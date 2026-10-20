@@ -7,21 +7,21 @@ import type { AlvoCaptura } from '../lib/captura-mapa'
 import type { EntradaClassificada } from '../lib/entrada-ponto'
 import { type BlocoParametro, type RotuloPartido, blocosPorParametro } from '../lib/comparacao'
 import {
-  DIMENSOES_PONTO,
   avisoDimensoesCortadas,
   dimensoesDoComparativo,
   MAX_PONTOS,
   compararPontos,
   corDoPonto,
-  motivoSemPdfDeComparacao,
   passaNoEstudo,
+  recorteParaOPdf,
   resumoDoEstudo,
   rotulosDosPontos,
   rotulosPartidosDosPontos,
   subtituloDoDeckDePontos,
 } from '../lib/comparacao-pontos'
+import { contornosDoItem } from '../lib/alcance'
 import { ranquear } from '../lib/ranking-comparacao'
-import { ehAreaDesenhada, rotuloDoRaio } from '../lib/recorte'
+import { rotuloDoRaio, tipoDoRecorte } from '../lib/recorte'
 import { relatarAcessoNegado, relatarFalhaDeRede } from '../lib/sessao'
 import { alunos } from '../lib/format'
 import type { PontoPayload } from '../lib/types'
@@ -98,29 +98,31 @@ export default function PainelPontos({
      perguntas diferentes, e um ponto pode ganhar a comparação e ainda assim reprovar num
      piso do produto. Viabilidade fica de fora de propósito — é entrada do operador sobre um
      imóvel concreto (DEC-009), e a comparação não a tem. */
-  /* ÁREA DESENHADA (DEC-071, fase 1) ainda não tem PDF: o deck de comparação desenha o raio
-     de 1 km de cada ponto na foto e nos textos, e para uma área ele afirmaria um recorte
-     que não é o dela. A recusa é DITA, com o motivo, em vez de o botão sumir. */
-  const temArea = fichas.some((f) => ehAreaDesenhada(f))
+  /* ÁREA DESENHADA e ALCANCE entram no PDF (fase 2 da DEC-071, DEC-074). A recusa que
+     morava aqui existia porque o deck afirmava o raio de 1 km de todo item; agora cada um
+     leva o SEU recorte (`recorteParaOPdf`) para a linha dele, a foto enquadra pelo
+     contorno, e o ranking do deck é o MESMO da tela: `dimensoesDoComparativo`, que tira os
+     totais quando os recortes têm tamanhos diferentes. Ranquear o PDF por `DIMENSOES_PONTO`
+     (como era) faria o deck premiar o recorte maior que a tela acabou de esconder. */
+  const soRaioDe1Km = fichas.every((f) => tipoDoRecorte(f) === 'raio_1km')
   const gerarRelatorio = useCallback(async () => {
     if (fichas.length < 2 || gerandoRelatorio) return
-    const semPdf = motivoSemPdfDeComparacao(fichas)
-    if (semPdf) {
-      setErroRelatorio(semPdf)
-      return
-    }
     setGerandoRelatorio(true)
     setErroRelatorio(null)
     try {
-      const ranking = ranquear(DIMENSOES_PONTO, fichas, rotulos, { aprovado: passaNoEstudo })
+      const ranking = ranquear(dimensoesDoComparativo(fichas), fichas, rotulos, { aprovado: passaNoEstudo })
       const itens = ranking.itens.map((it) => ({
         ...it,
         criterios: (fichas[it.indice]?.criterios ?? []).map((c) => ({
           rotulo: c.rotulo,
           passa: c.passa,
         })),
+        /* O recorte DESTE item (tipo, rótulo, área, fator das réguas), para a linha dele
+           no deck não afirmar um raio que ele não tem. */
+        ...(fichas[it.indice] ? { recorte: recorteParaOPdf(fichas[it.indice]) } : {}),
       }))
-      /* Um enquadramento por ENDEREÇO, pelo hexágono em que ele caiu. O mapa se mexe
+      /* Um enquadramento por ENDEREÇO, pelo contorno do recorte dele (o círculo de 1 km
+         incluso) — o hexágono só quando não houver contorno. O mapa se mexe
          sozinho durante isso — o botão avisa. Falha na captura não impede o PDF: o slide
          declara a ausência em vez de sumir. */
       const imagens = onCapturarMapas
@@ -133,6 +135,11 @@ export default function PainelPontos({
               // cidade aberta — ou com nenhum. Ver `AlvoCaptura`.
               uf: f.local?.uf ?? null,
               municipio: f.local?.municipio ?? null,
+              /* A foto ENQUADRA e DESENHA o contorno do recorte — o círculo de 1 km
+                 também, gerado igual ao do mapa (`contornosDoItem`) —, e então o hexágono
+                 NÃO é marcado: as duas linhas se sobrepunham (pedido do Vinicius,
+                 20/10/2026). Item sem contorno (vazio) cai no hexágono (`marcaDoAlvo`). */
+              contorno: contornosDoItem(f),
             })),
           )
         : []
@@ -410,12 +417,12 @@ export default function PainelPontos({
           )}
 
           <p style={{ font: '400 11px/1.5 var(--f-ui)', color: 'var(--tx-sub)', margin: 0 }}>
-            {temArea
-              ? /* Com área na lista, "cada leitura sai do raio" seria falso para ela. */
-                `Os pontos saem do ${rotuloDoRaio(fichas.find((f) => !ehAreaDesenhada(f))?.raio_km)} ` +
-                'em torno de cada um; a área desenhada, de dentro do polígono que você desenhou.'
-              : `Cada leitura sai do ${rotuloDoRaio(fichas[0]?.raio_km)} em torno do ` +
-                'ponto — a mesma régua do Relatório Pontual.'}
+            {soRaioDe1Km
+              ? `Cada leitura sai do ${rotuloDoRaio(fichas[0]?.raio_km)} em torno do ` +
+                'ponto — a mesma régua do Relatório Pontual.'
+              : /* Com outro recorte na lista, "cada leitura sai do raio" seria falso para ele. */
+                'Cada item sai do próprio recorte — raio, 10 min de carro ou área desenhada —, ' +
+                'dito na ficha dele; as réguas de totais escalam pela área de cada recorte.'}
           </p>
         </Glass>
       )}

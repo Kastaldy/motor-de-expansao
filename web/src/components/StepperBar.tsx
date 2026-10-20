@@ -9,6 +9,13 @@ import { Spinner } from './primitives'
    O ultimo passo troca o CTA de "próxima camada" por "Gerar Relatório
    Municipal" — a sintese das camadas vira o PDF (pedido do Felipe).
 
+   O RELATÓRIO EM TODAS AS CAMADAS (pedido do Vinicius, 2026-10-20): o PDF é do
+   MUNICÍPIO, não da camada em que o operador está, e obrigar a percorrer o funil
+   até o fim para baixá-lo escondia o botão de quem já sabe o que quer. Nas camadas
+   antes da última ele entra ao lado do "Próxima camada", sempre na PONTA DIREITA e
+   em ciano; na última, o "Próxima camada" sai e só ele fica. Na visão de UF não há
+   município, então não há relatório. A regra mora em `botoesDoStepper`, testada.
+
    Voltar SEMPRE foi possivel (clicar num passo ja percorrido), mas nada dizia
    isso: o CTA era de mao unica e a palavra "voltar" nao aparecia. Dai o botao
    secundario ao lado do CTA e o aria-label/title explicito em cada passo.
@@ -31,6 +38,21 @@ export interface StepperBarProps {
   nivelUf?: boolean
 }
 
+/** Quais botões a barra mostra — pura, para ser testada sem montar o componente. */
+export function botoesDoStepper({
+  atual,
+  total,
+  nivelUf,
+}: {
+  atual: number
+  total: number
+  nivelUf: boolean
+}): { navegacao: 'proxima' | 'escolha-municipio' | null; relatorio: boolean } {
+  const ultimo = atual >= total
+  if (nivelUf) return { navegacao: ultimo ? 'escolha-municipio' : 'proxima', relatorio: false }
+  return { navegacao: ultimo ? null : 'proxima', relatorio: true }
+}
+
 export default function StepperBar({
   passos,
   atual,
@@ -41,9 +63,12 @@ export default function StepperBar({
 }: StepperBarProps) {
   // Deriva do proprio funil, como as linhas 69/144/168 ja faziam. Era o unico
   // literal do stepper que precisava de edicao manual a cada passo novo.
-  const ultimo = atual >= passos.length
   // No nível da UF, o último passo guia para escolher um município (não gera PDF).
-  const ctaUf = ultimo && nivelUf
+  const { navegacao, relatorio } = botoesDoStepper({
+    atual,
+    total: passos.length,
+    nivelUf,
+  })
   const podeVoltar = atual > 1
 
   return (
@@ -192,38 +217,61 @@ export default function StepperBar({
         </button>
       )}
 
-      <button
-        type="button"
-        onClick={ctaUf ? undefined : ultimo ? onGerarRelatorio : () => onIr(atual + 1)}
-        disabled={gerando || ctaUf}
-        style={{
-          flexShrink: 0,
-          background: ctaUf ? 'var(--surf-pending)' : 'var(--ac)',
-          color: ctaUf ? 'var(--tx-muted)' : 'var(--ac-on)',
-          font: '700 12px/1 var(--f-ui)',
-          padding: '10px 15px',
-          borderRadius: 10,
-          boxShadow: ctaUf ? 'none' : 'var(--ac-glow)',
-          border: ctaUf ? '1px solid var(--line-strong)' : 'none',
-          opacity: gerando ? 0.6 : 1,
-          display: 'flex',
-          alignItems: 'center',
-          gap: 7,
-        }}
-      >
-        {gerando ? (
-          <>
-            <Spinner />
-            Montando o relatório…
-          </>
-        ) : ctaUf ? (
-          'Escolha um município ↑'
-        ) : ultimo ? (
-          'Gerar Relatório Municipal ↓'
-        ) : (
-          'Próxima camada →'
-        )}
-      </button>
+      {navegacao && (
+        <button
+          type="button"
+          onClick={navegacao === 'proxima' ? () => onIr(atual + 1) : undefined}
+          disabled={gerando || navegacao === 'escolha-municipio'}
+          style={{
+            flexShrink: 0,
+            background: navegacao === 'proxima' ? 'var(--ac)' : 'var(--surf-pending)',
+            color: navegacao === 'proxima' ? 'var(--ac-on)' : 'var(--tx-muted)',
+            font: '700 12px/1 var(--f-ui)',
+            padding: '10px 15px',
+            borderRadius: 10,
+            boxShadow: navegacao === 'proxima' ? 'var(--ac-glow)' : 'none',
+            border: navegacao === 'proxima' ? 'none' : '1px solid var(--line-strong)',
+            opacity: gerando ? 0.6 : 1,
+          }}
+        >
+          {navegacao === 'proxima' ? 'Próxima camada →' : 'Escolha um município ↑'}
+        </button>
+      )}
+
+      {/* O relatório fica SEMPRE na ponta direita e em CIANO (pedidos do Vinicius,
+          2026-10-20: primeiro rosa, depois ciano) — o `--ac`, turquesa do sistema, por
+          token e não por hex, para acompanhar o tema claro. */}
+      {relatorio && (
+        <button
+          type="button"
+          onClick={onGerarRelatorio}
+          disabled={gerando}
+          title="Gerar o Relatório Municipal (PDF)"
+          style={{
+            flexShrink: 0,
+            background: 'var(--ac)',
+            color: 'var(--ac-on)',
+            font: '700 12px/1 var(--f-ui)',
+            padding: '10px 15px',
+            borderRadius: 10,
+            boxShadow: 'var(--ac-glow)',
+            border: 'none',
+            opacity: gerando ? 0.6 : 1,
+            display: 'flex',
+            alignItems: 'center',
+            gap: 7,
+          }}
+        >
+          {gerando ? (
+            <>
+              <Spinner />
+              Montando o relatório…
+            </>
+          ) : (
+            'Gerar Relatório Municipal ↓'
+          )}
+        </button>
+      )}
     </div>
   )
 }

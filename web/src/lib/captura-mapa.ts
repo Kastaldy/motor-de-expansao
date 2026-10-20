@@ -42,23 +42,40 @@ export interface AlvoCaptura {
    */
   uf?: string | null
   municipio?: string | null
+  /**
+   * O contorno do RECORTE do item (DEC-074), como lista de poligonos `[lng, lat]`: o
+   * circulo de 1 ou 2 km, a isocrona, a area desenhada — todo item de ponto o traz. Com
+   * ele a foto ENQUADRA pelo contorno (`quadroDoAlvo`), o DESENHA e NAO marca o hexagono
+   * (`marcaDoAlvo`). Ausente (o deck de hexagonos) = a foto de sempre, pelo hexagono.
+   */
+  contorno?: [number, number][][][] | null
 }
 
 /**
- * O que a foto de um alvo MARCA: o contorno do hexagono sempre, o pin so' com coordenada.
+ * O que a foto de um alvo MARCA: o contorno do RECORTE quando o alvo o traz, senao o do
+ * hexagono; o pin so' com coordenada.
  *
  * Os dois andavam juntos, e o contorno so' nascia quando havia pin. Desde que o #345
  * esvaziou a coropleta durante a captura, isso tirou o hexagono de TODAS as colunas do
  * deck de hexagonos, cujos alvos nao tem lat/lng — so' o deck de pontos seguia marcado.
+ *
+ * Com contorno (o ponto do deck de pontos, DEC-074 — o raio de 1 km incluso), o hexagono
+ * NAO e' marcado (`hexId` nulo): as duas linhas se sobrepunham em volta do mesmo ponto
+ * (pedido do Vinicius, 20/10/2026). O mapa faz o mesmo (`hexSubstituidoPeloAlcance`).
  */
 export function marcaDoAlvo(alvo: AlvoCaptura): {
-  hexId: string
+  /** O hexagono a contornar, ou `null` quando o recorte e' a marca. */
+  hexId: string | null
   pin: { lat: number; lng: number } | null
+  /** O contorno do recorte, so' quando o alvo o traz (DEC-074). */
+  contorno?: [number, number][][][]
 } {
   const temPin = typeof alvo.lat === 'number' && typeof alvo.lng === 'number'
+  const temContorno = !!alvo.contorno?.length
   return {
-    hexId: alvo.hexId,
+    hexId: temContorno ? null : alvo.hexId,
     pin: temPin ? { lat: alvo.lat as number, lng: alvo.lng as number } : null,
+    ...(alvo.contorno?.length ? { contorno: alvo.contorno } : {}),
   }
 }
 
@@ -336,6 +353,33 @@ export function quadroDaCaptura(
     // O h3-js lanca em id malformado. Quem nao e' hexagono nao vira quadro.
     return null
   }
+}
+
+/**
+ * O quadro de um ALVO: pelo contorno do recorte quando ele vem (DEC-074), senao pelo
+ * hexagono (`quadroDaCaptura`, o de sempre).
+ *
+ * Pelo contorno, a camera pousa no CENTRO DA CAIXA dele e o zoom faz a maior travessia
+ * (altura ou largura, em metros) ocupar a mesma fracao do recorte que o hexagono ocupa
+ * — o mesmo `zoomQueEnquadra`, uma regua so'. Contorno sem nenhum vertice valido cai no
+ * hexagono, em vez de mandar a camera para (0, 0).
+ */
+export function quadroDoAlvo(
+  alvo: AlvoCaptura,
+  larguraPx: number,
+  alturaPx: number,
+): { lat: number; lng: number; zoom: number } | null {
+  const vertices = (alvo.contorno ?? [])
+    .flatMap((poligono) => poligono[0] ?? [])
+    .filter(([x, y]) => Number.isFinite(x) && Number.isFinite(y))
+  if (!vertices.length) return quadroDaCaptura(alvo.hexId, larguraPx, alturaPx)
+  const lats = vertices.map(([, y]) => y)
+  const lngs = vertices.map(([x]) => x)
+  const lat = (Math.max(...lats) + Math.min(...lats)) / 2
+  const lng = (Math.max(...lngs) + Math.min(...lngs)) / 2
+  // `larguraDoAnel` le' [lat, lng] (o formato do h3-js); o GeoJSON vem em [lng, lat].
+  const anel = vertices.map(([x, y]) => [y, x] as [number, number])
+  return { lat, lng, zoom: zoomQueEnquadra(larguraDoAnel(anel), lat, larguraPx, alturaPx) }
 }
 
 /**

@@ -26,7 +26,8 @@ import JanelaFicha from '../components/JanelaFicha'
 import MethodologyPanel from '../components/MethodologyPanel'
 import NarrativePanel from '../components/NarrativePanel'
 import PainelComparacao from '../components/PainelComparacao'
-import ScoreLegend from '../components/ScoreLegend'
+import ScoreLegend, { LegendaCalor } from '../components/ScoreLegend'
+import { alternarCalor, alternarCoresHex, type ModoCalor } from '../lib/camadas-calor'
 import Select from '../components/Select'
 import StepperBar from '../components/StepperBar'
 import { Botao } from '../components/primitives'
@@ -78,6 +79,7 @@ import {
 import type { Coord } from '../lib/medicao'
 import { assinarJanelas, deslocamentoDoTrilho, janelasAbertas } from '../lib/ocupacao-janelas'
 import { degrauSobreFichaDePonto, janelaDoHexVisivel, pontoSeleciona } from '../lib/janela-hex'
+import { selecaoMarcadaNoMapa } from '../lib/alcance'
 import type { PinDoPonto } from '../lib/pontos-estado'
 import type { Tema } from '../lib/tema'
 import type {
@@ -759,6 +761,26 @@ export default function MapScreen({
   const [heatmap, setHeatmap] = useState<SetoresHeatmapPayload | null>(null)
   const [carregandoCalor, setCarregandoCalor] = useState(false)
   const calorLigado = verCalorDensidade || verCalorRenda
+  const modoCalor: ModoCalor | null = verCalorDensidade ? 'densidade' : verCalorRenda ? 'renda' : null
+  /* Calor e cores dos hexágonos são exclusivos nos dois sentidos: ligar um desliga o
+     outro. A regra mora em `lib/camadas-calor`. */
+  const aplicarChaves = useCallback((prox: { calor: ModoCalor | null; coresHex: boolean }) => {
+    setVerCalorDensidade(prox.calor === 'densidade')
+    setVerCalorRenda(prox.calor === 'renda')
+    setCoresHex(prox.coresHex)
+  }, [])
+  const clicarCalor = useCallback(
+    (modo: ModoCalor) => aplicarChaves(alternarCalor({ calor: modoCalor, coresHex }, modo)),
+    [aplicarChaves, modoCalor, coresHex],
+  )
+  const clicarCoresHex = useCallback(
+    () => aplicarChaves(alternarCoresHex({ calor: modoCalor, coresHex })),
+    [aplicarChaves, modoCalor, coresHex],
+  )
+  /* A legenda do calor só aparece quando ele está DESENHADO: carregando ou sem malha
+     para o município, ela explicaria uma cor que não está no mapa. */
+  const calorDesenhado =
+    modoCalor !== null && !carregandoCalor && !!heatmap?.disponivel && (heatmap?.setores.length ?? 0) > 0
 
   useEffect(() => {
     // `dados?.nivel === 'uf'` direto (nao a const `nivelUf`, declarada mais abaixo neste
@@ -1350,20 +1372,6 @@ export default function MapScreen({
       })
     }
 
-    /* CORES DOS HEXÁGONOS — sempre presente (não depende de recorte): é a camada base do
-       mapa. Antes das camadas de pontos, porque é o fundo sobre o qual elas são lidas. */
-    lista.push({
-      id: 'cores-hex',
-      icone: 'hexagono',
-      titulo: 'Cores dos hexágonos',
-      sub: coresHex ? 'mapa de calor das faixas · visível' : 'só a grade, sem cor',
-      ligado: coresHex,
-      onToggle: () => setCoresHex((v) => !v),
-      cor: 'var(--ac-text)',
-      corTexto: 'var(--ac-chip)',
-      corRealce: 'var(--ac-a16)',
-    })
-
     /* Academias de REDE — as bandeiras das cadeias. Vem ANTES das independentes porque e' a
        camada instalada (na sobreposicao do mapa a rede vence), e some com o dado como as
        demais. Cor neutra de proposito: sao 107 marcas, nenhuma cor as representa. */
@@ -1447,6 +1455,21 @@ export default function MapScreen({
       })
     }
 
+    /* CORES DOS HEXÁGONOS — sempre presente (não depende de recorte). Fica LOGO ACIMA dos
+       mapas de calor (pedido do Vinicius, 2026-10-20): as três chaves são as coropletas do
+       mapa e se excluem entre si (`lib/camadas-calor`), então leem melhor juntas. */
+    lista.push({
+      id: 'cores-hex',
+      icone: 'hexagono',
+      titulo: 'Cores dos hexágonos',
+      sub: coresHex ? 'mapa de calor das faixas · visível' : 'só a grade, sem cor',
+      ligado: coresHex,
+      onToggle: clicarCoresHex,
+      cor: 'var(--ac-text)',
+      corTexto: 'var(--ac-chip)',
+      corRealce: 'var(--ac-a16)',
+    })
+
     /* Bloco D — mapa de calor de setor censitario. So' no drill-down de municipio (mesmo
        gate dos pins de concorrente): a malha de setor de uma UF inteira seria pesada
        demais e nao e' o recorte em que o operador le densidade/renda de bairro. As duas
@@ -1465,10 +1488,7 @@ export default function MapScreen({
         titulo: 'Densidade demográfica',
         sub: subCalor(verCalorDensidade),
         ligado: verCalorDensidade,
-        onToggle: () => {
-          setVerCalorDensidade((v) => !v)
-          setVerCalorRenda(false)
-        },
+        onToggle: () => clicarCalor('densidade'),
         cor: '#dc4141',
         corTexto: 'var(--ac-chip)',
         corRealce: 'rgba(220,65,65,.16)',
@@ -1479,10 +1499,7 @@ export default function MapScreen({
         titulo: 'Renda domiciliar',
         sub: subCalor(verCalorRenda),
         ligado: verCalorRenda,
-        onToggle: () => {
-          setVerCalorRenda((v) => !v)
-          setVerCalorDensidade(false)
-        },
+        onToggle: () => clicarCalor('renda'),
         cor: '#00a844',
         corTexto: 'var(--ac-chip)',
         corRealce: 'rgba(0,168,68,.16)',
@@ -1505,6 +1522,8 @@ export default function MapScreen({
     carregandoCalor,
     verCalorDensidade,
     verCalorRenda,
+    clicarCalor,
+    clicarCoresHex,
     alternarCenario,
     temRedes,
     verRedes,
@@ -1591,7 +1610,18 @@ export default function MapScreen({
           municipio={dados.municipio ?? undefined}
           uf={dados.uf}
           pins={pinsNoMapa}
-          selecionado={modoCenario ? null : selecionado}
+          /* A seleção que veio do PONTO ativo não é contornada quando o alcance dele já
+             está desenhado: o recorte é a marca (`selecaoMarcadaNoMapa`). Clique direto no
+             hexágono segue marcado. */
+          selecionado={
+            modoCenario
+              ? null
+              : selecaoMarcadaNoMapa(
+                  selecionado,
+                  selecaoDaBusca,
+                  pontosComparados?.find((p) => p.ativo) ?? null,
+                )
+          }
           cenario={cenario}
           raio1km={raio1km}
           medindo={ferramenta === 'regua'}
@@ -1620,7 +1650,7 @@ export default function MapScreen({
           }
           cobertura1k={cobertura}
           heatmapSetores={heatmap?.setores}
-          modoCalor={verCalorDensidade ? 'densidade' : verCalorRenda ? 'renda' : null}
+          modoCalor={modoCalor}
           /* A foto CONGELA na montagem, e trocar de UF/municipio zera `cameraRef` mas
              nao tem como zerar `foto.camera`. Sem este portao: SP/Sao Paulo -> volta da
              Viabilidade (foto.camera = zoom 14 sobre SP) -> troca a UF -> a carga falha
@@ -1991,7 +2021,7 @@ export default function MapScreen({
                       }
                 }
                 legendaVisivel={legendaVisivel}
-                legendaDisponivel={coresHex}
+                legendaDisponivel={coresHex || calorDesenhado}
                 onLegenda={() => setLegendaVisivel((v) => !v)}
                 camadasAberto={trilho.camadasAberto}
                 onAlternarCamadas={() => acaoTrilho({ tipo: 'alternar-camadas' })}
@@ -2091,6 +2121,7 @@ export default function MapScreen({
                   comAlunos={(pinsNoMapa?.concorrentes ?? []).some(temAlunos)}
                 />
               )}
+              {legendaVisivel && calorDesenhado && modoCalor && <LegendaCalor modo={modoCalor} />}
             </div>
 
           </div>

@@ -37,6 +37,7 @@ import type {
   ViabilidadeIn,
   ViabilidadeOut,
 } from './types'
+import type { Alcance } from './alcance'
 import { ehQuedaDeSessao, entradaDoPayload, type EntradaAceita } from './login-motor'
 import { relatarAcessoNegado, relatarFalhaDeRede } from './sessao'
 
@@ -54,6 +55,12 @@ function queryRede(q: RedeQuery = {}): string {
 const TIMEOUT_LEITURA = 90_000
 /** Análise de área desenhada: a conta cresce com os setores interseccionados (até 200 km²). */
 const TIMEOUT_GEOMETRIA = 150_000
+/**
+ * Análise de ALCANCE (DEC-074): o raio de 2 km lê os setores de até 12,57 km² e pode
+ * alcançar o município vizinho; os 10 min de carro somam a chamada ao serviço de rotas à
+ * mesma conta de área. O mesmo teto da área desenhada, que é a conta mais próxima.
+ */
+const TIMEOUT_ALCANCE = 150_000
 /**
  * Downloads pesados (PDF, XLSX). O PDF baixa tiles de basemap (7 mapas — a camada
  * "entorno" saiu no BLK-RELPON-14) e em area densa/cache frio passa de 1 min; a
@@ -613,6 +620,22 @@ export const api = {
     ),
 
   /**
+   * Ficha de um ponto em outro ALCANCE (DEC-074): raio de 1 km, raio de 2 km ou 10 min de
+   * carro sem trânsito. O mesmo payload do `ponto`, com `lat`/`lng` na ORIGEM clicada e o
+   * bloco `recorte` dizendo o tipo, a área, o fator das réguas e o contorno.
+   *
+   * A isócrona é calculada no SERVIDOR (serviço de rotas): sem ele, a rota responde 503 com
+   * a mensagem em português, que vira `ApiError.message` e é mostrada como veio — nunca
+   * cai em silêncio para o raio de 1 km.
+   */
+  pontoAlcance: (lat: number, lng: number, alcance: Alcance) =>
+    pedir<PontoPayload>(
+      `/api/ponto/alcance?${new URLSearchParams({ lat: String(lat), lng: String(lng), alcance }).toString()}`,
+      {},
+      TIMEOUT_ALCANCE,
+    ),
+
+  /**
    * Texto colado -> coordenada. Só é chamada quando o front NÃO resolveu sozinho
    * (`lib/entrada-ponto`): link curto do celular, link de place sem coordenada, ou
    * endereço escrito. Pode fazer requisição externa (expandir redirect + geocode),
@@ -823,6 +846,16 @@ export const api = {
      * de ponto (a Ultra próxima conta).
      */
     excluirUltraProxima?: boolean
+    /**
+     * O RECORTE do Estudo quando não é o raio de 1 km (fase 2 da DEC-071, DEC-074): o
+     * alcance (`raio_2km`, `carro_10min`) OU a área desenhada (o Polygon do desenho). Vão no
+     * CORPO (FormData), nunca na query — 50 vértices estourariam o orçamento da URL (o HTTP
+     * 431 que este relatório já conheceu). Só com `soEstudo`: o relatório completo é do
+     * raio de 1 km. O servidor RECALCULA a isócrona pelo alcance; não confia em polígono
+     * mandado pela tela.
+     */
+    alcance?: Alcance
+    geometria?: { type: 'Polygon'; coordinates: [number, number][][] }
     infoImovel?: Record<string, unknown>
     viabilidadeInputs?: ViabilidadeIn
     fotos?: File[]
@@ -848,6 +881,13 @@ export const api = {
 
     const fd = new FormData()
     for (const f of (opts.fotos ?? []).slice(0, 2)) fd.append('fotos', f)
+    /* O raio de 1 km NÃO vai: é o default do servidor, e mandar o descritor dele faria um
+       servidor anterior à DEC-074 recusar um pedido que ele sabe atender. */
+    if (opts.soEstudo && opts.geometria) {
+      fd.append('geometria', JSON.stringify(opts.geometria))
+    } else if (opts.soEstudo && opts.alcance && opts.alcance !== 'raio_1km') {
+      fd.append('alcance', opts.alcance)
+    }
 
     return pedirArquivo(
       `/api/relatorio/pontual?${q.toString()}`,

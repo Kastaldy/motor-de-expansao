@@ -22,9 +22,11 @@ import {
   pinsDoAlvo,
   ordenarParaEmpilhar,
   quadroDaCaptura,
+  quadroDoAlvo,
   recorteCentral,
   zoomQueEnquadra,
 } from './captura-mapa'
+import { contornosDoItem } from './alcance'
 
 /* Os falsos abaixo entram por `as unknown as HTMLCanvasElement`: a lib e' tipada contra o
    DOM de verdade (e' o que a producao usa), e o casting fica no TESTE, que e' o unico
@@ -528,5 +530,74 @@ describe('alvoDoHex', () => {
       lat: -16.1,
       lng: -47.2,
     })
+  })
+})
+
+/* ---------------- Contorno do recorte na foto (DEC-074) ---------------- */
+describe('quadroDoAlvo e o contorno na marca', () => {
+  const HEX = '87a8100c9ffffff'
+  /* Um quadrado de ~4 km de lado em volta de São Paulo, em [lng, lat]. */
+  const quadrado: [number, number][] = [
+    [-46.65, -23.57], [-46.61, -23.57], [-46.61, -23.53], [-46.65, -23.53], [-46.65, -23.57],
+  ]
+
+  it('sem contorno, o quadro de sempre (pelo hexágono)', () => {
+    expect(quadroDoAlvo({ hexId: HEX }, 1200, 800)).toEqual(quadroDaCaptura(HEX, 1200, 800))
+  })
+
+  it('com contorno, pousa no centro da caixa dele e afasta o zoom para caber', () => {
+    const q = quadroDoAlvo({ hexId: HEX, contorno: [[quadrado]] }, 1200, 800)!
+    expect(q.lat).toBeCloseTo(-23.55, 9)
+    expect(q.lng).toBeCloseTo(-46.63, 9)
+    // ~4,4 km de travessia contra os ~2,9 km do hexágono res-7: zoom MENOR (mais afastado).
+    expect(q.zoom).toBeLessThan(quadroDaCaptura(HEX, 1200, 800)!.zoom)
+  })
+
+  it('contorno sem vértice válido cai no hexágono, nunca em (0, 0)', () => {
+    expect(quadroDoAlvo({ hexId: HEX, contorno: [] }, 1200, 800)).toEqual(quadroDaCaptura(HEX, 1200, 800))
+  })
+
+  it('a marca leva o contorno só quando o alvo o traz', () => {
+    // Com contorno, o recorte é a marca: o hexágono NÃO é contornado (pedido de 20/10/2026).
+    expect(marcaDoAlvo({ hexId: HEX, contorno: [[quadrado]] })).toEqual({ hexId: null, pin: null, contorno: [[quadrado]] })
+    expect(marcaDoAlvo({ hexId: HEX, contorno: [] })).toEqual({ hexId: HEX, pin: null })
+  })
+})
+
+/* ---------- Ponto de 1 km na foto: o contorno do alcance, não o hexágono ---------- */
+describe('alvo de ponto de 1 km no deck de comparação', () => {
+  const HEX = '87a8100c9ffffff'
+  const [lat, lng] = cellToLatLng(HEX)
+  const circulo = contornosDoItem({ lat, lng, raio_km: 1 })
+  const alvo = { hexId: HEX, lat, lng, uf: 'SP', municipio: 'São Paulo', contorno: circulo }
+
+  it('a marca leva o círculo de 1 km e o pin, e não o hexágono', () => {
+    const m = marcaDoAlvo(alvo)
+    expect(m.hexId).toBeNull()
+    expect(m.contorno).toEqual(circulo)
+    expect(m.pin).toEqual({ lat, lng })
+  })
+
+  it('o enquadramento cabe o círculo inteiro, com folga, centrado no ponto', () => {
+    const LARG = 1200
+    const ALT = 800
+    const q = quadroDoAlvo(alvo, LARG, ALT)!
+    expect(q.lat).toBeCloseTo(lat, 3)
+    expect(q.lng).toBeCloseTo(lng, 3)
+    // Diâmetro do círculo, em pixels CSS, contra o lado do recorte quadrado da foto.
+    const ladoPx = Math.min(LARG, ALT) * FATOR_RECORTE
+    const diametroPx = 2000 / metrosPorPixel(lat, q.zoom)
+    expect(diametroPx).toBeLessThan(ladoPx * 0.9)
+    expect(diametroPx).toBeGreaterThan(ladoPx * 0.6)
+  })
+
+  it('o deck de HEXÁGONOS segue marcando o hexágono (alvoDoHex sem contorno)', () => {
+    const a = alvoDoHex({ id: HEX, lat: 0, lng: 0, mun: 'São Paulo' }, 'SP')
+    expect(a.contorno).toBeUndefined()
+    expect(marcaDoAlvo(a)).toEqual({ hexId: HEX, pin: { lat: a.lat, lng: a.lng } })
+  })
+
+  it('contorno vazio (item sem recorte conhecido) cai no hexágono', () => {
+    expect(marcaDoAlvo({ ...alvo, contorno: [] }).hexId).toBe(HEX)
   })
 })
