@@ -797,8 +797,9 @@ _LOG_D17 = logging.getLogger("piloto.d17")
 # requisicao. Travado por `tests/unit/test_falha_5xx_loga.py` (BLK-SAUDE-01).
 #
 # NAO carrega identidade de proposito: quem fez o que e' a trilha da DEC-027, que tem
-# retencao declarada de 90 dias e poda. O log do container nao tem governanca nenhuma, e
-# jogar login de pessoa nele seria criar um segundo cadastro de acesso sem regra.
+# retencao DECLARADA (sem prazo desde a emenda 2, 20/10/2026, por decisao do dono). O log
+# do container nao tem governanca nenhuma, e jogar login de pessoa nele seria criar um
+# segundo cadastro de acesso sem regra.
 _LOG_FALHA = logging.getLogger("piloto.falha")
 
 
@@ -972,14 +973,14 @@ def _registrar_visita_imovel(remote_user: str | None, *, acao: str, imovel: str 
             origem="web",
         )
     except BancoNaoConfigurado:
-        # Sem banco configurado a decisao de visita fica so' na trilha de 90 dias, e isso e' o
+        # Sem banco configurado a decisao de visita fica so' na trilha da DEC-027, e isso e' o
         # esperado deste deploy. A guarda de ALVO AUSENTE, logo acima, segue sendo ERRO: la' o
         # gesto chegou incompleto, que e' defeito, e nao configuracao.
         _LOG_D17.debug("deploy sem banco — gesto %s no imovel %s sem evento", acao, imovel)
     except Exception:  # noqa: BLE001 — a trilha nunca derruba o gesto
         _LOG_D17.exception(
             "gesto %s no imovel %s SEM evento no banco — a decisao de visita ficou so' na "
-            "trilha de 90 dias",
+            "trilha da DEC-027",
             acao,
             imovel,
         )
@@ -4517,8 +4518,9 @@ def ciencia_confidencialidade() -> dict[str, Any]:
 
 @app.on_event("startup")
 def _consolidar_rollup_de_uso() -> None:
-    # Consolida dias BRT fechados no rollup sem dado pessoal ANTES que a poda de
-    # 90 dias da trilha os alcance; nunca levanta (analytics e' rastro).
+    # Consolida dias BRT fechados no rollup sem dado pessoal ANTES que uma poda da
+    # trilha os alcance (sem prazo por padrao desde a emenda 2 da DEC-027; a poda so'
+    # existe se MOTOR_ACESSO_RETENCAO_DIAS for definida); nunca levanta (analytics e' rastro).
     acesso_analytics.consolidar_rollup_seguro()
 
 
@@ -12045,7 +12047,7 @@ ACOES_IMOBILIARIA: frozenset[str] = frozenset(
 )
 
 #: Os DOIS que sobem para `eventos` (contrato §2.4). Os outros cinco sao uso de tela e ficam
-#: so' na trilha de 90 dias -- e `abrir-dossie` nao entra aqui de proposito: quem grava o
+#: so' na trilha da DEC-027 -- e `abrir-dossie` nao entra aqui de proposito: quem grava o
 #: download e' o GET do PDF, senao o mesmo clique contaria duas vezes (correcao de 16/09).
 GESTOS_QUE_VIRAM_EVENTO: frozenset[str] = frozenset({"marcar-visita", "desmarcar-visita"})
 

@@ -61,7 +61,9 @@ do host `piloto-ar`, ja coberto pelos backups cifrados acima). O que a AR acresc
 | `/opt/motor-expansao-ar/cadastro/acesso_abas.json` | Concessoes de aba da AR (editado em producao, so existe no servidor); molde em `docs/acesso_abas_ar.exemplo.json` |
 
 A trilha de acesso AR (`/opt/motor-expansao-ar/logs/acesso/`) segue o regime da trilha
-BR (retencao de 90 dias podada pelo backend, DEC-027). Artefatos de dados AR
+BR (sem prazo de retencao desde a emenda 2 da DEC-027, 20/10/2026; era 90 dias), porque
+e' o mesmo codigo. Nenhum backup deste runbook cobre as trilhas (BR ou AR): se o disco
+for perdido, o historico inteiro vai junto. Artefatos de dados AR
 (`/opt/motor-expansao-ar/data/{outputs,staging}`) seguem a MESMA politica dos BR (§3):
 nao entram no git nem no backup cifrado — sao reproduziveis a partir do pacote
 Motor-Argentina e sobem por `scp`.
