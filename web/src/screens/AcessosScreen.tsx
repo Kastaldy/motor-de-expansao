@@ -1152,8 +1152,9 @@ export default function AcessosScreen({ onInicio }: { onInicio: () => void }) {
               >
                 As métricas excluem este painel e as chamadas de diagnóstico. O conteúdo
                 consultado (endereços pesquisados, parâmetros de simulação) não é exibido aqui —
-                fica apenas na trilha bruta do servidor, com retenção de 90 dias (DEC-027). A
-                série diária vem do rollup sem dado pessoal e por isso segue além dos 90 dias.
+                fica apenas na trilha bruta do servidor, guardada sem prazo de deleção (DEC-027,
+                emenda 2). Esta tela mostra o detalhe de no máximo 90 dias porque esse é o limite
+                da janela da tela, não da trilha; a série diária vem do rollup sem dado pessoal.
               </div>
             </div>
           )
