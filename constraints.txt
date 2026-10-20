@@ -365,7 +365,13 @@ pendulum==3.2.0 ; python_full_version < '3.13'
     # via prefect
 pglast==8.4
     # via motor-expansao (pyproject.toml)
-pillow==12.3.0
+pillow==13.0.0
+    # (bump manual 20/10) oito advisories de uma vez (GHSA-p4wg-p73j-c528,
+    # -65qm-jvmh-6pqg, -58r4-6rv3-gfh8, -pchr-8j38-3x4p, -q45j-58j2-45rg, -462x-pgg6-55fp,
+    # -c6hw-5grf-ff96, -vx6w-vv9f-6gvg), todas corrigidas somente na 13.0.0. Alcancaveis:
+    # o PDF pontual abre com o Pillow as fotos enviadas pelo usuario, sem restringir
+    # formato (TIFF/GIF/EPS/PPM). Major conferido antes: as 84 suites de imagem/PDF
+    # (2.284 testes, inclusive os byte a byte) passam com a 13. Sem teto nos consumidores:
     # via
     #   motor-expansao (pyproject.toml)
     #   contextily
