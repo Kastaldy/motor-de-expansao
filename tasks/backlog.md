@@ -6830,3 +6830,20 @@ em MAIÚSCULAS e sem acento.
 
 **Critério de aceite da fase 1.** Cobertura medida nas 27 UFs (endereços, setores, municípios e
 território), com a régua do que conta como bairro "genérico" declarada antes de medir.
+
+**Resultado da fase 1 (20/10, `data/analysis/bairro_cnefe/`).** CNEFE 2022 nas 27 UFs, 90,6 mi de
+domicílios. Régua declarada antes de medir: VAZIO, SEM_NOME, CODIGO (só número ou "SETOR 3"),
+RURAL (nome com RURAL ou INTERIOR), MUNICIPIO (igual ao nome da cidade) e BAIRRO (o resto, CENTRO
+incluído).
+- **97,6% dos domicílios** têm bairro de verdade; o resto é 1,8% nome da própria cidade, 0,3% rural
+  e 0,2% código.
+- **97,2% dos 446.426 setores** têm um bairro dominante.
+- **5.566 de 5.570 municípios (99,9%)** têm 2 ou mais bairros. Mediana: 38 nos menores (<5 mil
+  domicílios) e 205 nos maiores (>100 mil). Sem bairro: só Nova Europa/SP, Pequeri/MG, Áurea/RS e
+  Carlos Gomes/RS.
+- **Território povoado:** 91,3% dos 638.483 hexágonos res-7 com domicílio têm bairro dominante, e
+  97,5% ponderando por domicílio. A diferença são hexágonos rurais (GO: 59% sem peso, 95% com).
+- **SP contra o IBGE:** dos 587 municípios sem `NM_BAIRRO`, 586 ganham bairros pelo CNEFE. Nos 58
+  com `NM_BAIRRO`, a mediana sobe de 30,5 para 132 bairros.
+Ressalvas: nome em MAIÚSCULAS e sem acento; em cidade pequena parte dos "bairros" são localidades
+rurais com nome próprio (povoado, comunidade), que servem como rótulo mas não são bairro urbano.
