@@ -36,10 +36,11 @@ import {
 } from '../lib/studios'
 import { avisoDeViabilidade, sementeDaDemanda } from '../lib/viabilidade-demanda'
 import {
-  FORMA_RAMPA_PADRAO,
   FORMAS_RAMPA,
   ROTULO_FORMA_RAMPA,
   ajudaDaRampa,
+  formaExibida,
+  formaParaEnviar,
   mesFimDaRampa,
   usaMesesDeRampa,
   type FormaRampa,
@@ -274,9 +275,10 @@ export default function ViabilityScreen({
   // Rampa de maturação (Simulador E13; padrão 8). Controlável na sidebar: alonga
   // a curva de alunos e o fluxo de caixa (afeta payback), não a margem steady.
   const [rampaMeses, setRampaMeses] = useState(8)
-  // Forma da rampa (DEC-075): curva observada (padrão) ou reta. Os meses acima ficam
-  // guardados mesmo na curva, para voltarem intactos quando o operador escolher a reta.
-  const [formaRampa, setFormaRampa] = useState<FormaRampa>(FORMA_RAMPA_PADRAO)
+  // Forma da rampa (DEC-075) ESCOLHIDA pelo operador; `null` = sem escolha, e então o
+  // pedido vai sem `forma_rampa` e vale o padrão do SERVIDOR (a reta, com a demanda do
+  // operador). Os meses acima ficam guardados mesmo na curva, para voltarem intactos.
+  const [formaRampa, setFormaRampa] = useState<FormaRampa | null>(null)
   // Studios (0..3): cada um atende uma fatia da demanda com ticket PRÓPRIO e soma um
   // custo fixo mensal (valores do motor). O estado dos tickets guarda SEMPRE as três
   // posições: baixar de 3 para 1 e voltar devolve o que o operador já digitou.
@@ -361,7 +363,7 @@ export default function ViabilityScreen({
       juros_equipamentos_am: jurosEquip !== undefined ? jurosEquip / 100 : undefined,
       carencia_aluguel_meses: carencia,
       rampa_meses: rampaMeses,
-      forma_rampa: formaRampa,
+      forma_rampa: formaParaEnviar(formaRampa),
       taxa_franquia: paraReais(taxaFranquia, reaisPorUn),
       parcelas_franquia: parcelasFranquia,
       // % a.a. digitado -> FRAÇÃO, mesma conversão de unidade.
@@ -617,6 +619,8 @@ export default function ViabilityScreen({
   // TUDO abaixo é LEITURA do viabilidade_payload_v1. A tela não deriva número
   // financeiro nenhum: o motor (dimensionamento/simulador.py) já entregou pronto.
   const premissas = res?.premissas ?? null
+  // O seletor mostra a escolha do operador ou, sem ela, a forma que o servidor usou.
+  const formaMostrada = formaExibida(formaRampa, premissas)
   // Studios lidos do PAYLOAD (o que o motor aplicou), não do estado da tela: o rótulo
   // descreve o último cálculo, e não o que está digitado e ainda não foi calculado.
   const temStudios = (premissas?.n_studios ?? 0) > 0
@@ -1260,7 +1264,7 @@ export default function ViabilityScreen({
               style={{ display: 'flex', gap: 6 }}
             >
               {FORMAS_RAMPA.map((id) => {
-                const ativo = formaRampa === id
+                const ativo = formaMostrada === id
                 return (
                   <button
                     key={id}
@@ -1283,7 +1287,7 @@ export default function ViabilityScreen({
                 )
               })}
             </div>
-            {usaMesesDeRampa(formaRampa) && (
+            {usaMesesDeRampa(formaMostrada) && (
               <div
                 style={{
                   display: 'flex',
@@ -1328,7 +1332,7 @@ export default function ViabilityScreen({
             )}
             <div style={{ font: '400 10.5px/1.4 var(--f-ui)', color: 'var(--tx-sub)', marginTop: 8 }}>
               {ajudaDaRampa(
-                formaRampa,
+                formaMostrada,
                 premissas?.forma_rampa === 'curva_uni03' ? premissas.curva_rampa : null,
               )}
             </div>

@@ -118,7 +118,8 @@ class ViabilidadeInputs(BaseModel):
     rampa_meses: int | None = Field(default=None, ge=1, le=36)
     # FORMA da rampa (DEC-075): "curva_uni03" (curva observada na rede, BLK-UNI-03) ou
     # "reta" (a rampa historica, com `rampa_meses` e os alunos iniciais do config). None =
-    # SIM_FORMA_RAMPA_PADRAO, a curva. Na curva, `rampa_meses` e' aceito e IGNORADO pelo
+    # `forma_rampa_padrao()`: a reta, porque a demanda deste corpo e' a do OPERADOR (a curva
+    # so' e' padrao com a demanda da v2). Na curva, `rampa_meses` e' aceito e IGNORADO pelo
     # motor (a tela guarda o numero para quando o operador voltar a reta) — o payload
     # devolve `mes_maturidade_rampa`, que e' o fim da rampa que de fato valeu.
     forma_rampa: str | None = None
@@ -240,6 +241,21 @@ def investimento_do_body(body: ViabilidadeIn) -> dict[str, Any]:
     }
 
 
+def forma_rampa_padrao(*, demanda_v2: bool = False) -> str:
+    """Forma da rampa de quem nao escolhe (DEC-075, decisao do dono de 2026-10-20).
+
+    A curva observada so' e' o padrao quando a demanda vem da Viabilidade v2; com a
+    demanda do operador (o unico modo do produto hoje) e' `SIM_FORMA_RAMPA_PADRAO`, a reta.
+    Lido em tempo de chamada: trocar a constante no config muda a API, o PDF, a planilha e
+    a tela (que le a forma servida) de uma vez.
+    """
+    from motor_expansao.dimensionamento import config
+
+    if demanda_v2:
+        return str(config.SIM_FORMA_RAMPA_PADRAO_DEMANDA_V2)
+    return str(config.SIM_FORMA_RAMPA_PADRAO)
+
+
 def premissas_do_body(body: ViabilidadeIn):  # -> simulador.Premissas
     """Traduz o corpo da requisicao em `Premissas` — a fonte unica de coeficientes.
 
@@ -251,10 +267,7 @@ def premissas_do_body(body: ViabilidadeIn):  # -> simulador.Premissas
     `Premissas.custo_studio_mes` (e nao mais somado em `outros_fixos_mes` aqui): assim a
     planilha .xlsx mostra a linha "Studios" em vez de ratear o valor pelas contas fixas.
     """
-    from motor_expansao.dimensionamento.config import (
-        SIM_FORMA_RAMPA_PADRAO,
-        SIM_MENSALIDADE_BALCAO,
-    )
+    from motor_expansao.dimensionamento.config import SIM_MENSALIDADE_BALCAO
     from motor_expansao.dimensionamento.simulador import Premissas
 
     opcionais: dict[str, Any] = {
@@ -282,9 +295,10 @@ def premissas_do_body(body: ViabilidadeIn):  # -> simulador.Premissas
         ticket_cheio=float(body.ticket or SIM_MENSALIDADE_BALCAO),
         aluguel_mes=float(body.aluguel),
         tickets_studios=tickets_studios_do_body(body),
-        # O default do PRODUTO e' a curva (DEC-075); o do nucleo segue "reta". Por isso a
-        # forma vai SEMPRE explicita daqui, e nunca cai no default do dataclass.
-        forma_rampa=body.forma_rampa or SIM_FORMA_RAMPA_PADRAO,
+        # O default do PRODUTO sai de `forma_rampa_padrao()` (DEC-075), nunca do default do
+        # dataclass: e' ele que a constante do config controla. A demanda deste corpo e' a
+        # do operador, entao o padrao e' o da demanda do operador.
+        forma_rampa=body.forma_rampa or forma_rampa_padrao(),
         **{k: v for k, v in opcionais.items() if v is not None},
     )
 

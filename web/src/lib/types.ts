@@ -586,7 +586,8 @@ export interface ViabilidadeIn {
   /** Meses de rampa de maturacao do balcao (Simulador E13; default do motor = 8). So'
    *  vale na forma `reta`; na curva o motor o aceita e ignora. */
   rampa_meses?: number
-  /** Forma da rampa (DEC-075): `curva_uni03` (padrao, curva observada) ou `reta`. */
+  /** Forma da rampa (DEC-075): `curva_uni03` (curva observada) ou `reta`. Ausente = o
+   *  padrao do SERVIDOR (hoje a reta: a curva so' e' padrao com a demanda da v2). */
   forma_rampa?: 'curva_uni03' | 'reta'
   /* --- Premissas explícitas (FIN-VIAB-01). Todas OPCIONAIS: vazio = default do
      `dimensionamento/config.py`, a fonte única. Estavam escondidas como literal no

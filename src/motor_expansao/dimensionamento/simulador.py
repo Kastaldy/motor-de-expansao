@@ -213,7 +213,7 @@ class Premissas:
     # a byte): `alunos_inicial` no mes 1 ate a demanda em `maturacao_meses`. "curva_uni03":
     # alunos(t) = demanda x `curva_rampa[t-1]` nos meses 1..len(curva) e a demanda cheia
     # depois — `alunos_inicial` e `maturacao_meses` NAO entram. O default do PRODUTO (tela,
-    # PDF, API) e' a curva, e e' o payload que a escolhe (`SIM_FORMA_RAMPA_PADRAO`).
+    # PDF, API) sai do payload (`forma_rampa_padrao()`): reta com a demanda do operador.
     forma_rampa: str = SIM_FORMA_RAMPA_RETA
     curva_rampa: tuple[float, ...] = SIM_CURVA_RAMPA_UNI03
 
@@ -248,6 +248,13 @@ class Premissas:
         object.__setattr__(self, "curva_rampa", curva)
         if not curva or any(not 0.0 < f <= 1.0 for f in curva):
             raise ValueError("curva_rampa: fracoes da demanda em (0, 1], ao menos um mes")
+        # A rampa nunca decresce (a mesma regra da reta e da derivacao da curva UNI-03). E'
+        # o que faz "primeiro mes com 100%" ser o FIM da rampa: com uma curva que cai depois
+        # de chegar a 1, o steady-state sairia de um mes que nao e' o regime pleno.
+        if any(b < a for a, b in zip(curva, curva[1:], strict=False)):
+            raise ValueError(
+                "curva_rampa: a fracao da demanda nao pode decrescer de um mes para o outro"
+            )
         # A curva e' fracao da demanda TOTAL; no modo historico so' o balcao rampa e
         # "fracao de qual total" nao tem resposta. Nenhum chamador legado usa a curva.
         if self.forma_rampa == SIM_FORMA_RAMPA_CURVA_UNI03 and self.rampa_apenas_balcao:

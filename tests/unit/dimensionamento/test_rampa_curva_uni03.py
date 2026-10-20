@@ -11,10 +11,13 @@ O QUE ESTE ARQUIVO TRAVA
    mudanca — nunca contra o proprio codigo novo, que tornaria o teste circular.
 4. Os NUMEROS da DEC-075 (caso golden Boulevard Londrina, reta x curva) — medidos
    rodando o motor; a DEC cita estes valores e nao outros.
-5. O contrato do payload (`forma_rampa`): default curva, reta escolhivel, 422 em
-   portugues, eco no payload.
+5. O contrato do payload (`forma_rampa`): default RETA (a curva so' e' padrao com a
+   demanda da v2 — decisao do dono de 2026-10-20), curva escolhivel, 422 em portugues,
+   eco no payload, e UMA constante do config reverte o padrao.
 6. A planilha .xlsx com a curva: recalculada, bate com o motor nos 64 meses; e trocar a
-   celula "Forma da rampa" para "reta" reproduz o motor na reta.
+   celula "Forma da rampa" para "reta" reproduz o motor na reta. A planilha da RETA nao
+   tem nada da curva (e' a de antes da DEC).
+7. As sensibilidades e cenarios de fronteira citados na DEC-075.
 
 READ-ONLY sobre o M1.
 """
@@ -39,11 +42,13 @@ from motor_expansao.dimensionamento.config import (
     SIM_CURVA_UNI03_ALUNOS_P1,
     SIM_FORMA_RAMPA_CURVA_UNI03,
     SIM_FORMA_RAMPA_PADRAO,
+    SIM_FORMA_RAMPA_PADRAO_DEMANDA_V2,
     SIM_FORMA_RAMPA_RETA,
 )
 from motor_expansao.dimensionamento.payload_viabilidade import (
     ViabilidadeIn,
     ViabilidadeInputs,
+    forma_rampa_padrao,
     premissas_do_body,
 )
 from motor_expansao.dimensionamento.simulador import (
@@ -215,10 +220,14 @@ def test_reta_reproduz_o_motor_anterior_byte_a_byte() -> None:
     )
 
 
-def test_default_do_nucleo_e_reta_e_o_do_produto_e_a_curva() -> None:
-    """O nucleo fica na reta (adaptadores e golden historicos); o produto escolhe a curva."""
+def test_padrao_e_a_reta_e_a_curva_so_com_a_demanda_v2() -> None:
+    """Decisao do dono (2026-10-20): "A Viabilidade v2 entra junto com o ramp-up". Com a
+    demanda do OPERADOR (o produto de hoje) o padrao e' a reta; a curva fica amarrada a v2."""
     assert Premissas(ticket_cheio=147.0).forma_rampa == SIM_FORMA_RAMPA_RETA
-    assert SIM_FORMA_RAMPA_PADRAO == SIM_FORMA_RAMPA_CURVA_UNI03
+    assert SIM_FORMA_RAMPA_PADRAO == SIM_FORMA_RAMPA_RETA
+    assert SIM_FORMA_RAMPA_PADRAO_DEMANDA_V2 == SIM_FORMA_RAMPA_CURVA_UNI03
+    assert forma_rampa_padrao() == SIM_FORMA_RAMPA_RETA
+    assert forma_rampa_padrao(demanda_v2=True) == SIM_FORMA_RAMPA_CURVA_UNI03
     assert _rodar(SIM_FORMA_RAMPA_RETA).serie_mensal == simular(
         DEMANDA, _premissas(), **INVEST  # type: ignore[arg-type]
     ).serie_mensal
@@ -236,6 +245,8 @@ def test_default_do_nucleo_e_reta_e_o_do_produto_e_a_curva() -> None:
         ({"forma_rampa": "curva_uni03", "curva_rampa": (0.5, 1.2)}, "curva_rampa"),
         ({"forma_rampa": "curva_uni03", "curva_rampa": (0.0, 1.0)}, "curva_rampa"),
         ({"forma_rampa": "curva_uni03", "curva_rampa": ()}, "curva_rampa"),
+        # a rampa nunca decresce (achado 5 do revisor): 0,9 -> 0,8 e' recusado
+        ({"forma_rampa": "curva_uni03", "curva_rampa": (0.5, 0.9, 0.8, 1.0)}, "decrescer"),
         ({"forma_rampa": "curva_uni03", "rampa_apenas_balcao": True}, "rampa_apenas_balcao"),
     ],
 )
@@ -312,21 +323,40 @@ _BODY: dict[str, object] = {
 }
 
 
-def test_payload_default_e_a_curva_e_aceita_a_reta() -> None:
-    assert premissas_do_body(ViabilidadeIn(**_BODY)).forma_rampa == SIM_FORMA_RAMPA_CURVA_UNI03
+def test_payload_default_e_a_reta_e_aceita_a_curva() -> None:
+    assert premissas_do_body(ViabilidadeIn(**_BODY)).forma_rampa == SIM_FORMA_RAMPA_RETA
+    curva = premissas_do_body(ViabilidadeIn(**_BODY, forma_rampa="curva_uni03"))
+    assert curva.forma_rampa == SIM_FORMA_RAMPA_CURVA_UNI03
     reta = premissas_do_body(ViabilidadeIn(**_BODY, forma_rampa="reta", rampa_meses=10))
     assert reta.forma_rampa == SIM_FORMA_RAMPA_RETA
     assert reta.maturacao_meses == 10
 
 
-def test_payload_na_reta_monta_as_mesmas_premissas_de_antes() -> None:
-    """Na reta, o corpo vira EXATAMENTE as Premissas que o codigo anterior montava (que nao
-    passava forma nenhuma e caia no default do nucleo, a reta)."""
-    p = premissas_do_body(ViabilidadeIn(**_BODY, forma_rampa="reta"))
-    assert p == Premissas(ticket_cheio=177.0, aluguel_mes=30_000.0, tickets_studios=())
+def test_payload_sem_forma_monta_as_mesmas_premissas_de_antes() -> None:
+    """Sem `forma_rampa` (o corpo de antes da DEC-075) e com a reta explicita, o corpo vira
+    EXATAMENTE as Premissas que o codigo anterior montava (sem forma nenhuma, caindo no
+    default do nucleo, a reta)."""
+    antes = Premissas(ticket_cheio=177.0, aluguel_mes=30_000.0, tickets_studios=())
+    assert premissas_do_body(ViabilidadeIn(**_BODY)) == antes
+    assert premissas_do_body(ViabilidadeIn(**_BODY, forma_rampa="reta")) == antes
     # e a curva so' difere na forma
-    curva = premissas_do_body(ViabilidadeIn(**_BODY))
-    assert replace(curva, forma_rampa=SIM_FORMA_RAMPA_RETA) == p
+    curva = premissas_do_body(ViabilidadeIn(**_BODY, forma_rampa="curva_uni03"))
+    assert replace(curva, forma_rampa=SIM_FORMA_RAMPA_RETA) == antes
+
+
+def test_uma_constante_do_config_reverte_o_padrao(monkeypatch, pilot_app) -> None:
+    """Achado 1 do revisor: o padrao tem UMA fonte, lida em tempo de chamada. Trocar
+    `SIM_FORMA_RAMPA_PADRAO` muda o corpo sem forma (tela sem escolha, API, PDF, planilha)
+    e o eco do payload, que e' o que a tela mostra. A escolha explicita segue vencendo."""
+    from motor_expansao.dimensionamento import config
+
+    monkeypatch.setattr(config, "SIM_FORMA_RAMPA_PADRAO", SIM_FORMA_RAMPA_CURVA_UNI03)
+    assert premissas_do_body(ViabilidadeIn(**_BODY)).forma_rampa == SIM_FORMA_RAMPA_CURVA_UNI03
+    eco = pilot_app.viabilidade(pilot_app.ViabilidadeIn(**_BODY))["premissas"]
+    assert eco["forma_rampa"] == SIM_FORMA_RAMPA_CURVA_UNI03
+    assert eco["mes_maturidade_rampa"] == 10
+    reta = premissas_do_body(ViabilidadeIn(**_BODY, forma_rampa="reta"))
+    assert reta.forma_rampa == SIM_FORMA_RAMPA_RETA
 
 
 def test_payload_recusa_forma_desconhecida_em_portugues() -> None:
@@ -350,7 +380,14 @@ def pilot_app():
 
 
 def test_payload_ecoa_a_forma_e_o_fim_da_rampa(pilot_app) -> None:
-    curva = pilot_app.viabilidade(pilot_app.ViabilidadeIn(**_BODY))["premissas"]
+    padrao = pilot_app.viabilidade(pilot_app.ViabilidadeIn(**_BODY))["premissas"]
+    assert padrao["forma_rampa"] == "reta"
+    assert padrao["mes_maturidade_rampa"] == 8
+    assert padrao["curva_rampa"] is None
+
+    curva = pilot_app.viabilidade(
+        pilot_app.ViabilidadeIn(**_BODY, forma_rampa="curva_uni03")
+    )["premissas"]
     assert curva["forma_rampa"] == "curva_uni03"
     assert curva["mes_maturidade_rampa"] == 10
     assert curva["curva_rampa"] == list(SIM_CURVA_RAMPA_UNI03)
@@ -390,7 +427,45 @@ def test_xlsx_traz_a_forma_e_a_tabela_da_curva(blob_curva: bytes) -> None:
         row = _linha_premissa(ws, f"Curva observada — mês {i}")
         assert ws.cell(row=row, column=2).value == f
     mes_mat = ws.cell(row=_linha_premissa(ws, "Mês em que a rampa termina"), column=2).value
-    assert isinstance(mes_mat, str) and "COUNTIF" in mes_mat
+    # a regra do motor (PRIMEIRO mes com 100%), nao a contagem de meses abaixo de 100%
+    assert isinstance(mes_mat, str) and "COUNTIF" not in mes_mat and ">=1" in mes_mat
+
+
+def _rotulos(ws) -> list[str]:
+    return [
+        str(ws.cell(row=r, column=c).value)
+        for r in range(1, ws.max_row + 1)
+        for c in range(1, min(ws.max_column, 8) + 1)
+        if isinstance(ws.cell(row=r, column=c).value, str)
+    ]
+
+
+def test_xlsx_da_reta_nao_tem_nada_da_curva() -> None:
+    """A planilha de quem nao pediu a curva e' a de antes da DEC-075: sem a premissa
+    "Forma da rampa", sem o bloco da curva, sem a validacao de lista e sem os nomes novos.
+    (O snapshot contra a `origin/main` confirmou o arquivo inteiro igual membro a membro.)"""
+    wb = openpyxl.load_workbook(BytesIO(gerar_simulador_xlsx(DEMANDA, _premissas(), **INVEST)))
+    ws = wb[ABA_PREMISSAS]
+    textos = _rotulos(ws)
+    assert "Forma da rampa" not in textos
+    assert not any(t.startswith("Curva observada") for t in textos)
+    assert "Mês em que a rampa termina" not in textos
+    assert not any("curva observada" in str(dv.formula1) for dv in ws.data_validations.dataValidation)
+    assert not {"prem_forma_rampa", "prem_mes_mat_rampa"} & set(wb.defined_names)
+    # e os textos do mes 1 sao os de antes (validos na reta)
+    assert "(é por isso que o EBITDA do mês 1 é bem negativo)" in " ".join(_rotulos(wb[ABA_DRE]))
+    assert "EBITDA do mês 1 (negativo por construção)" in _rotulos(wb[ABA_AFERICAO])
+
+
+def test_xlsx_da_curva_nao_afirma_ebitda_negativo_no_mes_1(blob_curva: bytes) -> None:
+    """Achado 2 do revisor: na curva o golden da +R$ 37.346 no mes 1. A planilha da curva
+    (que troca de forma pela celula) nao pode afirmar "negativo por construcao"."""
+    wb = openpyxl.load_workbook(BytesIO(blob_curva))
+    tudo = " ".join(t for aba in wb.worksheets for t in _rotulos(aba))
+    assert "negativo por construção" not in tudo.lower()
+    assert "é bem negativo)" not in tudo
+    assert "pode sair positivo" in " ".join(_rotulos(wb[ABA_DRE]))
+    assert "EBITDA do mês 1 (início da rampa)" in _rotulos(wb[ABA_AFERICAO])
 
 
 def _recalcular(blob: bytes, pasta: Path):
@@ -449,6 +524,23 @@ def test_xlsx_curva_recalculada_bate_com_o_motor(blob_curva: bytes, tmp_path: Pa
     assert conferidas >= 40
 
 
+def test_xlsx_fim_da_rampa_e_o_primeiro_mes_cheio_como_no_motor(
+    blob_curva: bytes, tmp_path: Path
+) -> None:
+    """Achado 5 do revisor: a celula da curva e' editavel. Com o mes 11 digitado abaixo de
+    100% DEPOIS do mes 10 cheio, a contagem antiga (`COUNTIF(<1)+1`) dava 11; a regra do
+    motor (primeiro mes com 100%) da 10. A planilha usa a regra do motor."""
+    wb = openpyxl.load_workbook(BytesIO(blob_curva))
+    ws = wb[ABA_PREMISSAS]
+    ws.cell(row=_linha_premissa(ws, "Curva observada — mês 11"), column=2).value = 0.95
+    buf = BytesIO()
+    wb.save(buf)
+    ler = _recalcular(buf.getvalue(), tmp_path)
+    linha = _linha_premissa(ws, "Mês em que a rampa termina")
+    assert ler(ABA_PREMISSAS, f"B{linha}") == 10.0
+    assert _premissas(forma_rampa=SIM_FORMA_RAMPA_CURVA_UNI03).mes_maturidade_rampa == 10
+
+
 def test_xlsx_trocar_a_celula_para_reta_reproduz_o_motor_na_reta(
     blob_curva: bytes, tmp_path: Path
 ) -> None:
@@ -459,3 +551,56 @@ def test_xlsx_trocar_a_celula_para_reta_reproduz_o_motor_na_reta(
     wb.save(buf)
     ler = _recalcular(buf.getvalue(), tmp_path)
     assert _divergencias(ler, _rodar(SIM_FORMA_RAMPA_RETA)) == []
+
+
+# ---------------------------------------------------------------------------
+# 8. Sensibilidades e cenarios de fronteira citados na DEC-075 (golden)
+# ---------------------------------------------------------------------------
+
+# cenario -> (overrides das Premissas, overrides do investimento, forma -> (payback,))
+_FRONTEIRA: dict[str, tuple[dict[str, object], dict[str, object], dict[str, tuple]]] = {
+    "p10": ({}, {}, {SIM_FORMA_RAMPA_RETA: (float("inf"),), SIM_FORMA_RAMPA_CURVA_UNI03: (float("inf"),)}),
+    "p90": ({}, {}, {SIM_FORMA_RAMPA_RETA: (18.0,), SIM_FORMA_RAMPA_CURVA_UNI03: (14.0,)}),
+    "carencia_4": ({"carencia_aluguel_meses": 4}, {},
+                   {SIM_FORMA_RAMPA_RETA: (28.0,), SIM_FORMA_RAMPA_CURVA_UNI03: (22.0,)}),
+    "equipamento_a_vista": ({}, {"prazo_equipamentos": 0},
+                            {SIM_FORMA_RAMPA_RETA: (33.0,), SIM_FORMA_RAMPA_CURVA_UNI03: (30.0,)}),
+    "sem_anuidade": ({"anuidade_valor": 0.0}, {},
+                     {SIM_FORMA_RAMPA_RETA: (32.0,), SIM_FORMA_RAMPA_CURVA_UNI03: (25.0,)}),
+    "franquia_a_vista": ({}, {"parcelas_franquia": 1},
+                         {SIM_FORMA_RAMPA_RETA: (31.0,), SIM_FORMA_RAMPA_CURVA_UNI03: (25.0,)}),
+}
+_DEMANDA_FRONTEIRA = {"p10": 1189.0, "p90": 3034.0}
+
+
+@pytest.mark.parametrize("forma", [SIM_FORMA_RAMPA_RETA, SIM_FORMA_RAMPA_CURVA_UNI03])
+@pytest.mark.parametrize("cenario", sorted(_FRONTEIRA))
+def test_cenarios_de_fronteira_da_dec_075(cenario: str, forma: str) -> None:
+    over_p, over_inv, esperado = _FRONTEIRA[cenario]
+    r = simular(
+        _DEMANDA_FRONTEIRA.get(cenario, DEMANDA),
+        _premissas(forma_rampa=forma, **over_p),
+        **{**INVEST, **over_inv},  # type: ignore[arg-type]
+    )
+    assert r.payback_meses == esperado[forma][0]
+
+
+def test_sensibilidade_curva_de_faturamento_no_lugar_da_de_alunos() -> None:
+    """A curva de FATURAMENTO da P1 (52% ... 102%) pelas mesmas tres regras, aplicada como
+    se fosse a de alunos: payback 28 e TIR do socio 46,4% (a DEC cita, nao e' o modelo)."""
+    bruta = (0.52, 0.64, 0.75, 0.77, 0.83, 0.85, 0.87, 0.90, 0.95, 0.94, 0.98, 1.02)
+    derivada, maximo = [], 0.0
+    for f in bruta:
+        maximo = max(maximo, f)
+        derivada.append(min(maximo, 1.0))
+    r = _rodar(SIM_FORMA_RAMPA_CURVA_UNI03, curva_rampa=tuple(derivada))
+    assert r.payback_meses == 28.0
+    assert r.tir_socio_anual == pytest.approx(0.464, abs=0.0005)
+
+
+def test_sensibilidade_reta_recalibrada_do_estudo() -> None:
+    """A reta recalibrada da UNI-03 (62% do nivel maduro no mes 1 da forma do simulador,
+    100% no mes 8): payback 26 e TIR do socio 53,2% — quase a historia da curva."""
+    r = _rodar(SIM_FORMA_RAMPA_RETA, alunos_inicial=0.62 * DEMANDA, maturacao_meses=8)
+    assert r.payback_meses == 26.0
+    assert r.tir_socio_anual == pytest.approx(0.532, abs=0.0005)

@@ -610,7 +610,7 @@ function LinhaReceita({
  * contrapartida no simulador: a operação começa com `alunos_inicial` no mês 1 e
  * o mix balcão/agregadores escala junto até o platô.
  *
- * Desde a DEC-075 a série pode vir da CURVA observada (padrão) ou da reta; o desenho
+ * Desde a DEC-075 a série pode vir da CURVA observada (escolha do operador) ou da reta (padrão); o desenho
  * é o mesmo (é a série do motor), e `maturacaoMeses` é o fim da rampa SERVIDO
  * (`mes_maturidade_rampa`), não o parâmetro da reta.
  */

@@ -101,11 +101,18 @@ SIM_MATURACAO_MESES = 8                  # E13
 SIM_FORMA_RAMPA_RETA = "reta"
 SIM_FORMA_RAMPA_CURVA_UNI03 = "curva_uni03"
 SIM_FORMAS_RAMPA = (SIM_FORMA_RAMPA_CURVA_UNI03, SIM_FORMA_RAMPA_RETA)
-# Default do PRODUTO (payload da tela, PDF, planilha da rota e API publica), pedido do dono
-# em 2026-10-20. O `Premissas` do nucleo segue com "reta" por default, de proposito: os
-# adaptadores historicos (`viabilidade()`, lote, backtest, risco) e o golden do FIN-VIAB-01
-# reproduzem o motor antigo byte a byte, e a curva entra so' por quem a pede.
-SIM_FORMA_RAMPA_PADRAO = SIM_FORMA_RAMPA_CURVA_UNI03
+# Default do PRODUTO (payload da tela, PDF, planilha da rota e API publica) — a UNICA
+# constante que decide a forma de quem nao escolhe: a tela le a forma servida pelo payload
+# e so' manda `forma_rampa` quando o operador escolhe. Decisao do dono (Vinicius,
+# 2026-10-20): "A Viabilidade v2 entra junto com o ramp-up". A curva so' e' o padrao
+# quando a demanda vem da v2 (BLK-UNI-05, ainda fora do produto); com a demanda do
+# OPERADOR (o modo de hoje: digitada ou semeada pela faixa de densidade) o padrao e' a
+# RETA, e o resultado e' byte a byte o de antes da DEC-075. A curva fica disponivel por
+# escolha explicita (`forma_rampa = "curva_uni03"`).
+SIM_FORMA_RAMPA_PADRAO = SIM_FORMA_RAMPA_RETA
+# Padrao quando a demanda vier da Viabilidade v2. Nenhum chamador do produto o usa hoje:
+# fica declarado para a v2 nascer com a forma que a decisao amarrou a ela.
+SIM_FORMA_RAMPA_PADRAO_DEMANDA_V2 = SIM_FORMA_RAMPA_CURVA_UNI03
 # Transcricao LITERAL da tabela P1 de data/analysis/uni/uni03/resultado_uni03.md, coluna
 # "alunos (mediana)", meses de vida 0..12, como fracao do nivel maduro (media dos meses de
 # vida 11-13 da propria unidade; 33 unidades de exploracao). NAO e' o que o motor usa:
