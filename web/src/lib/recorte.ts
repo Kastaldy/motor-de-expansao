@@ -25,9 +25,38 @@ export const RAIO_PADRAO_KM = 1
  * interno dela, com o nome da área. Um PDF certo sobre o recorte errado.
  */
 export function ehAreaDesenhada(
-  p: Partial<Pick<PontoPayload, 'geometria' | 'mercado'>> | null | undefined,
+  p: Partial<Pick<PontoPayload, 'geometria' | 'mercado' | 'recorte'>> | null | undefined,
 ): boolean {
+  /* O ALCANCE (DEC-074) também pode vir com `grao === 'geometria'` — a isócrona de 10 min
+     é calculada como polígono no servidor —, mas NÃO é área desenhada: o ponto é o que o
+     operador clicou, o Estudo e o Simulador falam dele. Quando o servidor diz o tipo do
+     recorte, é o tipo que manda. */
+  const tipo = p?.recorte?.tipo
+  if (tipo && tipo !== 'poligono') return false
   return !!p?.geometria?.length || p?.mercado?.grao === 'geometria'
+}
+
+/** Os tipos de recorte que a tela conhece (identificadores crus). */
+export type TipoRecorte = 'raio_1km' | 'raio_2km' | 'carro_10min' | 'poligono'
+
+const TIPOS_RECORTE: readonly string[] = ['raio_1km', 'raio_2km', 'carro_10min', 'poligono']
+
+/**
+ * O TIPO do recorte de um item (identificador cru, NÃO acentuar): `'raio_1km'`,
+ * `'raio_2km'`, `'carro_10min'` (isócrona, DEC-074) ou `'poligono'` (área desenhada à mão,
+ * DEC-071).
+ *
+ * Pelo `recorte.tipo` do servidor quando ele vem; payload anterior à chave cai na regra de
+ * sempre — área desenhada pelo `ehAreaDesenhada`, senão o raio pelo `raio_km` (2 km é o
+ * único raio além do de 1 km que a tela conhece).
+ */
+export function tipoDoRecorte(
+  p: Partial<Pick<PontoPayload, 'raio_km' | 'geometria' | 'mercado' | 'recorte'>> | null | undefined,
+): TipoRecorte {
+  const tipo = p?.recorte?.tipo
+  if (tipo && TIPOS_RECORTE.includes(tipo)) return tipo
+  if (ehAreaDesenhada(p)) return 'poligono'
+  return p?.raio_km != null && Math.abs(p.raio_km - 2) < 1e-9 ? 'raio_2km' : 'raio_1km'
 }
 
 /** Quilômetros com no máximo uma casa e sem ",0" sobrando: 1 -> "1", 1,5 -> "1,5". */
@@ -41,8 +70,24 @@ export function rotuloDoRaio(raioKm: number | null | undefined): string {
   return `raio de ${kmCurto(raioKm ?? RAIO_PADRAO_KM)} km`
 }
 
+/** Área em km² com duas casas abaixo de 10 km² e uma acima, vírgula fixa: "2,40" / "38,2". */
+function areaCurta(areaKm2: number): string {
+  return areaKm2.toFixed(areaKm2 < 10 ? 2 : 1).replace('.', ',')
+}
+
 /** "área desenhada de 2,40 km²" (duas casas abaixo de 10 km², uma acima); sem área, só o nome. */
 export function rotuloDaAreaDesenhada(areaKm2: number | null | undefined): string {
   if (areaKm2 == null || Number.isNaN(areaKm2)) return 'área desenhada'
-  return `área desenhada de ${areaKm2.toFixed(areaKm2 < 10 ? 2 : 1).replace('.', ',')} km²`
+  return `área desenhada de ${areaCurta(areaKm2)} km²`
+}
+
+/**
+ * "10 min de carro, sem trânsito · 38,2 km²" — a isócrona (DEC-074). O "sem trânsito" é
+ * parte do recorte, não enfeite: o serviço de rotas calcula com a velocidade da via, e a
+ * mesma origem na hora do rush alcançaria bem menos. Sem área, só o tempo.
+ */
+export function rotuloDaIsocrona(areaKm2: number | null | undefined): string {
+  const base = '10 min de carro, sem trânsito'
+  if (areaKm2 == null || Number.isNaN(areaKm2)) return base
+  return `${base} · ${areaCurta(areaKm2)} km²`
 }

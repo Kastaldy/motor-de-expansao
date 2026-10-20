@@ -19,7 +19,13 @@ import {
   pedir,
   pinParaAtivo,
   pinsDoEstado,
+  LEITURA_ULTRA,
+  TROCAS_VAZIO,
+  concluirTroca,
+  leituraDaFicha,
+  pedirTroca,
   remover,
+  substituir,
   type EstadoPontos,
 } from './pontos-estado'
 import type { PontoPayload } from './types'
@@ -499,5 +505,64 @@ describe('janelaNaMontagem / erroFlutuanteVisivel', () => {
   it('durante a leitura, ou sem erro, nada', () => {
     expect(erroFlutuanteVisivel({ nFichas: 2, caixaAberta: false, carregando: true, erro: 'x' })).toBe(false)
     expect(erroFlutuanteVisivel({ nFichas: 2, caixaAberta: false, carregando: false, erro: null })).toBe(false)
+  })
+})
+
+/* ---------------- Alcance do ponto (DEC-074) ---------------- */
+describe('alcance: o MESMO item, trocado no lugar', () => {
+  /** A ficha do mesmo ponto relida em outro alcance: `lat`/`lng` = a origem clicada. */
+  function emAlcance(c: { lat: number; lng: number }, tipo: 'raio_2km' | 'carro_10min') {
+    const base = ficha(c.lat, c.lng) as unknown as Record<string, unknown>
+    return {
+      ...base,
+      raio_km: tipo === 'raio_2km' ? 2 : null,
+      mercado: { disponivel: true, sam: 1, residual: 1, score_residual: 1, grao: tipo === 'raio_2km' ? 'raio' : 'geometria' },
+      recorte: { tipo, area_km2: tipo === 'raio_2km' ? 12.57 : 38.2, metodo: 'x', fator_regua: tipo === 'raio_2km' ? 4 : 12.16 },
+    } as unknown as PontoPayload
+  }
+
+  it('trocar o alcance substitui a ficha na MESMA posição (mesma cor, mesma aba)', () => {
+    const e = lido(lido(PONTOS_VAZIO, A), B)
+    const trocado = substituir(e, emAlcance(A, 'raio_2km'))
+    expect(trocado.fichas).toHaveLength(2)
+    expect(trocado.fichas[0].raio_km).toBe(2)
+    expect(trocado.fichas[1]).toBe(e.fichas[1])
+    expect(trocado.aberto).toBe(e.aberto)
+    // E a isócrona também (mercado de geometria no servidor, mas é ponto).
+    expect(substituir(trocado, emAlcance(A, 'carro_10min')).fichas[0].recorte?.tipo).toBe('carro_10min')
+  })
+
+  it('buscar de novo a origem de um item de alcance abre ele (não cria um segundo)', () => {
+    const e = substituir(lido(PONTOS_VAZIO, A), emAlcance(A, 'carro_10min'))
+    expect(decidirPedido(e, A.lat, A.lng)).toEqual({ tipo: 'repetido', indice: 0 })
+  })
+
+  it('a leitura da ficha: alcance e, só no raio de 1 km, o modo', () => {
+    expect(leituraDaFicha(ficha(A.lat, A.lng))).toBe('raio_1km')
+    expect(leituraDaFicha(emAlcance(A, 'raio_2km'))).toBe('raio_2km')
+    expect(leituraDaFicha(emAlcance(A, 'carro_10min'))).toBe('carro_10min')
+    const ultra = { ...(ficha(A.lat, A.lng) as object), mercado: { modo_estudo: 'unidade_ultra' } } as unknown as PontoPayload
+    expect(leituraDaFicha(ultra)).toBe(LEITURA_ULTRA)
+  })
+
+  it('"último clique vence" entre modo e alcance: as duas trocas passam pelo MESMO registro', () => {
+    const chave = 'k'
+    // 2 km, depois "liga o estudo da unidade": a 1a leitura em voo é descartada.
+    const r1 = pedirTroca(TROCAS_VAZIO, chave, 'raio_1km', 'raio_2km')
+    const r2 = pedirTroca(r1.trocas, chave, 'raio_1km', LEITURA_ULTRA)
+    if (r1.decisao.tipo !== 'ler' || r2.decisao.tipo !== 'ler') throw new Error('esperava duas leituras')
+    expect(concluirTroca(r2.trocas, chave, r1.decisao.geracao).vale).toBe(false)
+    expect(concluirTroca(r2.trocas, chave, r2.decisao.geracao).vale).toBe(true)
+    // Voltar ao alcance que a ficha já tem cancela a leitura em voo, sem pedir outra.
+    const r3 = pedirTroca(r1.trocas, chave, 'raio_1km', 'raio_1km')
+    expect(r3.decisao).toEqual({ tipo: 'cancelar' })
+  })
+
+  it('o pin do item de alcance tem o contorno do recorte; o de 1 km, o círculo de 1 km', () => {
+    const e = substituir(lido(lido(PONTOS_VAZIO, A), B), emAlcance(A, 'raio_2km'))
+    const pins = pinsDoEstado(e)
+    expect(pins[0].contornos).toHaveLength(1)
+    expect(pins[1].contornos).toHaveLength(1)
+    expect(pins[0].rotulo).toBe('Santana #1')
   })
 })

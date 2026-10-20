@@ -17,7 +17,7 @@
  * com o motivo que o servidor mandou — nunca como zero, que afirmaria mercado livre por
  * falta de dado.
  */
-import { rotuloDaAreaDesenhada, rotuloDoRaio } from './recorte'
+import { rotuloDaAreaDesenhada, rotuloDaIsocrona, rotuloDoRaio, type TipoRecorte } from './recorte'
 import type { PontoMercado } from './types'
 
 /** Uma linha da conta, na ordem em que ela se le. */
@@ -45,10 +45,27 @@ export interface LeituraMercado {
   motivoParcial: string | null
 }
 
-/** O recorte em texto de usuario. Sem `raio_km` no payload, vale o raio padrao do produto. */
-export function recorteDoMercado(m: Pick<PontoMercado, 'grao' | 'raio_km' | 'area_km2'>): string {
+/**
+ * O recorte em texto de usuario. Sem `raio_km` no payload, vale o raio padrao do produto.
+ *
+ * `tipo` (DEC-074) e' o recorte do ITEM (`tipoDoRecorte`). O `grao` do mercado so' diz se
+ * a conta rodou num circulo ou num poligono, e a isocrona de 10 min de carro tambem roda
+ * num poligono: decidir so' pelo `grao` chamava a isocrona de "area desenhada", enquanto a
+ * linha de recorte da mesma ficha dizia "10 min de carro". Sem `tipo`, a leitura de antes.
+ */
+export function recorteDoMercado(
+  m: Pick<PontoMercado, 'grao' | 'raio_km' | 'area_km2'>,
+  tipo?: TipoRecorte,
+): string {
+  if (tipo === 'carro_10min') return rotuloDaIsocrona(m.area_km2)
   if (m.grao === 'geometria') return rotuloDaAreaDesenhada(m.area_km2)
   return rotuloDoRaio(m.raio_km)
+}
+
+/** O complemento das contagens ("8 academias de rede alcançam ..."), no recorte do item. */
+function alvoDoRecorte(m: Pick<PontoMercado, 'grao'>, tipo?: TipoRecorte): string {
+  if (tipo === 'carro_10min') return 'a área de 10 min de carro'
+  return m.grao === 'geometria' ? 'a área' : 'o raio'
 }
 
 function contagem(n: number | null | undefined, singular: string, plural: string): string | null {
@@ -62,7 +79,7 @@ function contagem(n: number | null | undefined, singular: string, plural: string
  * Bloco indisponivel nao chega aqui: quem desenha a secao mostra o motivo do servidor no
  * lugar dela (`Secao` com `bloco`).
  */
-export function leituraDoMercado(m: PontoMercado): LeituraMercado {
+export function leituraDoMercado(m: PontoMercado, tipo?: TipoRecorte): LeituraMercado {
   const nConc = contagem(m.n_concorrentes_alcancam, 'academia de rede alcança', 'academias de rede alcançam')
   /* Estudo da unidade Ultra (emenda da DEC-070): a parcela da Ultra já vem SEM a unidade
      estudada — o rótulo diz "outras", senão "Consumo da Ultra 0" ao lado de uma unidade a
@@ -71,7 +88,7 @@ export function leituraDoMercado(m: PontoMercado): LeituraMercado {
   const nUltra = daUnidade
     ? contagem(m.n_ultra_alcancam, 'outra unidade Ultra alcança', 'outras unidades Ultra alcançam')
     : contagem(m.n_ultra_alcancam, 'unidade Ultra alcança', 'unidades Ultra alcançam')
-  const alvo = m.grao === 'geometria' ? 'a área' : 'o raio'
+  const alvo = alvoDoRecorte(m, tipo)
   const linhas: LinhaMercado[] = [
     { chave: 'sam', rotulo: 'Mercado potencial (SAM)', sinal: '', valor: m.sam, detalhe: null },
     {
@@ -98,7 +115,7 @@ export function leituraDoMercado(m: PontoMercado): LeituraMercado {
       : null
 
   return {
-    recorte: recorteDoMercado(m),
+    recorte: recorteDoMercado(m, tipo),
     linhas,
     avisoGate,
     motivoParcial: m.motivo_parcial ?? null,

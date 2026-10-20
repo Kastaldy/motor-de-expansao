@@ -106,6 +106,70 @@ def indice_do_item(item: Mapping[str, Any], padrao: int) -> int:
     return int(valor) if isinstance(valor, int) else padrao
 
 
+#: Rotulo de exibicao do `recorte.tipo` (identificador CRU, DEC-074), quando o item nao traz o
+#: proprio `rotulo`. Os mesmos textos que a ficha do piloto mostra.
+_ROTULO_DO_TIPO_RECORTE = {
+    "raio_1km": "raio de 1 km",
+    "raio_2km": "raio de 2 km",
+    "carro_10min": "10 min de carro, sem trânsito",
+    "poligono": "área desenhada",
+}
+
+
+def rotulo_do_recorte(item: Mapping[str, Any]) -> str | None:
+    """O recorte do item em texto ("raio de 2 km", "10 min de carro, sem trânsito, 38,2 km2").
+
+    DEC-074: um deck de pontos pode misturar o raio de 1 km com o de 2 km, a isocrona e a
+    area desenhada. Sem dizer o recorte de cada item, "Santana lidera em populacao" leria
+    como mais gente no MESMO tamanho de praca. `None` quando o item nao traz recorte -- o
+    deck de sempre, sem linha nova. O `rotulo` do front tem precedencia (e' o texto da
+    ficha); sem ele, o rotulo sai do `tipo` e da `area_km2`.
+    """
+    recorte = item.get("recorte")
+    if not isinstance(recorte, Mapping):
+        return None
+    rotulo = str(recorte.get("rotulo") or "").strip()
+    if rotulo:
+        return rotulo
+    base = _ROTULO_DO_TIPO_RECORTE.get(str(recorte.get("tipo") or ""))
+    if base is None:
+        return None
+    area = recorte.get("area_km2")
+    if isinstance(area, (int, float)) and math.isfinite(area) and not str(
+        recorte.get("tipo")
+    ).startswith("raio_"):
+        # O raio ja' diz o tamanho no nome; a isocrona e o desenho, nao.
+        return f"{base}, {area:.1f}".replace(".", ",") + " km2"
+    return base
+
+
+def rotulos_dos_recortes(itens: Sequence[Mapping[str, Any]]) -> list[str | None]:
+    """O rotulo do recorte de cada item, ou `None` para todos num deck so' de raio de 1 km.
+
+    O front manda `recorte` em TODO item de ponto, inclusive no raio de 1 km. Imprimir
+    "raio de 1 km" num deck em que todos sao do raio de 1 km mudaria o deck de sempre --
+    capa com o rotulo e fonte reduzida, foto 13 pt menor, linha a mais na Recomendacao --
+    sem informar nada, porque o tamanho e' o mesmo para todos. So' quando ALGUM item tem
+    outro recorte o rotulo de cada um (o do 1 km inclusive) passa a dizer alguma coisa.
+    """
+    mostra = any(
+        isinstance(item.get("recorte"), Mapping)
+        and str(item["recorte"].get("tipo") or "raio_1km") != "raio_1km"
+        for item in itens
+    )
+    return [rotulo_do_recorte(item) if mostra else None for item in itens]
+
+
+def _fatores_distintos(itens: Sequence[Mapping[str, Any]]) -> bool:
+    """True quando os itens tem recortes de TAMANHOS diferentes (fatores de regua distintos)."""
+    fatores = set()
+    for item in itens:
+        recorte = item.get("recorte")
+        fator = recorte.get("fator_regua") if isinstance(recorte, Mapping) else None
+        fatores.add(round(float(fator), 6) if isinstance(fator, (int, float)) else 1.0)
+    return len(fatores) > 1
+
+
 def _milhar(v: float) -> str:
     """Inteiro em pt-BR. O separador e' ponto, como no resto dos relatorios."""
     return f"{v:,.0f}".replace(",", ".")
@@ -221,13 +285,23 @@ def _slide_capa(pdf: UltraPDF, dados: Mapping[str, Any], arte: bytes | None, qua
     passo = 17.0
     # Piso rigido: a lista para antes da faixa de logos, custe o que custar.
     cabem = max(int((_CAPA_RODAPE_LOGOS_TOP - 6 - y) / passo), 0)
+    recortes = rotulos_dos_recortes(itens)
     for i, item in enumerate(itens[:cabem]):
         pdf.set_fill_color(*cor_do_item(indice_do_item(item, i)))
         pdf.rect(_CAPA_X, y + 3, 8, 8, style="F")
         pdf.set_text_color(*BRANCO)
-        pdf.set_font("Helvetica", "", 10.5)
+        nome = str(item.get("rotulo") or f"Área {i + 1}")
+        recorte = recortes[i]
+        # DEC-074: o recorte vai junto do nome ja' na capa. Sem recorte, a linha de sempre.
+        texto = ascii_seguro(f"{nome} ({recorte})" if recorte else nome)
+        corpo = (
+            _corpo_que_cabe(pdf, texto, _CAPA_LARGURA - 14, (10.5, 9.5, 8.5, 7.5))
+            if recorte
+            else 10.5
+        )
+        pdf.set_font("Helvetica", "", corpo)
         pdf.set_xy(_CAPA_X + 14, y)
-        pdf.cell(_CAPA_LARGURA - 14, 14, ascii_seguro(str(item.get("rotulo") or f"Área {i + 1}")))
+        pdf.cell(_CAPA_LARGURA - 14, 14, texto)
         y += passo
 
     if cabem < len(itens):
@@ -561,7 +635,11 @@ def _slide_mapas(
     # sem ela o slide fica identico ao de antes.
     coordenadas = list(dados.get("coordenadas") or [])
     legenda = 16.0 if any(coordenadas) else 0.0
-    disponivel -= legenda
+    # DEC-074: uma linha a mais sob a foto quando algum item traz recorte ("raio de 2 km",
+    # "10 min de carro") -- a captura mostra o contorno, a linha diz o que ele e'.
+    recortes = rotulos_dos_recortes(itens)
+    linha_recorte = 13.0 if any(recortes) else 0.0
+    disponivel -= legenda + linha_recorte
 
     # A CAPTURA CHEGA NA ORDEM DE COLAGEM e `itens` chega RANQUEADO — parear pelas duas
     # posicoes punha o mapa de uma area sob o nome de outra assim que o ranking reordenava
@@ -631,6 +709,14 @@ def _slide_mapas(
             pdf.set_font("Helvetica", "", 8.5)
             pdf.set_xy(x, topo + altura + 4)
             pdf.cell(largura, 11, centro, align="C")
+
+        if recortes[i]:
+            texto_recorte = ascii_seguro(str(recortes[i]))
+            pdf.set_text_color(*CINZA_TEXTO)
+            corpo = _corpo_que_cabe(pdf, texto_recorte, largura, (8.5, 7.5, 6.5))
+            pdf.set_font("Helvetica", "", corpo)
+            pdf.set_xy(x, topo + altura + 4 + legenda)
+            pdf.cell(largura, 11, texto_recorte, align="C")
 
     rodape(
         pdf,
@@ -770,6 +856,8 @@ def _slide_recomendacao(pdf: UltraPDF, dados: Mapping[str, Any], arte: bytes | N
     # Reserva o rodape da frase (54 pt) e distribui o resto entre os itens, para o slide
     # nao terminar com metade da pagina em branco.
     altura = _altura_que_preenche(414.0 - y, len(ordenados), minimo=46.0, maximo=84.0, respiro=8.0)
+    # Indexado pela posicao ORIGINAL do item (a de `itens`), nao pela ordem do ranking.
+    recortes = rotulos_dos_recortes(itens)
     for ordem, (indice_original, item) in enumerate(ordenados):
         posicao = posicoes[ordem]
         destaque = posicao == 1 and melhor is not None
@@ -804,10 +892,16 @@ def _slide_recomendacao(pdf: UltraPDF, dados: Mapping[str, Any], arte: bytes | N
         pdf.set_font("Helvetica", "", 10)
         pdf.set_text_color(110, 110, 110)
         pdf.set_xy(92, centro + 4)
+        lidera = f"lidera em {vitorias} de {disputados} parâmetros"
+        recorte = recortes[indice_original]
+        if recorte:
+            # DEC-074: o recorte na linha do item, para a vitoria ser lida no tamanho certo.
+            lidera = ascii_seguro(f"{lidera} - {recorte}")
+            pdf.set_font("Helvetica", "", _corpo_que_cabe(pdf, lidera, 360, (10.0, 9.0, 8.0)))
         pdf.cell(
             360,
             13,
-            ascii_seguro(f"lidera em {vitorias} de {disputados} parâmetros"),
+            ascii_seguro(lidera),
         )
 
         # QUAIS parametros, e nao so' quantos: "lidera em 3" nao diz se sao os que importam.
@@ -882,11 +976,19 @@ def _slide_recomendacao(pdf: UltraPDF, dados: Mapping[str, Any], arte: bytes | N
     # "área" vira "ponto" no deck de pontos: o rodapé é a linha que explica a régua, e
     # explicá-la com a palavra errada é a forma mais fácil de perder a confiança do leitor.
     sujeito = "cada ponto" if dados.get("dePontos") else "cada área"
+    # DEC-074: com recortes de tamanhos diferentes o rodape AVISA -- quem le o deck nao viu a
+    # tela, e o recorte de cada um esta' na linha dele. Sem recorte, o rodape de sempre.
+    aviso_recortes = (
+        " Os itens têm recortes de tamanhos diferentes (indicados na linha de cada um)."
+        if _fatores_distintos(itens)
+        else ""
+    )
     rodape(
         pdf,
         f"O rank CONTA em quantos parâmetros {sujeito} lidera; ele não soma os parâmetros numa "
         "nota única. Parâmetro em que as áreas ficaram perto demais não elege ninguém - por "
-        "isso as contagens podem não fechar o total. Empate divide a mesma posição.",
+        "isso as contagens podem não fechar o total. Empate divide a mesma posição."
+        + aviso_recortes,
     )
 
 
