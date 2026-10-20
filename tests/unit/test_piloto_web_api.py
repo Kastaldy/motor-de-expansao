@@ -56,13 +56,14 @@ def test_health_ok() -> None:
 
 
 def test_health_publico_nao_vaza_caminhos() -> None:
-    """Pentest Onda B #8: o /api/health publico devolve EXATAMENTE {"status":"ok"}.
+    """Pentest Onda B #8: o /api/health publico devolve EXATAMENTE {"status":"ok"} + a versao
+    de fatores da renda (E0: metodologia publica, sem caminho nem infra).
 
     O inventario (data_dir + caminhos absolutos + descricao de cada parquet) vazava o
     layout do FS e a camada de M&A a qualquer autenticado, ja' que a rota e' livre.
     Trava contra readicao silenciosa desses campos no payload publico.
     """
-    assert asyncio.run(pilot_app.health()) == {"status": "ok"}
+    assert asyncio.run(pilot_app.health()) == _health_esperado()
 
 
 def test_health_reporta_os_artefatos_que_a_tela_depende() -> None:
@@ -477,3 +478,17 @@ def test_viabilidade_latlng_fora_do_bound_e_422(corpo: str) -> None:
 def test_viabilidade_corpo_valido_segue_200() -> None:
     """Baseline: o fix nao pode quebrar o caminho feliz."""
     assert _post_viab_cru(_CORPO_VIAB_OK).status_code == 200
+
+
+def _health_esperado() -> dict:
+    """O `/api/health` publico EXATO: status + versao de fatores da renda (E0), nada mais.
+
+    A versao vem do loader (muda a cada atualizacao de fatores, por isso nao e literal); o
+    que o teste trava e o FORMATO -- nenhuma chave alem destas, nenhum caminho.
+    """
+    from motor_expansao.renda import carregar_fatores
+
+    return {
+        "status": "ok",
+        "renda_fatores": {"versao": carregar_fatores().versao, "fixada_por_env": False},
+    }

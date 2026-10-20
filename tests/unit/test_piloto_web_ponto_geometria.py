@@ -224,7 +224,7 @@ def test_nota_da_area_e_a_media_dos_setores_e_nao_a_do_ponto_central(ambiente, m
 
 _CHAVES_DO_GET = {
     "lat", "lng", "raio_km", "hex_id", "local", "censo", "concorrencia", "mercado",
-    "vizinhos", "reguas", "criterios",
+    "vizinhos", "reguas", "criterios", "renda_meta",
 }
 
 

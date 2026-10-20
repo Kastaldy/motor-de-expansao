@@ -24,6 +24,7 @@ import type {
 } from '../lib/types'
 import { rotuloDoRaio } from '../lib/recorte'
 import IconeComodidade from './IconeComodidade'
+import { InfoRenda } from './InfoRenda'
 import { CardPainel, LinhaTabela, Pill, TituloSecao } from './PecasPainel'
 import { Botao } from './primitives'
 
@@ -263,11 +264,11 @@ export default function FichaUnidadeNoMapa({
         ) : (
           <div style={GRADE_2}>
             <Numero
-              rotulo="Renda média domiciliar"
+              rotulo={<>Renda média domiciliar<InfoRenda /></>}
               valor={ponto ? renda(ponto.censo.renda_media_domiciliar) : '…'}
             />
             <Numero
-              rotulo="Renda per capita"
+              rotulo={<>Renda per capita<InfoRenda /></>}
               valor={ponto ? renda(ponto.censo.renda_per_capita) : '…'}
             />
             <Numero
@@ -355,7 +356,7 @@ function planoDaUltra(planos: RedePlanosEntorno | undefined): string {
   return `${planos.ultra.plano} · ${brl(planos.ultra.preco, false, 2)}`
 }
 
-function Numero({ rotulo, valor, unidade }: { rotulo: string; valor: string; unidade?: string }) {
+function Numero({ rotulo, valor, unidade }: { rotulo: ReactNode; valor: string; unidade?: string }) {
   return (
     <CardPainel style={{ padding: '12px 14px' }}>
       <div style={{ font: '400 11px/1.3 var(--f-ui)', color: 'var(--tx-label)' }}>{rotulo}</div>

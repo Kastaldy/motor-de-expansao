@@ -1,3 +1,5 @@
+import type { ReactNode } from 'react'
+
 import type { CrescimentoMunicipio } from '../lib/oportunidades'
 import { censoDaBase } from '../lib/rodape-base'
 import { leiturasDoContexto } from '../lib/contexto'
@@ -8,6 +10,7 @@ import { classeAluguelFat, corTipo, custoOcup, labelTipo, pctAluguelFat } from '
 import { composicaoMercado, faixaDoValor, leituraDeSaturacao } from '../lib/medidor'
 import type { ContextoMunicipio, Hex, Oportunidade } from '../lib/types'
 import IconeTipo from './IconeTipo'
+import { InfoRenda } from './InfoRenda'
 import { CardPainel, LinhaTabela, Ticks, TituloSecao } from './PecasPainel'
 
 /* Cores do design "Paineis do Hexagono" aplicadas por pedido do Felipe (2026-08-21):
@@ -335,11 +338,21 @@ export default function FichaHex({
           />
           <CelulaCenso
             valor={hex.renda == null ? '—' : renda(hex.renda)}
-            rotulo={hex.renda_municipal ? 'Renda per capita (estimativa municipal)' : 'Renda per capita'}
+            rotulo={
+              <>
+                {hex.renda_municipal ? 'Renda per capita (estimativa municipal)' : 'Renda per capita'}
+                <InfoRenda />
+              </>
+            }
           />
           <CelulaCenso
             valor={hex.renda_dom == null ? '—' : renda(hex.renda_dom)}
-            rotulo={hex.renda_municipal ? 'Renda domiciliar (estimativa municipal)' : 'Renda domiciliar'}
+            rotulo={
+              <>
+                {hex.renda_municipal ? 'Renda domiciliar (estimativa municipal)' : 'Renda domiciliar'}
+                <InfoRenda />
+              </>
+            }
             ultima
           />
         </div>
@@ -597,7 +610,7 @@ function CardScore({
   )
 }
 
-function CelulaCenso({ valor, rotulo, ultima }: { valor: string; rotulo: string; ultima?: boolean }) {
+function CelulaCenso({ valor, rotulo, ultima }: { valor: string; rotulo: ReactNode; ultima?: boolean }) {
   return (
     <div
       style={{

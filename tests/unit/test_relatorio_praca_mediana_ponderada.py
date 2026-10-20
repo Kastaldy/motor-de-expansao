@@ -216,7 +216,7 @@ def test_trindade_e_pontalina_voltam_a_ter_lista(cod, nome):
     "ponderada < simples" valia so' para o rateio por area (Pontalina, no card: 5.071 x 4.902)."""
     import pyarrow.dataset as ds
 
-    from motor_expansao.dashboard.renda_hex import renda_domiciliar_por_hex
+    from motor_expansao.renda import renda_domiciliar_por_hex
 
     raiz = _data_dir()
     dset = ds.dataset(sorted((raiz / "outputs" / "hexagonos_dashboard_enriquecido" / "uf=GO").glob("*.parquet")))
@@ -226,7 +226,7 @@ def test_trindade_e_pontalina_voltam_a_ter_lista(cod, nome):
     if df.empty:
         pytest.skip(f"{nome}/GO ausente do enriquecido local")
 
-    # A renda e' a do card do hexagono (`renda_hex`, PR #460), a mesma da tela.
+    # A renda e' a do card do hexagono (`renda.hex`, PR #460), a mesma da tela.
     renda = renda_domiciliar_por_hex(df, uf="GO", cod_municipio=cod, staging_dir=raiz / "staging")
     hexes = rp.preparar_hexes_da_cidade(df, renda)
     sel = rp.selecionar_onde_crescer(hexes)

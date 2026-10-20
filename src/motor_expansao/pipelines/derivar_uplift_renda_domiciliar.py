@@ -20,7 +20,7 @@ Aqui o fator e derivado SO do IBGE, fechando a conta com duas fontes oficiais:
 Resultado: mediana nacional ~1.63 — o responsavel responde por ~61% da renda do domicilio.
 
 IMPORTANTE — valores sao de JULHO/2022 (data de referencia do Censo). A atualizacao para valores
-correntes e um fator SEPARADO e explicito (`FATOR_TEMPORAL_RENDA` em dashboard/constants.py).
+correntes e um fator SEPARADO e explicito (versionado em `motor_expansao/renda/fatores/`).
 Nao embuta inflacao aqui: foi exatamente essa mistura que fez o fator antigo (2.15) envelhecer
 escondido — ele carregava composicao familiar E deriva temporal no mesmo numero.
 """
@@ -170,7 +170,7 @@ def gerar_relatorio(df: pd.DataFrame) -> str:
         "## Valores em JULHO/2022",
         "",
         "Esta e a data de referencia do Censo. A atualizacao para valores correntes e um fator",
-        "SEPARADO (`FATOR_TEMPORAL_RENDA`, em dashboard/constants.py) — de proposito: o fator",
+        "SEPARADO (versionado em `motor_expansao/renda/fatores/`) — de proposito: o fator",
         "antigo, ajustado contra a GeoFusion (2.15), misturava composicao familiar com deriva",
         "temporal no mesmo numero e envelhecia sem ninguem perceber.",
         "",

@@ -1,0 +1,31 @@
+{
+  "versao": "2026-08_sem_atualizacao_v0",
+  "pais": "AR",
+  "ano_base_renda": 2022,
+  "data_referencia_base": "2022-07",
+  "ano_alvo": 2022,
+  "fonte": {
+    "pesquisa": "sem atualizacao temporal",
+    "descricao": "a instancia argentina nunca teve fator temporal: sem fator_temporal_renda.json no staging, o fator efetivo era 1,0",
+    "origem_do_numero": "container web_ar em 2026-10-20 (FATOR_TEMPORAL_RENDA = 1.0)",
+    "nota_rotulo": "rotulo_referencia transcreve o texto exibido hoje ('julho/2022 (Censo IBGE)'), herdado do fallback brasileiro; corrigir o texto e decisao de versao propria, fora da E0"
+  },
+  "data_extracao": "2026-08",
+  "metodo": "sem atualizacao temporal (fator 1,0)",
+  "nacional": {
+    "per_capita": 1.0,
+    "domiciliar": 1.0,
+    "moradores": 1.0
+  },
+  "regra_excecao": null,
+  "candidatas_regra": [],
+  "excecoes_aprovadas": {},
+  "ponte_ipca": null,
+  "dec": null,
+  "aprovado_por": null,
+  "relatorio": null,
+  "rotulo_referencia": "julho/2022 (Censo IBGE)",
+  "rotulo_pdf": "Renda: Censo 2022 (jul/2022), sem atualizacao temporal - fatores 2026-08_sem_atualizacao_v0",
+  "artefatos_obrigatorios": [],
+  "artefato_k_obrigatorio": false
+}

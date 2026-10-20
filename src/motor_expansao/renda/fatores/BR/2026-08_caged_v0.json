@@ -1,0 +1,45 @@
+{
+  "versao": "2026-08_caged_v0",
+  "pais": "BR",
+  "ano_base_renda": 2022,
+  "data_referencia_base": "2022-07",
+  "ano_alvo": 2026,
+  "fonte": {
+    "pesquisa": "Novo CAGED",
+    "descricao": "Novo CAGED (salario medio de admissao), winsorizado e ponderado por admissoes",
+    "fator_temporal_renda": 1.1641,
+    "salario_base_2022": 2195.21,
+    "salario_atual": 2555.41,
+    "competencia_base_inicio": 202201,
+    "competencia_base_fim": 202212,
+    "competencia_atual_inicio": 202507,
+    "competencia_atual_fim": 202606,
+    "ipca_acumulado_conferencia": 1.1935,
+    "divergencia_vs_ipca_pp": -2.9,
+    "escopo": "nacional",
+    "gerado_por": "pipelines/derivar_fator_temporal_renda.py (aposentado na E0)",
+    "origem_do_numero": "data/staging/fator_temporal_renda.json da VPS, lido nos containers api e web em 2026-10-20",
+    "nota_data_extracao": "o JSON da VPS nao carimba a data de extracao; 2026-08 e o mes do nome da versao, nao uma data medida"
+  },
+  "data_extracao": "2026-08",
+  "metodo": "salario medio de admissao do Novo CAGED: media dos ultimos 12 meses / media de 2022 (NACIONAL; transcricao do fator que producao aplicava antes da E0)",
+  "nacional": {
+    "per_capita": 1.1641,
+    "domiciliar": 1.1641,
+    "moradores": 1.0
+  },
+  "regra_excecao": null,
+  "candidatas_regra": [],
+  "excecoes_aprovadas": {},
+  "ponte_ipca": null,
+  "dec": null,
+  "aprovado_por": null,
+  "relatorio": null,
+  "rotulo_referencia": "06/2026 (CAGED; Censo jul/2022 x 1.1641)",
+  "rotulo_pdf": "Renda: Censo 2022 (jul/2022) atualizada para 06/2026 pelo salario de admissao do Novo CAGED (x1,1641) - fatores 2026-08_caged_v0",
+  "artefatos_obrigatorios": [
+    "uplift_renda_domiciliar_municipio.parquet",
+    "uplift_composicao_setor.parquet"
+  ],
+  "artefato_k_obrigatorio": true
+}

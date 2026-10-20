@@ -646,6 +646,39 @@ def _ascii(text: str) -> str:
     return text.encode("latin-1", errors="replace").decode("latin-1")
 
 
+def _rotulo_renda_pdf() -> str:
+    """Linha de proveniencia da renda (E0): versao de fatores, base e alvo, ja em ASCII.
+
+    Vem da versao de fatores VIGENTE (`motor_expansao.renda.proveniencia`), e nao de texto fixo
+    aqui: quando a versao muda, a nota de fontes do PDF muda junto. Import tardio, como o resto
+    do motor neste modulo.
+    """
+    from motor_expansao.renda import proveniencia
+
+    return _ascii(str(proveniencia()["rotulo_pdf"]))
+
+
+def _nota_renda_na_linha_do_titulo(pdf: _UltraPDF, *, rgb: tuple[int, int, int] = _CINZA_TEXTO) -> None:
+    """Escreve `_rotulo_renda_pdf()` alinhado a direita na linha do titulo da secao (classico).
+
+    Mesma faixa e mesma tecnica do `_aviso_no_ponto`: o titulo da secao fica a esquerda e e'
+    curto, e a pagina e' FIXA (auto_page_break OFF) -- a linha nao empurra o conteudo. Encolhe
+    ate caber na metade direita; no piso, quebra em duas linhas DENTRO da mesma faixa.
+    """
+    texto = _rotulo_renda_pdf()
+    largura = _AVISO_NO_PONTO_LARGURA
+    x = _PAGE_W - _CLASSICO_MARGIN - 18.0 - largura
+    y = _CLASSICO_MARGIN + _CLASSICO_BAND_H + 12.0 + 8.0
+    pdf.set_text_color(*rgb)
+    _ajustar_fonte_para_largura(pdf, texto, largura, estilo="", tamanho=8.0, minimo=6.0)
+    if pdf.get_string_width(texto) <= largura:
+        pdf.set_xy(x, y)
+        pdf.cell(largura, 12, texto, align="R")
+        return
+    pdf.set_xy(x, y - 2.0)
+    pdf.multi_cell(largura, 8, texto, align="R", max_line_height=8)
+
+
 def _ajustar_fonte_para_largura(
     pdf: FPDF,
     texto: str,
@@ -3789,6 +3822,11 @@ def _big_numbers_page(
             + (f" {ctx.nota_regua}" if ctx.nota_regua else "")
         ),
     )
+    # Proveniencia da renda (E0): linha PROPRIA logo abaixo da nota, e nao enxertada nela --
+    # a nota tem frase de metodo; esta diz de que versao de fatores e de quando e' a renda dos
+    # dois cards. Os cards terminam em y~338 e o rodape esta' em _PAGE_H-22: sobra espaco.
+    pdf.set_xy(margin_x, pdf.get_y() + 2)
+    pdf.multi_cell(_PAGE_W - 2 * margin_x, 11, _rotulo_renda_pdf())
     _draw_footer(pdf, with_attribution=True)
 
 
@@ -4395,6 +4433,9 @@ def _classico_mapas_calor_page(
     pdf.add_page()
     _draw_full_page_background(pdf, assets.get("conteudo"), ULTRA_BRANCO_GELO)
     _classico_title_band(pdf, banda_texto, "Mapas de calor", assets, rgb=primary)
+    # Dois dos quatro mapas sao de renda (per capita e domiciliar): a proveniencia vai na
+    # linha do titulo da secao, porque o grid ocupa ate' o rodape (E0).
+    _nota_renda_na_linha_do_titulo(pdf)
     boxes = _classico_draw_maps_grid(
         pdf,
         [

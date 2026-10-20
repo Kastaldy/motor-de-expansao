@@ -19,6 +19,7 @@ __all__ = [
     "AnalisarRequest",
     "ViabilidadeInputs",
     "AnalisarResponseJSON",
+    "RendaMeta",
     "AnalisarMunicipioRequest",
     "MunicipiosResponse",
     "FaixaAlunosResponse",
@@ -128,6 +129,24 @@ class MunicipiosResponse(BaseModel):
     municipios: list[str] = Field(examples=[["Palmas", "Araguaina", "Gurupi"]])
 
 
+class RendaMeta(BaseModel):
+    """Proveniencia da renda exibida (E0): de que versao de fatores e de quando ela e.
+
+    Espelha `motor_expansao.renda.renda_meta()` (a `proveniencia()` sem o `rotulo_pdf`).
+    Informacao publica de METODOLOGIA, sem caminho nem infra.
+    """
+
+    versao_fator: str = Field(examples=["2026-08_caged_v0"])
+    pais: str = Field(examples=["BR"])
+    ano_base: int = Field(examples=[2022])
+    data_referencia_base: str = Field(examples=["2022-07"])
+    ano_alvo: int = Field(examples=[2026])
+    fonte: str = Field(examples=["Novo CAGED"])
+    rotulo: str = Field(examples=["06/2026 (CAGED; Censo jul/2022 x 1.1641)"])
+    fixada_por_env: bool = Field(examples=[False])
+    excecoes_uf: list[str] = Field(default_factory=list, examples=[[]])
+
+
 class AnalisarResponseJSON(BaseModel):
     """KPIs derivados (READ-ONLY) do estudo do ponto + carimbo de versao."""
 
@@ -157,6 +176,9 @@ class AnalisarResponseJSON(BaseModel):
     versao_score: str = Field(examples=["score_setor_2022_calibrado"])
     gerado_em: str = Field(examples=["2026-06-11T12:00:00Z"])
     consumidor: str | None = Field(default=None, examples=["bot-telegram"])
+    # ADITIVO (E0 da renda): proveniencia das rendas acima. Opcional no schema so para nao
+    # quebrar quem constroi a resposta sem ela; `analisar_ponto` sempre preenche.
+    renda_meta: RendaMeta | None = None
 
 
 class FaixaAlunosResponse(BaseModel):

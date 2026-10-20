@@ -1012,7 +1012,16 @@ def analisar_ponto(lat: float, lng: float, consumidor: str | None, settings: Set
         "versao_score": _VERSAO_SCORE,
         "gerado_em": datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ"),
         "consumidor": consumidor,
+        # E0 da renda: de que versao de fatores e de quando sao as rendas acima.
+        "renda_meta": _renda_meta(),
     }
+
+
+def _renda_meta() -> dict[str, Any]:
+    """`renda_meta` do JSON: import tardio, como o resto do motor neste modulo."""
+    from motor_expansao.renda import renda_meta
+
+    return renda_meta()
 
 
 def _reuse_contextily_session() -> None:
@@ -1434,7 +1443,11 @@ def montar_pdf_municipio(
         gerar_payloads_download_relatorio_municipal,
         render_mapas_municipio,
     )
-    from motor_expansao.dashboard.renda_hex import renda_domiciliar_por_hex
+    from motor_expansao.renda import (
+        FatoresRendaInvalidos,
+        InsumoRendaInvalido,
+        renda_domiciliar_por_hex,
+    )
 
     uf = str(uf).strip().upper()
     if df_muni is None or df_muni.empty:
@@ -1479,7 +1492,7 @@ def montar_pdf_municipio(
         bairros_geo = None
     # Renda DOMICILIAR por hexagono para a tabela de comparacao: vale nas DUAS unidades
     # (a tabela e' sempre por hexagono), entao fica fora do guard de `unidade` acima.
-    # A MESMA formula do card do REP (`renda_hex`), sobre os hexes que o chamador entregou:
+    # A MESMA formula do card do REP (`motor_expansao.renda.hex`), sobre os hexes que o chamador entregou:
     # ate 2026-10-16 o PDF jogava o setor inteiro no hexagono do centro do bbox e divergia do
     # card (Sao Roque/SP, 87a810361ffffff: R$ 13.261 no PDF, R$ 4.924 no card).
     # try/except proprio: falha aqui so tira a coluna de renda, nao o resto do relatorio.
@@ -1492,6 +1505,10 @@ def montar_pdf_municipio(
             renda_dom = renda_domiciliar_por_hex(
                 df_muni, uf=uf, cod_municipio=cod, staging_dir=settings.staging_dir
             )
+    except (FatoresRendaInvalidos, InsumoRendaInvalido):
+        # Configuracao de fatores ou insumo obrigatorio quebrado NAO vira coluna vazia em
+        # silencio (E0): sobe como erro, como na subida.
+        raise
     except Exception:
         renda_dom = None
 

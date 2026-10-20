@@ -180,6 +180,60 @@ components:
         environment:
           type: string
           example: production
+        renda_fatores:
+          type: object
+          description: >
+            ADITIVO (E0 da renda). Versao de fatores de renda vigente e se ela foi fixada por
+            env (rollback via MOTOR_FATORES_RENDA_VERSAO). Metodologia publica, sem caminho.
+          properties:
+            versao:
+              type: string
+              example: 2026-08_caged_v0
+            fixada_por_env:
+              type: boolean
+              example: false
+
+    RendaMeta:
+      type: object
+      description: >
+        Proveniencia das rendas exibidas (E0 da renda; motor_expansao.renda.renda_meta()):
+        versao de fatores, ano-base do Censo e ano-alvo da atualizacao temporal.
+      required: [versao_fator, pais, ano_base, data_referencia_base, ano_alvo, fonte, rotulo,
+                 fixada_por_env, excecoes_uf]
+      properties:
+        versao_fator:
+          type: string
+          example: 2026-08_caged_v0
+        pais:
+          type: string
+          example: BR
+        ano_base:
+          type: integer
+          example: 2022
+        data_referencia_base:
+          type: string
+          example: "2022-07"
+        ano_alvo:
+          type: integer
+          example: 2026
+        fonte:
+          type: string
+          description: Pesquisa que atualiza a renda no tempo.
+          example: Novo CAGED
+        rotulo:
+          type: string
+          description: Texto de referencia exibido ao usuario.
+          example: "06/2026 (CAGED; Censo jul/2022 x 1.1641)"
+        fixada_por_env:
+          type: boolean
+          description: Versao fixada por env (rollback), fora do VIGENTE.
+          example: false
+        excecoes_uf:
+          type: array
+          description: UFs com fator proprio aprovado (vazia na v0).
+          items:
+            type: string
+          example: []
 
     AnalisarRequest:
       type: object
@@ -415,8 +469,9 @@ components:
             Tambem NAO e a soma da renda do raio; e a faixa exibida no choropleth
             renda_domiciliar do PDF. MUDANCA DE ESCALA em 2026-08-14 (fim da dupla contagem
             do k na base: para o mesmo ponto o valor cai /1,2335). O example abaixo assume
-            fator temporal 1,0 (fallback sem data/staging/fator_temporal_renda.json); em
-            producao o fator temporal (~1,17) tambem multiplica.
+            fator temporal 1,0; em producao multiplica o fator domiciliar da versao vigente
+            de motor_expansao.renda (v0 BR = 1,1641; o fator viaja na imagem, nao mais em
+            data/staging/fator_temporal_renda.json).
           example: 25740.0
         fracao_uplift_extrapolado_raio:
           type: [number, "null"]
@@ -464,6 +519,13 @@ components:
           type: string
           description: Resolvido pelo token (rastreio do solicitante).
           example: bot-telegram
+        renda_meta:
+          description: >
+            ADITIVO (E0 da renda). Proveniencia das rendas deste JSON (versao de fatores,
+            ano-base e ano-alvo).
+          oneOf:
+            - $ref: "#/components/schemas/RendaMeta"
+            - type: "null"
 
     ErrorResponse:
       type: object

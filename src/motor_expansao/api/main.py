@@ -102,6 +102,27 @@ def create_app() -> FastAPI:
     settings = get_settings()
     _garantir_producao_sem_defaults(settings)
     _garantir_log_handler()
+    # Renda exibida (E0): fatores versionados da imagem e, em producao (`MOTOR_DATA_DIR`),
+    # os insumos obrigatorios do staging -- erro explicito na subida, nunca o fallback
+    # silencioso de antes. Import tardio e SO aqui: o bot nao passa por `create_app` e nao
+    # pode depender do pacote da renda (DEC-049).
+    from motor_expansao.renda import configurar_staging, fatores_do_health, validar_na_subida
+    from motor_expansao.renda import insumos as _renda_insumos
+
+    # A checagem e a LEITURA tem de olhar o MESMO diretorio: os insumos leem de
+    # `<raiz do perfil>/staging` por default, e `API_STAGING_DIR` pode apontar para outro.
+    # Sem isto a subida aprovava um staging e o ponto lia outro, caindo em silencio na
+    # cascata nacional. So reaponta quando diverge (estado global do modulo; no caso comum
+    # os dois coincidem e nada e tocado).
+    if Path(settings.staging_dir).resolve() != _renda_insumos.staging_dir().resolve():
+        configurar_staging(settings.staging_dir)
+    fatores = validar_na_subida(settings.staging_dir)
+    # WARNING quando a versao foi FIXADA por env (rollback): tem de aparecer no log do boot.
+    _log.log(
+        logging.WARNING if fatores.fixada_por_env else logging.INFO,
+        "renda: fatores versao=%s pais=%s fixada_por_env=%s",
+        fatores.versao, fatores.pais, fatores.fixada_por_env,
+    )
 
     app = FastAPI(
         title="API GeoEspacial — Motor de Expansao Ultra Academia",
@@ -204,6 +225,8 @@ def create_app() -> FastAPI:
             "environment": settings.environment,
             "artefatos_oferta": inventario,
             "oferta_completa": all(inventario.values()),
+            # E0 da renda: versao de fatores vigente (metodologia publica, sem caminho).
+            "renda_fatores": fatores_do_health(),
         }
 
     # Espelha o /health sob o prefixo de versao (contrato §10).
@@ -215,6 +238,7 @@ def create_app() -> FastAPI:
             "environment": settings.environment,
             "artefatos_oferta": inventario,
             "oferta_completa": all(inventario.values()),
+            "renda_fatores": fatores_do_health(),
         }
 
     # BLK-API-03: POST /api/v1/analisar

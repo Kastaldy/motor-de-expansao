@@ -22,6 +22,7 @@ from motor_expansao.dashboard.censo_point import (
 )
 from motor_expansao.dashboard.competitors import _ICON_CACHE
 from motor_expansao.dashboard.constants import DENSIDADE_POP_BANDS, TEXTO_SEM_DADO
+from tests.unit.renda_fixtures import fixar_fatores, fixar_uplift_setor
 
 LAT_C = -23.55
 LNG_C = -46.63
@@ -493,7 +494,9 @@ def test_valor_ponto_repassado_aos_4_choropleths_nao_a_concorrentes(monkeypatch)
         assert "no ponto" not in capturado[titulo]["valor_ponto"]
 
 
-def test_valor_raio_nao_e_nd_quando_setor_nao_cobre_o_ponto_mas_intersecta_raio(monkeypatch):
+def test_valor_raio_nao_e_nd_quando_setor_nao_cobre_o_ponto_mas_intersecta_raio(
+    monkeypatch, tmp_path
+):
     # BLK-RELPON-06 (D1): unico setor NAO cobre o ponto central (0,0) -- so intersecta
     # parcialmente o raio -- mas isso NAO produz sem-dado: a faixa agora mostra os agregados
     # do RAIO (n_setores=1, pop_total_raio nao-None), que sao valores REAIS aqui (sob
@@ -523,15 +526,14 @@ def test_valor_raio_nao_e_nd_quando_setor_nao_cobre_o_ponto_mas_intersecta_raio(
     monkeypatch.setattr(censo_map, "_render_camada", _spy)
     # 2026-08-13: fixa os dois fatores da cadeia da renda. Sem isto o teste depende de o artefato
     # `data/staging/uplift_composicao_setor.parquet` existir no disco E de nenhum teste anterior
-    # ter repontado `constants.UPLIFT_*_PATH` para um tmp_path (os testes do hex fazem isso). O
+    # ter repontado o staging dos insumos para um tmp_path (os testes do hex fazem isso). O
     # cod_setor deste fixture existe no artefato real, entao o valor mudava conforme a ORDEM da
     # suite -- o teste passava isolado e falhava em conjunto, ou vice-versa.
-    from motor_expansao.dashboard import censo_point
-
+    # Desde a E0 os dois pontos de patch sao do modulo da renda e valem para censo_map E
+    # censo_point de uma vez (os dois leem o mesmo lookup e o mesmo fator).
     uplift, fator = 1.6, 1.25
-    for modulo in (censo_map, censo_point):
-        monkeypatch.setattr(modulo, "uplift_composicao_por_setor", lambda *_a, **_k: uplift)
-        monkeypatch.setattr(modulo._constants, "FATOR_TEMPORAL_RENDA", fator)
+    fixar_uplift_setor(monkeypatch, uplift)
+    fixar_fatores(monkeypatch, tmp_path, per_capita=fator)
 
     censo_map.render_mapas_censitarios_combinados(
         LAT_C, LNG_C, setores, width=800, height=600, basemap=False
@@ -1802,7 +1804,7 @@ def test_orcamento_corta_o_mosaico_e_devolve_o_parcial(monkeypatch, tmp_path):
     )
 
 
-def test_camada_renda_per_capita_ignora_a_coluna_calibrada(monkeypatch):
+def test_camada_renda_per_capita_ignora_a_coluna_calibrada(monkeypatch, tmp_path):
     """A coluna CALIBRADA nao pode mais influenciar nenhuma cor do mapa de renda per capita.
 
     Ate 2026-08-13 a camada "Renda per capita" era colorida por
@@ -1817,12 +1819,9 @@ def test_camada_renda_per_capita_ignora_a_coluna_calibrada(monkeypatch):
     diferem. Comparacao por histograma de cores, nao por bytes: o PNG carrega metadados que
     poderiam diferir por motivo alheio ao pixel.
     """
-    from motor_expansao.dashboard import censo_point
-
     uplift, fator, moradores = 1.6, 1.25, 3.0
-    for modulo in (censo_map, censo_point):
-        monkeypatch.setattr(modulo, "uplift_composicao_por_setor", lambda *_a, **_k: uplift)
-        monkeypatch.setattr(modulo._constants, "FATOR_TEMPORAL_RENDA", fator)
+    fixar_uplift_setor(monkeypatch, uplift)
+    fixar_fatores(monkeypatch, tmp_path, per_capita=fator)
 
     # Espia `source_values` — a Serie que ALIMENTA a cor. Assertar sobre ela, e nao sobre pixel,
     # e o que da poder ao teste: o histograma do PNG inclui legenda e rotulo, que mudam por

@@ -5,6 +5,7 @@ import type { PontoEscolhido } from '../App'
 
 import CampoPonto from '../components/CampoPonto'
 import DetalheRegiao from '../components/DetalheRegiao'
+import { InfoRenda } from '../components/InfoRenda'
 import JanelaFicha from '../components/JanelaFicha'
 import { Landing } from './MapScreen'
 import {
@@ -947,8 +948,14 @@ function Ficha({
           <FilaApoio>
             <NumeroApoio rotulo="População" valor={num(censo.populacao)} />
             <NumeroApoio rotulo="Domicílios" valor={num(censo.domicilios)} />
-            <NumeroApoio rotulo="Renda per capita" valor={comPrefixo('R$ ', censo.renda_per_capita)} />
-            <NumeroApoio rotulo="Renda domiciliar" valor={comPrefixo('R$ ', censo.renda_media_domiciliar)} />
+            <NumeroApoio
+              rotulo={<>Renda per capita<InfoRenda /></>}
+              valor={comPrefixo('R$ ', censo.renda_per_capita)}
+            />
+            <NumeroApoio
+              rotulo={<>Renda domiciliar<InfoRenda /></>}
+              valor={comPrefixo('R$ ', censo.renda_media_domiciliar)}
+            />
             <NumeroApoio rotulo="Densidade" valor={comSufixo(censo.densidade_hab_km2, ' hab/km²')} />
           </FilaApoio>
         </div>

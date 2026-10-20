@@ -340,9 +340,11 @@ Ao passar o mouse, o tooltip espelha o do dashboard Streamlit: **Município / UF
 **Faixa M1**, os três scores (M1, censitário, residual — o que colore o mapa no
 passo atual vem em destaque), **Habitantes**, **Renda per capita**, **Renda média
 domiciliar**, **Residual Fitness** e concorrentes no raio. A renda domiciliar usa a
-mesma fórmula do Streamlit (`renda per capita × moradores × uplift × fator
-temporal`, todos municipais); sem os parquets municipais de uplift no `data/`, cai
-no fallback nacional — igual ao Streamlit local.
+mesma fórmula do Streamlit (`renda per capita × moradores × uplift × fator`,
+com uplift e moradores municipais e o fator da versão vigente de
+`motor_expansao.renda`); sem os parquets municipais de uplift no `data/`, cai
+no fallback nacional em dev — em produção (`MOTOR_DATA_DIR` setado) a subida
+recusa sem eles.
 
 O basemap é o **CARTO Dark Matter** (tiles online, precedente DEC-004/DEC-010),
 com fallback gracioso ao gradiente do tema se a rede faltar — a interatividade do
