@@ -3,6 +3,7 @@ import { useCallback, useEffect, useLayoutEffect, useReducer, useRef, useState, 
 import {
   ALTURA_CABECALHO,
   geometriaPadrao,
+  LARGURA_PADRAO,
   mover,
   reajustar,
   redimensionar,
@@ -89,6 +90,7 @@ export default function JanelaFicha({
      justamente o que se lê junto com a ficha. */
   ancora = 'esquerda',
   degrau = 0,
+  larguraInicial = LARGURA_PADRAO,
   rodape,
   children,
 }: {
@@ -110,6 +112,12 @@ export default function JanelaFicha({
    * das camadas. Depois que o operador arrasta, quem manda e' ele.
    */
   recuoInferior?: number
+  /**
+   * A largura de NASCENÇA (`geometriaPadrao`). Ausente, a de sempre (`LARGURA_PADRAO`);
+   * a ficha de ponto passa `LARGURA_FICHA_PONTO`. Depois que o operador redimensiona,
+   * quem manda é ele.
+   */
+  larguraInicial?: number
   /**
    * Faixa FIXA no pé da janela, fora da área que rola — os botões de ação da ficha
    * (2026-10-14: "Estudo" e "Simulador" da análise de ponto).
@@ -149,7 +157,7 @@ export default function JanelaFicha({
 
   const atual =
     geo ??
-    (area.largura ? geometriaPadrao(area, TOPO_PADRAO, recuoInferior, ancora, degrau) : null)
+    (area.largura ? geometriaPadrao(area, TOPO_PADRAO, recuoInferior, ancora, degrau, larguraInicial) : null)
 
   /** Identidade estável desta instância na pilha de janelas abertas. */
   const idJanela = useRef(Symbol('janela'))

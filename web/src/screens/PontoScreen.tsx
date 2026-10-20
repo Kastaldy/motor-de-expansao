@@ -51,6 +51,14 @@ import {
 } from '../lib/rodape-ponto'
 import { erroFlutuanteVisivel, janelaNaMontagem } from '../lib/pontos-estado'
 import { TOPO_BOTAO_PADRAO, topoDoBotaoVerFicha } from '../lib/botao-ver-ficha'
+import { LARGURA_FICHA_PONTO } from '../lib/janela'
+import {
+  AVISO_RELENDO_ALCANCE,
+  ESTILO_ROTULO_ALCANCE,
+  ESTILO_TRILHO_ALCANCE,
+  ROTULO_SELETOR_ALCANCE,
+  estiloDaOpcaoAlcance,
+} from '../lib/seletor-alcance'
 import type { BlocoOpcional, PontoPayload } from '../lib/types'
 
 /**
@@ -672,6 +680,10 @@ export default function PontoScreen({
             : undefined
         }
         onFechar={() => setJanela(false)}
+        /* Mais estreita que as outras janelas do mapa (pedido do Vinicius, 20/10/2026: "no
+           meu dispositivo, 480px se mostraram menor sem perder muito conteúdo"). Só a
+           NASCENÇA: redimensionar continua livre, até o mínimo de sempre. */
+        larguraInicial={LARGURA_FICHA_PONTO}
         /* O stepper do Explorar ocupa a largura toda no pé; sem este recuo a janela
            cobriria os botões das camadas. */
         recuoInferior={96}
@@ -873,6 +885,21 @@ function Ficha({
             .filter(Boolean)
             .join(' · ')}
         </div>
+        {/* O seletor de ALCANCE (DEC-074) mora DENTRO da identificação, logo abaixo do nome
+            e do endereço e antes de qualquer número (pedido do Vinicius, 20/10/2026: "ainda
+            está muito escondida na lateral"). Ele muda a PERGUNTA da ficha inteira (de que
+            recorte em volta do ponto ela fala), então é a primeira coisa que se lê depois
+            de ONDE. Só em ponto — a área desenhada já é o recorte — e só com mais de uma
+            opção: sem a rota de alcance no servidor, nada a escolher. */}
+        {!area && alcance && onTrocarAlcance && opcoesDeAlcance.length > 1 && (
+          <SeletorAlcance
+            opcoes={opcoesDeAlcance}
+            atual={alcance}
+            trocando={trocando}
+            comEstudoUltra={ofertaUltra?.ligado === true}
+            onTrocar={onTrocarAlcance}
+          />
+        )}
         <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
           <Chip>hex {ficha.hex_id}</Chip>
           {/* O modo do estudo, discreto, ao lado da identidade (emenda da DEC-070). */}
@@ -904,20 +931,6 @@ function Ficha({
           Vinicius, 2026-10-16): ela muda a PERGUNTA da ficha inteira (estudo de ponto x
           estudo da unidade), e no fim do bloco de mercado exigia rolar a ficha toda para
           ser achada. */}
-      {/* O seletor de ALCANCE (DEC-074), no mesmo lugar e no mesmo molde da chave do
-          estudo da unidade: ele também muda a PERGUNTA da ficha inteira (de que recorte
-          em volta do ponto ela fala). Só em ponto — a área desenhada já é o recorte — e só
-          com mais de uma opção: sem a rota de alcance no servidor, nada a escolher. */}
-      {!area && alcance && onTrocarAlcance && opcoesDeAlcance.length > 1 && (
-        <SeletorAlcance
-          opcoes={opcoesDeAlcance}
-          atual={alcance}
-          trocando={trocando}
-          comEstudoUltra={ofertaUltra?.ligado === true}
-          onTrocar={onTrocarAlcance}
-        />
-      )}
-
       {/* A chave do estudo da unidade Ultra só existe no raio de 1 km: o servidor não
           oferece o estudo da unidade em outro alcance. */}
       {ofertaUltra && alcance === 'raio_1km' && (
@@ -1133,35 +1146,30 @@ function SeletorAlcance({
   comEstudoUltra: boolean
   onTrocar: (alcance: Alcance) => void
 }) {
+  /* O visual mora em `lib/seletor-alcance` (travado em teste): controle segmentado da
+     largura da ficha, o marcado CHEIO na cor de ação do sistema. */
   return (
-    <div
-      style={{
-        display: 'grid',
-        gap: 8,
-        padding: '10px 12px',
-        borderRadius: 10,
-        border: '1px solid var(--line-soft)',
-        background: 'var(--surf-raised)',
-      }}
-    >
-      <span
-        id="rotulo-alcance-ponto"
-        style={{
-          display: 'inline-flex',
-          alignItems: 'center',
-          gap: 8,
-          font: '500 12px/1.4 var(--f-ui)',
-          color: 'var(--tx-soft)',
-        }}
-      >
-        Alcance a partir do ponto
-        {trocando && <Spinner />}
+    <div style={{ display: 'grid', gap: 6, marginTop: 2 }}>
+      <span id="rotulo-alcance-ponto" style={ESTILO_ROTULO_ALCANCE}>
+        {ROTULO_SELETOR_ALCANCE}
+        {/* A releitura em voo é DITA, não só girada: a isócrona leva alguns segundos. */}
+        {trocando && (
+          <span
+            role="status"
+            style={{
+              display: 'inline-flex',
+              alignItems: 'center',
+              gap: 6,
+              font: '500 11.5px/1 var(--f-ui)',
+              color: 'var(--ac-text)',
+            }}
+          >
+            <Spinner />
+            {AVISO_RELENDO_ALCANCE}
+          </span>
+        )}
       </span>
-      <div
-        role="radiogroup"
-        aria-labelledby="rotulo-alcance-ponto"
-        style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}
-      >
+      <div role="radiogroup" aria-labelledby="rotulo-alcance-ponto" aria-busy={trocando} style={ESTILO_TRILHO_ALCANCE}>
         {opcoes.map((a) => {
           const marcado = a === atual
           return (
@@ -1173,15 +1181,8 @@ function SeletorAlcance({
               role="radio"
               aria-checked={marcado}
               onClick={() => onTrocar(a)}
-              style={{
-                padding: '7px 11px',
-                borderRadius: 999,
-                border: `1px solid ${marcado ? 'var(--ac-text)' : 'var(--line-soft)'}`,
-                background: 'transparent',
-                color: marcado ? 'var(--ac-text)' : 'var(--tx-soft)',
-                font: `${marcado ? 700 : 500} 12px/1 var(--f-ui)`,
-                cursor: 'pointer',
-              }}
+              title={ROTULO_ALCANCE[a]}
+              style={estiloDaOpcaoAlcance(marcado)}
             >
               {ROTULO_ALCANCE[a]}
             </button>
