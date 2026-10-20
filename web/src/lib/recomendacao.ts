@@ -41,6 +41,9 @@ export interface ReguasPonto {
   area_ideal_min_m2: number | null
   area_ideal_max_m2: number | null
   conc_regiao_disputada: number | null
+  /** Por quanto as réguas de TOTAIS acima foram escaladas pela área do recorte (DEC-074).
+   *  1 no raio de 1 km; ausente em servidor anterior. */
+  fator_regua?: number | null
 }
 
 /** O que o motor sugere cortar para o payback bater o alvo. */

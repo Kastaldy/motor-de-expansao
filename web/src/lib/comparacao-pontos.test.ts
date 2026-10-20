@@ -11,8 +11,9 @@ import {
   dimensoesDoComparativo,
   indiceDaMesmaArea,
   indiceDoMesmoPonto,
-  motivoSemPdfDeComparacao,
   passaNoEstudo,
+  recorteParaOPdf,
+  recortesDeTamanhosDiferentes,
   rotuloDoRecorte,
   resumoDoEstudo,
   rotuloDoPonto,
@@ -536,9 +537,15 @@ describe('área desenhada na comparação', () => {
     expect(indiceDoMesmoPonto([area, ponto], ponto.lat, ponto.lng)).toBe(1)
   })
 
-  it('o PDF de comparação recusa lista com área, dizendo por quê', () => {
-    expect(motivoSemPdfDeComparacao([ponto, ponto])).toBeNull()
-    expect(motivoSemPdfDeComparacao([ponto, area])).toMatch(/segue em desenvolvimento/)
+  it('o PDF de comparação aceita área: cada item leva o SEU recorte para a linha dele', () => {
+    expect(recorteParaOPdf(area)).toEqual({
+      tipo: 'poligono',
+      rotulo: 'área desenhada de 2,40 km²',
+      area_km2: 2.4,
+      fator_regua: 2.4 / Math.PI,
+    })
+    // O raio de 1 km sai com fator EXATAMENTE 1 e a área do círculo.
+    expect(recorteParaOPdf(ponto)).toEqual({ tipo: 'raio_1km', rotulo: 'raio de 1 km', area_km2: 3.14, fator_regua: 1 })
   })
 
   it('a mesma área casa pelos vértices; o ponto nunca casa como área', () => {
@@ -569,5 +576,72 @@ describe('área desenhada na comparação', () => {
     const c = compararPontos(grande, pequeno, 'Área desenhada', 'Santana')
     expect(c.frase).not.toMatch(/popula/i)
     expect(c.frase).not.toMatch(/concorrente/i)
+  })
+})
+
+/* ---------------- Alcance do ponto (DEC-074) ---------------- */
+describe('alcance na comparação', () => {
+  const local = { uf: 'SP', municipio: 'São Paulo', bairro: 'Santana', unidade_tipo: null }
+  const um = {
+    lat: -23.5, lng: -46.62, raio_km: 1, hex_id: 'x', local,
+    mercado: { disponivel: true, sam: 1, residual: 1, score_residual: 1, grao: 'raio' },
+  } as unknown as PontoPayload
+  const dois = {
+    ...um,
+    raio_km: 2,
+    recorte: { tipo: 'raio_2km', area_km2: 12.57, metodo: 'x', fator_regua: 4, contorno: null },
+  } as unknown as PontoPayload
+  const contorno = {
+    type: 'MultiPolygon' as const,
+    coordinates: [[[[-46.65, -23.52], [-46.6, -23.52], [-46.6, -23.48], [-46.65, -23.52]]]] as [number, number][][][],
+  }
+  const carro = {
+    ...um,
+    raio_km: null,
+    mercado: { ...um.mercado, grao: 'geometria', area_km2: 38.2 },
+    recorte: { tipo: 'carro_10min', area_km2: 38.2, metodo: 'x', fator_regua: 12.16, contorno },
+  } as unknown as PontoPayload
+
+  it('o item continua com o NOME DO LUGAR, não com o do recorte', () => {
+    expect(rotuloDoPonto(dois)).toBe('Santana')
+    expect(rotuloDoPonto(carro)).toBe('Santana')
+    expect(ehAreaDesenhada(carro)).toBe(false)
+  })
+
+  it('o recorte em texto: raio de 2 km; 10 min de carro, sem trânsito, com a área', () => {
+    expect(rotuloDoRecorte(dois)).toBe('raio de 2 km')
+    expect(rotuloDoRecorte(carro)).toBe('10 min de carro, sem trânsito · 38,2 km²')
+  })
+
+  it('o item de alcance casa pela ORIGEM, como ponto (trocar o alcance é no lugar)', () => {
+    expect(indiceDoMesmoPonto([carro], carro.lat, carro.lng)).toBe(0)
+    expect(indiceDoMesmoPonto([dois], dois.lat, dois.lng)).toBe(0)
+  })
+
+  it('o pin fica na origem e o mapa recebe o contorno de cada recorte (1 km incluso)', () => {
+    const pins = pinsDaComparacao([um, dois, carro], 0, ['a', 'b', 'c'])
+    expect(pins.map((p) => [p.lat, p.lng])).toEqual([[-23.5, -46.62], [-23.5, -46.62], [-23.5, -46.62]])
+    expect(pins[0].contornos).toHaveLength(1)
+    expect(pins[1].contornos).toHaveLength(1)
+    expect(pins[2].contornos).toEqual(contorno.coordinates)
+    // A geometria (o "é área" do hover) fica só para o desenho à mão.
+    expect(pins.every((p) => p.geometria === null)).toBe(true)
+  })
+
+  it('1 km contra 2 km: tamanhos diferentes, os TOTAIS saem e o aviso diz por quê', () => {
+    expect(recortesDeTamanhosDiferentes([um, dois])).toBe(true)
+    expect(dimensoesDoComparativo([um, dois]).map((d) => d.chave)).toEqual(['renda_domiciliar', 'score', 'densidade'])
+    expect(avisoDimensoesCortadas([um, carro])).toMatch(/^Com recortes de tamanhos diferentes na lista/)
+  })
+
+  it('todos do MESMO raio (todos de 2 km): comparáveis nos totais, sem aviso', () => {
+    expect(recortesDeTamanhosDiferentes([dois, dois])).toBe(false)
+    expect(dimensoesDoComparativo([dois, dois])).toBe(DIMENSOES_PONTO)
+    expect(avisoDimensoesCortadas([dois, dois])).toBeNull()
+  })
+
+  it('o recorte de cada item vai ao PDF de comparação', () => {
+    expect(recorteParaOPdf(dois)).toEqual({ tipo: 'raio_2km', rotulo: 'raio de 2 km', area_km2: 12.57, fator_regua: 4 })
+    expect(recorteParaOPdf(carro)).toMatchObject({ tipo: 'carro_10min', area_km2: 38.2, fator_regua: 12.16 })
   })
 })

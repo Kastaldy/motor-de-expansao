@@ -31,7 +31,7 @@ describe('cores dos hexágonos', () => {
     expect(mapScreen).toContain("id: 'cores-hex'")
     expect(mapScreen).toContain('const [coresHex, setCoresHex] = useState(true)')
     expect(mapScreen).toContain('{legendaVisivel && coresHex && (')
-    expect(mapScreen).toContain('legendaDisponivel={coresHex}')
+    expect(mapScreen).toContain('legendaDisponivel={coresHex || calorDesenhado}')
     expect(mapScreen).toContain('coresHex={coresHex}')
   })
 })
@@ -79,5 +79,16 @@ describe('captura do mapa (PDF)', () => {
     // o halo do search-hex depende de `pinDoSearch`, que e nulo durante a captura
     expect(hexMap).toContain('if (!searchPin || capturando) return null')
     expect(hexMap).toMatch(/if \(pinDoSearch\) \{\s+const halo = tracoComHalo/)
+  })
+})
+
+describe('ordem das chaves de cor no painel de camadas', () => {
+  it('"Cores dos hexágonos" vem logo acima dos mapas de calor', () => {
+    const iCores = mapScreen.indexOf("id: 'cores-hex'")
+    const iDensidade = mapScreen.indexOf("id: 'calor-densidade'")
+    expect(iCores).toBeGreaterThan(-1)
+    expect(iDensidade).toBeGreaterThan(iCores)
+    // Nenhuma outra chave entre as duas.
+    expect(mapScreen.slice(iCores + 1, iDensidade)).not.toMatch(/id: '[a-z-]+',\n\s+icone:/)
   })
 })

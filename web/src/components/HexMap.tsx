@@ -17,11 +17,12 @@ import {
   marcaDoAlvo,
   ordemDeVoo,
   ordenarParaEmpilhar,
-  quadroDaCaptura,
+  quadroDoAlvo,
 } from '../lib/captura-mapa'
 import { CORES_IDENTIDADE, corDeIdentidadeRgb, rotuloDoHex } from '../lib/comparacao'
 import { cursorDaFerramenta, ferramentaDasChaves, pinDaComparacaoAbre } from '../lib/ferramenta-mapa'
 import { contornosDoCenario, raioComHalo, tracoComHalo, veuDoDesenho } from '../lib/contorno-halo'
+import { hexSubstituidoPeloAlcance } from '../lib/alcance'
 import { chaveDaCoordenada, type PinDaComparacao } from '../lib/comparacao-pontos'
 import { alunos, brl, distanciaCurta, num, renda } from '../lib/format'
 import {
@@ -860,7 +861,8 @@ export default function HexMap({
    * a MESMA marca nas tres fotos, e nas duas primeiras ela apontava um imovel que nao era
    * o assunto daquela coluna. Fora do modo de imovel o pin fica `null`, e ai a captura sai
    * sem pin nenhum: um pin de busca antigo no meio do deck se le como "o ponto e' aqui".
-   * O hexagono, esse, vem sempre — ver `marcaDoAlvo`.
+   * A marca e' o contorno do recorte (o circulo de 1 km incluso) quando o alvo o traz;
+   * senao, o hexagono — ver `marcaDoAlvo`.
    */
   const [marcaCaptura, setMarcaCaptura] = useState<ReturnType<typeof marcaDoAlvo> | null>(null)
 
@@ -924,8 +926,11 @@ export default function HexMap({
          como o mapa serve UM municipio por vez, comparar pontos de duas cidades so'
          rendia mapa para os da cidade aberta. O zoom continua DERIVADO do hexagono. */
       const caixa = caixaRef.current?.getBoundingClientRect()
+      /* Alvo com CONTORNO (DEC-074: todo item de ponto — 1 km, 2 km, isócrona, área
+         desenhada) enquadra pelo contorno; o resto (o deck de hexágonos), pelo hexágono,
+         como sempre (`quadroDoAlvo`). */
       const quadros = pedidoCaptura.alvos.map((a) =>
-        quadroDaCaptura(a.hexId, caixa?.width || 1200, caixa?.height || 800),
+        quadroDoAlvo(a, caixa?.width || 1200, caixa?.height || 800),
       )
 
       /* VOA POR PROXIMIDADE, mas guarda POR POSICAO. A ordem de captura era a de
@@ -1053,10 +1058,11 @@ export default function HexMap({
     return s
   }, [cobertura1k])
 
-  /* O que o mapa marca. Durante a captura manda o quadro (`marcaCaptura`): o hexagono
-     sempre, e o pin so' no modo de imovel — fora dele a foto sai sem pin, em vez de
-     carregar a marca de uma busca antiga para dentro do PDF. */
-  const marcaNoMapa = useMemo(
+  /* O que o mapa marca. Durante a captura manda o quadro (`marcaCaptura`): o contorno do
+     recorte (o circulo de 1 km incluso) quando vier, senao o hexagono; e o pin so' no
+     modo de imovel — fora dele a foto sai sem pin, em vez de carregar a marca de uma
+     busca antiga para dentro do PDF. */
+  const marcaNoMapa = useMemo<ReturnType<typeof marcaDoAlvo> | null>(
     () =>
       capturando
         ? marcaCaptura
@@ -1778,7 +1784,51 @@ export default function HexMap({
     // Buscar um endereco e' uma forma de SELECIONAR, entao vale a mesma cor do hex
     // selecionado e do item ativo do painel; o turquesa ficou exclusivo do cenario
     // multi-hex, que era a unica marcacao turquesa deliberada do mapa.
-    if (marcaNoMapa) {
+    /* O CONTORNO DO RECORTE na foto do PDF de comparação (DEC-074): só durante a captura,
+       só do alvo da vez — os itens da lista não são desenhados nela (`pontosNoMapa`
+       esvazia), então sem esta camada a foto de um recorte de 10 min de carro sairia sem
+       dizer onde ele termina. Na cor da seleção, com o mesmo halo do contorno dos itens. */
+    if (marcaNoMapa?.contorno?.length) {
+      const traco = tracoComHalo(tema, pele.selecao, 3)
+      const poligonos = marcaNoMapa.contorno.map((p) => ({ p }))
+      base.push(
+        new PolygonLayer<{ p: [number, number][][] }>({
+          id: 'captura-contorno-halo',
+          data: poligonos,
+          getPolygon: (d) => d.p,
+          filled: false,
+          stroked: true,
+          getLineColor: traco.halo.cor,
+          getLineWidth: traco.halo.largura,
+          lineWidthUnits: 'pixels',
+          lineJointRounded: true,
+          pickable: false,
+        }) as unknown as PolygonLayer<Hex>,
+      )
+      base.push(
+        new PolygonLayer<{ p: [number, number][][] }>({
+          id: 'captura-contorno',
+          data: poligonos,
+          getPolygon: (d) => d.p,
+          filled: false,
+          stroked: true,
+          getLineColor: pele.selecao,
+          getLineWidth: 3,
+          lineWidthUnits: 'pixels',
+          lineJointRounded: true,
+          pickable: false,
+        }) as unknown as PolygonLayer<Hex>,
+      )
+    }
+    /* O hexágono do ponto ATIVO não é marcado quando o alcance dele já está desenhado
+       (`hexSubstituidoPeloAlcance`): o contorno do recorte é a marca do ponto, e as duas
+       linhas se sobrepunham. Na captura, `marcaDoAlvo` já zera o `hexId` do alvo com
+       contorno (e `pinDoSearch` é nulo). */
+    const hexDaMarca =
+      marcaNoMapa?.hexId && marcaNoMapa.hexId !== hexSubstituidoPeloAlcance(pinDoSearch)
+        ? marcaNoMapa.hexId
+        : null
+    if (marcaNoMapa && hexDaMarca) {
       /* Halo por baixo do contorno do ponto ATIVO quando ele veste a cor de identidade:
          3 px da mesma matiz do hexágono vizinho sumiam (`lib/contorno-halo`). Só com
          `pinDoSearch` — na captura ele é nulo, e o contorno sai como antes. */
@@ -1787,7 +1837,7 @@ export default function HexMap({
         base.push(
           new H3HexagonLayer<{ id: string }>({
             id: 'search-hex-halo',
-            data: [{ id: marcaNoMapa.hexId }],
+            data: [{ id: hexDaMarca }],
             getHexagon: (d) => d.id,
             extruded: false,
             filled: false,
@@ -1804,7 +1854,7 @@ export default function HexMap({
       base.push(
         new H3HexagonLayer<{ id: string }>({
           id: 'search-hex',
-          data: [{ id: marcaNoMapa.hexId }],
+          data: [{ id: hexDaMarca }],
           getHexagon: (d) => d.id,
           extruded: false,
           filled: true,
@@ -1861,22 +1911,25 @@ export default function HexMap({
        por baixo de um vizinho colado. */
     if (pontosNoMapa.length) {
       const emOrdem = [...pontosNoMapa].sort((a, b) => Number(a.ativo) - Number(b.ativo))
-      /* Contorno da AREA DESENHADA (DEC-071, fase 1), quando o item e' de geometria: so' a
-         linha, na cor do item, sem preenchimento — o choropleth embaixo continua legivel. */
-      const areas = emOrdem.filter((p) => p.geometria?.length)
+      /* Contorno do RECORTE de cada item (DEC-074): o círculo do raio — o de 1 km também,
+         que antes não era desenhado —, a isócrona dos 10 min de carro e a área desenhada
+         (DEC-071). Só a linha, na cor do item, sem preenchimento — o choropleth embaixo
+         continua legível. Uma entrada POR POLÍGONO: a isócrona pode vir em mais de um
+         pedaço (MultiPolygon), e cada pedaço leva os seus buracos. */
+      const areas = emOrdem.flatMap((p) => (p.contornos ?? []).map((poligono) => ({ pin: p, poligono })))
       /* Contorno DUPLO (`lib/contorno-halo`): halo de contraste por baixo, a cor do item
          por cima — senão a área verde-água some sobre o hexágono verde da rampa. */
-      const larguraArea = (d: PinComparado) => (d.ativo ? 3 : 2)
+      const larguraArea = (d: { pin: PinComparado }) => (d.pin.ativo ? 3 : 2)
       if (areas.length) {
         base.push(
-          new PolygonLayer<PinComparado>({
+          new PolygonLayer<(typeof areas)[number]>({
             id: 'comparacao-areas-halo',
             data: areas,
-            getPolygon: (d) => d.geometria ?? [],
+            getPolygon: (d) => d.poligono,
             filled: false,
             stroked: true,
-            getLineColor: (d) => tracoComHalo(tema, d.rgb, larguraArea(d)).halo.cor,
-            getLineWidth: (d) => tracoComHalo(tema, d.rgb, larguraArea(d)).halo.largura,
+            getLineColor: (d) => tracoComHalo(tema, d.pin.rgb, larguraArea(d)).halo.cor,
+            getLineWidth: (d) => tracoComHalo(tema, d.pin.rgb, larguraArea(d)).halo.largura,
             lineWidthUnits: 'pixels',
             lineJointRounded: true,
             pickable: false,
@@ -1884,13 +1937,13 @@ export default function HexMap({
           }) as unknown as PolygonLayer<Hex>,
         )
         base.push(
-          new PolygonLayer<PinComparado>({
+          new PolygonLayer<(typeof areas)[number]>({
             id: 'comparacao-areas',
             data: areas,
-            getPolygon: (d) => d.geometria ?? [],
+            getPolygon: (d) => d.poligono,
             filled: false,
             stroked: true,
-            getLineColor: (d) => d.rgb,
+            getLineColor: (d) => d.pin.rgb,
             getLineWidth: larguraArea,
             lineWidthUnits: 'pixels',
             lineJointRounded: true,

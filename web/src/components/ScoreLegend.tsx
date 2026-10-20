@@ -5,6 +5,7 @@ import {
   FAIXA_M1_HEX,
   FAIXA_M1_ORDEM,
 } from '../lib/colors'
+import { legendaDoCalor, SEM_LEITURA_CALOR, type ModoCalor } from '../lib/camadas-calor'
 import {
   alunosDaFaixa,
   bandasDaFaixa,
@@ -44,6 +45,31 @@ const TITULO: React.CSSProperties = {
   textTransform: 'uppercase',
   letterSpacing: '.06em',
 }
+
+/* LEGENDA NA VERTICAL (teste pedido pelo Vinicius, 2026-10-20): uma faixa por linha,
+   em coluna, em vez da fileira que quebrava linha conforme a largura. Vale para as três
+   legendas deste arquivo (faixas, crescimento e calor). Para voltar à fileira, basta
+   `LEGENDA_VERTICAL = false`: a linha e o separador derivam daqui. */
+export const LEGENDA_VERTICAL = true
+
+/** As rampas (potencial, demanda, densidade, renda) vêm do pior para o melhor. Na
+ *  VERTICAL o positivo fica EM CIMA e o negativo embaixo (pedido do Vinicius,
+ *  2026-10-20), então a rampa é invertida só na hora de desenhar; na fileira segue da
+ *  esquerda (pior) para a direita (melhor). A faixa do M1 e o crescimento já nascem do
+ *  melhor para o pior e não passam por aqui. */
+export function doPositivoAoNegativo<T>(rampa: readonly T[]): T[] {
+  return LEGENDA_VERTICAL ? [...rampa].reverse() : [...rampa]
+}
+
+/** O contêiner das faixas: coluna na vertical, fileira com quebra na horizontal. */
+const LINHA: React.CSSProperties = LEGENDA_VERTICAL
+  ? { display: 'flex', flexDirection: 'column', alignItems: 'flex-start', gap: 5 }
+  : { display: 'flex', alignItems: 'flex-start', gap: 9, flexWrap: 'wrap' }
+
+/** O filete que separa o que não é faixa (< 5k hab, nº de alunos, sem dado). */
+const SEPARADOR: React.CSSProperties = LEGENDA_VERTICAL
+  ? { paddingTop: 5, borderTop: '1px solid var(--line-mid)', alignSelf: 'stretch' }
+  : { paddingLeft: 7, borderLeft: '1px solid var(--line-mid)' }
 
 const NOME: React.CSSProperties = { font: '400 8.5px/1 var(--f-ui)', color: 'var(--tx-sub)' }
 const SUB: React.CSSProperties = { font: '400 7.5px/1 var(--f-num)', color: 'var(--tx-label)' }
@@ -100,8 +126,7 @@ function MarcaAlunos() {
         display: 'flex',
         alignItems: 'center',
         gap: 4,
-        paddingLeft: 7,
-        borderLeft: '1px solid var(--line-mid)',
+        ...SEPARADOR,
       }}
     >
       <span
@@ -126,7 +151,7 @@ function LegendaCrescimento({ comAlunos }: { comAlunos?: boolean }) {
   return (
     <div style={CAIXA}>
       <div style={TITULO}>Área construída 2016–2023</div>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 9 }}>
+      <div style={LINHA}>
         {CLASSES_CRESCIMENTO.map(([cor, rotulo]) => (
           <span key={rotulo} style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
             <span style={{ width: 8, height: 8, borderRadius: 2, background: cor }} />
@@ -158,9 +183,9 @@ export default function ScoreLegend({
     <div style={CAIXA}>
       <div style={TITULO}>{tituloDaLegenda(passoN)}</div>
 
-      <div style={{ display: 'flex', alignItems: 'flex-start', gap: 9, flexWrap: 'wrap' }}>
+      <div style={LINHA}>
         {faixas
-          ? faixas.map((f) => (
+          ? doPositivoAoNegativo(faixas).map((f) => (
               <Bloco
                 key={f.nome}
                 fundo={fundoDoSwatch(bandasDaFaixa(f))}
@@ -182,8 +207,7 @@ export default function ScoreLegend({
             display: 'flex',
             alignItems: 'center',
             gap: 4,
-            paddingLeft: 7,
-            borderLeft: '1px solid var(--line-mid)',
+            ...SEPARADOR,
           }}
         >
           <span style={{ width: 14, height: 9, borderRadius: 2, background: 'rgb(150,150,170)' }} />
@@ -191,6 +215,29 @@ export default function ScoreLegend({
         </span>
 
         {comAlunos ? <MarcaAlunos /> : null}
+      </div>
+    </div>
+  )
+}
+
+/* Legenda do mapa de calor de setor censitário (pedido do Vinicius, 2026-10-20). Antes a
+   camada pintava a cidade inteira sem dizer o que cada cor valia. Mesma caixa e mesmos
+   blocos da legenda das faixas, para ler como a mesma família; as faixas e os rótulos
+   são as réguas de `lib/colors` (as do Relatório Pontual), não uma cópia. */
+export function LegendaCalor({ modo }: { modo: ModoCalor }) {
+  const { titulo, unidade, faixas } = legendaDoCalor(modo)
+  return (
+    <div style={CAIXA}>
+      <div style={TITULO}>
+        {titulo} <span style={{ textTransform: 'none', letterSpacing: 0 }}>({unidade})</span>
+      </div>
+      <div style={LINHA}>
+        {doPositivoAoNegativo(faixas).map((f) => (
+          <Bloco key={f.rotulo} fundo={f.cor} nome={f.rotulo} />
+        ))}
+        <span style={SEPARADOR}>
+          <Bloco fundo={SEM_LEITURA_CALOR.cor} nome={SEM_LEITURA_CALOR.rotulo} />
+        </span>
       </div>
     </div>
   )
