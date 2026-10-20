@@ -285,6 +285,12 @@ def _resolver_e_carregar(
             # painel com a primeira linha nao-nula, e o rotulo e' do ponto, nao do vizinho.
             setores_df = pd.concat([setores_df, *extras], ignore_index=True)
 
+    # DEC-076: o bairro de cada setor pelo CNEFE 2022 (IBGE como reserva), UMA vez aqui, para
+    # todo consumidor do ponto: bairro do ponto, perfil do bairro e o nome do hexagono da ficha
+    # (que reusa estes setores) leem a mesma coluna. Sem o artefato, devolve o mesmo frame.
+    from motor_expansao.dashboard.bairro_cnefe import aplicar_bairro_cnefe
+
+    setores_df = aplicar_bairro_cnefe(setores_df, censo_geo_dir=settings.censo_geo_dir, uf=uf)
     return uf, cod_municipio, setores_df
 
 

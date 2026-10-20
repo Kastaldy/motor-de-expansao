@@ -25,6 +25,12 @@ BLK-RELMUN-02 (resolve D9): a Pagina 6 lista bairros REAIS (IBGE 2022 `NM_BAIRRO
 pelas 3 zonas geometricas quando `bairros_por_hex` e resolvido (via `_carregar_bairros_por_hex`,
 leitura OFFLINE da particao geo do municipio); fallback gracioso por zona geometrica quando o
 municipio nao tem bairro mapeado (cobertura IBGE heterogenea). READ-ONLY sobre o M1.
+
+DEC-076: o nome do bairro passa a vir do CNEFE 2022 (bairro dominante por setor), com o
+`NM_BAIRRO` da malha como RESERVA. Os dois leitores de setores daqui (`_carregar_bairros_por_hex`
+e `carregar_bairros_geo`) passam por `bairro_cnefe.aplicar_bairro_cnefe` antes da cascata, entao
+a Pagina 6 (bairros por zona), os rotulos dos hexes destacados e os "Bairros oficiais" agrupam
+pelo MESMO bairro. Sem o artefato, tudo e' o de antes.
 """
 
 from __future__ import annotations
@@ -43,6 +49,11 @@ import pandas as pd
 from fpdf import FPDF
 from PIL import Image, ImageChops, ImageDraw, ImageFont
 
+from motor_expansao.dashboard.bairro_cnefe import (
+    FONTE_CNEFE,
+    aplicar_bairro_cnefe,
+    bairro_cnefe_disponivel,
+)
 from motor_expansao.dashboard.censo_map import (
     _BASEMAP_TILES_URL_ENV,
     _fetch_labels,
@@ -522,6 +533,10 @@ def _carregar_bairros_por_hex(
     if censo_geo_dir is None or not uf or not cod_municipio:
         return {}
     _bbox_pop = ["bbox_minx", "bbox_miny", "bbox_maxx", "bbox_maxy", "pop_total_setor_2022"]
+    # DEC-076: com o artefato do CNEFE para a UF, le tambem `cod_setor` (a chave dele). Sem o
+    # artefato a leitura e' a de sempre, coluna a coluna.
+    if bairro_cnefe_disponivel(censo_geo_dir, uf):
+        _bbox_pop = ["cod_setor", *_bbox_pop]
     try:
         from motor_expansao.pipelines.materializar_setores_censitarios_geo import (
             ler_particao_setores,
@@ -542,7 +557,9 @@ def _carregar_bairros_por_hex(
             )
     except Exception:
         return {}
-    return bairros_por_hex_de_setores(setores)
+    return bairros_por_hex_de_setores(
+        aplicar_bairro_cnefe(setores, censo_geo_dir=censo_geo_dir, uf=uf)
+    )
 
 
 def bairros_por_hex_de_setores(setores: pd.DataFrame | None) -> dict[str, str]:
@@ -673,6 +690,9 @@ def carregar_bairros_geo(
         "bbox_maxx",
         "bbox_maxy",
     ]
+    # DEC-076: a chave do artefato do CNEFE, so' quando ele existe para a UF.
+    if bairro_cnefe_disponivel(censo_geo_dir, uf):
+        medidas.append("cod_setor")
     try:
         setores = ler_particao_setores(
             root=Path(censo_geo_dir), uf=str(uf), cod_municipio=str(cod_municipio),
@@ -689,6 +709,11 @@ def carregar_bairros_geo(
             return vazio
     if setores is None or setores.empty or "geometry_wkb" not in setores.columns:
         return vazio
+    # DEC-076: o bairro do CNEFE substitui o do IBGE onde existe; o limite desenhado passa a ser
+    # o do bairro do CNEFE (dissolvido pelos setores), o mesmo que nomeia a Pagina 6.
+    setores_cnefe = aplicar_bairro_cnefe(setores, censo_geo_dir=censo_geo_dir, uf=uf)
+    usou_cnefe = setores_cnefe is not setores
+    setores = setores_cnefe
 
     nome_muni = ""
     if "nome_municipio" in setores.columns:
@@ -842,6 +867,9 @@ def carregar_bairros_geo(
         # Fracao de setores COM bairro/distrito: e o que diz se a contagem acima representa o
         # municipio ou so um pedaco dele. Quem exibe tem de olhar isto antes do numero.
         "cobertura": ((n_setores - sem_localidade) / n_setores) if n_setores else 0.0,
+        # DEC-076: a chave so' entra quando o CNEFE nomeou algum setor (sem o artefato, o dict
+        # e' o de antes). E' o que a Pagina 6 le para citar a fonte certa.
+        **({"fonte_bairro": FONTE_CNEFE} if usou_cnefe else {}),
     }
 
 
@@ -3779,6 +3807,18 @@ def _bairros_mapa_page(pdf: _UltraPDF, result: dict[str, Any], mapa: bytes | Non
     _draw_footer(pdf, versao=result.get("versao_contrato"))
 
 
+def _nota_fonte_bairro(result: dict[str, Any]) -> str:
+    """Primeira frase da nota de fonte da Pagina 6: diz de ONDE veio o nome do bairro (DEC-076)."""
+    instituto = _instituto_censo()
+    if (result.get("bairros_geo") or {}).get("fonte_bairro") == FONTE_CNEFE:
+        return (
+            f"Fonte: bairro do Cadastro de Endereços (CNEFE) do {instituto} Censo 2022, o mais "
+            "frequente em cada setor; sem bairro no CNEFE, usa bairro/subdistrito/distrito da "
+            "malha de setores. "
+        )
+    return f"Fonte: {instituto} Censo 2022 (bairro do setor; sem bairro, usa subdistrito/distrito). "
+
+
 def _bairros_page(pdf: _UltraPDF, result: dict[str, Any], assets: dict[str, bytes | None], *,
                   primary: tuple[int, int, int] = ULTRA_TURQUESA) -> None:
     """Pagina 6 — Bairros por Zona (BLK-RELMUN-02 / resolve D9).
@@ -3857,8 +3897,7 @@ def _bairros_page(pdf: _UltraPDF, result: dict[str, Any], assets: dict[str, byte
         if tem_bairros:
             _draw_note(
                 pdf, 36, yy + 2, _PAGE_W - 72,
-                f"Fonte: {_instituto_censo()} Censo 2022 (bairro do setor; sem bairro, usa subdistrito/distrito). "
-                "Cobertura heterogênea entre municípios; zonas por distância ao centroide "
+                _nota_fonte_bairro(result) + "Cobertura heterogênea entre municípios; zonas por distância ao centroide "
                 "(display, não altera o M1).",
             )
         else:

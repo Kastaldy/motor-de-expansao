@@ -6847,3 +6847,16 @@ incluído).
   com `NM_BAIRRO`, a mediana sobe de 30,5 para 132 bairros.
 Ressalvas: nome em MAIÚSCULAS e sem acento; em cidade pequena parte dos "bairros" são localidades
 rurais com nome próprio (povoado, comunidade), que servem como rótulo mas não são bairro urbano.
+
+**Fase 2 (20/10, branch `feat/bairro-cnefe`, DEC-076 PROPOSTA): código pronto, falta deploy.** Aprovada
+por Vinicius "com a recomendação". Uma função só, `dashboard/bairro_cnefe.aplicar_bairro_cnefe`:
+classe BAIRRO -> nome do CNEFE (grafia do IBGE quando casa no município; senão Title Case com acento
+por dicionário conservador), RURAL -> "Zona rural", o resto -> cascata do IBGE. Ligada nos dois
+leitores do Relatório Municipal (rótulos, página 6 por bairro do CNEFE, "Bairros oficiais") e em
+`_resolver_e_carregar` (bairro e perfil do ponto, nome do hexágono da ficha); o ranking do piloto
+herda pelo `_carregar_bairros_por_hex`. Artefato opcional em `staging/bairro_cnefe_setor/` (sem ele,
+byte a byte o de hoje, travado por teste). Medido em SP: hexágonos com nome de bairro 16,1% -> 96,4%;
+São José dos Campos "Setor Socioeconômico 14" -> "Jardim Satélite"; Jacareí e Sorocaba 0% -> 100%,
+Campinas 0% -> 77,0%. **Pendente:** (1) aprovação da DEC-076; (2) decisão do dono sobre quem move o
+artefato para o `staging/` — recomendado um `install -d` de root, uma vez, e o resto pelo `deploy` do
+Vinicius (avaliação na DEC); (3) deploy das imagens `web`/`api` e `restart web` depois do artefato.
