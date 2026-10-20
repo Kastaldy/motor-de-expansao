@@ -129,6 +129,24 @@ MOTIVO_POP_INSUFICIENTE = (
     + " habitantes: SAM zerado pelo gate."
 )
 
+
+def motivo_pop_insuficiente(pop_minima: float) -> str:
+    """O motivo do gate de populacao para um piso JA' escalado (DEC-074).
+
+    Com o piso de sempre devolve a constante `MOTIVO_POP_INSUFICIENTE`, caractere a
+    caractere -- e' o que a tela e o PDF do raio de 1 km ja' mostram. Num recorte maior o
+    piso escala pela area e o texto diz o numero que de fato reprovou, e por que ele nao e'
+    o de 5.000: dizer "abaixo de 5.000" com 12.000 habitantes no raio de 2 km seria mentir.
+    """
+    if pop_minima == POP_MIN_SAM_GATE:
+        return MOTIVO_POP_INSUFICIENTE
+    piso = f"{round(pop_minima):,}".replace(",", ".")
+    base = f"{POP_MIN_SAM_GATE:,}".replace(",", ".")
+    return (
+        f"População da área analisada abaixo de {piso} habitantes (piso de {base} do raio "
+        "de 1 km, escalado pela área do recorte): SAM zerado pelo gate."
+    )
+
 # Nomes dos insumos em `data/staging` -- os mesmos que o pipeline le.
 ARQ_CONCORRENTES = "concorrentes_mapeados.parquet"
 ARQ_REDES_AGREGADOR = "vulnerabilidade_ma_redes.parquet"
@@ -400,8 +418,18 @@ def mercado_na_area(
     geometria: BaseGeometry | None = None,
     excluir_ultra_proxima: bool = False,
     tolerancia_ultra_m: float = TOLERANCIA_UNIDADE_ULTRA_M,
+    fator_regua: float = 1.0,
 ) -> dict[str, Any]:
     """SAM, consumo (concorrentes + Ultra) e residual DENTRO do recorte do ponto.
+
+    `fator_regua` (DEC-074): escala o piso de POPULACAO do gate do SAM (DEC-007) pela area do
+    recorte -- `area / pi` (no raio, `raio^2`). O piso de 5.000 habitantes foi pensado para
+    o raio de 1 km; num raio de 2 km (4x a area) ele aprovaria quase qualquer praca so' por
+    ela ser maior. A tela e o PDF leem o MESMO `pop_minima_gate` devolvido aqui, ja'
+    escalado. Default 1.0 = o raio de 1 km de sempre, com os mesmos valores, frases e
+    chaves (o dict so' ganha `fator_regua` quando ele e' diferente de 1). NAO
+    escala o score do residual (`100 x residual / 2.500` mede "cabe uma unidade cheia", que
+    e' por unidade, nao por area).
 
     `excluir_ultra_proxima` (emenda da DEC-070): ESTUDO DA UNIDADE ULTRA. Tira do consumo
     UMA unidade -- a mais proxima de (lat, lng) a ate' `tolerancia_ultra_m` -- e so' ela
@@ -419,6 +447,11 @@ def mercado_na_area(
     `score_oportunidade_residual`) porque e' isso que o gerador do PDF ja' le -- o
     significado muda para o recorte, o contrato de leitura nao.
     """
+    fator = _finito(fator_regua)
+    if fator is None or fator <= 0:
+        raise ValueError(f"fator_regua tem de ser positivo e finito: {fator_regua!r}")
+    # Com fator 1 o piso continua sendo o INTEIRO do pipeline (mesmo tipo, mesmo payload).
+    pop_minima = POP_MIN_SAM_GATE if fator == 1.0 else POP_MIN_SAM_GATE * fator
     area = area_local(lat, lng, raio_km=raio_km, geometria=geometria)
     pop = _finito(pop_area)
     taxa_f = _finito(taxa)
@@ -428,7 +461,7 @@ def mercado_na_area(
 
     # --- gate (DEC-007 com a populacao do recorte) ---
     faixa_ok = faixa in FAIXAS_SAM_ELEGIVEIS if faixa is not None else False
-    pop_ok = None if pop is None else pop >= POP_MIN_SAM_GATE
+    pop_ok = None if pop is None else pop >= pop_minima
     flag_sam = None if pop_ok is None else (faixa_ok and pop_ok)
     motivo_gate = None
     if faixa is None:
@@ -436,7 +469,7 @@ def mercado_na_area(
     elif not faixa_ok:
         motivo_gate = MOTIVO_FAIXA_INELEGIVEL
     elif pop_ok is False:
-        motivo_gate = MOTIVO_POP_INSUFICIENTE
+        motivo_gate = motivo_pop_insuficiente(pop_minima)
 
     # --- SAM ---
     if taxa_f is None:
@@ -497,7 +530,7 @@ def mercado_na_area(
         residual = max(sam - consumo_total, 0.0)
         score = min(max(100.0 * residual / SCORE_RESIDUAL_CAPACIDADE_REFERENCIA, 0.0), 100.0)
 
-    return {
+    resultado: dict[str, Any] = {
         "grao": GRAO_GEOMETRIA if geometria is not None else GRAO_RAIO,
         "raio_km": None if geometria is not None else float(raio_km),
         "area_km2": float(area.area) / 1e6,
@@ -506,7 +539,7 @@ def mercado_na_area(
         "faixa_oportunidade": faixa,
         "gate_faixa_elegivel": bool(faixa_ok),
         "gate_pop_ok": pop_ok,
-        "pop_minima_gate": POP_MIN_SAM_GATE,
+        "pop_minima_gate": pop_minima,
         "flag_sam": flag_sam,
         "motivo_gate": motivo_gate,
         "sam_fitness_potencial": sam,
@@ -531,6 +564,12 @@ def mercado_na_area(
             k: proxima[k] for k in ("ultra_id", "nome", "dist_m")
         },
     }
+    # O fator so' entra no dict quando escala alguma coisa (molde do `censo_point`): com
+    # fator 1 o dict sai com as MESMAS chaves de antes da DEC-074, e quem serializa o dict
+    # inteiro (ou compara chaves) nao ve diferenca no raio de 1 km.
+    if fator != 1.0:
+        resultado["fator_regua"] = float(fator)
+    return resultado
 
 
 # --------------------------------------------------------------------------- #

@@ -194,12 +194,29 @@ def _carregar_malha(ibge_dir_str: str) -> _MalhaMunicipal:
     return _MalhaMunicipal(STRtree(geoms), meta, geoms)
 
 
-def _resolver_e_carregar(lat: float, lng: float, settings: Settings, *, geometria=None):
+def _resolver_e_carregar(
+    lat: float,
+    lng: float,
+    settings: Settings,
+    *,
+    geometria=None,
+    raio_km: float | None = None,
+    com_mapa: bool = False,
+):
     """Resolve ``(uf, cod_municipio)`` e carrega ``setores_df``. Levanta 400/404.
 
     `geometria` (DEC-071, opcional; shapely em graus, x=lng): o poligono desenhado, com
     (lat, lng) = o `representative_point` dele. Muda SO' o alcance dos vizinhos -- o proprio
     poligono (com margem) soma-se ao frame do ponto. Sem ela, a carga e' a de sempre, byte a byte.
+
+    `raio_km` (DEC-074, opcional): o raio do estudo quando ele NAO e' o de 1 km. O frame do
+    mapa cresce com o raio, e os vizinhos tem de crescer junto -- senao o raio de 2 km perto
+    de uma divisa perderia o municipio do lado em silencio (a classe de defeito da DEC-065).
+    `None` = o raio canonico, com a mesma chamada de sempre.
+
+    `com_mapa` (DEC-074, so' com `geometria`): a carga vai desenhar o MAPA do recorte (o
+    PDF), entao os vizinhos cobrem tambem o quadro dele -- ver `_malha_alcancada`. A ficha
+    da tela nao desenha mapa e nao paga essas particoes a mais.
     """
     malha = _carregar_malha(str(settings.ibge_dir))
     resolvido = malha.resolver(lat, lng)
@@ -238,13 +255,18 @@ def _resolver_e_carregar(lat: float, lng: float, settings: Settings, *, geometri
     # saia cortado em linha reta e os Big Numbers contavam meia vizinhanca. A ausencia que
     # IMPORTA continua sendo a do proprio ponto -> o 404 acima e' avaliado ANTES da uniao, e
     # vizinho sem particao apenas nao entra (cobertura parcial e' estado normal do artefato).
+    # So' repassa os kwargs que vieram: a chamada sem eles e' a de antes, literalmente
+    # (testes substituem `_malha_alcancada` por fakes de assinatura antiga).
+    kw_alcance: dict = {}
+    if geometria is not None:
+        kw_alcance["geometria"] = geometria
+    if raio_km is not None:
+        kw_alcance["raio_km"] = raio_km
+    if com_mapa and geometria is not None:
+        kw_alcance["com_mapa"] = True
     vizinhos = [
         chave
-        for chave in (
-            _malha_alcancada(malha, lat, lng)
-            if geometria is None
-            else _malha_alcancada(malha, lat, lng, geometria=geometria)
-        )
+        for chave in _malha_alcancada(malha, lat, lng, **kw_alcance)
         if chave != (uf, cod_municipio)
     ]
     if vizinhos:
@@ -267,24 +289,47 @@ def _resolver_e_carregar(lat: float, lng: float, settings: Settings, *, geometri
 
 
 def _malha_alcancada(
-    malha: _MalhaMunicipal, lat: float, lng: float, *, geometria=None
+    malha: _MalhaMunicipal,
+    lat: float,
+    lng: float,
+    *,
+    geometria=None,
+    raio_km: float | None = None,
+    com_mapa: bool = False,
 ) -> list[tuple[str, str]]:
     """Municipios que o FRAME do mapa alcanca — o alcance vem de quem desenha o frame.
 
     Com `geometria` (DEC-071), soma os que o poligono (com margem) alcanca, sem repetir e na
     ordem estavel (frame primeiro). Soma, e nao troca: o frame do ponto de referencia
     continua sendo o que um mapa centrado nele mostraria.
+
+    `raio_km` (DEC-074): o frame e' o do raio pedido (`alcance_do_frame_km(raio_km)`), pela
+    mesma fonte unica que desenha o mapa. `None` = o raio canonico de 1 km.
+
+    `com_mapa` (DEC-074, com `geometria`): soma tambem o QUADRO que o mapa do recorte
+    mostra (`quadro_do_mapa_da_geometria`, a mesma fonte do render). Ele sai dos bounds do
+    contorno esticados para a proporcao da figura e, numa isocrona alongada, vai
+    quilometros alem do poligono com folga -- o vizinho so' nessa faixa saia em branco no
+    mapa do PDF. So' quando ha' mapa: pelo poligono, e nao pela caixa, e' a regra da
+    revisao do PR #457 para a carga que nao desenha nada.
     """
     from motor_expansao.dashboard.censo_map import (
         RAIO_CENSITARIO_DEFAULT_KM,
         alcance_do_frame_km,
+        quadro_do_mapa_da_geometria,
     )
 
-    alcancados = malha.alcancados(lat, lng, alcance_do_frame_km(RAIO_CENSITARIO_DEFAULT_KM))
+    alcancados = malha.alcancados(
+        lat, lng, alcance_do_frame_km(raio_km or RAIO_CENSITARIO_DEFAULT_KM)
+    )
     if geometria is None:
         return alcancados
     vistos = set(alcancados)
-    for chave in malha.alcancados_na_geometria(geometria):
+    candidatos = list(malha.alcancados_na_geometria(geometria))
+    if com_mapa:
+        quadro = quadro_do_mapa_da_geometria(lat, lng, geometria)
+        candidatos.extend(malha.alcancados_na_geometria(quadro, margem_km=0.0))
+    for chave in candidatos:
         if chave not in vistos:
             vistos.add(chave)
             alcancados.append(chave)
@@ -780,8 +825,15 @@ def _mercado_do_ponto(
     *,
     geometria: Any = None,
     excluir_ultra_proxima: bool = False,
+    raio_km: float | None = None,
+    fator_regua: float | None = None,
 ) -> dict:
     """SAM / consumo (concorrentes + Ultra) / residual NO RAIO do ponto (DEC-070).
+
+    `raio_km` e `fator_regua` (DEC-074, alcance do ponto): o raio de 2 km e o fator que
+    escala o piso de populacao do gate do SAM pela area do recorte. `None` = o raio de
+    1 km e o fator 1 de sempre -- e, nesse caso, a chamada a `mercado_na_area` nem recebe
+    o fator, para o dict sair exatamente como antes.
 
     `excluir_ultra_proxima` (emenda da DEC-070): ESTUDO DA UNIDADE ULTRA -- o consumo da
     unidade Ultra a ate' 150 m do ponto sai da conta (so' ela). E' a UNICA falha que esta
@@ -810,6 +862,7 @@ def _mercado_do_ponto(
 
     linha = _linha_mercado_do_hex(lat, lng, settings) or {}
     staging = str(settings.staging_dir)
+    kw_regua: dict[str, Any] = {} if fator_regua is None else {"fator_regua": fator_regua}
     try:
         out = mercado_na_area(
             lat,
@@ -819,9 +872,10 @@ def _mercado_do_ponto(
             ultra=carregar_ultra_mercado(staging),
             taxa=linha.get(_COL_TAXA),
             faixa_oportunidade=linha.get("faixa_oportunidade"),
-            raio_km=RAIO_CENSITARIO_DEFAULT_KM,
+            raio_km=raio_km or RAIO_CENSITARIO_DEFAULT_KM,
             geometria=geometria,
             excluir_ultra_proxima=excluir_ultra_proxima,
+            **kw_regua,
         )
     except UnidadeUltraForaDaTolerancia:
         raise

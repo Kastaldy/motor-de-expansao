@@ -758,7 +758,7 @@ export default function BarraCamadas({
           icone="legenda"
           titulo={
             !legendaDisponivel
-              ? 'Legenda escondida: as cores dos hexágonos estão desligadas'
+              ? 'Legenda escondida: nenhuma camada de cor está ligada'
               : legendaVisivel
                 ? 'Esconder a legenda'
                 : 'Mostrar a legenda'

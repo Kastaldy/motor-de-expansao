@@ -1,6 +1,7 @@
 import { StrictMode } from 'react'
 import { createRoot } from 'react-dom/client'
 
+import { definirAlcances } from './lib/alcance'
 import { api } from './lib/api'
 import { definirPerfil } from './lib/perfil'
 import { definirAvisoDeViabilidade } from './lib/viabilidade-demanda'
@@ -34,6 +35,9 @@ async function iniciar(): Promise<void> {
     definirPerfil(me.perfil)
     definirAvisoDeViabilidade(me.aviso_viabilidade)
     definirMoedaDeViabilidade(me.viabilidade_moeda)
+    /* Os alcances do ponto que a instância oferece (DEC-074): "10 min de carro" só com o
+       serviço de rotas configurado. Sem a chave, só o raio de 1 km. */
+    definirAlcances(me.alcances)
   } catch {
     /* sem /api/me -> segue no default; o backend continua barrando o que deve */
   }
