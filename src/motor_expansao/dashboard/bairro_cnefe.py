@@ -13,10 +13,17 @@ existe, as vezes e' outra coisa (em Sao Jose dos Campos sao as 35 regioes de pla
 prefeitura, "Setor Socioeconomico 14"). O `DSC_LOCALIDADE` do CNEFE da' o bairro em 97,2% dos
 setores do pais (BLK-BAIRRO-01, fase 1).
 
-Artefato (derivado, OPCIONAL, gitignored): `<MOTOR_DATA_DIR>/staging/bairro_cnefe_setor/
-uf=XX/part-000.parquet`, uma linha por setor com o bairro DOMINANTE (o de mais enderecos).
+Artefato (derivado, OPCIONAL, gitignored): `<staging>/bairro_cnefe_setor/uf=XX/part-000.parquet`,
+uma linha por setor com o bairro DOMINANTE (o de mais enderecos). `<staging>` e' a configuracao
+de staging DO PROCESSO (piloto: `STAGING_DIR`; API/bot: `Settings.staging_dir`, `API_STAGING_DIR`);
+so' quem nao a passa cai no fallback `censo_geo_dir.parent.parent / "staging"`.
 Sem o artefato, ou sem a UF, `aplicar_bairro_cnefe` devolve o MESMO objeto que recebeu: o
 comportamento e' byte a byte o de antes (travado por teste).
+
+Cache e restart: a leitura do artefato aqui e' cacheada por (caminho, mtime), entao ESTA camada
+rele um artefato trocado. Mas quem chama pode cachear o resultado por cima: o
+`bairros_por_hex` do piloto (`web/server/app.py`) e' `lru_cache` por (uf, municipio) e guarda o
+nome antigo -- toda troca do artefato (subida, atualizacao ou remocao) exige restart do `web`.
 
 Regra de nome, por setor:
 - classe BAIRRO  -> o nome do CNEFE, em qualquer participacao (e' o dominante do setor; sem
@@ -55,13 +62,22 @@ _CLASSE_RURAL = "RURAL"
 _COLUNAS_ARTEFATO = ["cod_setor", "bairro_cnefe", "classe"]
 
 
-def diretorio_bairro_cnefe(censo_geo_dir: Path | str) -> Path:
-    """`<MOTOR_DATA_DIR>/staging/bairro_cnefe_setor`, derivado do diretorio da malha geo.
+def diretorio_bairro_cnefe(
+    censo_geo_dir: Path | str | None, staging_dir: Path | str | None = None
+) -> Path | None:
+    """`<staging>/bairro_cnefe_setor`.
 
-    A malha mora em `<MOTOR_DATA_DIR>/outputs/setores_censitarios_2022_geo` nos tres lugares
-    que a leem (piloto, API e o checkout local), e `outputs/` e `staging/` sao irmaos nos
-    mounts de producao. Derivar daqui evita um parametro novo em cada chamador.
+    `staging_dir` e' a configuracao de staging do processo (piloto: `STAGING_DIR`; API/bot:
+    `Settings.staging_dir`, lida de `API_STAGING_DIR`) e, quando vem, MANDA: um override de
+    `API_CENSO_GEO_DIR` nao desalinha o caminho do artefato. FALLBACK declarado, so' para quem
+    nao passa a configuracao: `censo_geo_dir.parent.parent / "staging"` (a malha mora em
+    `<MOTOR_DATA_DIR>/outputs/setores_censitarios_2022_geo`, irma do `staging/` nos mounts de
+    hoje). Sem nenhum dos dois -> `None` (sem artefato).
     """
+    if staging_dir is not None:
+        return Path(staging_dir) / SUBDIR_ARTEFATO
+    if censo_geo_dir is None:
+        return None
     return Path(censo_geo_dir).parent.parent / "staging" / SUBDIR_ARTEFATO
 
 
@@ -69,32 +85,40 @@ def _arquivo_uf(raiz: Path, uf: str) -> Path:
     return raiz / f"uf={str(uf).upper()}" / "part-000.parquet"
 
 
-def bairro_cnefe_disponivel(censo_geo_dir: Path | str | None, uf: str | None) -> bool:
+def bairro_cnefe_disponivel(
+    censo_geo_dir: Path | str | None, uf: str | None, *, staging_dir: Path | str | None = None
+) -> bool:
     """O artefato existe para esta UF? (barato: um `stat`)."""
-    if censo_geo_dir is None or not uf:
+    if not uf:
         return False
-    return _arquivo_uf(diretorio_bairro_cnefe(censo_geo_dir), str(uf)).is_file()
+    raiz = diretorio_bairro_cnefe(censo_geo_dir, staging_dir)
+    return raiz is not None and _arquivo_uf(raiz, str(uf)).is_file()
 
 
 @lru_cache(maxsize=8)
-def _ler_uf(caminho: str, _mtime_ns: int) -> dict[str, tuple[str, str]]:
-    """`cod_setor -> (bairro_cnefe, classe)` de uma UF. Cacheado por (caminho, mtime).
+def _ler_uf(caminho: str, _mtime_ns: int) -> pd.DataFrame:
+    """Tabela do artefato de uma UF, indexada pelo `cod_setor` LIMPO. Cacheada por (caminho, mtime).
 
-    O `mtime` na chave e' de proposito: um artefato substituido no disco e' relido sem
-    restart, e a AUSENCIA nunca entra no cache (quem chama so' chega aqui com o arquivo).
+    Colunas `bairro` (cru, "" quando nulo) e `classe`; indice unico (codigo repetido: vale a
+    ULTIMA linha, como no dict de antes). O `mtime` na chave e' de proposito: um artefato
+    substituido no disco e' relido por ESTA camada, e a AUSENCIA nunca entra no cache (quem
+    chama so' chega aqui com o arquivo). Quem cacheia o RESULTADO por cima (o `bairros_por_hex`
+    do piloto) continua precisando de restart -- ver o docstring do modulo.
     """
     df = pd.read_parquet(caminho, columns=_COLUNAS_ARTEFATO)
-    mapa: dict[str, tuple[str, str]] = {}
-    for cod, bruto, classe in zip(df["cod_setor"], df["bairro_cnefe"], df["classe"], strict=True):
-        chave = _cod_setor_limpo(cod)
-        if not chave:
-            continue
-        mapa[chave] = ("" if bruto is None or pd.isna(bruto) else str(bruto), str(classe))
-    return mapa
+    bairro = df["bairro_cnefe"].astype(object)
+    tabela = pd.DataFrame(
+        {
+            "chave": _cods_setor_limpos(df["cod_setor"]).to_numpy(),
+            "bairro": bairro.where(bairro.notna(), "").astype(str).to_numpy(),
+            "classe": df["classe"].astype(str).to_numpy(),
+        }
+    )
+    tabela = tabela[tabela["chave"] != ""].drop_duplicates("chave", keep="last")
+    return tabela.set_index("chave")
 
 
-def ler_bairro_cnefe_uf(raiz: Path | str, uf: str) -> dict[str, tuple[str, str]] | None:
-    """Mapa do artefato de uma UF, ou `None` se ele nao existe (ou nao se le)."""
+def _tabela_uf(raiz: Path | str, uf: str) -> pd.DataFrame | None:
     arquivo = _arquivo_uf(Path(raiz), uf)
     try:
         mtime = arquivo.stat().st_mtime_ns
@@ -104,6 +128,17 @@ def ler_bairro_cnefe_uf(raiz: Path | str, uf: str) -> dict[str, tuple[str, str]]
         return _ler_uf(str(arquivo), mtime)
     except Exception:  # noqa: BLE001 - artefato ilegivel = ausente: o IBGE segue valendo
         return None
+
+
+def ler_bairro_cnefe_uf(raiz: Path | str, uf: str) -> dict[str, tuple[str, str]] | None:
+    """Mapa `cod_setor -> (bairro_cnefe, classe)` de uma UF, ou `None` se ele nao existe."""
+    tabela = _tabela_uf(raiz, uf)
+    if tabela is None:
+        return None
+    return {
+        str(k): (str(b), str(c))
+        for k, b, c in zip(tabela.index, tabela["bairro"], tabela["classe"], strict=True)
+    }
 
 
 def _cod_setor_limpo(valor: Any) -> str:
@@ -119,6 +154,22 @@ def _cod_setor_limpo(valor: Any) -> str:
     if texto.endswith(".0"):
         texto = texto[:-2]
     return re.sub(r"\D", "", texto)
+
+
+def _cods_setor_limpos(serie: pd.Series) -> pd.Series:
+    """`_cod_setor_limpo` VETORIZADO (mesmo resultado, sem laco Python por setor).
+
+    Texto: strip, sufixo ".0" fora, so' digitos. Coluna numerica (raro: parquet antigo) cai no
+    escalar, que e' a referencia -- o `str()` de um float nao se reproduz com operacao de texto.
+    """
+    if not (pd.api.types.is_object_dtype(serie) or pd.api.types.is_string_dtype(serie)):
+        return serie.map(_cod_setor_limpo).astype(object)
+    nulos = serie.isna()
+    # Uma passada so': o ".0" final (com espaco depois, que o strip tiraria) e tudo que nao e'
+    # digito -- espaco incluso, entao o strip do escalar ja' esta coberto.
+    texto = serie.astype(object).where(~nulos, "").astype(str)
+    texto = texto.str.replace(r"\.0\s*$|\D", "", regex=True)
+    return texto.where(~nulos, "").astype(object)
 
 
 def normalizar_nome(valor: Any) -> str:
@@ -209,7 +260,8 @@ _ACENTOS: dict[str, str] = {
     # Medidas na malha de SP (20/10): palavras do CNEFE cuja UNICA grafia no IBGE e' acentuada
     # (nenhuma ocorrencia sem acento), conferidas uma a uma. Ficaram de fora as que o IBGE
     # grafa errado ("Bangú", "Cumbíca", "Jóckey") ou que tem outra leitura ("PARA", "CARA",
-    # "POMPEIA", que o Acordo de 1990 tirou o acento).
+    # "POMPEIA", que o Acordo de 1990 tirou o acento; "SAPE", que e' Sapê e tambem Sapé/PB;
+    # "FLORIDA", que e' Flórida e tambem o adjetivo "florida" de "Vila Florida").
     "TRES": "Três", "CONDOMINIO": "Condomínio", "BOQUEIRAO": "Boqueirão", "POCO": "Poço",
     "CALIFORNIA": "Califórnia", "NACOES": "Nações", "SONIA": "Sônia",
     "CENTENARIO": "Centenário", "BALNEARIO": "Balneário", "ESTANCIA": "Estância",
@@ -221,7 +273,7 @@ _ACENTOS: dict[str, str] = {
     "ITAPUA": "Itapuã", "ACU": "Açu", "GALVAO": "Galvão", "HIGIENOPOLIS": "Higienópolis",
     "JUNIOR": "Júnior", "HUMAITA": "Humaitá", "MARABA": "Marabá", "VIRGINIA": "Virgínia",
     "AVIACAO": "Aviação", "REDENCAO": "Redenção", "CANDIDA": "Cândida", "INGA": "Ingá",
-    "JACUI": "Jacuí", "BARAO": "Barão", "SAPE": "Sapê", "FLORIDA": "Flórida",
+    "JACUI": "Jacuí", "BARAO": "Barão",
     "MONTANHAO": "Montanhão", "MAE": "Mãe", "ANGELICA": "Angélica", "MAUA": "Mauá",
     "PARAIBA": "Paraíba", "CERAMICA": "Cerâmica", "JAGUARE": "Jaguaré", "INDAIA": "Indaiá",
     "VALPARAISO": "Valparaíso", "ORATORIO": "Oratório", "JORDAO": "Jordão", "IRMA": "Irmã",
@@ -301,35 +353,38 @@ def _grafias_por_municipio(setores: pd.DataFrame, cods_muni: pd.Series) -> dict[
 
     So' grafia que TEM minuscula entra: uma grafia toda em maiusculas nao ensina nada sobre
     acento nem capitalizacao. Varias grafias para o mesmo nome -> a mais frequente, desempate
-    pela ordem alfabetica (deterministico, nao depende da ordem das linhas).
+    pela ordem alfabetica (deterministico, nao depende da ordem das linhas). Vetorizado: a
+    normalizacao roda uma vez por grafia DISTINTA, nao por setor. `cods_muni` e' POSICIONAL.
     """
-    contagem: dict[str, dict[str, dict[str, int]]] = {}
-    for col in ("nome_bairro", "nome_subdistrito", "nome_distrito"):
-        if col not in setores.columns:
-            continue
-        for cod, valor in zip(cods_muni, setores[col], strict=True):
-            if valor is None:
-                continue
-            try:
-                if pd.isna(valor):
-                    continue
-            except (TypeError, ValueError):
-                continue
-            grafia = str(valor).strip()
-            if not grafia or grafia.upper() == grafia:
-                continue
-            chave = normalizar_nome(grafia)
-            if not chave:
-                continue
-            balde = contagem.setdefault(cod, {}).setdefault(chave, {})
-            balde[grafia] = balde.get(grafia, 0) + 1
-    return {
-        cod: {
-            chave: sorted(opcoes.items(), key=lambda kv: (-kv[1], kv[0]))[0][0]
-            for chave, opcoes in por_nome.items()
-        }
-        for cod, por_nome in contagem.items()
-    }
+    cods = cods_muni.to_numpy(dtype=object)
+    partes = [
+        pd.DataFrame({"cod": cods, "grafia": setores[col].to_numpy(dtype=object)})
+        for col in ("nome_bairro", "nome_subdistrito", "nome_distrito")
+        if col in setores.columns
+    ]
+    if not partes:
+        return {}
+    todas = pd.concat(partes, ignore_index=True)
+    todas = todas[todas["grafia"].notna()]
+    if todas.empty:
+        return {}
+    todas = todas.assign(grafia=todas["grafia"].astype(str).str.strip())
+    todas = todas[(todas["grafia"] != "") & (todas["grafia"] != todas["grafia"].str.upper())]
+    if todas.empty:
+        return {}
+    contagem = todas.groupby(["cod", "grafia"], sort=False).size().reset_index(name="n")
+    chaves = {g: normalizar_nome(g) for g in pd.unique(contagem["grafia"])}
+    contagem["chave"] = contagem["grafia"].map(chaves)
+    contagem = contagem[contagem["chave"] != ""]
+    contagem = contagem.sort_values(
+        ["cod", "chave", "n", "grafia"], ascending=[True, True, False, True], kind="mergesort"
+    ).drop_duplicates(["cod", "chave"], keep="first")
+    saida: dict[str, dict[str, str]] = {}
+    for cod, chave, grafia in zip(
+        contagem["cod"], contagem["chave"], contagem["grafia"], strict=True
+    ):
+        saida.setdefault(cod, {})[chave] = grafia
+    return saida
 
 
 def aplicar_bairro_cnefe(
@@ -337,6 +392,7 @@ def aplicar_bairro_cnefe(
     *,
     censo_geo_dir: Path | str | None,
     uf: str | None = None,
+    staging_dir: Path | str | None = None,
 ) -> pd.DataFrame:
     """Reescreve o bairro dos setores pelo CNEFE 2022; o IBGE fica como reserva. FONTE UNICA.
 
@@ -348,76 +404,106 @@ def aplicar_bairro_cnefe(
     de onde veio cada linha (`cnefe`/`ibge`).
 
     Devolve o MESMO objeto, intocado, quando nao ha o que aplicar: frame vazio, sem
-    `cod_setor`, sem `censo_geo_dir`, sem o artefato da(s) UF(s) ou nenhum setor coberto. E'
+    `cod_setor`, sem `censo_geo_dir` nem `staging_dir`, sem o artefato da(s) UF(s) ou nenhum setor coberto. E'
     essa identidade que garante o "byte a byte" sem o artefato.
 
     `uf`: a UF quando o frame nao tem a coluna `uf` (a particao lida por
     `ler_particao_setores` com colunas escolhidas nao a traz). Com a coluna, ela manda — o
     frame do ponto de divisa junta municipios de UFs diferentes.
+
+    `staging_dir`: a configuracao de staging do processo (ver `diretorio_bairro_cnefe`).
+
+    Perfil do bairro (`censo_point.agregar_perfil_bairro_distrito`): o setor que fica com o IBGE
+    mantem o `cod_bairro` do IBGE, mas os vizinhos da mesma regiao que o CNEFE nomeou trocaram
+    de chave -- por isso o perfil de um codigo do IBGE agrega por `cod_bairro_ibge` (a regiao
+    COMPLETA), nao por `cod_bairro`.
     """
-    if setores is None or getattr(setores, "empty", True) or censo_geo_dir is None:
+    if setores is None or getattr(setores, "empty", True):
+        return setores
+    if censo_geo_dir is None and staging_dir is None:
         return setores
     if "cod_setor" not in setores.columns:
         return setores
-    raiz = diretorio_bairro_cnefe(censo_geo_dir)
+    raiz = diretorio_bairro_cnefe(censo_geo_dir, staging_dir)
+    if raiz is None:
+        return setores
     uf_padrao = str(uf).upper().strip() if uf else ""
     if "uf" in setores.columns:
-        ufs = [
-            (str(u).upper().strip() if u is not None and not pd.isna(u) else "") or uf_padrao
-            for u in setores["uf"]
-        ]
+        bruta = setores["uf"].astype(object)
+        ufs = bruta.where(bruta.notna(), "").astype(str).str.upper().str.strip()
+        ufs = ufs.where(ufs != "", uf_padrao)
     else:
         if not uf_padrao:
             return setores
-        ufs = [uf_padrao] * len(setores)
-    mapas: dict[str, dict[str, tuple[str, str]]] = {}
+        ufs = pd.Series(uf_padrao, index=setores.index, dtype=object)
+    tabelas: dict[str, pd.DataFrame] = {}
     for u in sorted(set(ufs)):
         if not u:
             continue
-        mapa = ler_bairro_cnefe_uf(raiz, u)
-        if mapa:
-            mapas[u] = mapa
-    if not mapas:
+        tabela = _tabela_uf(raiz, u)
+        if tabela is not None and not tabela.empty:
+            tabelas[u] = tabela
+    if not tabelas:
         return setores
 
-    cods = [_cod_setor_limpo(c) for c in setores["cod_setor"]]
-    achados: list[tuple[str, str] | None] = []
-    for u, cod in zip(ufs, cods, strict=True):
-        entrada = mapas.get(u, {}).get(cod) if cod else None
-        if entrada is not None and entrada[1] in (_CLASSE_BAIRRO, _CLASSE_RURAL):
-            achados.append(entrada)
-        else:
-            achados.append(None)
-    if not any(a is not None for a in achados):
+    # Busca VETORIZADA (revisao M2 da DEC-076): `map` contra a tabela indexada, por UF -- antes
+    # era um laco Python por setor.
+    cods = _cods_setor_limpos(setores["cod_setor"])
+    com_cod = (cods != "").to_numpy()
+    brutos = pd.Series(pd.NA, index=setores.index, dtype=object)
+    classes = pd.Series(pd.NA, index=setores.index, dtype=object)
+    for u, tabela in tabelas.items():
+        na_uf = (ufs == u).to_numpy() & com_cod
+        if not na_uf.any():
+            continue
+        alvo = cods[na_uf]
+        brutos[na_uf] = alvo.map(tabela["bairro"]).to_numpy(dtype=object)
+        classes[na_uf] = alvo.map(tabela["classe"]).to_numpy(dtype=object)
+    achado = classes.isin([_CLASSE_BAIRRO, _CLASSE_RURAL]).to_numpy()
+    if not achado.any():
         return setores
 
-    cods_muni = pd.Series([c[:7] for c in cods], index=setores.index)
+    cods_muni = cods.str[:7]
     grafias = _grafias_por_municipio(setores, cods_muni)
 
-    nomes: list[Any] = []
-    chaves: list[Any] = []
-    fontes: list[str] = []
+    # Grafia e chave uma vez por (nome cru, classe, municipio) DISTINTO, nao por setor.
+    pares = pd.DataFrame(
+        {
+            "bruto": brutos[achado].astype(str).to_numpy(dtype=object),
+            "classe": classes[achado].astype(str).to_numpy(dtype=object),
+            "muni": cods_muni[achado].to_numpy(dtype=object),
+        }
+    )
+    distintos = pares.drop_duplicates().reset_index(drop=True)
+    nomes_distintos = [
+        ROTULO_ZONA_RURAL
+        if classe == _CLASSE_RURAL
+        else formatar_nome_cnefe(bruto, grafias.get(muni))
+        for bruto, classe, muni in zip(
+            distintos["bruto"], distintos["classe"], distintos["muni"], strict=True
+        )
+    ]
+    distintos["nome"] = nomes_distintos
+    distintos["chave"] = [
+        f"cnefe:{muni}:{normalizar_nome(nome)}"
+        for muni, nome in zip(distintos["muni"], nomes_distintos, strict=True)
+    ]
+    resolvidos = pares.merge(distintos, on=["bruto", "classe", "muni"], how="left", sort=False)
+
     nome_ibge = setores["nome_bairro"] if "nome_bairro" in setores.columns else None
     cod_ibge = setores["cod_bairro"] if "cod_bairro" in setores.columns else None
-    for i, (achado, cod_muni) in enumerate(zip(achados, cods_muni, strict=True)):
-        if achado is None:
-            nomes.append(nome_ibge.iat[i] if nome_ibge is not None else pd.NA)
-            chaves.append(cod_ibge.iat[i] if cod_ibge is not None else pd.NA)
-            fontes.append(FONTE_IBGE)
-            continue
-        bruto, classe = achado
-        if classe == _CLASSE_RURAL:
-            nome = ROTULO_ZONA_RURAL
-        else:
-            nome = formatar_nome_cnefe(bruto, grafias.get(cod_muni))
-        nomes.append(nome)
-        chaves.append(f"cnefe:{cod_muni}:{normalizar_nome(nome)}")
-        fontes.append(FONTE_CNEFE)
+    vazio = pd.Series(pd.NA, index=setores.index, dtype=object)
+    nomes = nome_ibge.astype(object).copy() if nome_ibge is not None else vazio.copy()
+    chaves = cod_ibge.astype(object).copy() if cod_ibge is not None else vazio.copy()
+    nomes[achado] = resolvidos["nome"].to_numpy(dtype=object)
+    chaves[achado] = resolvidos["chave"].to_numpy(dtype=object)
+    fontes = pd.Series(FONTE_IBGE, index=setores.index, dtype=object)
+    fontes[achado] = FONTE_CNEFE
 
     out = setores.copy()
     out["nome_bairro_ibge"] = nome_ibge if nome_ibge is not None else pd.NA
     out["cod_bairro_ibge"] = cod_ibge if cod_ibge is not None else pd.NA
-    out["nome_bairro"] = pd.Series(nomes, index=setores.index, dtype=object)
-    out["cod_bairro"] = pd.Series(chaves, index=setores.index, dtype=object)
-    out["fonte_bairro"] = pd.Series(fontes, index=setores.index, dtype=object)
+    out["nome_bairro"] = nomes
+    out["cod_bairro"] = chaves
+    out["fonte_bairro"] = fontes
     return out

@@ -48,9 +48,9 @@ def capturado(monkeypatch: pytest.MonkeyPatch, tmp_path) -> dict:
         return pd.DataFrame({"rede": [pd.NA], "lat": [0.0], "lng": [0.0]}), None
 
     monkeypatch.setattr(service, "_competitors_ultra", _uniao)
-    monkeypatch.setattr(relmun, "_carregar_bairros_por_hex", lambda uf, cod, d: {"ac1": "Centro"})
+    monkeypatch.setattr(relmun, "_carregar_bairros_por_hex", lambda uf, cod, d, **k: {"ac1": "Centro"})
 
-    def _geo(uf, cod, d):
+    def _geo(uf, cod, d, **k):  # **k: `staging_dir` (DEC-076)
         cap["bairros_geo_cod"] = cod
         return {"bairros": ["Centro"]}
 

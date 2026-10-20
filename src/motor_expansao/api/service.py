@@ -290,7 +290,10 @@ def _resolver_e_carregar(
     # (que reusa estes setores) leem a mesma coluna. Sem o artefato, devolve o mesmo frame.
     from motor_expansao.dashboard.bairro_cnefe import aplicar_bairro_cnefe
 
-    setores_df = aplicar_bairro_cnefe(setores_df, censo_geo_dir=settings.censo_geo_dir, uf=uf)
+    # O artefato mora no staging DO PROCESSO (`API_STAGING_DIR`), nao no irmao da malha.
+    setores_df = aplicar_bairro_cnefe(
+        setores_df, censo_geo_dir=settings.censo_geo_dir, uf=uf, staging_dir=settings.staging_dir
+    )
     return uf, cod_municipio, setores_df
 
 
@@ -1471,7 +1474,9 @@ def montar_pdf_municipio(
                 resolve_cod_municipio_from_geo_dir(settings.censo_geo_dir, uf, nome_municipio)
             )
         if cod:
-            bairros = _carregar_bairros_por_hex(uf, cod, settings.censo_geo_dir)
+            bairros = _carregar_bairros_por_hex(
+                uf, cod, settings.censo_geo_dir, staging_dir=settings.staging_dir
+            )
     except Exception:
         bairros = None
     # BLK-RELMUN-06: limite territorial dos bairros (mesma particao geo, segunda leitura), nas
@@ -1480,7 +1485,9 @@ def montar_pdf_municipio(
     # levar junto o rotulo por hex da pagina "Bairros por Zona", que ja funcionava.
     try:
         if cod:
-            bairros_geo = carregar_bairros_geo(uf, cod, settings.censo_geo_dir)
+            bairros_geo = carregar_bairros_geo(
+                uf, cod, settings.censo_geo_dir, staging_dir=settings.staging_dir
+            )
     except Exception:
         bairros_geo = None
     # Renda DOMICILIAR por hexagono para a tabela de comparacao: vale nas DUAS unidades

@@ -519,6 +519,7 @@ def _carregar_bairros_por_hex(
     uf: str | None,
     cod_municipio: str | None,
     censo_geo_dir: Path | None,
+    staging_dir: Path | str | None = None,
 ) -> dict[str, str]:
     """A2.3: le a particao geo do municipio e mapeia `hex_id` res-7 -> localidade dominante.
 
@@ -529,37 +530,54 @@ def _carregar_bairros_por_hex(
     (redundante). Deriva o centroide do setor (do bbox), mapeia a `hex_id` res-7 via h3 (import
     lazy) e resolve a localidade DOMINANTE por hex (mais populosa vence). Fallback gracioso: sem
     `censo_geo_dir`/particao/coluna -> `{}` (Pagina 6 simplificada).
+
+    `staging_dir` (DEC-076): a configuracao de staging do processo, onde mora o artefato do
+    CNEFE; `None` cai no fallback derivado de `censo_geo_dir` (ver `bairro_cnefe`).
     """
     if censo_geo_dir is None or not uf or not cod_municipio:
         return {}
     _bbox_pop = ["bbox_minx", "bbox_miny", "bbox_maxx", "bbox_maxy", "pop_total_setor_2022"]
+    # Tenta a cascata completa (bairro/subdistrito/distrito + nome_municipio p/ o guard); se a
+    # particao for de um schema antigo sem essas colunas, cai para so `nome_bairro`.
+    tentativas = [
+        ["nome_bairro", "nome_subdistrito", "nome_distrito", "nome_municipio", *_bbox_pop],
+        ["nome_bairro", *_bbox_pop],
+    ]
     # DEC-076: com o artefato do CNEFE para a UF, le tambem `cod_setor` (a chave dele). Sem o
-    # artefato a leitura e' a de sempre, coluna a coluna.
-    if bairro_cnefe_disponivel(censo_geo_dir, uf):
-        _bbox_pop = ["cod_setor", *_bbox_pop]
+    # artefato a leitura e' a de sempre, coluna a coluna. Particao SEM `cod_setor` (schema
+    # antigo) cai nas leituras de antes: o bairro segue o do IBGE, nunca some.
+    if bairro_cnefe_disponivel(censo_geo_dir, uf, staging_dir=staging_dir):
+        tentativas = [[*cols, "cod_setor"] for cols in tentativas] + tentativas
+    setores = _ler_setores_em_tentativas(censo_geo_dir, uf, cod_municipio, tentativas)
+    if setores is None:
+        return {}
+    return bairros_por_hex_de_setores(
+        aplicar_bairro_cnefe(setores, censo_geo_dir=censo_geo_dir, uf=uf, staging_dir=staging_dir)
+    )
+
+
+def _ler_setores_em_tentativas(
+    censo_geo_dir: Path | str,
+    uf: str,
+    cod_municipio: str,
+    tentativas: list[list[str]],
+) -> pd.DataFrame | None:
+    """Le a particao com a PRIMEIRA lista de colunas que o schema aceitar; `None` se nenhuma."""
     try:
         from motor_expansao.pipelines.materializar_setores_censitarios_geo import (
             ler_particao_setores,
         )
-
-        # Tenta a cascata completa (bairro/subdistrito/distrito + nome_municipio p/ o guard); se a
-        # particao for de um schema antigo sem essas colunas, cai para so `nome_bairro`.
+    except Exception:
+        return None
+    for colunas in tentativas:
         try:
-            setores = ler_particao_setores(
+            return ler_particao_setores(
                 root=Path(censo_geo_dir), uf=str(uf), cod_municipio=str(cod_municipio),
-                columns=["nome_bairro", "nome_subdistrito", "nome_distrito", "nome_municipio",
-                         *_bbox_pop],
+                columns=colunas,
             )
         except Exception:
-            setores = ler_particao_setores(
-                root=Path(censo_geo_dir), uf=str(uf), cod_municipio=str(cod_municipio),
-                columns=["nome_bairro", *_bbox_pop],
-            )
-    except Exception:
-        return {}
-    return bairros_por_hex_de_setores(
-        aplicar_bairro_cnefe(setores, censo_geo_dir=censo_geo_dir, uf=uf)
-    )
+            continue
+    return None
 
 
 def bairros_por_hex_de_setores(setores: pd.DataFrame | None) -> dict[str, str]:
@@ -648,6 +666,7 @@ def carregar_bairros_geo(
     uf: str | None,
     cod_municipio: str | None,
     censo_geo_dir: Path | str | None,
+    staging_dir: Path | str | None = None,
 ) -> dict[str, Any]:
     """Limite territorial de cada bairro do municipio, em EPSG:3857, pronto para desenho.
 
@@ -671,10 +690,6 @@ def carregar_bairros_geo(
     try:
         from shapely import wkb as shapely_wkb
         from shapely.ops import unary_union
-
-        from motor_expansao.pipelines.materializar_setores_censitarios_geo import (
-            ler_particao_setores,
-        )
     except Exception:
         return vazio
 
@@ -690,28 +705,23 @@ def carregar_bairros_geo(
         "bbox_maxx",
         "bbox_maxy",
     ]
-    # DEC-076: a chave do artefato do CNEFE, so' quando ele existe para a UF.
-    if bairro_cnefe_disponivel(censo_geo_dir, uf):
-        medidas.append("cod_setor")
-    try:
-        setores = ler_particao_setores(
-            root=Path(censo_geo_dir), uf=str(uf), cod_municipio=str(cod_municipio),
-            columns=["nome_bairro", "nome_subdistrito", "nome_distrito", "nome_municipio", *medidas],
-        )
-    except Exception:
-        # Schema antigo (sem a cascata): so `nome_bairro` ja permite desenhar.
-        try:
-            setores = ler_particao_setores(
-                root=Path(censo_geo_dir), uf=str(uf), cod_municipio=str(cod_municipio),
-                columns=["nome_bairro", *medidas],
-            )
-        except Exception:
-            return vazio
+    # Schema antigo (sem a cascata): so `nome_bairro` ja permite desenhar.
+    tentativas = [
+        ["nome_bairro", "nome_subdistrito", "nome_distrito", "nome_municipio", *medidas],
+        ["nome_bairro", *medidas],
+    ]
+    # DEC-076: a chave do artefato do CNEFE, so' quando ele existe para a UF. Particao SEM
+    # `cod_setor` cai nas leituras de antes (bairro do IBGE), em vez de sumir.
+    if bairro_cnefe_disponivel(censo_geo_dir, uf, staging_dir=staging_dir):
+        tentativas = [[*cols, "cod_setor"] for cols in tentativas] + tentativas
+    setores = _ler_setores_em_tentativas(censo_geo_dir, str(uf), str(cod_municipio), tentativas)
     if setores is None or setores.empty or "geometry_wkb" not in setores.columns:
         return vazio
     # DEC-076: o bairro do CNEFE substitui o do IBGE onde existe; o limite desenhado passa a ser
     # o do bairro do CNEFE (dissolvido pelos setores), o mesmo que nomeia a Pagina 6.
-    setores_cnefe = aplicar_bairro_cnefe(setores, censo_geo_dir=censo_geo_dir, uf=uf)
+    setores_cnefe = aplicar_bairro_cnefe(
+        setores, censo_geo_dir=censo_geo_dir, uf=uf, staging_dir=staging_dir
+    )
     usou_cnefe = setores_cnefe is not setores
     setores = setores_cnefe
 

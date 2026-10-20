@@ -21,13 +21,15 @@ _UF = "SP"
 _COD = "3549904"  # Sao Jose dos Campos
 _MUNI = box(-45.95, -23.25, -45.80, -23.15)
 _LAT, _LNG = -23.2005, -45.8985  # dentro do setor 0
+_LNG_SETOR_2 = -45.8945  # dentro do setor 2 (MUNICIPIO no CNEFE -> fica com o IBGE)
+_COD_BAIRRO_IBGE = "0003549904014"
 
 
 def _cod_setor(i: int) -> str:
     return f"{_COD}05{i:06d}"
 
 
-def _escrever_particao(censo_dir) -> None:
+def _escrever_particao(censo_dir, *, sem_cod_setor: bool = False) -> None:
     from shapely import wkb
 
     linhas = []
@@ -59,11 +61,14 @@ def _escrever_particao(censo_dir) -> None:
         )
     destino = censo_dir / f"uf={_UF}" / f"cod_municipio={_COD}"
     destino.mkdir(parents=True, exist_ok=True)
-    pd.DataFrame(linhas).to_parquet(destino / "part-000.parquet", index=False)
+    frame = pd.DataFrame(linhas)
+    if sem_cod_setor:
+        frame = frame.drop(columns=["cod_setor"])
+    frame.to_parquet(destino / "part-000.parquet", index=False)
 
 
-def _escrever_artefato(raiz, uf: str = _UF) -> None:
-    destino = raiz / "staging" / bc.SUBDIR_ARTEFATO / f"uf={uf}"
+def _escrever_artefato(raiz, uf: str = _UF, *, staging=None) -> None:
+    destino = (staging or raiz / "staging") / bc.SUBDIR_ARTEFATO / f"uf={uf}"
     destino.mkdir(parents=True, exist_ok=True)
     pd.DataFrame(
         {
@@ -106,7 +111,10 @@ def ambiente(tmp_path):
     _escrever_particao(censo_dir)
     service._carregar_malha.cache_clear()
     try:
-        yield Settings(ibge_dir=ibge_dir, censo_geo_dir=censo_dir), tmp_path
+        yield (
+            Settings(ibge_dir=ibge_dir, censo_geo_dir=censo_dir, staging_dir=tmp_path / "staging"),
+            tmp_path,
+        )
     finally:
         service._carregar_malha.cache_clear()
 
@@ -144,6 +152,10 @@ def test_dicionario_de_acentos_e_conservador() -> None:
     # verbo "sabia", preposicao "para", conjuncao "se", Franca (cidade) x França (pais)
     for ambigua in ("SABIA", "PARA", "SE", "FRANCA", "ALVORADA", "JARDIM", "VILA"):
         assert ambigua not in bc._ACENTOS
+    # Revisao M6: Sapê x Sapé (municipio da PB); Flórida x "florida" (adjetivo, "Vila Florida").
+    for ambigua in ("SAPE", "FLORIDA"):
+        assert ambigua not in bc._ACENTOS
+    assert bc.title_case_portugues("VILA FLORIDA") == "Vila Florida"
 
 
 def test_grafia_do_ibge_do_mesmo_municipio_vence() -> None:
@@ -295,8 +307,12 @@ def test_bairros_oficiais_e_nota_da_pagina_6(ambiente) -> None:
     assert "CNEFE" in _nota_fonte_bairro({"bairros_geo": com})
 
 
-def test_artefato_trocado_no_disco_e_relido_sem_restart(ambiente) -> None:
-    """O cache e' por (caminho, mtime): a ausencia nunca fica memorizada."""
+def test_artefato_trocado_no_disco_e_relido_pela_camada_do_artefato(ambiente) -> None:
+    """O cache DESTA camada e' por (caminho, mtime): a ausencia nunca fica memorizada.
+
+    So' esta camada. O `bairros_por_hex` do piloto e' `lru_cache` por cima e exige restart do
+    `web` a cada troca do artefato (DEC-076, Deploy).
+    """
     settings, raiz = ambiente
     raiz_artefato = bc.diretorio_bairro_cnefe(settings.censo_geo_dir)
     assert bc.ler_bairro_cnefe_uf(raiz_artefato, _UF) is None
@@ -304,3 +320,110 @@ def test_artefato_trocado_no_disco_e_relido_sem_restart(ambiente) -> None:
     mapa = bc.ler_bairro_cnefe_uf(raiz_artefato, _UF)
     assert mapa is not None
     assert mapa[_cod_setor(0)] == ("JARDIM SATELITE", "BAIRRO")
+
+
+# --- revisao adversarial (B1, M2, M7, M8) ------------------------------------------------------
+
+
+def test_perfil_de_setor_que_ficou_com_o_ibge_agrega_a_regiao_COMPLETA(ambiente) -> None:
+    """B1: o setor 2 fica com o IBGE (MUNICIPIO no CNEFE); os vizinhos da mesma regiao trocaram
+    de `cod_bairro` para a chave do CNEFE. O perfil tem de somar os 4 setores da regiao, nao so'
+    o que sobrou com o codigo do IBGE (antes: 1 setor, 50 habitantes)."""
+    from motor_expansao.api.service import _resolver_e_carregar
+    from motor_expansao.dashboard.censo_point import (
+        agregar_perfil_bairro_distrito,
+        analisar_ponto_censitario_setores,
+    )
+
+    settings, raiz = ambiente
+    _escrever_artefato(raiz)
+    uf, cod, setores_df = _resolver_e_carregar(_LAT, _LNG_SETOR_2, settings)
+    res = analisar_ponto_censitario_setores(_LAT, _LNG_SETOR_2, setores_df, raio_km=1.0)
+    assert res["nome_bairro_ponto"] == "Setor Socioeconômico 14"
+    assert res["cod_bairro_ponto"] == _COD_BAIRRO_IBGE
+    perfil = agregar_perfil_bairro_distrito(
+        setores_df,
+        cod_bairro=res.get("cod_bairro_ponto"),
+        nome_bairro=res.get("nome_bairro_ponto"),
+        nome_distrito=res.get("nome_distrito_ponto"),
+        uf=uf,
+        cod_municipio=cod,
+    )
+    assert perfil["unidade_nome"] == "Setor Socioeconômico 14"
+    assert perfil["n_setores_unidade"] == 4
+    assert perfil["populacao_total"] == 1760.0
+    # O bairro do CNEFE continua agregando so' os setores dele.
+    cnefe = agregar_perfil_bairro_distrito(
+        setores_df, cod_bairro=f"cnefe:{_COD}:JARDIM SATELITE", nome_bairro="Jardim Satélite"
+    )
+    assert cnefe["n_setores_unidade"] == 2
+
+
+def test_cods_setor_limpos_vetorizado_igual_ao_escalar() -> None:
+    """M2: a limpeza vetorizada da' o MESMO codigo que a escalar, caso a caso."""
+    valores = [
+        "354990405000000", " 354990405000001 ", "354990405000002P", "354990405000003.0",
+        "354990405000004.0 ", "12.05", None, pd.NA, float("nan"), "", "abc",
+    ]
+    serie = pd.Series(valores, dtype=object)
+    assert list(bc._cods_setor_limpos(serie)) == [bc._cod_setor_limpo(v) for v in valores]
+    numerica = pd.Series([354990405000000.0, float("nan")])
+    assert list(bc._cods_setor_limpos(numerica)) == [
+        bc._cod_setor_limpo(v) for v in numerica
+    ]
+
+
+def test_particao_sem_cod_setor_com_artefato_cai_no_comportamento_antigo(tmp_path) -> None:
+    """M7: com o artefato presente e uma particao de schema antigo (sem `cod_setor`), o bairro
+    segue o do IBGE nas duas leituras do Relatorio Municipal -- nao some."""
+    from motor_expansao.dashboard.relatorio_municipal import (
+        _carregar_bairros_por_hex,
+        carregar_bairros_geo,
+    )
+
+    censo_dir = tmp_path / "outputs" / "setores_censitarios_2022_geo"
+    _escrever_particao(censo_dir, sem_cod_setor=True)
+    staging = tmp_path / "staging"
+    sem_hex = _carregar_bairros_por_hex(_UF, _COD, censo_dir, staging_dir=staging)
+    sem_geo = carregar_bairros_geo(_UF, _COD, censo_dir, staging_dir=staging)
+    assert set(sem_hex.values()) == {"Setor Socioeconômico 14"}
+
+    _escrever_artefato(tmp_path)
+    assert bc.bairro_cnefe_disponivel(censo_dir, _UF, staging_dir=staging)
+    assert _carregar_bairros_por_hex(_UF, _COD, censo_dir, staging_dir=staging) == sem_hex
+    com_geo = carregar_bairros_geo(_UF, _COD, censo_dir, staging_dir=staging)
+    assert [b["nome"] for b in com_geo["bairros"]] == [b["nome"] for b in sem_geo["bairros"]]
+    assert com_geo["n_bairros"] == 1
+
+
+def test_artefato_segue_o_staging_DO_PROCESSO_e_nao_o_irmao_da_malha(ambiente) -> None:
+    """M8: com `staging_dir` configurado (`API_STAGING_DIR` / `STAGING_DIR`), o artefato e' lido
+    de LA'; o irmao `censo_geo_dir/../../staging` so' vale como fallback de quem nao passa nada."""
+    from motor_expansao.api.service import _resolver_e_carregar
+    from motor_expansao.api.settings import Settings
+    from motor_expansao.dashboard.relatorio_municipal import _carregar_bairros_por_hex
+
+    settings, raiz = ambiente
+    outro = raiz / "outro_staging"
+    _escrever_artefato(raiz, staging=outro)
+
+    # Fallback declarado (sem staging_dir): o irmao da malha, onde nao ha' artefato.
+    assert bc.diretorio_bairro_cnefe(settings.censo_geo_dir) == (
+        raiz / "staging" / bc.SUBDIR_ARTEFATO
+    )
+    assert set(_carregar_bairros_por_hex(_UF, _COD, settings.censo_geo_dir).values()) == {
+        "Setor Socioeconômico 14"
+    }
+    # Com a configuracao do processo, o artefato de `outro` vale.
+    assert bc.diretorio_bairro_cnefe(settings.censo_geo_dir, outro) == outro / bc.SUBDIR_ARTEFATO
+    assert set(
+        _carregar_bairros_por_hex(_UF, _COD, settings.censo_geo_dir, staging_dir=outro).values()
+    ) == {"Jardim Satélite"}
+    cfg = Settings(
+        ibge_dir=settings.ibge_dir, censo_geo_dir=settings.censo_geo_dir, staging_dir=outro
+    )
+    _uf, _cod, setores_df = _resolver_e_carregar(_LAT, _LNG, cfg)
+    assert setores_df["fonte_bairro"].iat[0] == "cnefe"
+    # E a API com o staging padrao do ambiente (sem artefato) segue no IBGE.
+    _uf, _cod, setores_ibge = _resolver_e_carregar(_LAT, _LNG, settings)
+    assert "fonte_bairro" not in setores_ibge.columns
