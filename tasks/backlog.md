@@ -6805,3 +6805,28 @@ com duas medidas:
 As colunas `rampa_ret12_*` e `rampa_n_alunos_prevenda` já existem no painel e estão vazias à espera disso.
 Aproveitar para regenerar o vintage (o atual é de 2026-08-10) e, se possível, incluir as 9 unidades sem
 perfil (fora do `Unidades.xlsx` do Lifetime).
+
+### BLK-BAIRRO-01 — Nome de bairro pelo CNEFE 2022 (o IBGE não tem bairro em 587 de 645 municípios de SP)
+
+| | |
+|---|---|
+| **Criticidade** | **Alta** — muda a FONTE do rótulo de bairro no ranking, nas fichas e nos dois PDFs (municipal e pontual) e cria um artefato derivado novo (bairro por setor censitário, do CNEFE). READ-ONLY sobre o M1: nenhum score, peso, `config.py` ou artefato oficial é tocado. Exige DEC. A fase 1 (medição de cobertura) é só leitura. |
+| **Prioridade** | Alta — pedido do Vinicius (20/10), uso real em São José dos Campos. |
+| **Esteira** | Fase 1: medir a cobertura do CNEFE no Brasil (leitura). Fase 2: DEC + artefato + troca da fonte do nome. Subida do artefato na VPS: MANUAL (§6). |
+| **Depende de** | nada. |
+| **Autonomia** | **manual (NÃO loop-safe)** |
+
+**O defeito.** O nome do hexágono e o bairro dos PDFs vêm de `NM_BAIRRO` da malha de setores do
+IBGE 2022. Em São José dos Campos esse campo traz as 35 regiões de planejamento da prefeitura
+("Setor Socioeconômico 14"), não bairros: o operador vê "Jardim Satélite" no mapa de fundo e
+"Setor Socioeconômico 14" na ficha e no PDF. Medido nos 645 municípios de SP: 53 têm bairro de
+verdade, 5 têm código no lugar do nome (São José dos Campos, Hortolândia, Nova Odessa, Santa Cruz
+das Palmeiras) e **587 não têm bairro nenhum** (o rótulo cai para o distrito).
+
+**A fonte candidata.** O CNEFE 2022 (cadastro de endereços do IBGE) traz `DSC_LOCALIDADE` por
+endereço, com `COD_SETOR`. Em São José dos Campos: 499 bairros, o "Setor Socioeconômico 14" é 81%
+JARDIM SATELITE, e a localidade é praticamente única dentro de cada setor censitário. Ressalva: vem
+em MAIÚSCULAS e sem acento.
+
+**Critério de aceite da fase 1.** Cobertura medida nas 27 UFs (endereços, setores, municípios e
+território), com a régua do que conta como bairro "genérico" declarada antes de medir.
