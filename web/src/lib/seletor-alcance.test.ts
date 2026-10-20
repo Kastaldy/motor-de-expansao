@@ -17,9 +17,9 @@ const pontoScreen = readFileSync(fileURLToPath(new URL('../screens/PontoScreen.t
 const SEM_HEX = /#[0-9a-f]{3,8}\b|rgba?\(/i
 
 describe('o seletor de alcance em destaque (pedido de 20/10/2026)', () => {
-  it('a opção marcada é CHEIA na cor de ação do sistema; a desmarcada, sem fundo', () => {
+  it('a opção marcada é CHEIA no turquesa de texto do tema; a desmarcada, sem fundo', () => {
     const marcada = estiloDaOpcaoAlcance(true)
-    expect(marcada.background).toBe('var(--ac)')
+    expect(marcada.background).toBe('var(--ac-text)')
     expect(marcada.color).toBe('var(--ac-on)')
     const livre = estiloDaOpcaoAlcance(false)
     expect(livre.background).toBe('transparent')
@@ -50,7 +50,7 @@ describe('o seletor de alcance em destaque (pedido de 20/10/2026)', () => {
     const identificacao = pontoScreen.indexOf("<Eyebrow dot>{area ? 'Área desenhada' : 'Ponto analisado'}</Eyebrow>")
     const seletor = pontoScreen.indexOf('<SeletorAlcance\n')
     const chipHex = pontoScreen.indexOf('<Chip>hex {ficha.hex_id}</Chip>')
-    const socio = pontoScreen.indexOf("titulo={area ? 'Quem mora na área'")
+    const socio = pontoScreen.indexOf("? 'Quem mora na área'")
     expect(identificacao).toBeGreaterThan(-1)
     expect(seletor).toBeGreaterThan(identificacao)
     expect(seletor).toBeLessThan(chipHex)
@@ -67,5 +67,74 @@ describe('o seletor de alcance em destaque (pedido de 20/10/2026)', () => {
     expect(pontoScreen).toContain('aria-busy={trocando}')
     // A lógica não mudou: quem troca é o mesmo callback.
     expect(pontoScreen).toContain('onClick={() => onTrocar(a)}')
+  })
+})
+
+/* ---------------- Achados do revisor do 89ab23b3 ---------------- */
+const tokens = readFileSync(fileURLToPath(new URL('../styles/tokens.css', import.meta.url)), 'utf-8')
+
+/** O valor de `--nome` no PRIMEIRO bloco que começa em `seletor` (o tema). */
+function token(seletor: string, nome: string): string {
+  const inicio = tokens.indexOf(`${seletor} {`)
+  expect(inicio).toBeGreaterThan(-1)
+  const bloco = tokens.slice(inicio, tokens.indexOf('\n}', inicio))
+  const m = new RegExp(`\\s${nome}:\\s*(#[0-9a-fA-F]{6})\\s*;`).exec(bloco)
+  expect(m, `${nome} em ${seletor}`).not.toBeNull()
+  return m![1]
+}
+
+function luminancia(hex: string): number {
+  const [r, g, b] = [1, 3, 5].map((i) => parseInt(hex.slice(i, i + 2), 16) / 255)
+  const lin = (c: number) => (c <= 0.03928 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4)
+  return 0.2126 * lin(r) + 0.7152 * lin(g) + 0.0722 * lin(b)
+}
+
+function contraste(a: string, b: string): number {
+  const [x, y] = [luminancia(a), luminancia(b)].sort((p, q) => q - p)
+  return (x + 0.05) / (y + 0.05)
+}
+
+/** `var(--ac-text)` -> `--ac-text`. */
+const nomeDoToken = (v: unknown) => /^var\((--[a-z0-9-]+)\)$/.exec(String(v))![1]
+
+describe('contraste da opção marcada (texto de 13px pede 4,5:1)', () => {
+  const marcada = estiloDaOpcaoAlcance(true)
+  const fundo = nomeDoToken(marcada.background)
+  const texto = nomeDoToken(marcada.color)
+
+  it.each([
+    [':root', 'tema escuro'],
+    ["[data-tema='claro']", 'tema claro'],
+  ])('%s (%s) passa 4,5:1', (seletor) => {
+    expect(contraste(token(seletor, fundo), token(seletor, texto))).toBeGreaterThanOrEqual(4.5)
+  })
+
+  it('o par antigo (--ac / --ac-on) reprovava no tema claro: é o que esta régua pega', () => {
+    const claro = "[data-tema='claro']"
+    expect(contraste(token(claro, '--ac'), token(claro, '--ac-on'))).toBeLessThan(4.5)
+  })
+})
+
+describe('o aviso de releitura não faz parte do nome do grupo', () => {
+  const inicio = pontoScreen.indexOf('function SeletorAlcance(')
+  const seletor = pontoScreen.slice(inicio, pontoScreen.indexOf('\n}\n', inicio))
+  const abreRotulo = seletor.indexOf('<span id="rotulo-alcance-ponto"')
+  const rotulo = seletor.slice(abreRotulo, seletor.indexOf('</span>', abreRotulo))
+
+  it('o rótulo que nomeia o radiogroup tem só o nome', () => {
+    expect(abreRotulo).toBeGreaterThan(-1)
+    expect(seletor).toContain('aria-labelledby="rotulo-alcance-ponto"')
+    expect(rotulo).toContain('{ROTULO_SELETOR_ALCANCE}')
+    expect(rotulo).not.toContain('AVISO_RELENDO_ALCANCE')
+    expect(rotulo).not.toContain('role="status"')
+  })
+
+  it('a região viva fica MONTADA o tempo todo; só o conteúdo depende da releitura', () => {
+    const regiao = seletor.indexOf('role="status"')
+    expect(regiao).toBeGreaterThan(-1)
+    expect(seletor).toContain('aria-live="polite"')
+    // Nada de `{trocando && (<span role="status" ...` — a região nasceria junto com o texto.
+    expect(seletor).not.toMatch(/trocando && \(\s*<span\s+role="status"/)
+    expect(seletor.indexOf('{AVISO_RELENDO_ALCANCE}')).toBeGreaterThan(regiao)
   })
 })

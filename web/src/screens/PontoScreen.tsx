@@ -19,7 +19,7 @@ import PainelPontos from '../components/PainelPontos'
 import Recomendacao from '../components/Recomendacao'
 import { Aviso, Botao, Chip, Eyebrow, Glass, Spinner } from '../components/primitives'
 import { api, ApiError, baixar } from '../lib/api'
-import { RAIO_PADRAO_KM, ehAreaDesenhada, rotuloDoRaio, tipoDoRecorte } from '../lib/recorte'
+import { RAIO_PADRAO_KM, ehAreaDesenhada, minutosDoRecorte, rotuloDoRaio, tipoDoRecorte } from '../lib/recorte'
 import {
   ROTULO_ALCANCE,
   alcanceDoItem,
@@ -787,7 +787,7 @@ function RodapePonto({
           title={simulador.dica}
           style={estiloDoBotaoSimulador(simulador.habilitado)}
         >
-          {simulador.rotulo} →
+          {simulador.rotulo}
         </Botao>
       </div>
       {motivos.map((m) => (
@@ -834,10 +834,11 @@ function Ficha({
   const area = ehAreaDesenhada(ficha)
   const recorte = rotuloDoRecorte(ficha)
   /* O ALCANCE (DEC-074): `null` só na área desenhada. A isócrona fala "em 10 min de
-     carro" — a mesma escrita do servidor nos critérios —, os raios seguem "no raio". */
+     carro" (ou "em 5 min", Emenda 1) — a mesma escrita do servidor nos critérios —, os
+     raios seguem "no raio". */
   const alcance = alcanceDoItem(ficha)
-  const isocrona = tipoDoRecorte(ficha) === 'carro_10min'
-  const onde = area ? 'na área' : isocrona ? 'em 10 min de carro' : 'no raio'
+  const minutosCarro = minutosDoRecorte(tipoDoRecorte(ficha))
+  const onde = area ? 'na área' : minutosCarro != null ? `em ${minutosCarro} min de carro` : 'no raio'
   /* O recorte do ponto deixou de ser sempre o raio de 1 km: fora dele a ficha DIZ qual é
      na identificação, e não só no subtítulo da janela. */
   const recorteNaIdentificacao = !area && alcance !== 'raio_1km' ? recorte : null
@@ -939,7 +940,13 @@ function Ficha({
 
       {/* ---------------- Socioeconomia (sempre disponível) ---------------- */}
       <Secao
-        titulo={area ? 'Quem mora na área' : isocrona ? 'Quem mora a 10 min de carro' : 'Quem mora em volta'}
+        titulo={
+          area
+            ? 'Quem mora na área'
+            : minutosCarro != null
+              ? `Quem mora a ${minutosCarro} min de carro`
+              : 'Quem mora em volta'
+        }
         nota={`${censoDaBase() ?? 'Censo 2022'} · ${recorte}`}>
         {/* ---- O VISUAL VEM PRIMEIRO ----
             A hierarquia estava invertida: cinco cards de 24px dominavam o bloco e a barra
@@ -968,7 +975,7 @@ function Ficha({
 
         <Rodape>
           A densidade desconta água e vazio: divide pela área de setor censitário
-          realmente intersectada, não pela área {area ? 'desenhada' : isocrona ? 'do recorte' : 'do círculo'}.
+          realmente intersectada, não pela área {area ? 'desenhada' : minutosCarro != null ? 'do recorte' : 'do círculo'}.
         </Rodape>
         {censo.detalhe && (
           <DetalheRegiao detalhe={censo.detalhe} concorrencia={concorrencia} area={area} />
@@ -1124,10 +1131,10 @@ function ChaveEstudoUltra({
 }
 
 /**
- * O SELETOR DE ALCANCE (DEC-074): raio de 1 km, raio de 2 km e 10 min de carro, em grupo
+ * O SELETOR DE ALCANCE (DEC-074): raio de 1 km, raio de 2 km, 5 e 10 min de carro, em grupo
  * de rádio. Trocar relê o PRÓPRIO ponto no servidor e troca a ficha no lugar (mesmo nome,
  * mesma cor) — "último clique vence", como a chave do estudo da unidade. Nada é calculado
- * aqui. "10 min de carro" só aparece quando a instância tem o serviço de rotas
+ * aqui. Os alcances de carro só aparecem quando a instância tem o serviço de rotas
  * (`alcancesDisponiveis`); opção que não pode acender não é desenhada apagada.
  *
  * O estudo da unidade Ultra é só do raio de 1 km: com ele ligado, escolher outro alcance
@@ -1147,28 +1154,38 @@ function SeletorAlcance({
   onTrocar: (alcance: Alcance) => void
 }) {
   /* O visual mora em `lib/seletor-alcance` (travado em teste): controle segmentado da
-     largura da ficha, o marcado CHEIO na cor de ação do sistema. */
+     largura da ficha, o marcado CHEIO no turquesa de texto do tema (contraste medido lá). */
   return (
     <div style={{ display: 'grid', gap: 6, marginTop: 2 }}>
-      <span id="rotulo-alcance-ponto" style={ESTILO_ROTULO_ALCANCE}>
-        {ROTULO_SELETOR_ALCANCE}
-        {/* A releitura em voo é DITA, não só girada: a isócrona leva alguns segundos. */}
-        {trocando && (
-          <span
-            role="status"
-            style={{
-              display: 'inline-flex',
-              alignItems: 'center',
-              gap: 6,
-              font: '500 11.5px/1 var(--f-ui)',
-              color: 'var(--ac-text)',
-            }}
-          >
-            <Spinner />
-            {AVISO_RELENDO_ALCANCE}
-          </span>
-        )}
-      </span>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+        {/* O rótulo é SÓ o nome do grupo (`aria-labelledby` do radiogroup): o aviso de
+            releitura morava aqui dentro, e o leitor de tela anunciava o grupo como "Alcance
+            da análise Atualizando a ficha…". */}
+        <span id="rotulo-alcance-ponto" style={ESTILO_ROTULO_ALCANCE}>
+          {ROTULO_SELETOR_ALCANCE}
+        </span>
+        {/* A releitura em voo é DITA, não só girada: a isócrona leva alguns segundos. A
+            região viva fica MONTADA o tempo todo, vazia fora da releitura: uma região criada
+            junto com o texto não é anunciada por todo leitor de tela. */}
+        <span
+          role="status"
+          aria-live="polite"
+          style={{
+            display: 'inline-flex',
+            alignItems: 'center',
+            gap: 6,
+            font: '500 11.5px/1 var(--f-ui)',
+            color: 'var(--ac-text)',
+          }}
+        >
+          {trocando && (
+            <>
+              <Spinner />
+              {AVISO_RELENDO_ALCANCE}
+            </>
+          )}
+        </span>
+      </div>
       <div role="radiogroup" aria-labelledby="rotulo-alcance-ponto" aria-busy={trocando} style={ESTILO_TRILHO_ALCANCE}>
         {opcoes.map((a) => {
           const marcado = a === atual

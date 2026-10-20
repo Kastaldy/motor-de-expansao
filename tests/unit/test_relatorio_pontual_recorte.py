@@ -604,3 +604,54 @@ def test_minimo_dos_cards_cita_a_area_do_recorte_e_a_meta_escalada() -> None:
     assert um is cr._RECORTE_PADRAO
     for texto in (*padrao.values(), *m2.values()):
         texto.encode("latin-1")
+
+
+# --------------------------------------------------------------------------- #
+# 5 min de carro (DEC-074, Emenda 1)                                           #
+# --------------------------------------------------------------------------- #
+def test_recorte_pdf_dos_5_min_nomeia_5_min_em_latin1():
+    rec = cr.recorte_pdf("carro_5min", fator_regua=1.01, area_km2=1.01 * math.pi)
+    assert rec["rotulo_curto"] == "5 min de carro (sem trânsito)"
+    ctx = cr._contexto_recorte(rec)
+    assert ctx.onde == "em 5 min de carro"
+    assert ctx.onde_longo == "em 5 min de carro, sem trânsito"
+    assert ctx.artigo_nome == "a isócrona de 5 min de carro"
+    textos = (ctx.rotulo_capa, ctx.rotulo_longo, ctx.onde, ctx.de_longo, ctx.descricao_censo)
+    assert not any("10 min" in t for t in textos)
+    for t in textos:
+        t.encode("latin-1")
+    # As metas de total escalam pelo fator, como nos 10 min.
+    assert ctx.metas.pop_total_raio == pytest.approx(cr._METAS.pop_total_raio * 1.01)
+
+
+def test_recorte_pdf_dos_10_min_nao_mudou():
+    ctx = cr._contexto_recorte(_iso_recorte())
+    assert ctx.rotulo_capa == "10 min de carro (sem trânsito)"
+    assert ctx.de_longo == "da isócrona de 10 min de carro (sem trânsito)"
+    assert ctx.descricao_censo == "isócrona de 10 min de carro sem trânsito (76,97 km2)"
+
+
+def test_onde_e_rodape_do_mapa_dos_5_min(monkeypatch):
+    from motor_expansao.dashboard.censo_point import GEOMETRIA_TIPO_ISOCRONA_CARRO_5MIN
+
+    assert censo_map.onde_do_recorte(None, GEOMETRIA_TIPO_ISOCRONA_CARRO_5MIN) == (
+        "em 5 min de carro"
+    )
+    camadas = _espiar_camadas(monkeypatch)
+    censo_map.render_mapas_censitarios_combinados(
+        LAT,
+        LNG,
+        _setores(),
+        basemap=False,
+        geometria_wgs84=_isocrona(),
+        geometria_tipo=GEOMETRIA_TIPO_ISOCRONA_CARRO_5MIN,
+    )
+    assert camadas[0]["rodape_recorte"] == "Isocrona 5 min de carro (sem transito)"
+    assert camadas[0]["valor_ponto"].startswith("Densidade em 5 min de carro: ")
+
+
+def test_rotulo_do_recorte_dos_5_min_no_deck():
+    assert (
+        rotulo_do_recorte({"recorte": {"tipo": "carro_5min", "area_km2": 3.17}})
+        == "5 min de carro, sem trânsito, 3,2 km2"
+    )

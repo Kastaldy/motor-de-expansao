@@ -161,7 +161,7 @@ logging.getLogger("piloto.perfil").info(
 _PDF_CONCORRENCIA_MAX = PERFIL.operacao.pdf_concorrencia_max
 _PDF_SEMAFORO = asyncio.Semaphore(_PDF_CONCORRENCIA_MAX)
 
-# Quantas ANALISES DE AREA (desenho a mao, raio de 2 km, 10 min de carro -- DEC-071/074)
+# Quantas ANALISES DE AREA (desenho a mao, raio de 2 km, 5/10 min de carro -- DEC-071/074)
 # podem rodar ao mesmo tempo. A conta e' o laco setor a setor de `censo_point`, que a
 # DEC-071 mediu em ate' ~40 s para 194 km2 -- e as duas rotas sao `def` no threadpool do
 # UNICO worker, entao sem teto N operadores desenhando ao mesmo tempo disputariam a CPU
@@ -4397,7 +4397,7 @@ def me(
     if viabilidade_moeda is not None:
         resposta["viabilidade_moeda"] = viabilidade_moeda
     # DEC-074: os alcances que ESTE deploy oferece na ficha do ponto. Os dois raios sempre;
-    # "10 min de carro" so' com o servico de rotas configurado -- sem a env a opcao SOME da
+    # "5 min" e "10 min de carro" so' com o servico de rotas configurado -- sem a env SOMEM da
     # tela, em vez de aparecer e responder 503 a cada clique. So' a env, sem consultar o
     # servico: `/api/me` e' chamada uma vez na abertura e nao pode pagar a latencia dele.
     resposta["alcances"] = _alcances_oferecidos()
@@ -6808,14 +6808,18 @@ def ponto(lat: float, lng: float, excluir_ultra_proxima: bool = False) -> dict[s
 
 
 # --------------------------------------------------------------------------- #
-# Alcance do ponto (DEC-074): raio de 1 km, raio de 2 km e 10 min de carro      #
+# Alcance do ponto (DEC-074): raio de 1 km, raio de 2 km, 5 e 10 min de carro  #
 # --------------------------------------------------------------------------- #
 # Rotulo do recorte nos criterios ("População no raio de 2 km"). O raio de 1 km NAO esta
 # aqui de proposito: pela rota de alcance ele devolve o MESMO conteudo do GET `/api/ponto`
 # (fator 1, byte a byte), e la' o rotulo e' "no raio".
-_ONDE_DO_ALCANCE = {"raio_2km": "no raio de 2 km", "carro_10min": "em 10 min de carro"}
+_ONDE_DO_ALCANCE = {
+    "raio_2km": "no raio de 2 km",
+    "carro_5min": "em 5 min de carro",
+    "carro_10min": "em 10 min de carro",
+}
 MSG_ALCANCE_DESCONHECIDO = (
-    "Alcance desconhecido: {alcance!r}. Use raio_1km, raio_2km ou carro_10min."
+    "Alcance desconhecido: {alcance!r}. Use raio_1km, raio_2km, carro_5min ou carro_10min."
 )
 MSG_ULTRA_SO_NO_RAIO_1KM = (
     "O estudo da unidade Ultra é só do raio de 1 km. Volte ao raio de 1 km para usá-lo."
@@ -6839,7 +6843,7 @@ class _AlcanceResolvido:
     lat: float
     lng: float
     raio_km: float | None
-    isocrona: Any = None  # `alcance_ponto.Isocrona` no "carro_10min"
+    isocrona: Any = None  # `alcance_ponto.Isocrona` no "carro_5min"/"carro_10min"
 
     @property
     def geometria(self) -> Any:
@@ -6847,18 +6851,16 @@ class _AlcanceResolvido:
 
 
 def _alcances_oferecidos() -> list[str]:
-    """Os alcances deste deploy: os dois raios sempre; a isocrona so' com a env de rotas."""
+    """Os alcances deste deploy: os dois raios sempre; as isocronas (5 e 10 min de carro,
+    na ordem do seletor) so' com a env de rotas."""
     from motor_expansao.dashboard.alcance_ponto import (
-        ALCANCE_CARRO_10MIN,
-        ALCANCE_RAIO_1KM,
-        ALCANCE_RAIO_2KM,
+        ALCANCES,
+        MINUTOS_DO_ALCANCE,
         rotas_configuradas,
     )
 
-    alcances = [ALCANCE_RAIO_1KM, ALCANCE_RAIO_2KM]
-    if rotas_configuradas():
-        alcances.append(ALCANCE_CARRO_10MIN)
-    return alcances
+    com_carro = rotas_configuradas()
+    return [a for a in ALCANCES if com_carro or a not in MINUTOS_DO_ALCANCE]
 
 
 def _resolver_alcance(lat: float, lng: float, alcance: str) -> _AlcanceResolvido:
@@ -6871,8 +6873,8 @@ def _resolver_alcance(lat: float, lng: float, alcance: str) -> _AlcanceResolvido
     """
     from motor_expansao.api.coord import CoordenadaInvalidaError, validar_brasil
     from motor_expansao.dashboard.alcance_ponto import (
-        ALCANCE_CARRO_10MIN,
         ALCANCES,
+        MINUTOS_DO_ALCANCE,
         RAIO_DO_ALCANCE,
         AlcanceInvalido,
         RotasIndisponiveis,
@@ -6886,10 +6888,10 @@ def _resolver_alcance(lat: float, lng: float, alcance: str) -> _AlcanceResolvido
         validar_brasil(lat, lng)
     except CoordenadaInvalidaError as exc:
         raise HTTPException(400, str(exc)) from exc
-    if alcance != ALCANCE_CARRO_10MIN:
+    if alcance not in MINUTOS_DO_ALCANCE:
         return _AlcanceResolvido(alcance, lat, lng, RAIO_DO_ALCANCE[alcance])
     try:
-        iso = isocrona_carro(lat, lng)
+        iso = isocrona_carro(lat, lng, MINUTOS_DO_ALCANCE[alcance])
     except RotasIndisponiveis as exc:
         # Condicao ESPERADA (servico fora/lento), entao `warning` e nao `exception` -- mas
         # com `exc_info`: o 503 tem de deixar a causa no log (BLK-SAUDE-01).
@@ -6906,10 +6908,10 @@ def ponto_alcance(
 ) -> dict[str, Any]:
     """Ficha do ponto com o ALCANCE escolhido na própria ficha (DEC-074).
 
-    `alcance` é identificador cru: `raio_1km` (o estudo de sempre), `raio_2km` ou
-    `carro_10min` (isócrona de 10 min de carro sem trânsito, calculada no servidor por um
-    Valhalla próprio -- só com `MOTOR_ROTAS_URL`; sem ela, 503 em português e a opção nem
-    aparece na tela, ver `/api/me`).
+    `alcance` é identificador cru: `raio_1km` (o estudo de sempre), `raio_2km`,
+    `carro_5min` ou `carro_10min` (isócrona de 5 ou 10 min de carro sem trânsito, calculada
+    no servidor por um Valhalla próprio -- só com `MOTOR_ROTAS_URL`; sem ela, 503 em
+    português e as opções nem aparecem na tela, ver `/api/me`).
 
     O MESMO corpo do `GET /api/ponto`, mais o bloco `recorte` (tipo, método, área, fator
     da régua, contorno GeoJSON, origem e parâmetros do cálculo). `raio_1km` devolve
@@ -7023,7 +7025,7 @@ def _payload_ponto(
     chave e cada chamada são as de antes da DEC-071 — o GET não muda um byte (travado por
     teste). Com ele, (lat, lng) é o `representative_point` do polígono.
 
-    `alcance` (DEC-074; raio de 2 km ou isócrona de 10 min de carro) troca o raio de 1 km
+    `alcance` (DEC-074; raio de 2 km ou isócrona de 5/10 min de carro) troca o raio de 1 km
     pelo recorte resolvido, com (lat, lng) = a ORIGEM clicada. O raio de 2 km segue pelo
     caminho de RAIO (área e fator exatos, método `_2km`); a isócrona, pelo de geometria
     (método próprio). Nos dois, e no desenho, as réguas de total escalam pelo fator.
@@ -7042,9 +7044,9 @@ def _payload_ponto(
     from motor_expansao.api.settings import Settings
     from motor_expansao.dashboard.censo_point import (
         CLASSE_CADEIA_OFERTA,
-        GEOMETRIA_TIPO_ISOCRONA_CARRO_10MIN,
         RAIO_CENSITARIO_DEFAULT_KM,
         analisar_ponto_censitario_setores,
+        geometria_tipo_isocrona,
     )
 
     # `_resolver_e_carregar` NÃO valida o bounding box — sem isto, uma coordenada
@@ -7114,7 +7116,7 @@ def _payload_ponto(
     # operador a desenhou.
     _recorte_kw: dict[str, Any] = {} if geometria is None else {"geometria_wgs84": geometria}
     if alcance is not None and alcance.isocrona is not None:
-        _recorte_kw["geometria_tipo"] = GEOMETRIA_TIPO_ISOCRONA_CARRO_10MIN
+        _recorte_kw["geometria_tipo"] = geometria_tipo_isocrona(alcance.isocrona.minutos)
     res = analisar_ponto_censitario_setores(
         lat, lng, setores_df,
         raio_km=raio,
@@ -11516,8 +11518,8 @@ async def relatorio_pontual(
     consumo da unidade Ultra a ate' 150 m do ponto, e o Big Numbers DECLARA isso. Vale com
     e sem `so_estudo`. Sem unidade na tolerancia -> 400.
 
-    `alcance` (`raio_2km`/`carro_10min`) OU `geometria` (o GeoJSON do desenho), campos Form
-    (DEC-074, fase 2 da DEC-071): o Estudo do RECORTE escolhido na ficha. So' com
+    `alcance` (`raio_2km`/`carro_5min`/`carro_10min`) OU `geometria` (o GeoJSON do desenho),
+    campos Form (DEC-074, fase 2 da DEC-071): o Estudo do RECORTE escolhido na ficha. So' com
     `so_estudo` -- o relatorio completo (viabilidade, zona morta) e' do raio de 1 km, e um
     PDF com o selo demografico num recorte e o financeiro em outro seria dois estudos
     colados. O servidor RECALCULA o recorte (a isocrona sai do cache do servico de rotas, o
@@ -11613,8 +11615,8 @@ class _RecorteDoPdf:
     `lat`/`lng`: a coordenada com que o PDF inteiro roda -- a origem clicada (raio, ou a da
     isocrona, garantida dentro dela) ou o ponto interno do desenho. `geometria` (shapely em
     graus) so' na isocrona e no desenho; `raio_km` so' no raio. `geometria_tipo` e' o
-    rotulo do MOTOR ("poligono"/"isocrona_carro_10min"); `tipo` e' o do payload
-    ("raio_2km"/"carro_10min"/"poligono").
+    rotulo do MOTOR ("poligono"/"isocrona_carro_5min"/"isocrona_carro_10min"); `tipo` e' o
+    do payload ("raio_2km"/"carro_5min"/"carro_10min"/"poligono").
     """
 
     tipo: str
@@ -11644,8 +11646,8 @@ def _resolver_recorte_do_pdf(
     """
     from motor_expansao.dashboard.alcance_ponto import ALCANCE_RAIO_1KM
     from motor_expansao.dashboard.censo_point import (
-        GEOMETRIA_TIPO_ISOCRONA_CARRO_10MIN,
         GEOMETRIA_TIPO_POLIGONO,
+        geometria_tipo_isocrona,
     )
 
     if alcance and geometria:
@@ -11683,7 +11685,7 @@ def _resolver_recorte_do_pdf(
         return _RecorteDoPdf(
             resolvido.tipo, resolvido.lat, resolvido.lng,
             geometria=resolvido.geometria,
-            geometria_tipo=GEOMETRIA_TIPO_ISOCRONA_CARRO_10MIN,
+            geometria_tipo=geometria_tipo_isocrona(resolvido.isocrona.minutos),
             versao_rotas=resolvido.isocrona.versao,
         )
     return _RecorteDoPdf(resolvido.tipo, resolvido.lat, resolvido.lng, raio_km=resolvido.raio_km)
@@ -12180,7 +12182,7 @@ class ComparacaoRecorteIn(BaseModel):
     """Recorte de UM item do deck de comparação (DEC-074). O servidor só imprime."""
 
     # Identificador cru (o mesmo `recorte.tipo` da ficha), NÃO acentuar.
-    tipo: Literal["raio_1km", "raio_2km", "carro_10min", "poligono"]
+    tipo: Literal["raio_1km", "raio_2km", "carro_5min", "carro_10min", "poligono"]
     rotulo: str | None = Field(default=None, max_length=120)
     area_km2: float | None = Field(default=None, gt=0, allow_inf_nan=False)
     fator_regua: float | None = Field(default=None, gt=0, allow_inf_nan=False)
@@ -12193,7 +12195,7 @@ class ComparacaoItemIn(BaseModel):
     # vetor sem teto, entao e' o unico limitado aqui.
     model_config = ConfigDict(extra="allow")
     porDimensao: list[dict[str, Any]] = Field(default_factory=list, max_length=12)
-    # DEC-074: o recorte do item (raio de 1/2 km, 10 min de carro, área desenhada), para o
+    # DEC-074: o recorte do item (raio de 1/2 km, 5/10 min de carro, área desenhada), para o
     # deck imprimir na linha do item e explicar os critérios escalados. Tipado (e não só
     # `extra`) porque vira TEXTO no PDF: rótulo com teto e números finitos.
     recorte: ComparacaoRecorteIn | None = None

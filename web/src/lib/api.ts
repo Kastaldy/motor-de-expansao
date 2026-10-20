@@ -620,8 +620,8 @@ export const api = {
     ),
 
   /**
-   * Ficha de um ponto em outro ALCANCE (DEC-074): raio de 1 km, raio de 2 km ou 10 min de
-   * carro sem trânsito. O mesmo payload do `ponto`, com `lat`/`lng` na ORIGEM clicada e o
+   * Ficha de um ponto em outro ALCANCE (DEC-074): raio de 1 km, raio de 2 km, 5 ou 10 min
+   * de carro sem trânsito. O mesmo payload do `ponto`, com `lat`/`lng` na ORIGEM clicada e o
    * bloco `recorte` dizendo o tipo, a área, o fator das réguas e o contorno.
    *
    * A isócrona é calculada no SERVIDOR (serviço de rotas): sem ele, a rota responde 503 com
@@ -848,7 +848,7 @@ export const api = {
     excluirUltraProxima?: boolean
     /**
      * O RECORTE do Estudo quando não é o raio de 1 km (fase 2 da DEC-071, DEC-074): o
-     * alcance (`raio_2km`, `carro_10min`) OU a área desenhada (o Polygon do desenho). Vão no
+     * alcance (`raio_2km`, `carro_5min`, `carro_10min`) OU a área desenhada (o Polygon do desenho). Vão no
      * CORPO (FormData), nunca na query — 50 vértices estourariam o orçamento da URL (o HTTP
      * 431 que este relatório já conheceu). Só com `soEstudo`: o relatório completo é do
      * raio de 1 km. O servidor RECALCULA a isócrona pelo alcance; não confia em polígono

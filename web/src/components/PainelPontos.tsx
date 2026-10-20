@@ -421,7 +421,7 @@ export default function PainelPontos({
               ? `Cada leitura sai do ${rotuloDoRaio(fichas[0]?.raio_km)} em torno do ` +
                 'ponto — a mesma régua do Relatório Pontual.'
               : /* Com outro recorte na lista, "cada leitura sai do raio" seria falso para ele. */
-                'Cada item sai do próprio recorte — raio, 10 min de carro ou área desenhada —, ' +
+                'Cada item sai do próprio recorte — raio, 5 ou 10 min de carro ou área desenhada —, ' +
                 'dito na ficha dele; as réguas de totais escalam pela área de cada recorte.'}
           </p>
         </Glass>

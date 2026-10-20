@@ -111,6 +111,7 @@ def indice_do_item(item: Mapping[str, Any], padrao: int) -> int:
 _ROTULO_DO_TIPO_RECORTE = {
     "raio_1km": "raio de 1 km",
     "raio_2km": "raio de 2 km",
+    "carro_5min": "5 min de carro, sem trânsito",
     "carro_10min": "10 min de carro, sem trânsito",
     "poligono": "área desenhada",
 }

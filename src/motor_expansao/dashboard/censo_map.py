@@ -20,7 +20,6 @@ from shapely.geometry.base import BaseGeometry
 from motor_expansao.dashboard import constants as _constants
 from motor_expansao.dashboard.censo_point import (
     CRS_ORIGEM_CENSO,
-    GEOMETRIA_TIPO_ISOCRONA_CARRO_10MIN,
     GEOMETRIA_TIPO_POLIGONO,
     RAIO_CENSITARIO_DEFAULT_KM,
     _bbox_prefilter,
@@ -29,6 +28,7 @@ from motor_expansao.dashboard.censo_point import (
     _project_geometry,
     _transformer,
     analisar_ponto_censitario_setores,
+    minutos_da_geometria,
 )
 from motor_expansao.dashboard.competitors import (
     CHAVE_AGREGADOR,
@@ -613,10 +613,12 @@ def onde_do_recorte(raio_km: float | None, geometria_tipo: str | None) -> str:
     O raio de 1 km devolve "no raio" -- o texto de sempre: o PNG do estudo de hoje nao muda
     um pixel. Qualquer outro raio diz qual ("no raio de 2 km"), porque a mesma faixa com o
     mesmo texto em dois recortes de tamanho diferente faria o leitor comparar 1 km com 2 km
-    sem saber. Geometria: isocrona -> "em 10 min de carro"; desenho a mao -> "na area".
+    sem saber. Geometria: isocrona -> "em 10 min de carro" (ou 5, pelo tempo dela); desenho
+    a mao -> "na area".
     """
-    if geometria_tipo == GEOMETRIA_TIPO_ISOCRONA_CARRO_10MIN:
-        return "em 10 min de carro"
+    minutos = minutos_da_geometria(geometria_tipo)
+    if minutos is not None:
+        return f"em {minutos} min de carro"
     if geometria_tipo is not None:
         return "na area"
     if raio_km is None or float(raio_km) == RAIO_CENSITARIO_DEFAULT_KM:
@@ -2127,9 +2129,10 @@ def render_mapas_censitarios_combinados(
         # Os kwargs novos so' entram com recorte: o `common` do raio fica com as MESMAS
         # chaves de antes (os defaults de `_render_camada` reproduzem o render de sempre).
         common["onde"] = onde
+        minutos_iso = minutos_da_geometria(tipo_geometria)
         common["rodape_recorte"] = (
-            "Isocrona 10 min de carro (sem transito)"
-            if tipo_geometria == GEOMETRIA_TIPO_ISOCRONA_CARRO_10MIN
+            f"Isocrona {minutos_iso} min de carro (sem transito)"
+            if minutos_iso is not None
             else "Area desenhada"
         )
     elif onde != "no raio":

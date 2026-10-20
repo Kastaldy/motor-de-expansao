@@ -27,7 +27,7 @@ export interface MePayload {
    *  nunca "nao precisa trocar". Quem le' e estreita e' `estadoDaSenhaDoPayload`. */
   senha?: unknown
   /** Os alcances do ponto que esta instância oferece (DEC-074): `raio_1km`, `raio_2km` e,
-   *  só com o serviço de rotas configurado, `carro_10min`. Ausente em backend anterior.
+   *  só com o serviço de rotas configurado, `carro_5min` e `carro_10min`. Ausente em backend anterior.
    *  Quem valida e estreita é `definirAlcances` em `lib/alcance.ts`. */
   alcances?: unknown
 }
@@ -2048,7 +2048,7 @@ export interface PontoPayload {
    */
   recorte?: {
     /** Identificador cru, NÃO acentuar. */
-    tipo: 'raio_1km' | 'raio_2km' | 'carro_10min' | 'poligono'
+    tipo: 'raio_1km' | 'raio_2km' | 'carro_5min' | 'carro_10min' | 'poligono'
     area_km2: number | null
     /** Só na área desenhada: quantos vértices o operador clicou. */
     n_vertices?: number

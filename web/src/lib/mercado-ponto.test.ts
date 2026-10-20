@@ -144,6 +144,14 @@ describe('leituraDoMercado na isócrona (DEC-074)', () => {
     expect(JSON.stringify(l)).not.toMatch(/desenhada/)
   })
 
+  it('nos 5 min de carro, o recorte e as contagens dizem 5 min (Emenda 1)', () => {
+    const l = leituraDoMercado(santana({ grao: 'geometria', raio_km: null, area_km2: 3.17 }), 'carro_5min')
+    expect(l.recorte).toBe('5 min de carro, sem trânsito · 3,17 km²')
+    const conc = l.linhas.find((x) => x.chave === 'consumo_concorrentes')!
+    expect(conc.detalhe).toBe('8 academias de rede alcançam a área de 5 min de carro')
+    expect(JSON.stringify(l)).not.toMatch(/10 min/)
+  })
+
   it('sem o tipo, a leitura de sempre (raio pelo grão)', () => {
     expect(leituraDoMercado(santana()).recorte).toBe('raio de 1 km')
     expect(leituraDoMercado(santana(), 'raio_1km')).toEqual(leituraDoMercado(santana()))

@@ -37,13 +37,27 @@ export function ehAreaDesenhada(
 }
 
 /** Os tipos de recorte que a tela conhece (identificadores crus). */
-export type TipoRecorte = 'raio_1km' | 'raio_2km' | 'carro_10min' | 'poligono'
+export type TipoRecorte = 'raio_1km' | 'raio_2km' | 'carro_5min' | 'carro_10min' | 'poligono'
 
-const TIPOS_RECORTE: readonly string[] = ['raio_1km', 'raio_2km', 'carro_10min', 'poligono']
+const TIPOS_RECORTE: readonly string[] = ['raio_1km', 'raio_2km', 'carro_5min', 'carro_10min', 'poligono']
+
+/**
+ * O TEMPO de cada isócrona (DEC-074 e Emenda 1). É a única coisa que muda entre os
+ * alcances de carro: os rótulos saem daqui, em vez de cada tela repetir o caso de 10 min.
+ */
+export const MINUTOS_DO_CARRO: Readonly<Record<'carro_5min' | 'carro_10min', number>> = Object.freeze({
+  carro_5min: 5,
+  carro_10min: 10,
+})
+
+/** Os minutos de carro do recorte, ou `null` quando ele não é uma isócrona. */
+export function minutosDoRecorte(tipo: TipoRecorte | null | undefined): number | null {
+  return tipo === 'carro_5min' || tipo === 'carro_10min' ? MINUTOS_DO_CARRO[tipo] : null
+}
 
 /**
  * O TIPO do recorte de um item (identificador cru, NÃO acentuar): `'raio_1km'`,
- * `'raio_2km'`, `'carro_10min'` (isócrona, DEC-074) ou `'poligono'` (área desenhada à mão,
+ * `'raio_2km'`, `'carro_5min'`/`'carro_10min'` (isócrona, DEC-074) ou `'poligono'` (área desenhada à mão,
  * DEC-071).
  *
  * Pelo `recorte.tipo` do servidor quando ele vem; payload anterior à chave cai na regra de
@@ -84,10 +98,11 @@ export function rotuloDaAreaDesenhada(areaKm2: number | null | undefined): strin
 /**
  * "10 min de carro, sem trânsito · 38,2 km²" — a isócrona (DEC-074). O "sem trânsito" é
  * parte do recorte, não enfeite: o serviço de rotas calcula com a velocidade da via, e a
- * mesma origem na hora do rush alcançaria bem menos. Sem área, só o tempo.
+ * mesma origem na hora do rush alcançaria bem menos. Sem área, só o tempo. `minutos` é o
+ * da isócrona (5 ou 10, `MINUTOS_DO_CARRO`); o default é o alcance original da DEC-074.
  */
-export function rotuloDaIsocrona(areaKm2: number | null | undefined): string {
-  const base = '10 min de carro, sem trânsito'
+export function rotuloDaIsocrona(areaKm2: number | null | undefined, minutos = 10): string {
+  const base = `${minutos} min de carro, sem trânsito`
   if (areaKm2 == null || Number.isNaN(areaKm2)) return base
   return `${base} · ${areaCurta(areaKm2)} km²`
 }
