@@ -86,7 +86,11 @@ cachetools==7.1.4
     # via
     #   prefect
     #   py-key-value-aio
-certifi==2026.6.17
+certifi==2026.10.19
+    # (bump manual 20/10) GHSA-6q48-6c7w-9gw2 -- ate 2026.10.17 o bundle trazia a raiz
+    # `emSign ECC Root CA - G3`, removida na 2026.10.18. Era a UNICA linha que o
+    # `pip-audit` reprovava, e deixou a `main` vermelha (e o publish-web pulado) no
+    # merge do #467. Nenhum consumidor tem teto de versao no certifi:
     # via
     #   apprise
     #   httpcore
