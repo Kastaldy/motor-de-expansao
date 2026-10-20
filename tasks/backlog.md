@@ -6805,3 +6805,58 @@ com duas medidas:
 As colunas `rampa_ret12_*` e `rampa_n_alunos_prevenda` já existem no painel e estão vazias à espera disso.
 Aproveitar para regenerar o vintage (o atual é de 2026-08-10) e, se possível, incluir as 9 unidades sem
 perfil (fora do `Unidades.xlsx` do Lifetime).
+
+### BLK-BAIRRO-01 — Nome de bairro pelo CNEFE 2022 (o IBGE não tem bairro em 587 de 645 municípios de SP)
+
+| | |
+|---|---|
+| **Criticidade** | **Alta** — muda a FONTE do rótulo de bairro no ranking, nas fichas e nos dois PDFs (municipal e pontual) e cria um artefato derivado novo (bairro por setor censitário, do CNEFE). READ-ONLY sobre o M1: nenhum score, peso, `config.py` ou artefato oficial é tocado. Exige DEC. A fase 1 (medição de cobertura) é só leitura. |
+| **Prioridade** | Alta — pedido do Vinicius (20/10), uso real em São José dos Campos. |
+| **Esteira** | Fase 1: medir a cobertura do CNEFE no Brasil (leitura). Fase 2: DEC + artefato + troca da fonte do nome. Subida do artefato na VPS: MANUAL (§6). |
+| **Depende de** | nada. |
+| **Autonomia** | **manual (NÃO loop-safe)** |
+
+**O defeito.** O nome do hexágono e o bairro dos PDFs vêm de `NM_BAIRRO` da malha de setores do
+IBGE 2022. Em São José dos Campos esse campo traz as 35 regiões de planejamento da prefeitura
+("Setor Socioeconômico 14"), não bairros: o operador vê "Jardim Satélite" no mapa de fundo e
+"Setor Socioeconômico 14" na ficha e no PDF. Medido nos 645 municípios de SP: 53 têm bairro de
+verdade, 5 têm código no lugar do nome (São José dos Campos, Hortolândia, Nova Odessa, Santa Cruz
+das Palmeiras) e **587 não têm bairro nenhum** (o rótulo cai para o distrito).
+
+**A fonte candidata.** O CNEFE 2022 (cadastro de endereços do IBGE) traz `DSC_LOCALIDADE` por
+endereço, com `COD_SETOR`. Em São José dos Campos: 499 bairros, o "Setor Socioeconômico 14" é 81%
+JARDIM SATELITE, e a localidade é praticamente única dentro de cada setor censitário. Ressalva: vem
+em MAIÚSCULAS e sem acento.
+
+**Critério de aceite da fase 1.** Cobertura medida nas 27 UFs (endereços, setores, municípios e
+território), com a régua do que conta como bairro "genérico" declarada antes de medir.
+
+**Resultado da fase 1 (20/10, `data/analysis/bairro_cnefe/`).** CNEFE 2022 nas 27 UFs, 90,6 mi de
+domicílios. Régua declarada antes de medir: VAZIO, SEM_NOME, CODIGO (só número ou "SETOR 3"),
+RURAL (nome com RURAL ou INTERIOR), MUNICIPIO (igual ao nome da cidade) e BAIRRO (o resto, CENTRO
+incluído).
+- **97,6% dos domicílios** têm bairro de verdade; o resto é 1,8% nome da própria cidade, 0,3% rural
+  e 0,2% código.
+- **97,2% dos 446.426 setores** têm um bairro dominante.
+- **5.566 de 5.570 municípios (99,9%)** têm 2 ou mais bairros. Mediana: 38 nos menores (<5 mil
+  domicílios) e 205 nos maiores (>100 mil). Sem bairro: só Nova Europa/SP, Pequeri/MG, Áurea/RS e
+  Carlos Gomes/RS.
+- **Território povoado:** 91,3% dos 638.483 hexágonos res-7 com domicílio têm bairro dominante, e
+  97,5% ponderando por domicílio. A diferença são hexágonos rurais (GO: 59% sem peso, 95% com).
+- **SP contra o IBGE:** dos 587 municípios sem `NM_BAIRRO`, 586 ganham bairros pelo CNEFE. Nos 58
+  com `NM_BAIRRO`, a mediana sobe de 30,5 para 132 bairros.
+Ressalvas: nome em MAIÚSCULAS e sem acento; em cidade pequena parte dos "bairros" são localidades
+rurais com nome próprio (povoado, comunidade), que servem como rótulo mas não são bairro urbano.
+
+**Fase 2 (20/10, branch `feat/bairro-cnefe`, DEC-076 PROPOSTA): código pronto, falta deploy.** Aprovada
+por Vinicius "com a recomendação". Uma função só, `dashboard/bairro_cnefe.aplicar_bairro_cnefe`:
+classe BAIRRO -> nome do CNEFE (grafia do IBGE quando casa no município; senão Title Case com acento
+por dicionário conservador), RURAL -> "Zona rural", o resto -> cascata do IBGE. Ligada nos dois
+leitores do Relatório Municipal (rótulos, página 6 por bairro do CNEFE, "Bairros oficiais") e em
+`_resolver_e_carregar` (bairro e perfil do ponto, nome do hexágono da ficha); o ranking do piloto
+herda pelo `_carregar_bairros_por_hex`. Artefato opcional em `staging/bairro_cnefe_setor/` (sem ele,
+byte a byte o de hoje, travado por teste). Medido em SP: hexágonos com nome de bairro 16,1% -> 96,4%;
+São José dos Campos "Setor Socioeconômico 14" -> "Jardim Satélite"; Jacareí e Sorocaba 0% -> 100%,
+Campinas 0% -> 77,0%. **Pendente:** (1) aprovação da DEC-076; (2) decisão do dono sobre quem move o
+artefato para o `staging/` — recomendado um `install -d` de root, uma vez, e o resto pelo `deploy` do
+Vinicius (avaliação na DEC); (3) deploy das imagens `web`/`api` e `restart web` depois do artefato.

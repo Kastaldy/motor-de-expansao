@@ -42,7 +42,8 @@ _ROOT = Path(__file__).resolve().parents[2]
 #: (registradas como UMA DEC com itens D1-D10 justamente para o §8 crescer 1 linha, não 10).
 #: 240 -> 241 com as duas (DEC-072 e DEC-073), mescladas em 2026-10-16.
 #: 241 -> 242 na DEC-074 (2026-10-19), idem: 1 linha-índice, corpo em docs/decisions/DEC-074.md.
-_TETO_LINHAS = 242
+#: 242 -> 243 na DEC-076 (2026-10-20), idem: 1 linha-índice, corpo em docs/decisions/DEC-076.md.
+_TETO_LINHAS = 243
 
 
 def _linhas(p: Path) -> int:
