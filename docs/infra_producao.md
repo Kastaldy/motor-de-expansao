@@ -26,6 +26,7 @@
 - **API GeoEspacial + bot Telegram** — containers `motor_expansao_api` e `motor_expansao_telegram_bot` (mesma imagem; ver `docs/deploy_api_bot.md`)
 - **Caddy** — reverse proxy com TLS automático (Let's Encrypt), container `motor_expansao_caddy`
 - **Authelia 4.38** — autenticação self-hosted (login + 2FA opcional), container `motor_expansao_authelia`
+- **Valhalla (opcional, DEC-074)** — serviço de rotas da isócrona de 10 min de carro, stack separada em `/opt/valhalla-infra`, container `motor_expansao_valhalla` (ver "Serviço de rotas")
 
 Todos os containers sobem com `docker compose -f docker-compose.prod.yml`.
 
@@ -981,6 +982,46 @@ falha no chat, `exit != 0` no log (`/var/log/motor-snapshots/atualizacao_crescim
 `MONITOR_CRESCIMENTO_MAX_DIAS=100`; arquivo que nunca existiu também é FAIL — é o
 estado real enquanto o repasse não acontecer). A linha de cron dele está no bloco da
 seção "Alertas automáticos (BLK-SEC-05)", mais abaixo.
+
+## Serviço de rotas (Valhalla, DEC-074) — isócrona de "10 min de carro"
+
+Stack **separada e opcional** em `/opt/valhalla-infra` (versionada em `valhalla-infra/`, molde
+do `openmaptiles-infra/`). Responde só a isócrona de 10 min de carro, sem trânsito, do alcance
+do ponto; raio de 1 km e de 2 km não passam por ela. Container `motor_expansao_valhalla`, na
+`app_net`, **sem porta no host e sem rota no Caddy** — quem chama é o servidor do piloto, nunca
+o navegador, e o Valhalla não tem autenticação.
+
+**Desligado por padrão.** Sem `MOTOR_ROTAS_URL` no `.env`, a opção "10 min de carro" some da
+tela e a rota responde 503 com mensagem; nada mais muda. O `web` só enxerga a variável porque ela
+está listada no `environment:` do `docker-compose.prod.yml` (o compose não tem `env_file`).
+
+**Instalação (manual, cada comando na VPS com confirmação do Felipe — §6 do CLAUDE.md).**
+Detalhe e verificação em `valhalla-infra/README.md`.
+
+1. **Build fora da VPS** (estação): `bash valhalla-infra/scripts/build-brazil.sh build`. Baixa o
+   extrato da Geofabrik, confere o md5, gera os tiles num rascunho, roda o smoke num Valhalla
+   temporário e empacota. Anotar duração, tamanho e memória: são números a medir da DEC-074.
+2. Copiar `valhalla-infra/` e o pacote para `/opt/valhalla-infra/`.
+3. Definir `VALHALLA_MEM_LIMIT` (medido) em `/opt/valhalla-infra/.env` — o compose da stack
+   aborta sem ele, de propósito: os tetos da caixa já somam mais que os 16 GB físicos.
+4. Publicar: `cd /opt/valhalla-infra && bash scripts/build-brazil.sh publicar <pacote>`
+   (rascunho → rename atômico → `up -d` → smoke de dentro do `motor_expansao_web`; reprovado,
+   volta o anterior sozinho).
+5. Só com o smoke verde: `MOTOR_ROTAS_URL=http://motor_expansao_valhalla:8002` no `.env` do
+   motor e `docker compose -f docker-compose.prod.yml up -d web` (recriar, não `restart`: env
+   nova só entra na recriação).
+
+**Monitor:** o subcomando `containers` do healthcheck só vigia `motor_expansao_valhalla` quando
+`MOTOR_ROTAS_URL` está preenchida no `.env`. Com a variável vazia, a stack ausente é o estado
+correto e não alerta; com ela preenchida, container ausente é falha real (a opção aparece e
+todo clique dá 503).
+
+**Atualizar a malha:** repetir build + `publicar` (manual, mensal a trimestral). Nunca na janela
+de domingo nem no sábado 03:00 UTC. Versão em uso: `custom_files/VERSAO_TILES` e o `/status` do
+serviço (carimbada em cada isócrona).
+
+**Desligar / rollback:** esvaziar `MOTOR_ROTAS_URL` e recriar o `web`. A stack pode ficar de pé
+ou sair com `docker compose down` em `/opt/valhalla-infra`.
 
 ## Portal de seleção de país na raiz (BLK-INTL-13)
 

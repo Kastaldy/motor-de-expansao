@@ -26,6 +26,10 @@ export interface MePayload {
    *  `perfil`: backend anterior nao manda o campo, e ausencia significa "nao sei" --
    *  nunca "nao precisa trocar". Quem le' e estreita e' `estadoDaSenhaDoPayload`. */
   senha?: unknown
+  /** Os alcances do ponto que esta instância oferece (DEC-074): `raio_1km`, `raio_2km` e,
+   *  só com o serviço de rotas configurado, `carro_10min`. Ausente em backend anterior.
+   *  Quem valida e estreita é `definirAlcances` em `lib/alcance.ts`. */
+  alcances?: unknown
 }
 
 /** Tom do chip do ranking. Fronteira TS<->Python sem contrato gerado: o produtor
@@ -2029,11 +2033,17 @@ export interface PontoVizinho {
   score_censo: number | null
 }
 
+/** Um contorno GeoJSON em `[lng, lat]` — a isócrona pode vir com mais de um pedaço e com buracos. */
+export type ContornoGeoJson =
+  | { type: 'Polygon'; coordinates: [number, number][][] }
+  | { type: 'MultiPolygon'; coordinates: [number, number][][][] }
+
 export interface PontoPayload {
-  /** No item de ÁREA DESENHADA (DEC-071) é o `representative_point` do polígono. */
+  /** No item de ÁREA DESENHADA (DEC-071) é o `representative_point` do polígono; no
+   *  ALCANCE (DEC-074) é a ORIGEM clicada, que está sempre dentro do recorte. */
   lat: number
   lng: number
-  /** `null` na área desenhada: ela não tem raio (o recorte está em `recorte`). */
+  /** `null` na área desenhada e na isócrona: não têm raio (o recorte está em `recorte`). */
   raio_km: number | null
   hex_id: string
   /**
@@ -2042,14 +2052,33 @@ export interface PontoPayload {
    * contorno que o mapa desenha na cor do item. Ausente no ponto com raio.
    */
   geometria?: [number, number][][] | null
-  /** Só na área desenhada: o recorte que substituiu o raio. */
+  /**
+   * O recorte da leitura. Na área desenhada (DEC-071) sempre; no ALCANCE (DEC-074,
+   * `GET /api/ponto/alcance`) também — raio de 1 km, de 2 km ou 10 min de carro. Ausente
+   * no `GET /api/ponto` de sempre (o raio de 1 km sem bloco, byte a byte igual).
+   *
+   * Campos novos OPCIONAIS de propósito: servidor anterior à DEC-074 não os manda, e a
+   * tela tem de continuar abrindo (`lib/alcance` cai no `raio_km` e na área).
+   */
   recorte?: {
-    /** Identificador cru (`'poligono'`), NÃO acentuar. */
-    tipo: 'poligono'
+    /** Identificador cru, NÃO acentuar. */
+    tipo: 'raio_1km' | 'raio_2km' | 'carro_10min' | 'poligono'
     area_km2: number | null
-    n_vertices: number
+    /** Só na área desenhada: quantos vértices o operador clicou. */
+    n_vertices?: number
     /** Rótulo do método do motor (`setor_censitario_intersecao_area_poligono`). */
     metodo: string | null
+    /**
+     * Área do recorte / área do raio de 1 km, EXATA (1 km -> 1,0; 2 km -> 4,0). É por
+     * quanto as réguas de TOTAIS foram escaladas no servidor (DEC-074).
+     */
+    fator_regua?: number | null
+    /** O contorno (lng/lat) da isócrona ou do desenho; `null` no raio — a tela gera o círculo. */
+    contorno?: ContornoGeoJson | null
+    /** O ponto clicado, de onde o alcance parte. */
+    origem?: { lat: number; lng: number } | null
+    /** Auditoria da isócrona: motor, perfil, minutos, trânsito e versão dos dados de rota. */
+    parametros?: Record<string, unknown> | null
   } | null
   local: {
     uf: string

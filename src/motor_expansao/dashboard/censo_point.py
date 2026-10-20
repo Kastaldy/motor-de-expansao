@@ -46,6 +46,15 @@ RAIO_CENSITARIO_DEFAULT_KM = 1.0
 METODO_RELATORIO_PONTUAL_POLIGONO = "setor_censitario_intersecao_area_poligono"
 # Identificador CRU do recorte (payload), NAO acentuar.
 GEOMETRIA_TIPO_POLIGONO = "poligono"
+# DEC-074 (alcance do ponto): a ISOCRONA de 10 min de carro tambem entra como geometria, mas
+# com rotulo PROPRIO -- chama-la de `_poligono` diria que o operador a desenhou, e o PDF e a
+# API exibiriam o metodo errado. Mesma razao do `_1km` da DEC-021: o rotulo e' o recorte.
+METODO_RELATORIO_PONTUAL_ISOCRONA = "setor_censitario_intersecao_area_isocrona_carro_10min"
+GEOMETRIA_TIPO_ISOCRONA_CARRO_10MIN = "isocrona_carro_10min"
+_METODO_DA_GEOMETRIA = {
+    GEOMETRIA_TIPO_POLIGONO: METODO_RELATORIO_PONTUAL_POLIGONO,
+    GEOMETRIA_TIPO_ISOCRONA_CARRO_10MIN: METODO_RELATORIO_PONTUAL_ISOCRONA,
+}
 # BLK-RELPON-07: renda media domiciliar do bairro/distrito ponderada por domicilios
 # (Metodo A, D3.5), com exclusao simetrica de setor com renda ou domicilios nulos/<=0.
 METODO_RENDA_PERFIL_BAIRRO = "renda_responsavel_media_ponderada_por_domicilios"
@@ -55,6 +64,21 @@ METODO_RENDA_PERFIL_BAIRRO = "renda_responsavel_media_ponderada_por_domicilios"
 # vocabulario, nao o contrario. Identificadores CRUS, sem acento (CLAUDE.md secao 2).
 CLASSE_CADEIA_OFERTA = "cadeia"
 CLASSE_INDEPENDENTE_OFERTA = "independente"
+
+
+def metodo_do_raio(raio_km: float) -> str:
+    """Rotulo do metodo para um raio: `_1km` no raio canonico, `_{r}km` em qualquer outro.
+
+    DEC-074: ate' aqui o motor carimbava `_1km` em QUALQUER `raio_km` -- com o raio de 2 km
+    o resultado mentiria sobre si mesmo, exatamente o que a DEC-021 proibiu. O raio de 1 km
+    devolve a constante de sempre (contrato travado da API e do PDF). Formato sem zeros a
+    direita e com `p` no lugar do ponto (2.0 -> `2km`, 1.5 -> `1p5km`), o mesmo que a
+    DEC-021 usava para o raio antigo.
+    """
+    if float(raio_km) == RAIO_CENSITARIO_DEFAULT_KM:
+        return METODO_RELATORIO_PONTUAL_CENSITARIO
+    rotulo = f"{float(raio_km):g}".replace(".", "p")
+    return f"setor_censitario_intersecao_area_{rotulo}km"
 
 
 def _contar_classe(pontos, classe: str) -> int:
@@ -243,8 +267,18 @@ def analisar_ponto_censitario_setores(
     competitors_df: pd.DataFrame | None = None,
     ultra_df: pd.DataFrame | None = None,
     geometria_wgs84: BaseGeometry | None = None,
+    geometria_tipo: str | None = None,
 ) -> dict:
     """Analisa um ponto por intersecao real entre setores censitarios e circulo.
+
+    DEC-074 (alcance do ponto): `geometria_tipo` rotula a geometria -- `"poligono"` (o
+    default quando ha' geometria: o desenho a mao, como antes) ou `"isocrona_carro_10min"`
+    (metodo `..._isocrona_carro_10min`). Na isocrona, (lat, lng) e' o PONTO CLICADO (a
+    origem do calculo de rotas), que o construtor da isocrona garante estar dentro dela.
+    Um `raio_km` diferente de 1 ganha metodo proprio (`metodo_do_raio`). Nos dois casos o
+    dict ganha `area_km2_exata` (sem arredondar) e `fator_regua` (area / pi; no raio,
+    `raio^2` exato), que escalam as reguas absolutas de TOTAL. No raio de 1 km sem
+    geometria NENHUMA chave nova entra: o estudo de sempre sai identico.
 
     DEC-071 (fase 1, PROPOSTA): `geometria_wgs84` OPCIONAL troca o circulo por um poligono
     desenhado (shapely em graus, x=lng, y=lat). Com ele, (lat, lng) TEM de ser um ponto
@@ -291,6 +325,12 @@ def analisar_ponto_censitario_setores(
     qualquer setor da malha -> os 5 campos ficam `None`, sem excecao.
     """
     poligono = geometria_wgs84 is not None
+    if geometria_tipo is not None and not poligono:
+        raise ValueError("geometria_tipo sem geometria_wgs84")
+    tipo_geometria = geometria_tipo or GEOMETRIA_TIPO_POLIGONO
+    if poligono and tipo_geometria not in _METODO_DA_GEOMETRIA:
+        # Rotulo desconhecido carimbaria um metodo inventado no PDF -- recusa explicita.
+        raise ValueError(f"geometria_tipo desconhecido: {geometria_tipo!r}")
     if poligono:
         # A MESMA projecao local que a intersecao usa mais abaixo: a area do recorte e a
         # area de cada pedaco de setor saem da mesma regua de metros.
@@ -309,7 +349,7 @@ def analisar_ponto_censitario_setores(
         "lng": lng,
         "raio_km": None if poligono else raio_km,
         "area_km2": round(area_km2, 2),
-        "metodo": METODO_RELATORIO_PONTUAL_POLIGONO if poligono else METODO_RELATORIO_PONTUAL_CENSITARIO,
+        "metodo": _METODO_DA_GEOMETRIA[tipo_geometria] if poligono else metodo_do_raio(raio_km),
         "n_setores": 0,
         "area_intersecao_total_m2": 0.0,
         "pop_total_raio": None,
@@ -368,7 +408,22 @@ def analisar_ponto_censitario_setores(
     if poligono:
         # Chave SO' no modo geometria: no raio o dict tem de sair identico ao de antes, e
         # quem nao conhece a DEC-071 continua lendo `raio_km`/`metodo` como sempre.
-        result["geometria_tipo"] = GEOMETRIA_TIPO_POLIGONO
+        result["geometria_tipo"] = tipo_geometria
+    if poligono or float(raio_km) != RAIO_CENSITARIO_DEFAULT_KM:
+        # DEC-074: as duas chaves da regua escalada, SO' fora do raio de 1 km (o dict do
+        # estudo de sempre nao ganha chave nenhuma). `area_km2` acima e' arredondada para
+        # EXIBICAO; o fator sai da area exata -- 3,14 em vez de pi moveria as metas.
+        # Import tardio por simetria com o resto do modulo leve; `alcance_ponto` nao importa
+        # este modulo no topo, entao nao ha' ciclo.
+        from motor_expansao.dashboard.alcance_ponto import (
+            fator_regua_da_area,
+            fator_regua_do_raio,
+        )
+
+        result["area_km2_exata"] = float(area_km2)
+        result["fator_regua"] = (
+            fator_regua_da_area(area_km2) if poligono else fator_regua_do_raio(raio_km)
+        )
 
     if setores_df is None or setores_df.empty:
         return result

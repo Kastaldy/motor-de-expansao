@@ -124,6 +124,30 @@ describe('recorteDoMercado', () => {
   it('área desenhada sem área conhecida não inventa número', () => {
     expect(recorteDoMercado({ grao: 'geometria', raio_km: null, area_km2: null })).toBe('área desenhada')
   })
+
+  it('a isócrona também roda num polígono, mas não é "área desenhada" (DEC-074)', () => {
+    // O servidor chama o mercado com `geometria` e devolve `grao = 'geometria'`: o tipo do
+    // recorte do item é que diz o que a ficha afirma.
+    const iso = { grao: 'geometria' as const, raio_km: null, area_km2: 38.24 }
+    expect(recorteDoMercado(iso, 'carro_10min')).toBe('10 min de carro, sem trânsito · 38,2 km²')
+    expect(recorteDoMercado(iso, 'poligono')).toBe('área desenhada de 38,2 km²')
+    expect(recorteDoMercado({ grao: 'raio', raio_km: 2, area_km2: 12.57 }, 'raio_2km')).toBe('raio de 2 km')
+  })
+})
+
+describe('leituraDoMercado na isócrona (DEC-074)', () => {
+  it('nota e contagens falam de 10 min de carro, não de área desenhada', () => {
+    const l = leituraDoMercado(santana({ grao: 'geometria', raio_km: null, area_km2: 38.24 }), 'carro_10min')
+    expect(l.recorte).toBe('10 min de carro, sem trânsito · 38,2 km²')
+    const conc = l.linhas.find((x) => x.chave === 'consumo_concorrentes')!
+    expect(conc.detalhe).toBe('8 academias de rede alcançam a área de 10 min de carro')
+    expect(JSON.stringify(l)).not.toMatch(/desenhada/)
+  })
+
+  it('sem o tipo, a leitura de sempre (raio pelo grão)', () => {
+    expect(leituraDoMercado(santana()).recorte).toBe('raio de 1 km')
+    expect(leituraDoMercado(santana(), 'raio_1km')).toEqual(leituraDoMercado(santana()))
+  })
 })
 
 describe('contaFecha', () => {

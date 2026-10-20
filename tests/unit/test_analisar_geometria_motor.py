@@ -132,8 +132,10 @@ def _escalares(res: dict) -> dict:
 def test_sem_geometria_o_dict_do_raio_nao_muda() -> None:
     setores = _malha_de_setores()
     res = analisar_ponto_censitario_setores(LAT_C, LNG_C, setores)
-    # Mesmas chaves de antes da DEC-071 -- nenhuma a mais (nem `geometria_tipo`).
+    # Mesmas chaves de antes da DEC-071 -- nenhuma a mais (nem `geometria_tipo`, nem as
+    # chaves da regua escalada da DEC-074, `area_km2_exata`/`fator_regua`).
     assert set(res) == _CHAVES_DO_RAIO
+    assert "fator_regua" not in res and "area_km2_exata" not in res
     assert res["metodo"] == METODO_RELATORIO_PONTUAL_CENSITARIO
     assert res["raio_km"] == 1.0
     assert res["area_km2"] == round(math.pi, 2)
@@ -159,6 +161,10 @@ def test_poligono_que_aproxima_o_circulo_reproduz_o_raio() -> None:
     assert poli["geometria_tipo"] == GEOMETRIA_TIPO_POLIGONO
     assert poli["raio_km"] is None
     assert poli["area_km2"] == pytest.approx(math.pi, rel=1e-3)
+    # DEC-074: com geometria o dict carrega a area EXATA e o fator dela (area / pi) -- o
+    # circulo poligonizado mede quase pi, mas nao pi: o fator so' e' exato no RAIO.
+    assert poli["fator_regua"] == pytest.approx(poli["area_km2_exata"] / math.pi, rel=1e-12)
+    assert poli["fator_regua"] == pytest.approx(1.0, rel=1e-3)
     assert poli["n_setores"] == raio["n_setores"]
     for chave in ("pop_total_raio", "domicilios_total_raio", "renda_per_capita_media_raio",
                   "renda_domiciliar_total_raio", "area_intersecao_total_m2"):

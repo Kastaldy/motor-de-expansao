@@ -181,9 +181,12 @@ _DENY_GOVERNANCA: list[tuple[str, str]] = [
     # `mercado_raio` (DEC-070: SAM/consumo/residual/score do ponto nas TRES superficies) e
     # `geometria_desenhada` (DEC-071: limites da area desenhada) entraram em 2026-10-14 --
     # nasceram fora da lista e um PR "Media" que mexesse so' neles passaria limpo.
+    # `alcance_ponto` (DEC-074: raio de 2 km, isocrona de 10 min e o FATOR que escala as
+    # reguas absolutas) entrou no MESMO PR que o criou, pela mesma razao.
     (
         r"^src/motor_expansao/dashboard/"
-        r"(data|utils|censo_point|censo_map|censo_report|mercado_raio|geometria_desenhada)\.py$",
+        r"(data|utils|censo_point|censo_map|censo_report|mercado_raio|geometria_desenhada|"
+        r"alcance_ponto)\.py$",
         "camada que calcula/exibe os numeros do dashboard",
     ),
     (r"^src/motor_expansao/api/", "API/bot servidos em producao"),

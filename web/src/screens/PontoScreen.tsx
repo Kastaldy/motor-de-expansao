@@ -19,7 +19,14 @@ import PainelPontos from '../components/PainelPontos'
 import Recomendacao from '../components/Recomendacao'
 import { Aviso, Botao, Chip, Eyebrow, Glass, Spinner } from '../components/primitives'
 import { api, ApiError, baixar } from '../lib/api'
-import { RAIO_PADRAO_KM, ehAreaDesenhada, rotuloDoRaio } from '../lib/recorte'
+import { RAIO_PADRAO_KM, ehAreaDesenhada, rotuloDoRaio, tipoDoRecorte } from '../lib/recorte'
+import {
+  ROTULO_ALCANCE,
+  alcanceDoItem,
+  alcancesDisponiveis,
+  notaDaReguaEscalada,
+  type Alcance,
+} from '../lib/alcance'
 import {
   rotuloDoRecorte,
   nomeDoLugar,
@@ -36,6 +43,9 @@ import { chaveDaCoordenada } from '../lib/comparacao-pontos'
 import {
   estadoDoEstudo,
   estadoDoSimulador,
+  estiloDoBotaoEstudo,
+  estiloDoBotaoSimulador,
+  recorteDoEstudo,
   rotuloParaSimulador,
   type EstadoBotao,
 } from '../lib/rodape-ponto'
@@ -94,6 +104,7 @@ export default function PontoScreen({
   erroPonto,
   onAnalisar,
   onTrocarModo,
+  onTrocarAlcance,
   trocandoModo = [],
   onAbrir,
   onRemover,
@@ -149,7 +160,12 @@ export default function PontoScreen({
    * (emenda da DEC-070). Ausente = a chave não aparece.
    */
   onTrocarModo?: (i: number, estudoUltra: boolean) => void
-  /** `chaveDaCoordenada` dos pontos sendo relidos em outro modo (a chave mostra a espera). */
+  /**
+   * Troca o ALCANCE do ponto `i` no lugar (DEC-074): raio de 1 km, de 2 km ou 10 min de
+   * carro. Ausente = o seletor não aparece.
+   */
+  onTrocarAlcance?: (i: number, alcance: Alcance) => void
+  /** `chaveDaCoordenada` dos pontos sendo relidos em outro modo ou alcance (a espera). */
   trocandoModo?: readonly string[]
   onAbrir: (i: number) => void
   onRemover: (i: number) => void
@@ -277,6 +293,10 @@ export default function PontoScreen({
 
   const gerarEstudo = useCallback(async () => {
     if (!ficha || !estadoDoEstudo(ficha, gerandoEstudo).habilitado) return
+    /* O RECORTE da ficha vai junto, no corpo (fase 2 da DEC-071, DEC-074): área desenhada
+       pelo contorno, 2 km e 10 min de carro pelo alcance. O raio de 1 km não manda nada. */
+    const recorte = recorteDoEstudo(ficha)
+    if (recorte == null) return
     setGerandoEstudo(true)
     setErroEstudo(null)
     try {
@@ -291,6 +311,7 @@ export default function PontoScreen({
         /* O MODO da ficha vai junto (emenda da DEC-070): o PDF do estudo da unidade Ultra
            sai sem o consumo dela, como a tela — e o Big Numbers declara isso. */
         excluirUltraProxima: ehEstudoDaUnidade(ficha),
+        ...recorte,
       })
       baixar(blob, filename)
     } catch (e) {
@@ -695,6 +716,7 @@ export default function PontoScreen({
               ficha={ficha}
               partido={partidos[aberto] ?? null}
               onTrocarModo={onTrocarModo ? (ligado) => onTrocarModo(aberto, ligado) : undefined}
+              onTrocarAlcance={onTrocarAlcance ? (a) => onTrocarAlcance(aberto, a) : undefined}
               trocando={trocandoModo.includes(chaveDaCoordenada(ficha.lat, ficha.lng))}
             />
           </div>
@@ -704,15 +726,10 @@ export default function PontoScreen({
   )
 }
 
-/**
- * Os dois botões do rodapé, um degrau acima do `Botao` padrão (pedido do Vinicius,
- * 2026-10-16: "aumentar um pouco mais"). Fonte 13 -> 15 px e padding na mesma proporção
- * (~+16% de altura), e os DOIS com o mesmo padding vertical: o ghost tem 1 px de borda de
- * cada lado, então desconta 1 px no padding para as duas pílulas saírem da MESMA altura e
- * o rodapé continuar alinhado. Cabem lado a lado na largura mínima da janela (320 px).
- */
-const ESTILO_RODAPE_PRIMARIO = { font: '700 15px/1 var(--f-ui)', padding: '14px 22px' } as const
-const ESTILO_RODAPE_GHOST = { font: '600 15px/1 var(--f-ui)', padding: '13px 18px' } as const
+/* Os dois botões do rodapé, um degrau acima do `Botao` padrão (pedido do Vinicius,
+   2026-10-16: "aumentar um pouco mais"), dividindo o quadro AO MEIO desde a nota do dono
+   de 19/10/2026: Estudo no rosa magenta da camada imobiliária, Simulador no azul do
+   sistema. Os estilos moram em `lib/rodape-ponto`, onde o teste os alcança. */
 
 /**
  * O rodapé fixo da janela: "Estudo" e "Simulador".
@@ -738,12 +755,14 @@ function RodapePonto({
   const motivos = [estudo.travadoPorque, simulador.travadoPorque].filter((m): m is string => m != null)
   return (
     <div style={{ flex: 1, minWidth: 0, display: 'grid', gap: 8 }}>
-      <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', alignItems: 'center' }}>
+      {/* Metade do quadro para cada um (`flex: 1` nos dois, sem quebra de linha): a mesma
+          largura e a mesma altura, qualquer que seja o rótulo. */}
+      <div style={{ display: 'flex', gap: 10, alignItems: 'stretch' }}>
         <Botao
           onClick={onEstudo}
           disabled={!estudo.habilitado}
           title={estudo.dica}
-          style={ESTILO_RODAPE_PRIMARIO}
+          style={estiloDoBotaoEstudo(estudo.habilitado)}
         >
           <span style={{ display: 'inline-flex', alignItems: 'center', gap: 8 }}>
             {gerando && <Spinner />}
@@ -751,11 +770,10 @@ function RodapePonto({
           </span>
         </Botao>
         <Botao
-          variante="ghost"
           onClick={onSimulador}
           disabled={!simulador.habilitado}
           title={simulador.dica}
-          style={ESTILO_RODAPE_GHOST}
+          style={estiloDoBotaoSimulador(simulador.habilitado)}
         >
           {simulador.rotulo} →
         </Botao>
@@ -780,6 +798,7 @@ function Ficha({
   ficha,
   partido,
   onTrocarModo,
+  onTrocarAlcance,
   trocando = false,
 }: {
   ficha: PontoPayload
@@ -787,18 +806,31 @@ function Ficha({
   partido: RotuloPartido | null
   /** Troca o modo de estudo deste ponto (emenda da DEC-070). Ausente = sem chave. */
   onTrocarModo?: (estudoUltra: boolean) => void
-  /** A releitura no outro modo está em voo. */
+  /** Troca o alcance deste ponto no lugar (DEC-074). Ausente = sem seletor. */
+  onTrocarAlcance?: (alcance: Alcance) => void
+  /** A releitura no outro modo (ou alcance) está em voo. */
   trocando?: boolean
 }) {
   const { local, censo, concorrencia, mercado } = ficha
-  const contaDoMercado = mercado.disponivel ? leituraDoMercado(mercado) : null
+  /* O recorte do ITEM vai junto: a isócrona roda num polígono (`grao = 'geometria'`) e,
+     sem o tipo, a nota do mercado a chamaria de "área desenhada" (DEC-074). */
+  const contaDoMercado = mercado.disponivel ? leituraDoMercado(mercado, tipoDoRecorte(ficha)) : null
   const ofertaUltra = ofertaDeEstudoUltra(ficha)
   /* ÁREA DESENHADA (DEC-071, fase 1): a mesma ficha, com o polígono no lugar do raio. O
      que muda é só o que a ficha AFIRMA sobre o recorte — os blocos e as contas são os
      mesmos, calculados pelo servidor dentro da área. */
   const area = ehAreaDesenhada(ficha)
   const recorte = rotuloDoRecorte(ficha)
-  const onde = area ? 'na área' : 'no raio'
+  /* O ALCANCE (DEC-074): `null` só na área desenhada. A isócrona fala "em 10 min de
+     carro" — a mesma escrita do servidor nos critérios —, os raios seguem "no raio". */
+  const alcance = alcanceDoItem(ficha)
+  const isocrona = tipoDoRecorte(ficha) === 'carro_10min'
+  const onde = area ? 'na área' : isocrona ? 'em 10 min de carro' : 'no raio'
+  /* O recorte do ponto deixou de ser sempre o raio de 1 km: fora dele a ficha DIZ qual é
+     na identificação, e não só no subtítulo da janela. */
+  const recorteNaIdentificacao = !area && alcance !== 'raio_1km' ? recorte : null
+  const notaRegua = notaDaReguaEscalada(ficha)
+  const opcoesDeAlcance = alcancesDisponiveis()
 
   return (
     <div style={{ display: 'grid', gap: 16 }}>
@@ -835,6 +867,7 @@ function Ficha({
                 local.municipio,
                 local.uf,
                 local.hexagono || local.bairro ? null : 'sem bairro identificado',
+                recorteNaIdentificacao,
               ]
           )
             .filter(Boolean)
@@ -871,12 +904,30 @@ function Ficha({
           Vinicius, 2026-10-16): ela muda a PERGUNTA da ficha inteira (estudo de ponto x
           estudo da unidade), e no fim do bloco de mercado exigia rolar a ficha toda para
           ser achada. */}
-      {ofertaUltra && (
+      {/* O seletor de ALCANCE (DEC-074), no mesmo lugar e no mesmo molde da chave do
+          estudo da unidade: ele também muda a PERGUNTA da ficha inteira (de que recorte
+          em volta do ponto ela fala). Só em ponto — a área desenhada já é o recorte — e só
+          com mais de uma opção: sem a rota de alcance no servidor, nada a escolher. */}
+      {!area && alcance && onTrocarAlcance && opcoesDeAlcance.length > 1 && (
+        <SeletorAlcance
+          opcoes={opcoesDeAlcance}
+          atual={alcance}
+          trocando={trocando}
+          comEstudoUltra={ofertaUltra?.ligado === true}
+          onTrocar={onTrocarAlcance}
+        />
+      )}
+
+      {/* A chave do estudo da unidade Ultra só existe no raio de 1 km: o servidor não
+          oferece o estudo da unidade em outro alcance. */}
+      {ofertaUltra && alcance === 'raio_1km' && (
         <ChaveEstudoUltra oferta={ofertaUltra} trocando={trocando} onTrocar={onTrocarModo} />
       )}
 
       {/* ---------------- Socioeconomia (sempre disponível) ---------------- */}
-      <Secao titulo={area ? 'Quem mora na área' : 'Quem mora em volta'} nota={`${censoDaBase() ?? 'Censo 2022'} · ${recorte}`}>
+      <Secao
+        titulo={area ? 'Quem mora na área' : isocrona ? 'Quem mora a 10 min de carro' : 'Quem mora em volta'}
+        nota={`${censoDaBase() ?? 'Censo 2022'} · ${recorte}`}>
         {/* ---- O VISUAL VEM PRIMEIRO ----
             A hierarquia estava invertida: cinco cards de 24px dominavam o bloco e a barra
             aparecia como rodapé. Quem escolhe imóvel pergunta "isso é muito?", e essa
@@ -904,7 +955,7 @@ function Ficha({
 
         <Rodape>
           A densidade desconta água e vazio: divide pela área de setor censitário
-          realmente intersectada, não pela área {area ? 'desenhada' : 'do círculo'}.
+          realmente intersectada, não pela área {area ? 'desenhada' : isocrona ? 'do recorte' : 'do círculo'}.
         </Rodape>
         {censo.detalhe && (
           <DetalheRegiao detalhe={censo.detalhe} concorrencia={concorrencia} area={area} />
@@ -918,7 +969,11 @@ function Ficha({
               distância só, e a régua afirmaria uma escala que não existe. Na área, a lista
               simples — quem está dentro, a que distância do ponto central. */}
           {area || ficha.raio_km == null ? (
-            <ListaConcorrentesArea lista={concorrencia.lista} />
+            /* Na isócrona a distância é ao ponto CLICADO (a origem), não a um ponto central. */
+            <ListaConcorrentesArea
+              lista={concorrencia.lista}
+              referencia={area ? 'ponto central' : 'ponto de origem'}
+            />
           ) : (
             <ReguaConcorrentes lista={concorrencia.lista} raioKm={ficha.raio_km} />
           )}
@@ -968,7 +1023,10 @@ function Ficha({
           contrato — nenhuma ação financeira (aluguel, metragem, teto) é gerada. */}
       <Secao
         titulo="Serve este imóvel?"
-        nota="cada métrica contra a régua da rede"
+        /* Fora do raio de 1 km as réguas de TOTAIS chegam escaladas pela área do recorte
+           (DEC-074, decidido no servidor): a nota DECLARA a escala, senão "precisa de 20.000
+           pessoas" pareceria outra régua da rede, e não a mesma num recorte maior. */
+        nota={notaRegua ?? 'cada métrica contra a régua da rede'}
       >
         <Recomendacao
           criterios={ficha.criterios}
@@ -1053,6 +1111,93 @@ function ChaveEstudoUltra({
 }
 
 /**
+ * O SELETOR DE ALCANCE (DEC-074): raio de 1 km, raio de 2 km e 10 min de carro, em grupo
+ * de rádio. Trocar relê o PRÓPRIO ponto no servidor e troca a ficha no lugar (mesmo nome,
+ * mesma cor) — "último clique vence", como a chave do estudo da unidade. Nada é calculado
+ * aqui. "10 min de carro" só aparece quando a instância tem o serviço de rotas
+ * (`alcancesDisponiveis`); opção que não pode acender não é desenhada apagada.
+ *
+ * O estudo da unidade Ultra é só do raio de 1 km: com ele ligado, escolher outro alcance
+ * volta ao estudo de ponto — e a frase embaixo diz isso ANTES do clique.
+ */
+function SeletorAlcance({
+  opcoes,
+  atual,
+  trocando,
+  comEstudoUltra,
+  onTrocar,
+}: {
+  opcoes: readonly Alcance[]
+  atual: Alcance
+  trocando: boolean
+  comEstudoUltra: boolean
+  onTrocar: (alcance: Alcance) => void
+}) {
+  return (
+    <div
+      style={{
+        display: 'grid',
+        gap: 8,
+        padding: '10px 12px',
+        borderRadius: 10,
+        border: '1px solid var(--line-soft)',
+        background: 'var(--surf-raised)',
+      }}
+    >
+      <span
+        id="rotulo-alcance-ponto"
+        style={{
+          display: 'inline-flex',
+          alignItems: 'center',
+          gap: 8,
+          font: '500 12px/1.4 var(--f-ui)',
+          color: 'var(--tx-soft)',
+        }}
+      >
+        Alcance a partir do ponto
+        {trocando && <Spinner />}
+      </span>
+      <div
+        role="radiogroup"
+        aria-labelledby="rotulo-alcance-ponto"
+        style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}
+      >
+        {opcoes.map((a) => {
+          const marcado = a === atual
+          return (
+            /* Clicar várias vezes é seguro mesmo durante a releitura: a regra do "último
+               clique vence" é do `use-pontos`. Por isso o botão não trava enquanto lê. */
+            <button
+              key={a}
+              type="button"
+              role="radio"
+              aria-checked={marcado}
+              onClick={() => onTrocar(a)}
+              style={{
+                padding: '7px 11px',
+                borderRadius: 999,
+                border: `1px solid ${marcado ? 'var(--ac-text)' : 'var(--line-soft)'}`,
+                background: 'transparent',
+                color: marcado ? 'var(--ac-text)' : 'var(--tx-soft)',
+                font: `${marcado ? 700 : 500} 12px/1 var(--f-ui)`,
+                cursor: 'pointer',
+              }}
+            >
+              {ROTULO_ALCANCE[a]}
+            </button>
+          )
+        })}
+      </div>
+      {comEstudoUltra && (
+        <span style={{ font: '400 11px/1.4 var(--f-ui)', color: 'var(--tx-sub)' }}>
+          O estudo da unidade Ultra é só do raio de 1 km: escolher outro alcance volta ao estudo de ponto.
+        </span>
+      )}
+    </div>
+  )
+}
+
+/**
  * A conta do mercado, linha a linha: SAM − concorrentes − Ultra = residual.
  *
  * Parcela ausente sai com travessão e o motivo do servidor abaixo — nunca zero, que
@@ -1124,8 +1269,11 @@ function ContaDoMercado({ leitura }: { leitura: ReturnType<typeof leituraDoMerca
  */
 function ListaConcorrentesArea({
   lista,
+  referencia,
 }: {
   lista: { rede: string | null; dist_km: number | null }[] | null | undefined
+  /** De onde a distância é medida: o ponto central da área, ou a origem do alcance. */
+  referencia: 'ponto central' | 'ponto de origem'
 }) {
   if (!lista?.length) return null
   return (
@@ -1139,7 +1287,7 @@ function ListaConcorrentesArea({
             {c.rede ?? 'Academia sem nome'}
           </span>
           <span className="num" style={{ font: '400 10.5px/1.3 var(--f-num)', color: 'var(--tx-sub)', whiteSpace: 'nowrap' }}>
-            {c.dist_km == null ? num(null) : `${num(c.dist_km, 2)} km do ponto central`}
+            {c.dist_km == null ? num(null) : `${num(c.dist_km, 2)} km do ${referencia}`}
           </span>
         </div>
       ))}
