@@ -20,6 +20,8 @@ from shapely.geometry.base import BaseGeometry
 from motor_expansao.dashboard import constants as _constants
 from motor_expansao.dashboard.censo_point import (
     CRS_ORIGEM_CENSO,
+    GEOMETRIA_TIPO_ISOCRONA_CARRO_10MIN,
+    GEOMETRIA_TIPO_POLIGONO,
     RAIO_CENSITARIO_DEFAULT_KM,
     _bbox_prefilter,
     _decode_geometry,
@@ -396,6 +398,60 @@ def alcance_do_frame_km(
     return max(abs(minx), abs(miny), abs(maxx), abs(maxy)) / 1000.0
 
 
+def _frame_box_da_geometria(contorno_metric: BaseGeometry, width: int, height: int) -> Polygon:
+    """Frame do mapa para um RECORTE por geometria (DEC-074), no CRS metrico local do ponto.
+
+    O `_frame_box_metric` e' centrado no ponto e dimensionado pelo raio; uma isocrona ou uma
+    area desenhada nao tem raio e quase nunca e' centrada no ponto (a isocrona se estica ao
+    longo das vias rapidas). Aqui o frame sai dos BOUNDS do contorno -- unidos ao proprio
+    ponto (0, 0), que tem de aparecer no mapa mesmo que o contorno chegue so' ate' perto
+    dele -- com a MESMA margem relativa do raio (`_MAP_FRAME_MARGIN`) e a MESMA proporcao da
+    area de mapa, para o choropleth encher a figura sem letterbox como no raio.
+    """
+    minx, miny, maxx, maxy = contorno_metric.bounds
+    minx, miny = min(minx, 0.0), min(miny, 0.0)
+    maxx, maxy = max(maxx, 0.0), max(maxy, 0.0)
+    cx, cy = (minx + maxx) / 2.0, (miny + maxy) / 2.0
+    # Piso de 500 m de meio-lado: um desenho degenerado (fino) nao vira um frame de 1 m.
+    half_x = max((maxx - minx) / 2.0 * (1.0 + _MAP_FRAME_MARGIN), 500.0)
+    half_y = max((maxy - miny) / 2.0 * (1.0 + _MAP_FRAME_MARGIN), 500.0)
+    inner_w, inner_h = _map_inner_dims(width, height)
+    aspect = inner_w / inner_h if inner_h > 0 else 1.0
+    if half_x / half_y < aspect:
+        half_x = half_y * aspect
+    else:
+        half_y = half_x / aspect
+    return box(cx - half_x, cy - half_y, cx + half_x, cy + half_y)
+
+
+def quadro_do_mapa_da_geometria(
+    lat: float,
+    lng: float,
+    geometria_wgs84: BaseGeometry,
+    width: int = MAPA_WIDTH_PADRAO,
+    height: int = MAPA_HEIGHT_PADRAO,
+) -> Polygon:
+    """O quadro (em GRAUS, x=lng) que o mapa de um recorte por geometria mostra (DEC-074).
+
+    O par de `alcance_do_frame_km` para a isocrona e a area desenhada: quem carrega os
+    setores dos municipios vizinhos le' ESTE quadro, e quem desenha o mapa usa o mesmo
+    `_frame_box_da_geometria`. O quadro sai dos bounds do contorno e e' ESTICADO para a
+    proporcao da figura (~1,7:1): numa isocrona alongada no sentido norte-sul ele vai
+    quilometros alem do contorno nas laterais, e um vizinho so' nessa faixa ficava sem
+    setor -- buraco no choropleth, em silencio (a classe da DEC-065). Mesmo CRS local
+    centrado em (lat, lng) que o render usa.
+    """
+    metric_crs = _local_metric_crs(lat, lng)
+    contorno_metric = _project_geometry(geometria_wgs84, _transformer(CRS_ORIGEM_CENSO, metric_crs))
+    quadro_metric = _frame_box_da_geometria(contorno_metric, width, height)
+    # O lado reto de um quadro metrico nao fica reto em graus; densificar antes de projetar
+    # evita que a corda entre dois cantos corte a faixa da borda.
+    quadro_metric = quadro_metric.segmentize(max(quadro_metric.length / 64.0, 1.0))
+    return cast(
+        Polygon, _project_geometry(quadro_metric, _transformer(metric_crs, CRS_ORIGEM_CENSO))
+    )
+
+
 def _font(size: int = 12) -> ImageFont.ImageFont:
     # BLK-RELPON-06 (D3): fonte TrueType EMBUTIDA do Pillow (>=10.1), via load_default(size=).
     # Deliberadamente NAO usa TTF do sistema: `arial.ttf` so existe no Windows e a imagem de
@@ -537,9 +593,35 @@ def _format_valor_residual(value: float | None) -> str:
     return f"{float(value):,.0f}".replace(",", ".")
 
 
-def _legenda_valor_ponto(rotulo: str, texto: str) -> str:
-    """Monta o texto da faixa superior do mapa: "<Rotulo> no raio: <texto>" (BLK-RELPON-06/D1)."""
-    return f"{rotulo} no raio: {texto}"
+def _legenda_valor_ponto(rotulo: str, texto: str, onde: str = "no raio") -> str:
+    """Monta o texto da faixa superior do mapa: "<Rotulo> no raio: <texto>" (BLK-RELPON-06/D1).
+
+    `onde` (DEC-074) troca a preposicao do recorte: "na area", "no raio de 2 km", "em 10 min
+    de carro". Default = o texto de sempre, caractere a caractere.
+    """
+    return f"{rotulo} {onde}: {texto}"
+
+
+def _formatar_raio_km(raio_km: float) -> str:
+    """Raio para texto de mapa: `2 km`, `1,5 km` (sem zero a direita, virgula decimal)."""
+    return f"{float(raio_km):g}".replace(".", ",") + " km"
+
+
+def onde_do_recorte(raio_km: float | None, geometria_tipo: str | None) -> str:
+    """Preposicao + recorte das faixas dos mapas (DEC-074), em ASCII (excecao de RENDER).
+
+    O raio de 1 km devolve "no raio" -- o texto de sempre: o PNG do estudo de hoje nao muda
+    um pixel. Qualquer outro raio diz qual ("no raio de 2 km"), porque a mesma faixa com o
+    mesmo texto em dois recortes de tamanho diferente faria o leitor comparar 1 km com 2 km
+    sem saber. Geometria: isocrona -> "em 10 min de carro"; desenho a mao -> "na area".
+    """
+    if geometria_tipo == GEOMETRIA_TIPO_ISOCRONA_CARRO_10MIN:
+        return "em 10 min de carro"
+    if geometria_tipo is not None:
+        return "na area"
+    if raio_km is None or float(raio_km) == RAIO_CENSITARIO_DEFAULT_KM:
+        return "no raio"
+    return f"no raio de {_formatar_raio_km(raio_km)}"
 
 
 def _legenda_valor_hex(rotulo: str, texto: str) -> str:
@@ -1144,8 +1226,16 @@ def _render_camada(
     mostrar_legenda_pins: bool = True,
     mostrar_legenda: bool = True,
     labels: tuple[Image.Image, tuple[float, float, float, float]] | None = None,
+    onde: str = "no raio",
+    rodape_recorte: str | None = None,
 ) -> bytes:
     """Desenha UMA camada (mesmos bbox/projecao/basemap/pins; varia fill + legenda).
+
+    DEC-074 (recorte do ponto): `circle_3857` pode ser qualquer contorno -- o circulo do raio
+    (1 ou 2 km), a isocrona de 10 min de carro ou a area desenhada, Polygon OU MultiPolygon,
+    com buracos. `onde` e' o recorte na mensagem de "sem setores" ("no raio" de sempre por
+    default) e `rodape_recorte` prefixa o rodape quando `raio_km=None` -- sem ele a isocrona
+    sairia com o rodape mudo dos paineis de hexagono, sem dizer que recorte o mapa desenha.
 
     Quando `pins_only=True` (camada Concorrentes): pula o choropleth de faixas E o overlay
     de ruas de pixel; mantem basemap + circulo + ponto central + pins de concorrentes/Ultra +
@@ -1303,13 +1393,19 @@ def _render_camada(
     # tem raio). O overlay de rotulos acima entra ANTES dele de proposito -- o circulo e' desenho
     # do motor, nao do basemap, e nao pode ser coberto por rotulo de rua.
     if circle_3857 is not None:
-        circle_points = [
-            (int(round(px)), int(round(py)))
-            for px, py in (project(x, y) for x, y in circle_3857.exterior.coords)
-        ]
-        if len(circle_points) >= 3:
-            # Circulo do raio em AZUL (pedido de Vini 2026-06-17), visivel sobre o fundo claro.
-            draw.line(circle_points + [circle_points[0]], fill=_CIRCLE_RGBA, width=3)
+        # DEC-074: itera PARTES e ANEIS em vez de ler `.exterior` -- a isocrona chega como
+        # MultiPolygon (ilhas de rua alcancavel) e com buracos (quarteirao sem via), e
+        # `.exterior` levantaria AttributeError no MultiPolygon. O circulo e' UM Polygon sem
+        # buraco, entao o desenho dele sai pixel a pixel o mesmo de antes.
+        for parte in _iter_polygons(circle_3857):
+            for anel in (parte.exterior, *parte.interiors):
+                circle_points = [
+                    (int(round(px)), int(round(py)))
+                    for px, py in (project(x, y) for x, y in anel.coords)
+                ]
+                if len(circle_points) >= 3:
+                    # Contorno em AZUL (pedido de Vini 2026-06-17), visivel sobre o fundo claro.
+                    draw.line(circle_points + [circle_points[0]], fill=_CIRCLE_RGBA, width=3)
 
     # BLK-RELPON-14: borda fina do poligono de DESTAQUE (hex H3 que contem o ponto), desenhada
     # DEPOIS do choropleth e do resgate de ruas -> fica por cima de todos os outros poligonos.
@@ -1337,7 +1433,7 @@ def _render_camada(
         _paste_logo_pin(image, int(round(px)), int(round(py)), "__ultra__")
 
     if not sector_records_3857 and not pins_only:
-        message = "Sem setores intersectados no raio"
+        message = f"Sem setores intersectados {onde}"
         msg_w = _text_width(draw, message, body_font)
         _draw_text(
             draw,
@@ -1367,7 +1463,9 @@ def _render_camada(
     # paineis de hexagono, onde os 5 km sao ENQUADRAMENTO e nao raio de analise. A referencia de
     # distancia continua na barra de escala; o resto do rodape nao muda.
     fundo_txt = _atribuicao_tiles() if drew_basemap else "fundo de ruas offline"
-    if raio_km is None:
+    if raio_km is None and rodape_recorte:
+        footer = f"{rodape_recorte} - EPSG:3857 - {fundo_txt}"
+    elif raio_km is None:
         footer = f"EPSG:3857 - {fundo_txt}"
     else:
         raio_txt = f"{float(raio_km):.1f}".replace(".", ",")
@@ -1738,8 +1836,26 @@ def render_mapas_censitarios_combinados(
     choropleth_alpha: int | None = None,
     hexes_df: pd.DataFrame | None = None,
     labels_overlay: bool = True,
+    geometria_wgs84: BaseGeometry | None = None,
+    result: dict | None = None,
+    geometria_tipo: str | None = None,
 ) -> dict[str, bytes]:
     """Gera as camadas do Relatorio Pontual Censitario numa unica chamada.
+
+    DEC-074 (Estudo por recorte), tres kwargs OPCIONAIS -- todos ausentes = os mesmos PNGs de
+    antes, byte a byte:
+    - `geometria_wgs84` (isocrona ou area desenhada, Polygon/MultiPolygon em graus): o frame
+      sai dos bounds do contorno (`_frame_box_da_geometria`), o contorno e' desenhado no lugar
+      do circulo, pins e faixas sao os do RECORTE e o rodape perde o "Raio 1,0 km".
+      `geometria_tipo` rotula a geometria como no motor (`"poligono"` por default; a
+      isocrona e' `"isocrona_carro_10min"`) e decide o texto das faixas.
+    - `raio_km` diferente de 1 (o raio de 2 km) ja' existia: frame, circulo e rodape seguem o
+      raio; agora as faixas tambem dizem qual ("no raio de 2 km").
+    - `result`: o dict de `analisar_ponto_censitario_setores` que o chamador JA' calculou
+      para o MESMO ponto e recorte. Sem ele a intersecao roda de novo aqui -- numa isocrona
+      de ~80 km2 isso dobra o custo do PDF (a DEC-071 mediu 39,6 s so' na analise de 194
+      km2) e, pior, se o chamador esquecer a geometria, pins e faixas sairiam do circulo
+      enquanto os Big Numbers saem do recorte. Com `result`, mapa e numeros leem o mesmo dict.
 
     Retorna `{"densidade": png, "renda": png, "score": png, "renda_domiciliar": png,
     "concorrentes": png}` e, CONDICIONALMENTE, `"socioeconomia"` e `"residual"`
@@ -1808,17 +1924,39 @@ def render_mapas_censitarios_combinados(
 
         preload_logos(logos_dir, ultra_dir=ultra_logo_dir)
 
-    result = analisar_ponto_censitario_setores(
-        lat,
-        lng,
-        setores_df,
-        raio_km=raio_km,
-        competitors_df=competitors_df,
-        ultra_df=ultra_df,
+    if geometria_tipo is not None and geometria_wgs84 is None:
+        # Mesmo contrato do motor: rotulo sem geometria carimbaria um recorte que nao existe.
+        raise ValueError("geometria_tipo sem geometria_wgs84")
+    tipo_geometria = (
+        (geometria_tipo or GEOMETRIA_TIPO_POLIGONO) if geometria_wgs84 is not None else None
     )
-    # Frame do mapa: RETANGULO com a proporcao da area de mapa (nao mais quadrado), para o
-    # choropleth preencher a figura inteira sem letterbox (ver `_frame_box_metric`).
-    frame_box_metric = _frame_box_metric(raio_km, width, height)
+    if result is None:
+        # Os kwargs do recorte so' entram quando ha' recorte: a chamada do raio de 1 km fica
+        # identica a de antes (quem a espiona em teste ve os mesmos argumentos).
+        kwargs_recorte: dict[str, object] = {}
+        if geometria_wgs84 is not None:
+            kwargs_recorte["geometria_wgs84"] = geometria_wgs84
+            if geometria_tipo is not None:
+                kwargs_recorte["geometria_tipo"] = geometria_tipo
+        result = analisar_ponto_censitario_setores(
+            lat,
+            lng,
+            setores_df,
+            raio_km=raio_km,
+            competitors_df=competitors_df,
+            ultra_df=ultra_df,
+            **kwargs_recorte,  # type: ignore[arg-type]
+        )
+    contorno_metric: BaseGeometry | None = None
+    if geometria_wgs84 is not None:
+        contorno_metric = _project_geometry(
+            geometria_wgs84, _transformer(CRS_ORIGEM_CENSO, _local_metric_crs(lat, lng))
+        )
+        frame_box_metric = _frame_box_da_geometria(contorno_metric, width, height)
+    else:
+        # Frame do mapa: RETANGULO com a proporcao da area de mapa (nao mais quadrado), para o
+        # choropleth preencher a figura inteira sem letterbox (ver `_frame_box_metric`).
+        frame_box_metric = _frame_box_metric(raio_km, width, height)
     sector_records, circle_metric = _decode_intersections(
         lat,
         lng,
@@ -1826,6 +1964,10 @@ def render_mapas_censitarios_combinados(
         raio_km,
         frame_box_metric,
     )
+    if contorno_metric is not None:
+        # O contorno do RECORTE no lugar do circulo: e' ele que o mapa tem de mostrar.
+        circle_metric = contorno_metric
+    onde = onde_do_recorte(raio_km, tipo_geometria)
 
     # Transformer compartilhado: criado UMA vez para todos os setores e geometrias
     # do mesmo render (mesmo lat/lng -> mesmo CRS aeqd local -> mesmo 3857). Fix 1 BLK-PERF-01a.
@@ -1971,7 +2113,9 @@ def render_mapas_censitarios_combinados(
         bounds=bounds_t,
         lat=lat,
         lng=lng,
-        raio_km=raio_km,
+        # Com geometria nao ha' raio: `None` tira o "Raio 1,0 km" do rodape, e o
+        # `rodape_recorte` diz qual recorte o mapa desenha.
+        raio_km=None if tipo_geometria is not None else raio_km,
         n_setores=n_setores,
         width=width,
         height=height,
@@ -1979,24 +2123,37 @@ def render_mapas_censitarios_combinados(
         street_gain=street_gain,
         street_cap=street_cap,
     )
+    if tipo_geometria is not None:
+        # Os kwargs novos so' entram com recorte: o `common` do raio fica com as MESMAS
+        # chaves de antes (os defaults de `_render_camada` reproduzem o render de sempre).
+        common["onde"] = onde
+        common["rodape_recorte"] = (
+            "Isocrona 10 min de carro (sem transito)"
+            if tipo_geometria == GEOMETRIA_TIPO_ISOCRONA_CARRO_10MIN
+            else "Area desenhada"
+        )
+    elif onde != "no raio":
+        common["onde"] = onde
 
     # BLK-RELPON-06 (D1): faixa superior por camada, com os agregados do RAIO de 1.0 km
     # (ja expostos por `result`, computados no proprio `analisar_ponto_censitario_setores`
     # acima) -- REVERTE a fonte do BLK-RELPON-05, que usava o valor BRUTO do setor que
     # CONTEM o ponto. `TEXTO_SEM_DADO` quando nao ha setores intersectados (sem area valida).
     valor_raio_densidade = _legenda_valor_ponto(
-        "Densidade", _format_valor_ponto_densidade(result.get("densidade_pop_raio_valida_hab_km2"))
+        "Densidade",
+        _format_valor_ponto_densidade(result.get("densidade_pop_raio_valida_hab_km2")),
+        onde,
     )
     valor_raio_renda = _legenda_valor_ponto(
-        "Renda", _format_valor_ponto_renda(result.get("renda_per_capita_media_raio"))
+        "Renda", _format_valor_ponto_renda(result.get("renda_per_capita_media_raio")), onde
     )
     valor_raio_score = _legenda_valor_ponto(
-        "Score", _format_valor_ponto_score(result.get("score_setor_medio"))
+        "Score", _format_valor_ponto_score(result.get("score_setor_medio")), onde
     )
     # Faixa da renda domiciliar: usa o agregado do raio COM uplift+temporal (mesma escala das
     # bandas), NAO o pre-uplift `renda_media_domiciliar_raio` (cairia sempre na faixa mais baixa).
     valor_raio_renda_dom = _legenda_valor_ponto(
-        "Renda dom.", _format_valor_ponto_renda(result.get("renda_domiciliar_total_raio"))
+        "Renda dom.", _format_valor_ponto_renda(result.get("renda_domiciliar_total_raio")), onde
     )
 
     densidade_png = _render_camada(
