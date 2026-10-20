@@ -40,8 +40,10 @@
 5. **Dependência de rede no caminho de CARGA do dashboard.** A seção 2 proíbe API ao vivo
    em produção. As únicas exceções são as já aprovadas e restritas a um caminho específico:
    DEC-004 (tiles do relatório pontual e, pela emenda de 2026-10-14, do PDF de concorrência
-   da unidade), DEC-010 (geocoding da barra de busca) e DEC-011 (tiles do relatório municipal).
-   Qualquer rede fora desses caminhos é achado ALTA.
+   da unidade), DEC-010 (geocoding da barra de busca), DEC-011 (tiles do relatório municipal)
+   e DEC-074 (isócrona de carro pelo serviço de rotas PRÓPRIO, `MOTOR_ROTAS_URL`, só no
+   cálculo do alcance do ponto: ficha, PDF pontual e comparativo; opcional por env, e sem
+   ela a opção não aparece). Qualquer rede fora desses caminhos é achado ALTA.
 6. **Teste removido ou `skip` novo sem justificativa explícita** no PR.
 
 ## Severidade MÉDIA (não bloqueia, mas reporte)

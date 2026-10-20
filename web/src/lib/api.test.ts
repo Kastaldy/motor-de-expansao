@@ -302,3 +302,93 @@ describe('pontoGeometria — a área desenhada vai no CORPO', () => {
     expect(corpo.geometria.coordinates[0]).toHaveLength(51)
   })
 })
+
+/* ---------------- Alcance do ponto e Estudo do recorte (DEC-074) ---------------- */
+describe('pontoAlcance — a rota de alcance', () => {
+  it('GET /api/ponto/alcance com lat, lng e o alcance cru', async () => {
+    let url = ''
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (u: string) => {
+        url = u
+        return { ok: true, json: async () => ({}) } as unknown as Response
+      }),
+    )
+    await api.pontoAlcance(-23.48, -46.61, 'carro_10min')
+    const [rota, query] = url.split('?')
+    expect(rota).toBe('/api/ponto/alcance')
+    const q = new URLSearchParams(query)
+    expect(q.get('lat')).toBe('-23.48')
+    expect(q.get('lng')).toBe('-46.61')
+    expect(q.get('alcance')).toBe('carro_10min')
+  })
+
+  it('503 do serviço de rotas vira a mensagem do servidor, nunca um raio de 1 km calado', async () => {
+    const msg = 'O cálculo de tempo de deslocamento está indisponível agora. Tente de novo em instantes ou use o raio.'
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => ({ ok: false, status: 503, json: async () => ({ detail: msg }) }) as unknown as Response),
+    )
+    await expect(api.pontoAlcance(-23.48, -46.61, 'carro_10min')).rejects.toMatchObject({ status: 503, message: msg })
+  })
+})
+
+describe('relatorioPontual — o recorte do Estudo vai no CORPO', () => {
+  function capturarTudo(): { url: () => string; corpo: () => FormData } {
+    let url = ''
+    let corpo = new FormData()
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (u: string, i?: RequestInit) => {
+        url = u
+        corpo = i?.body as FormData
+        return {
+          ok: true,
+          headers: { get: () => 'attachment; filename="rel.pdf"' },
+          blob: async () => new Blob([new Uint8Array([37, 80, 68, 70])]),
+        } as unknown as Response
+      }),
+    )
+    return { url: () => url, corpo: () => corpo }
+  }
+
+  it('alcance no FormData, nada dele na query', async () => {
+    const cap = capturarTudo()
+    await api.relatorioPontual({ lat: -23.48, lng: -46.61, soEstudo: true, alcance: 'raio_2km' })
+    expect(cap.corpo().get('alcance')).toBe('raio_2km')
+    expect(cap.url()).not.toContain('alcance')
+  })
+
+  it('área desenhada: o Polygon (50 vértices) no corpo, e a URL segue curta', async () => {
+    const cap = capturarTudo()
+    const anel: [number, number][] = Array.from({ length: 50 }, (_, k) => [
+      -46.63 + 0.01 * Math.cos((2 * Math.PI * k) / 50),
+      -23.55 + 0.01 * Math.sin((2 * Math.PI * k) / 50),
+    ])
+    anel.push(anel[0])
+    await api.relatorioPontual({
+      lat: -23.55,
+      lng: -46.63,
+      soEstudo: true,
+      geometria: { type: 'Polygon', coordinates: [anel] },
+    })
+    const g = JSON.parse(String(cap.corpo().get('geometria')))
+    expect(g.type).toBe('Polygon')
+    expect(g.coordinates[0]).toHaveLength(51)
+    expect(cap.url()).not.toContain('geometria')
+    expect((cap.url().split('?')[1] ?? '').length).toBeLessThan(ORCAMENTO_QUERY_BYTES)
+  })
+
+  it('raio de 1 km (ou sem recorte): nenhum campo novo — o pedido de antes, byte a byte', async () => {
+    const cap = capturarTudo()
+    await api.relatorioPontual({ lat: -23.48, lng: -46.61, soEstudo: true, alcance: 'raio_1km' })
+    expect(cap.corpo().has('alcance')).toBe(false)
+    expect(cap.corpo().has('geometria')).toBe(false)
+  })
+
+  it('fora do modo Estudo o recorte não vai: o relatório completo é do raio de 1 km', async () => {
+    const cap = capturarTudo()
+    await api.relatorioPontual({ lat: -23.48, lng: -46.61, alcance: 'carro_10min' })
+    expect(cap.corpo().has('alcance')).toBe(false)
+  })
+})

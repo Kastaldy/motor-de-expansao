@@ -774,6 +774,9 @@ export default function App() {
               /* Estudo de ponto <-> estudo da unidade Ultra (emenda da DEC-070): relê o
                  ponto no outro modo e troca a ficha no lugar. */
               onTrocarModo={(i, ligado) => void pontos.trocarModo(i, ligado)}
+              /* O alcance do ponto (DEC-074): raio de 1 km, de 2 km ou 10 min de carro. Relê
+                 o PRÓPRIO ponto e troca a ficha no lugar, como a troca de modo. */
+              onTrocarAlcance={(i, alcance) => void pontos.trocarAlcance(i, alcance)}
               trocandoModo={pontos.trocandoModo}
               onAbrir={pontos.abrir}
               onRemover={pontos.remover}

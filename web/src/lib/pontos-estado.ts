@@ -24,6 +24,7 @@
 
 import { latLngToCell } from 'h3-js'
 
+import { ALCANCE_PADRAO, alcanceDoItem } from './alcance'
 import {
   MAX_PONTOS,
   ROTULO_AREA_DESENHADA,
@@ -317,11 +318,38 @@ export function substituir(e: EstadoPontos, ficha: PontoPayload): EstadoPontos {
  * que o lê. Só a resposta da geração vigente é aplicada; qualquer outra é descartada,
  * chegue na ordem que chegar. Voltar ao modo que a ficha JÁ TEM cancela a leitura em voo
  * sem pedir outra.
+ *
+ * A LEITURA querida é genérica (DEC-074): além do modo (`boolean`), o mesmo ponto troca de
+ * ALCANCE no lugar (raio de 1 km, de 2 km, 10 min de carro). As duas trocas passam pelo
+ * MESMO registro, com a mesma chave — senão um "2 km" seguido de "liga o estudo da
+ * unidade" teria duas releituras em voo, e quem chegasse por último venceria. O `use-pontos`
+ * descreve cada leitura como uma string (`'raio_2km'`, `'raio_1km+ultra'`); a regra aqui só
+ * compara igualdade.
  */
+export type LeituraQuerida = boolean | string
+
+/**
+ * A leitura do estudo da unidade Ultra, na descrição de `leituraDaFicha`. É sempre do raio
+ * de 1 km: o servidor não oferece o estudo da unidade em outro alcance.
+ */
+export const LEITURA_ULTRA = `${ALCANCE_PADRAO}+ultra`
+
+/**
+ * A LEITURA de uma ficha como uma string só — o alcance e, no raio de 1 km, o modo:
+ * `'raio_1km'`, `'raio_1km+ultra'`, `'raio_2km'`, `'carro_10min'`. É a moeda comum das
+ * trocas em voo (`pedirTroca`): modo e alcance do mesmo ponto passam pelo mesmo registro.
+ */
+export function leituraDaFicha(
+  f: Pick<PontoPayload, 'raio_km' | 'geometria' | 'recorte' | 'mercado'>,
+): string {
+  const alcance = alcanceDoItem(f) ?? ALCANCE_PADRAO
+  return alcance === ALCANCE_PADRAO && ehEstudoDaUnidade(f) ? LEITURA_ULTRA : alcance
+}
+
 export interface TrocasDeModo {
   /** Contador que só cresce — a geração do próximo pedido. */
   geracao: number
-  emVoo: Readonly<Record<string, { geracao: number; estudoUltra: boolean }>>
+  emVoo: Readonly<Record<string, { geracao: number; querido: LeituraQuerida }>>
 }
 
 export const TROCAS_VAZIO: TrocasDeModo = Object.freeze({ geracao: 0, emVoo: Object.freeze({}) })
@@ -334,24 +362,27 @@ export type DecisaoTroca =
   /** Voltou ao modo da ficha: a leitura em voo é descartada quando chegar. */
   | { tipo: 'cancelar' }
 
-/** O operador pediu o modo `estudoUltra` para o ponto `chave`, cuja ficha está em `modoDaFicha`. */
+/**
+ * O operador pediu a leitura `pedido` (o modo `estudoUltra`, ou um alcance) para o ponto
+ * `chave`, cuja ficha está em `daFicha`.
+ */
 export function pedirTroca(
   t: TrocasDeModo,
   chave: string,
-  modoDaFicha: boolean,
-  estudoUltra: boolean,
+  daFicha: LeituraQuerida,
+  pedido: LeituraQuerida,
 ): { trocas: TrocasDeModo; decisao: DecisaoTroca } {
   const voo = t.emVoo[chave]
-  const querido = voo ? voo.estudoUltra : modoDaFicha
-  if (querido === estudoUltra) return { trocas: t, decisao: { tipo: 'nada' } }
-  if (estudoUltra === modoDaFicha) {
+  const vigente = voo ? voo.querido : daFicha
+  if (vigente === pedido) return { trocas: t, decisao: { tipo: 'nada' } }
+  if (pedido === daFicha) {
     const emVoo = { ...t.emVoo }
     delete emVoo[chave]
     return { trocas: { ...t, emVoo }, decisao: { tipo: 'cancelar' } }
   }
   const geracao = t.geracao + 1
   return {
-    trocas: { geracao, emVoo: { ...t.emVoo, [chave]: { geracao, estudoUltra } } },
+    trocas: { geracao, emVoo: { ...t.emVoo, [chave]: { geracao, querido: pedido } } },
     decisao: { tipo: 'ler', geracao },
   }
 }

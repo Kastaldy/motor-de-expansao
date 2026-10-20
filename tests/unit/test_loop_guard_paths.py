@@ -146,6 +146,8 @@ def test_caminhos_criticos(path: str) -> None:
         # limites da area desenhada: produzem numero servido, nasceram fora da lista.
         "src/motor_expansao/dashboard/mercado_raio.py",
         "src/motor_expansao/dashboard/geometria_desenhada.py",
+        # DEC-074 -- raio de 2 km / isocrona e o fator que escala as reguas absolutas.
+        "src/motor_expansao/dashboard/alcance_ponto.py",
         # DEC-022 — piloto web servido em producao: backend E frontend sob governanca.
         "web/server/app.py",
         "web/src/screens/MapScreen.tsx",

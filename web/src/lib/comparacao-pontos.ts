@@ -24,8 +24,9 @@ import {
 } from './comparacao'
 import { UNIDADE_MOEDA } from './format'
 import { sufixoDoModo } from './estudo-ultra'
-import { ehAreaDesenhada, rotuloDaAreaDesenhada, rotuloDoRaio } from './recorte'
-import type { PontoPayload } from './types'
+import { contornosDoItem, fatorReguaDoItem } from './alcance'
+import { ehAreaDesenhada, rotuloDaAreaDesenhada, rotuloDaIsocrona, rotuloDoRaio, tipoDoRecorte } from './recorte'
+import type { ContornoGeoJson, PontoPayload } from './types'
 
 /**
  * Ordem de PRIORIDADE, a mesma dos hexagonos: residual primeiro (a pergunta do
@@ -202,37 +203,55 @@ export function indiceDaMesmaArea(
   return itens.findIndex((p) => !!p.geometria?.length && chaveDaArea(p.geometria) === alvo)
 }
 
-/**
- * Por que o PDF de comparação NÃO sai para esta lista — ou `null` quando sai.
- *
- * Fase 1 da DEC-071: área desenhada é só TELA. O deck de comparação fotografa cada item com
- * o raio de 1 km e escreve "raio" nos textos; para uma área ele afirmaria um recorte que não
- * é o dela. A recusa é dita (com o caminho para destravar), e não um botão que some.
- */
-export function motivoSemPdfDeComparacao(
-  fichas: readonly Pick<PontoPayload, 'geometria'>[],
-): string | null {
-  if (!fichas.some((f) => ehAreaDesenhada(f))) return null
-  return (
-    'O PDF de comparação ainda não aceita área desenhada — o PDF por área desenhada segue em desenvolvimento. ' +
-    'Remova as áreas desenhadas da comparação para gerar o PDF dos pontos.'
-  )
-}
+/* `motivoSemPdfDeComparacao` SAIU (fase 2 da DEC-071, DEC-074): o PDF de comparação
+   passou a aceitar área desenhada e alcance. Cada item leva o seu recorte ao servidor
+   (`recorteParaOPdf`), a foto enquadra pelo contorno, e o ranking do deck é o MESMO da
+   tela (`dimensoesDoComparativo`) — a recusa existia porque o deck afirmaria o raio de
+   1 km para um recorte que não era o dele. */
 
 /** Rótulo da área desenhada nas abas, na legenda e no mapa ("#k" quando há mais de uma). */
 export const ROTULO_AREA_DESENHADA = 'Área desenhada'
 
 /**
- * O recorte da leitura em texto de usuário: "raio de 1 km" ou "área desenhada de
- * 2,40 km²". É o que substitui o "raio de X m" escrito à mão nas fichas — com uma área
- * desenhada na lista, aquele texto passaria a mentir sobre ela. Os dois textos saem de
- * `lib/recorte`, a mesma fonte da conta do mercado.
+ * O recorte da leitura em texto de usuário: "raio de 1 km", "raio de 2 km", "10 min de
+ * carro, sem trânsito · 38,2 km²" ou "área desenhada de 2,40 km²". É o que substitui o
+ * "raio de X m" escrito à mão nas fichas — com outro recorte na lista, aquele texto
+ * passaria a mentir sobre ele. Os textos saem de `lib/recorte`, a mesma fonte da conta do
+ * mercado.
  */
 export function rotuloDoRecorte(
   p: Pick<PontoPayload, 'raio_km' | 'geometria' | 'recorte' | 'mercado'>,
 ): string {
-  if (ehAreaDesenhada(p)) return rotuloDaAreaDesenhada(p.recorte?.area_km2 ?? p.mercado?.area_km2 ?? null)
-  return rotuloDoRaio(p.raio_km)
+  const area = p.recorte?.area_km2 ?? p.mercado?.area_km2 ?? null
+  const tipo = tipoDoRecorte(p)
+  if (tipo === 'poligono') return rotuloDaAreaDesenhada(area)
+  if (tipo === 'carro_10min') return rotuloDaIsocrona(area)
+  return rotuloDoRaio(p.raio_km ?? (tipo === 'raio_2km' ? 2 : null))
+}
+
+/** O recorte de um item como o PDF de comparação o imprime na linha dele (DEC-074). */
+export interface RecorteNoPdf {
+  /** Identificador cru (`raio_1km`, `raio_2km`, `carro_10min`, `poligono`), NÃO acentuar. */
+  tipo: string
+  rotulo: string
+  area_km2: number | null
+  fator_regua: number | null
+}
+
+/**
+ * O recorte do item para o corpo do `POST /api/relatorio/comparacao`: o servidor o imprime
+ * na linha do item, para o deck não afirmar o raio de 1 km de um recorte que não é ele.
+ */
+export function recorteParaOPdf(
+  p: Pick<PontoPayload, 'raio_km' | 'geometria' | 'recorte' | 'mercado'>,
+): RecorteNoPdf {
+  const tipo = tipoDoRecorte(p)
+  const raio = p.raio_km ?? (tipo === 'raio_2km' ? 2 : tipo === 'raio_1km' ? 1 : null)
+  const area =
+    p.recorte?.area_km2 ??
+    p.mercado?.area_km2 ??
+    (raio != null ? Math.round(Math.PI * raio ** 2 * 100) / 100 : null)
+  return { tipo, rotulo: rotuloDoRecorte(p), area_km2: area, fator_regua: fatorReguaDoItem(p) }
 }
 
 /* A paleta de identidade MUDOU DE CASA em 2026-08-13: virou `CORES_IDENTIDADE` /
@@ -339,6 +358,10 @@ export interface ItemNoMapa {
   hex_id?: string | null
   /** Aneis do Polygon GeoJSON (`coordinates`): o 1o e' o externo. So' item de geometria. */
   geometria?: PosicaoGeoJson[][] | null
+  /** O raio do ponto, quando o recorte e' circulo — o contorno sai dele (`contornosDoItem`). */
+  raio_km?: number | null
+  /** O contorno pronto do servidor (isocrona, desenho normalizado), DEC-074. */
+  recorte?: { contorno?: ContornoGeoJson | null } | null
 }
 
 /** Um pin da comparacao, pronto para o deck.gl. */
@@ -355,6 +378,12 @@ export interface PinDaComparacao {
   ativo: boolean
   /** O contorno da area desenhada, quando o item e' de geometria. */
   geometria: PosicaoGeoJson[][] | null
+  /**
+   * O contorno do RECORTE que o item representa, como lista de poligonos (cada um, lista
+   * de aneis): o circulo do raio (1 km incluso), a isocrona ou a area desenhada — DEC-074.
+   * Vazio no pin provisorio de um ponto, que ainda nao sabe o raio.
+   */
+  contornos: PosicaoGeoJson[][][]
 }
 
 /**
@@ -382,6 +411,7 @@ export function pinsDaComparacao(
     rotulo: rotulos[i] ?? `${f.lat.toFixed(4)}, ${f.lng.toFixed(4)}`,
     ativo: i === aberto,
     geometria: f.geometria ?? null,
+    contornos: contornosDoItem(f),
   }))
 }
 
@@ -391,32 +421,57 @@ export function pinsDaComparacao(
  */
 export const CHAVES_ABSOLUTAS: readonly string[] = Object.freeze(['residual', 'populacao', 'concorrentes'])
 
+type ItemDoComparativo = Partial<Pick<PontoPayload, 'raio_km' | 'geometria' | 'recorte' | 'mercado'>>
+
+/**
+ * Os itens desta lista tem recortes de TAMANHOS DIFERENTES?
+ *
+ * Sim quando ha' area desenhada (DEC-071: o tamanho dela e' do operador) ou quando os
+ * fatores de regua dos itens diferem (DEC-074: 1 km contra 2 km, raio contra 10 min de
+ * carro). Fator desconhecido (payload sem area nem raio) nao prova que o tamanho e' igual,
+ * entao conta como diferente. Lista de itens todos do MESMO raio (todos de 2 km) e'
+ * comparavel nos totais: o tamanho e' o mesmo.
+ */
+export function recortesDeTamanhosDiferentes(fichas: readonly ItemDoComparativo[]): boolean {
+  if (fichas.some((f) => ehAreaDesenhada(f))) return true
+  if (fichas.length < 2) return false
+  const fatores = fichas.map((f) =>
+    fatorReguaDoItem({
+      raio_km: f.raio_km ?? null,
+      geometria: f.geometria ?? null,
+      recorte: f.recorte ?? null,
+      mercado: f.mercado as PontoPayload['mercado'],
+    }),
+  )
+  if (fatores.some((x) => x == null)) return true
+  return new Set(fatores.map((x) => (x as number).toFixed(6))).size > 1
+}
+
 /**
  * As dimensoes que podem ser COMPARADAS entre os itens desta lista.
  *
- * Com uma AREA DESENHADA na lista (DEC-071) os recortes tem tamanhos diferentes — ate'
- * 200 km² contra os 3,14 km² do raio de 1 km —, e comparar TOTAIS entre eles mede o tamanho
- * do recorte, nao a praca: a area quase sempre "venceria" em populacao e residual (e
- * "perderia" em concorrentes) so' por ser maior. Essas dimensoes saem dos blocos e do
- * veredito; renda, score e densidade, que nao dependem da area, ficam. Os totais de cada
- * item continuam na ficha dele.
+ * Com recortes de tamanhos diferentes na lista — uma AREA DESENHADA (DEC-071, ate'
+ * 200 km²) ou alcances diferentes (DEC-074: os 12,57 km² do raio de 2 km contra os
+ * 3,14 km² do de 1 km) —, comparar TOTAIS entre eles mede o tamanho do recorte, nao a
+ * praca: o maior quase sempre "venceria" em populacao e residual (e "perderia" em
+ * concorrentes) so' por ser maior. Essas dimensoes saem dos blocos, do veredito e do
+ * ranking do PDF; renda, score e densidade, que nao dependem da area, ficam. Os totais de
+ * cada item continuam na ficha dele.
  */
 export function dimensoesDoComparativo(
-  fichas: readonly Pick<PontoPayload, 'geometria'>[],
+  fichas: readonly ItemDoComparativo[],
 ): readonly Dimensao<PontoPayload>[] {
-  if (!fichas.some((f) => ehAreaDesenhada(f))) return DIMENSOES_PONTO
+  if (!recortesDeTamanhosDiferentes(fichas)) return DIMENSOES_PONTO
   return DIMENSOES_PONTO.filter((d) => !CHAVES_ABSOLUTAS.includes(d.chave))
 }
 
 /** O aviso escrito do corte acima — `null` quando nada foi cortado. */
-export function avisoDimensoesCortadas(
-  fichas: readonly Pick<PontoPayload, 'geometria'>[],
-): string | null {
-  if (!fichas.some((f) => ehAreaDesenhada(f))) return null
+export function avisoDimensoesCortadas(fichas: readonly ItemDoComparativo[]): string | null {
+  if (!recortesDeTamanhosDiferentes(fichas)) return null
   return (
-    'Com área desenhada na lista, residual, população e concorrentes não entram na ' +
-    'comparação: são totais de recortes de tamanhos diferentes, e o maior venceria só por ' +
-    'ser maior. Os números de cada um continuam na ficha dele.'
+    'Com recortes de tamanhos diferentes na lista, residual, população e concorrentes não ' +
+    'entram na comparação: são totais, e o recorte maior venceria só por ser maior. Os ' +
+    'números de cada um continuam na ficha dele.'
   )
 }
 

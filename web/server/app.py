@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import contextlib
 import functools
 import hashlib
 import inspect
@@ -33,16 +34,18 @@ import math
 import os
 import re
 import sys
+import threading
 import time
 import unicodedata
-from collections.abc import Callable, Collection, Sequence
+from collections.abc import Callable, Collection, Iterator, Sequence
+from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Annotated, Any, Literal
 
 import anyio
 import pandas as pd
 from anyio.lowlevel import RunVar
-from fastapi import FastAPI, Header, HTTPException, Request, UploadFile
+from fastapi import FastAPI, Form, Header, HTTPException, Request, UploadFile
 from fastapi.encoders import jsonable_encoder
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
@@ -157,6 +160,38 @@ logging.getLogger("piloto.perfil").info(
 # historico, que deixa folga para o event loop e os demais apps do host) e a AR com 1.
 _PDF_CONCORRENCIA_MAX = PERFIL.operacao.pdf_concorrencia_max
 _PDF_SEMAFORO = asyncio.Semaphore(_PDF_CONCORRENCIA_MAX)
+
+# Quantas ANALISES DE AREA (desenho a mao, raio de 2 km, 10 min de carro -- DEC-071/074)
+# podem rodar ao mesmo tempo. A conta e' o laco setor a setor de `censo_point`, que a
+# DEC-071 mediu em ate' ~40 s para 194 km2 -- e as duas rotas sao `def` no threadpool do
+# UNICO worker, entao sem teto N operadores desenhando ao mesmo tempo disputariam a CPU
+# inteira (e o /api/health junto). Semaforo de THREAD (as rotas sao sincronas), separado
+# do `_PDF_SEMAFORO`, que e' asyncio. O teto segue o do PDF, limitado a 2: o BR (PDF 3)
+# fica com 2 e a AR (PDF 1) com 1, sem campo novo no perfil -- quem quiser outro valor
+# declara `operacao.area_concorrencia_max` e ele vence.
+_AREA_CONCORRENCIA_MAX = int(
+    getattr(PERFIL.operacao, "area_concorrencia_max", None) or min(2, _PDF_CONCORRENCIA_MAX)
+)
+_AREA_SEMAFORO = threading.BoundedSemaphore(_AREA_CONCORRENCIA_MAX)
+# Quanto um pedido espera por vaga antes do 503. Curto o bastante para o operador nao
+# achar que travou (o front espera ate' 150 s pela resposta inteira).
+_AREA_ESPERA_S = 20.0
+MSG_AREA_OCUPADA = "Muitas análises de área ao mesmo tempo; tente de novo em instantes."
+
+
+@contextlib.contextmanager
+def _vaga_de_analise_de_area() -> Iterator[None]:
+    """Segura uma vaga do `_AREA_SEMAFORO`; sem vaga dentro de `_AREA_ESPERA_S` -> 503.
+
+    503 e nao fila infinita: um pedido que espera minutos por vaga ocuparia uma thread do
+    pool sem fazer nada, e o front ja' trata 503 como "tente de novo".
+    """
+    if not _AREA_SEMAFORO.acquire(timeout=_AREA_ESPERA_S):
+        raise HTTPException(503, MSG_AREA_OCUPADA)
+    try:
+        yield
+    finally:
+        _AREA_SEMAFORO.release()
 
 
 def _texto_do_aviso_de_viabilidade(onde: str, campo: str) -> str | None:
@@ -4362,6 +4397,11 @@ def me(
     viabilidade_moeda = _moeda_da_viabilidade()
     if viabilidade_moeda is not None:
         resposta["viabilidade_moeda"] = viabilidade_moeda
+    # DEC-074: os alcances que ESTE deploy oferece na ficha do ponto. Os dois raios sempre;
+    # "10 min de carro" so' com o servico de rotas configurado -- sem a env a opcao SOME da
+    # tela, em vez de aparecer e responder 503 a cada clique. So' a env, sem consultar o
+    # servico: `/api/me` e' chamada uma vez na abertura e nao pode pagar a latencia dele.
+    resposta["alcances"] = _alcances_oferecidos()
     # A chave `senha` so' aparece quando o banco responde E a pessoa tem linha. AUSENTE em vez de
     # nula: o front ja' trata `perfil?` assim (um backend anterior ao Bloco C nao manda o campo e
     # a SPA abre igual), e o mesmo vale aqui -- ausencia significa "nao sei", que e' diferente de
@@ -4562,6 +4602,11 @@ def acessos_saude_artefatos(
     _exigir_admin_acessos(remote_user)
     inventario = _inventario_artefatos()
     inventario["banco"] = _saude_do_banco()
+    # DEC-074: o servico de rotas (Valhalla) aqui, NUNCA no /api/health -- o publico e' mudo
+    # desde o pentest e nao pode depender de servico externo. Nunca levanta.
+    from motor_expansao.dashboard.alcance_ponto import estado_rotas
+
+    inventario["rotas"] = estado_rotas()
     return inventario
 
 
@@ -6621,6 +6666,7 @@ def _criterios_do_ponto(
     mercado: dict[str, Any],
     concorrencia: dict[str, Any],
     onde: str = "no raio",
+    fator_regua: float = 1.0,
 ) -> list[dict[str, Any]]:
     """Cada métrica do IMÓVEL contra a régua do critério do imóvel.
 
@@ -6642,12 +6688,16 @@ def _criterios_do_ponto(
     `RENDA_MIN` é renda DOMICILIAR, não per capita (comentário literal em
     `config.py:131`) — comparar contra a per capita reprovaria quase todo ponto.
 
-    `onde` só muda o RÓTULO ("no raio" / "na área", DEC-071); as réguas são as mesmas.
-    Ressalva declarada da fase 1: população e concorrentes são totais ABSOLUTOS, e o piso
-    de 5.000 e o teto de 3 foram pensados para o raio de 1 km — numa área desenhada muito
-    maior ou menor eles leem outra coisa. Reescalar por área é decisão do dono (fase 2).
+    `onde` só muda o RÓTULO ("no raio" / "na área", DEC-071).
+
+    `fator_regua` (DEC-074, fase 2 da DEC-071): as réguas de TOTAL — população mínima,
+    residual de destaque e teto de concorrentes — foram calibradas para o raio de 1 km e
+    ESCALAM pela área do recorte (`_reguas_de_total`). As de MÉDIA (renda, score) não. Com
+    fator 1 (o raio de 1 km) as réguas são as constantes de sempre, sem conta nenhuma.
     """
     from motor_expansao.config import settings
+
+    pop_minima, residual_minimo, conc_maximo = _reguas_de_total(fator_regua)
 
     def crit(
         chave: str, rotulo: str, valor: Any, regua: float, unidade: str, maior_melhor: bool = True
@@ -6665,7 +6715,7 @@ def _criterios_do_ponto(
         }
 
     itens = [
-        crit("populacao", f"População {onde}", censo.get("populacao"), POP_MIN_ACIONAVEL, "pessoas"),
+        crit("populacao", f"População {onde}", censo.get("populacao"), pop_minima, "pessoas"),
         crit(
             "renda_domiciliar", "Renda domiciliar",
             censo.get("renda_media_domiciliar"), float(settings.RENDA_MIN), "R$",
@@ -6677,7 +6727,7 @@ def _criterios_do_ponto(
     ]
     if mercado.get("disponivel"):
         itens.append(
-            crit("residual", "Residual disponível", mercado.get("residual"), OFERTA_DESTAQUE_MIN, "alunos")
+            crit("residual", "Residual disponível", mercado.get("residual"), residual_minimo, "alunos")
         )
     if concorrencia.get("disponivel"):
         # O teto e' `CRIT_PONTO_CONC_MAX` (3), NAO o `CONC_ADENSAR_MAX` (2) da camada 3
@@ -6702,10 +6752,31 @@ def _criterios_do_ponto(
                     if concorrencia.get("completo")
                     else None
                 ),
-                CRIT_PONTO_CONC_MAX, "", False,
+                conc_maximo, "", False,
             )
         )
     return itens
+
+
+def _reguas_de_total(fator_regua: float) -> tuple[float, float, int]:
+    """(população mínima, residual de destaque, teto de concorrentes) escalados (DEC-074).
+
+    Fonte ÚNICA das três réguas de total da ficha: `_criterios_do_ponto` e o bloco `reguas`
+    do payload leem daqui, senão a tela compararia contra um número e o servidor contra
+    outro. As constantes de módulo NÃO mudam -- elas também alimentam o funil e estão
+    travadas por teste de contrato; o fator entra como parâmetro.
+
+    Fator 1 devolve as constantes cruas (mesmo tipo, mesmo valor): o raio de 1 km sai
+    byte a byte igual. O teto de concorrentes é uma CONTAGEM: `round(3 x fator)`, nunca
+    abaixo de 1 (um recorte pequeno com teto 0 reprovaria qualquer praça com uma academia).
+    """
+    if fator_regua == 1.0:
+        return POP_MIN_ACIONAVEL, OFERTA_DESTAQUE_MIN, CRIT_PONTO_CONC_MAX
+    return (
+        POP_MIN_ACIONAVEL * fator_regua,
+        OFERTA_DESTAQUE_MIN * fator_regua,
+        max(1, round(CRIT_PONTO_CONC_MAX * fator_regua)),
+    )
 
 
 @app.get("/api/ponto")
@@ -6738,6 +6809,158 @@ def ponto(lat: float, lng: float, excluir_ultra_proxima: bool = False) -> dict[s
     return _payload_ponto(lat, lng)
 
 
+# --------------------------------------------------------------------------- #
+# Alcance do ponto (DEC-074): raio de 1 km, raio de 2 km e 10 min de carro      #
+# --------------------------------------------------------------------------- #
+# Rotulo do recorte nos criterios ("População no raio de 2 km"). O raio de 1 km NAO esta
+# aqui de proposito: pela rota de alcance ele devolve o MESMO conteudo do GET `/api/ponto`
+# (fator 1, byte a byte), e la' o rotulo e' "no raio".
+_ONDE_DO_ALCANCE = {"raio_2km": "no raio de 2 km", "carro_10min": "em 10 min de carro"}
+MSG_ALCANCE_DESCONHECIDO = (
+    "Alcance desconhecido: {alcance!r}. Use raio_1km, raio_2km ou carro_10min."
+)
+MSG_ULTRA_SO_NO_RAIO_1KM = (
+    "O estudo da unidade Ultra é só do raio de 1 km. Volte ao raio de 1 km para usá-lo."
+)
+# Logger NOMEADO no modulo (e nao `logging.getLogger(...)` inline): a guarda do BLK-SAUDE-01
+# (`test_falha_5xx_loga`) reconhece a chamada de log antes do 503 pelo NOME do alvo.
+_LOG_ALCANCE = logging.getLogger("piloto.alcance")
+
+
+@dataclass(frozen=True)
+class _AlcanceResolvido:
+    """O recorte de alcance pronto para o motor.
+
+    `lat`/`lng` sao a ORIGEM -- o ponto clicado, e nao um ponto interno calculado como na
+    area desenhada. Na isocrona e' a origem que o calculo de rotas usou (arredondada a 5
+    casas, ~1 m, pela chave do cache), e o construtor garante que ela esta DENTRO da area:
+    e' o centro da projecao local do motor, o "setor do ponto" e o pin.
+    """
+
+    tipo: str
+    lat: float
+    lng: float
+    raio_km: float | None
+    isocrona: Any = None  # `alcance_ponto.Isocrona` no "carro_10min"
+
+    @property
+    def geometria(self) -> Any:
+        return None if self.isocrona is None else self.isocrona.geometria
+
+
+def _alcances_oferecidos() -> list[str]:
+    """Os alcances deste deploy: os dois raios sempre; a isocrona so' com a env de rotas."""
+    from motor_expansao.dashboard.alcance_ponto import (
+        ALCANCE_CARRO_10MIN,
+        ALCANCE_RAIO_1KM,
+        ALCANCE_RAIO_2KM,
+        rotas_configuradas,
+    )
+
+    alcances = [ALCANCE_RAIO_1KM, ALCANCE_RAIO_2KM]
+    if rotas_configuradas():
+        alcances.append(ALCANCE_CARRO_10MIN)
+    return alcances
+
+
+def _resolver_alcance(lat: float, lng: float, alcance: str) -> _AlcanceResolvido:
+    """`alcance` (identificador cru) -> recorte pronto. 400/503 em portugues.
+
+    A isocrona e' SEMPRE calculada aqui, a partir da origem -- nunca aceita do cliente
+    (reabriria a porta de corpo arbitrario que o teto do desenho a mao fecha). Servico de
+    rotas ausente/fora/lento -> 503; resposta que nao forma area analisavel -> 400. Em
+    nenhum dos dois casos o pedido cai para o raio de 1 km: seria entregar outro estudo.
+    """
+    from motor_expansao.api.coord import CoordenadaInvalidaError, validar_brasil
+    from motor_expansao.dashboard.alcance_ponto import (
+        ALCANCE_CARRO_10MIN,
+        ALCANCES,
+        RAIO_DO_ALCANCE,
+        AlcanceInvalido,
+        RotasIndisponiveis,
+        isocrona_carro,
+    )
+
+    if alcance not in ALCANCES:
+        raise HTTPException(400, MSG_ALCANCE_DESCONHECIDO.format(alcance=alcance))
+    # A coordenada absurda morre AQUI, antes de qualquer chamada ao servico de rotas.
+    try:
+        validar_brasil(lat, lng)
+    except CoordenadaInvalidaError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    if alcance != ALCANCE_CARRO_10MIN:
+        return _AlcanceResolvido(alcance, lat, lng, RAIO_DO_ALCANCE[alcance])
+    try:
+        iso = isocrona_carro(lat, lng)
+    except RotasIndisponiveis as exc:
+        # Condicao ESPERADA (servico fora/lento), entao `warning` e nao `exception` -- mas
+        # com `exc_info`: o 503 tem de deixar a causa no log (BLK-SAUDE-01).
+        _LOG_ALCANCE.warning("rotas indisponiveis: %s", exc.detalhe, exc_info=True)
+        raise HTTPException(503, str(exc)) from exc
+    except AlcanceInvalido as exc:
+        raise HTTPException(400, str(exc)) from exc
+    return _AlcanceResolvido(alcance, iso.lat, iso.lng, None, iso)
+
+
+@app.get("/api/ponto/alcance")
+def ponto_alcance(
+    lat: float, lng: float, alcance: str, excluir_ultra_proxima: bool = False
+) -> dict[str, Any]:
+    """Ficha do ponto com o ALCANCE escolhido na própria ficha (DEC-074).
+
+    `alcance` é identificador cru: `raio_1km` (o estudo de sempre), `raio_2km` ou
+    `carro_10min` (isócrona de 10 min de carro sem trânsito, calculada no servidor por um
+    Valhalla próprio -- só com `MOTOR_ROTAS_URL`; sem ela, 503 em português e a opção nem
+    aparece na tela, ver `/api/me`).
+
+    O MESMO corpo do `GET /api/ponto`, mais o bloco `recorte` (tipo, método, área, fator
+    da régua, contorno GeoJSON, origem e parâmetros do cálculo). `raio_1km` devolve
+    exatamente o conteúdo do GET + `recorte` -- fator 1, réguas e rótulos de sempre. Nos
+    outros, `lat`/`lng` continuam sendo a ORIGEM clicada, as réguas de total escalam pela
+    área (`fator_regua`) e o mercado lê o mesmo recorte.
+
+    `excluir_ultra_proxima` (estudo da unidade Ultra) só existe no raio de 1 km -> 400 nos
+    outros. O gate de acesso é o do `/api/ponto` (prefixo). Fora do raio de 1 km a rota
+    passa pelo semáforo das análises de área (503 se lotado). READ-ONLY sobre o M1.
+    """
+    from motor_expansao.dashboard.alcance_ponto import ALCANCE_RAIO_1KM, ALCANCES
+
+    if alcance not in ALCANCES:
+        raise HTTPException(400, MSG_ALCANCE_DESCONHECIDO.format(alcance=alcance))
+    if alcance == ALCANCE_RAIO_1KM:
+        # O estudo de sempre: a MESMA chamada do GET, e so' o bloco `recorte` a mais.
+        payload = ponto(lat=lat, lng=lng, excluir_ultra_proxima=excluir_ultra_proxima)
+        payload["recorte"] = _recorte_do_raio_1km(lat, lng)
+        return payload
+    if excluir_ultra_proxima:
+        # Antes de qualquer conta: o modo Ultra mede a unidade no raio de 1 km.
+        raise HTTPException(400, MSG_ULTRA_SO_NO_RAIO_1KM)
+    with _vaga_de_analise_de_area():
+        resolvido = _resolver_alcance(lat, lng, alcance)
+        return _payload_ponto(resolvido.lat, resolvido.lng, alcance=resolvido)
+
+
+def _recorte_do_raio_1km(lat: float, lng: float) -> dict[str, Any]:
+    """Bloco `recorte` do raio de 1 km: fator EXATAMENTE 1, método `_1km`, sem contorno
+    (a tela desenha o círculo a partir de `raio_km`)."""
+    from motor_expansao.dashboard.alcance_ponto import ALCANCE_RAIO_1KM, fator_regua_do_raio
+    from motor_expansao.dashboard.censo_point import (
+        RAIO_CENSITARIO_DEFAULT_KM,
+        metodo_do_raio,
+    )
+
+    raio = RAIO_CENSITARIO_DEFAULT_KM
+    return {
+        "tipo": ALCANCE_RAIO_1KM,
+        "metodo": metodo_do_raio(raio),
+        "area_km2": _num(math.pi * raio**2, 2),
+        "fator_regua": fator_regua_do_raio(raio),
+        "contorno": None,
+        "origem": {"lat": _num(lat, 6), "lng": _num(lng, 6)},
+        "parametros": None,
+    }
+
+
 class PontoGeometriaIn(BaseModel):
     """Corpo de `POST /api/ponto/geometria`: o polígono GeoJSON desenhado no mapa."""
 
@@ -6763,7 +6986,11 @@ def ponto_geometria(corpo: PontoGeometriaIn) -> dict[str, Any]:
     extensão (diagonal da caixa envolvente) acima de 40 km e faixa estreita demais
     (compacidade 4πA/P² abaixo de 0,02) — os dois últimos limitam QUANTOS municípios a área
     alcança, que a área sozinha não limita (revisão do PR #457: faixa de 10 m × 3.000 km).
-    Tudo isso roda ANTES de qualquer leitura de partição. SÓ TELA nesta fase: o PDF por área desenhada é a fase 2. READ-ONLY sobre o M1.
+    Tudo isso roda ANTES de qualquer leitura de partição. READ-ONLY sobre o M1.
+
+    Fase 2 (DEC-074): as réguas de total escalam pela área (`recorte.fator_regua`), o
+    `recorte` traz o `contorno` GeoJSON e a conta passa pelo semáforo das análises de área
+    (503 se lotado). O PDF da área sai pelo Estudo (`/api/relatorio/pontual`).
     """
     from motor_expansao.api.coord import CoordenadaInvalidaError, validar_brasil
     from motor_expansao.dashboard.geometria_desenhada import (
@@ -6779,18 +7006,32 @@ def ponto_geometria(corpo: PontoGeometriaIn) -> dict[str, Any]:
         desenho = validar_geometria_desenhada(corpo.geometria, validar_coordenada=_no_pais)
     except (GeometriaDesenhadaInvalida, CoordenadaInvalidaError) as exc:
         raise HTTPException(400, str(exc)) from exc
-    return _payload_ponto(desenho.lat, desenho.lng, desenho=desenho)
+    # A vaga e' pedida DEPOIS da validacao: um desenho recusado nao ocupa a fila.
+    with _vaga_de_analise_de_area():
+        return _payload_ponto(desenho.lat, desenho.lng, desenho=desenho)
 
 
 def _payload_ponto(
-    lat: float, lng: float, *, desenho: Any = None, excluir_ultra_proxima: bool = False
+    lat: float,
+    lng: float,
+    *,
+    desenho: Any = None,
+    excluir_ultra_proxima: bool = False,
+    alcance: _AlcanceResolvido | None = None,
 ) -> dict[str, Any]:
     """O corpo da ficha de ponto, comum ao `GET /api/ponto` e ao `POST /api/ponto/geometria`.
 
     `desenho` (`GeometriaDesenhada`, DEC-071) troca o raio pelo polígono. Sem ele, cada
     chave e cada chamada são as de antes da DEC-071 — o GET não muda um byte (travado por
     teste). Com ele, (lat, lng) é o `representative_point` do polígono.
+
+    `alcance` (DEC-074; raio de 2 km ou isócrona de 10 min de carro) troca o raio de 1 km
+    pelo recorte resolvido, com (lat, lng) = a ORIGEM clicada. O raio de 2 km segue pelo
+    caminho de RAIO (área e fator exatos, método `_2km`); a isócrona, pelo de geometria
+    (método próprio). Nos dois, e no desenho, as réguas de total escalam pelo fator.
     """
+    if desenho is not None and alcance is not None:
+        raise ValueError("desenho e alcance sao recortes exclusivos")
     from motor_expansao.api.coord import CoordenadaInvalidaError, validar_brasil
     from motor_expansao.api.errors import APIError
     from motor_expansao.api.service import (
@@ -6803,6 +7044,7 @@ def _payload_ponto(
     from motor_expansao.api.settings import Settings
     from motor_expansao.dashboard.censo_point import (
         CLASSE_CADEIA_OFERTA,
+        GEOMETRIA_TIPO_ISOCRONA_CARRO_10MIN,
         RAIO_CENSITARIO_DEFAULT_KM,
         analisar_ponto_censitario_setores,
     )
@@ -6822,14 +7064,31 @@ def _payload_ponto(
         perfil=PERFIL,
     )
 
+    # O RECORTE em tres formas: o poligono (desenho ou isocrona), o raio, ou nada (o raio de
+    # 1 km de sempre). `geometria` None + `raio` 1,0 = o GET de antes, chamada por chamada.
+    geometria = desenho.poligono if desenho is not None else (
+        alcance.geometria if alcance is not None else None
+    )
+    raio = (
+        alcance.raio_km
+        if alcance is not None and alcance.raio_km is not None
+        else RAIO_CENSITARIO_DEFAULT_KM
+    )
+    tem_recorte = desenho is not None or alcance is not None
+    # Kwargs da CARGA: so' os que mudam algo. A isocrona alcanca os vizinhos pelo poligono
+    # (como o desenho); o raio de 2 km, pelo frame do raio pedido -- senao, perto de uma
+    # divisa, o municipio do lado sumiria em silencio (a DEC-065 por outra porta).
+    _carga_kw: dict[str, Any] = {}
+    if geometria is not None:
+        _carga_kw["geometria"] = geometria
+    elif raio != RAIO_CENSITARIO_DEFAULT_KM:
+        _carga_kw["raio_km"] = raio
+
     try:
-        if desenho is None:
-            uf, _cod, setores_df = _resolver_e_carregar(lat, lng, cfg)
-        else:
-            # DEC-071: os vizinhos que a CAIXA do polígono alcança também entram — um
-            # polígono maior que o frame do ponto perderia setores do município vizinho em
-            # silêncio (a DEC-065 por outra porta).
-            uf, _cod, setores_df = _resolver_e_carregar(lat, lng, cfg, geometria=desenho.poligono)
+        # DEC-071: os vizinhos que a CAIXA do polígono alcança também entram — um
+        # polígono maior que o frame do ponto perderia setores do município vizinho em
+        # silêncio (a DEC-065 por outra porta). Sem recorte, a chamada é a de sempre.
+        uf, _cod, setores_df = _resolver_e_carregar(lat, lng, cfg, **_carga_kw)
     except APIError as exc:
         # `APIError` é do contrato da API de produção, que registra um handler próprio
         # (`main.py`). O piloto NÃO registra — aqui ela vazaria como 500 sem código.
@@ -6853,14 +7112,22 @@ def _payload_ponto(
 
     # A geometria só entra na chamada quando existe: sem ela, a chamada é LITERALMENTE a de
     # antes da DEC-071 (quem substitui o motor em teste continua recebendo os mesmos args).
-    _recorte_kw: dict[str, Any] = {} if desenho is None else {"geometria_wgs84": desenho.poligono}
+    # A isócrona leva o rótulo PRÓPRIO (DEC-074): chamá-la de "poligono" diria que o
+    # operador a desenhou.
+    _recorte_kw: dict[str, Any] = {} if geometria is None else {"geometria_wgs84": geometria}
+    if alcance is not None and alcance.isocrona is not None:
+        _recorte_kw["geometria_tipo"] = GEOMETRIA_TIPO_ISOCRONA_CARRO_10MIN
     res = analisar_ponto_censitario_setores(
         lat, lng, setores_df,
-        raio_km=RAIO_CENSITARIO_DEFAULT_KM,
+        raio_km=raio,
         competitors_df=comp_df,
         ultra_df=ultra_df,
         **_recorte_kw,
     )
+    # DEC-074: o fator da regua sai do MOTOR (area exata; no raio, raio^2 exato) e e' o
+    # UNICO lido daqui em diante -- criterios, bloco `reguas`, gate do SAM e `recorte`. No
+    # raio de 1 km o motor nao devolve a chave e o fator e' 1.0 por construcao.
+    fator_regua = float(res.get("fator_regua") or 1.0)
 
     # DEC-070: SAM / consumo / residual no MESMO raio de 1,0 km da populacao (era a linha do
     # hexagono res-7 do ponto: grao misto, termo da Ultra escondido e Ultra contada em dobro).
@@ -6868,7 +7135,7 @@ def _payload_ponto(
     # MESMA funcao no poligono (`mercado_raio.mercado_na_area` ja' aceita a geometria).
     from motor_expansao.dashboard.mercado_raio import UnidadeUltraForaDaTolerancia
 
-    if desenho is None and excluir_ultra_proxima:
+    if not tem_recorte and excluir_ultra_proxima:
         # Emenda da DEC-070: estudo da unidade Ultra. Sem unidade na tolerancia, 400 com o
         # motivo -- cair no estudo de ponto em silencio poria o consumo dela de volta numa
         # ficha que o operador pediu sem ele.
@@ -6878,11 +7145,17 @@ def _payload_ponto(
             )
         except UnidadeUltraForaDaTolerancia as exc:
             raise HTTPException(400, str(exc)) from exc
-    elif desenho is None:
+    elif not tem_recorte:
         mercado = _mercado_do_ponto(lat, lng, cfg, res.get("pop_total_raio"))
+    elif geometria is not None:
+        # DEC-074: o piso de populacao do gate do SAM escala pelo MESMO fator dos criterios.
+        mercado = _mercado_do_ponto(
+            lat, lng, cfg, res.get("pop_total_raio"),
+            geometria=geometria, fator_regua=fator_regua,
+        )
     else:
         mercado = _mercado_do_ponto(
-            lat, lng, cfg, res.get("pop_total_raio"), geometria=desenho.poligono
+            lat, lng, cfg, res.get("pop_total_raio"), raio_km=raio, fator_regua=fator_regua
         )
     tem_mercado = bool(mercado.get("disponivel"))
 
@@ -7017,9 +7290,12 @@ def _payload_ponto(
         # dava 98,2 contra 95,6 do raio, so' porque o ponto interno andou ~65 m). Ali vale
         # a MEDIA dos setores do poligono ponderada pela populacao intersectada (area,
         # onde nao ha populacao) -- `score_setor_medio`, que o motor ja' calculava.
+        # DEC-074: a ISOCRONA segue a regra da area (media dos setores) -- e' um poligono, nao
+        # um entorno simetrico da esquina. O raio de 2 km segue a do RAIO (setor do ponto):
+        # e' o mesmo estudo de sempre com o dobro do raio, centrado no ponto escolhido.
         "score_socioeconomico": _num(
             res.get("score_setor_medio")
-            if desenho is not None
+            if geometria is not None
             else res.get("score_setor_2022_calibrado_ponto"),
             1,
         ),
@@ -7124,12 +7400,14 @@ def _payload_ponto(
         },
     }
 
+    _regua_pop, _, _regua_conc = _reguas_de_total(fator_regua)
     payload: dict[str, Any] = {
         "lat": _num(lat, 6),
         "lng": _num(lng, 6),
         # Área desenhada não tem raio: `None` e não 1,0, senão a tela escreveria "raio de
         # 1.000 m" sobre um polígono (DEC-071). O recorte vai no bloco `recorte`, abaixo.
-        "raio_km": RAIO_CENSITARIO_DEFAULT_KM if desenho is None else None,
+        # DEC-074: 2,0 no raio de 2 km; `None` também na isócrona, que não tem raio.
+        "raio_km": raio if geometria is None else None,
         "hex_id": hex_id,
         "local": {
             # `uf` e o nome do município NÃO estão no dict de `analisar_ponto_...` (são
@@ -7155,8 +7433,10 @@ def _payload_ponto(
         "vizinhos": vizinhos,
         # Reguas do IMOVEL, legiveis por maquina. A `/api/metodologia` traz as mesmas
         # como TEXTO ("5.000 habitantes"), que serve para explicar e nao para comparar.
+        # DEC-074: as de TOTAL (`pop_minima`, `conc_regiao_disputada`) ja' escaladas pelo
+        # fator do recorte -- as MESMAS que `criterios` aplica (`_reguas_de_total`).
         "reguas": {
-            "pop_minima": POP_MIN_ACIONAVEL,
+            "pop_minima": _regua_pop if fator_regua == 1.0 else _num(_regua_pop),
             # A regua do IMOVEL, nao a do funil. Este bloco e' a versao legivel por
             # maquina do que `criterios` avalia; publicar `SCORE_CORTE_QUENTE` aqui
             # deixaria o MESMO payload dizendo 60 num campo e 70 no outro — foi o que o
@@ -7176,15 +7456,24 @@ def _payload_ponto(
             # passou a ser o mesmo numero em que o texto ja' chamava a regiao de
             # disputada. Sao papeis diferentes — um aprova, o outro nomeia —, mas manter
             # os dois no mesmo valor por construcao evita que divirjam em silencio.
-            "conc_regiao_disputada": CRIT_PONTO_CONC_MAX,
+            "conc_regiao_disputada": _regua_conc,
         },
         "criterios": (
             _criterios_do_ponto(censo_bloco, mercado_bloco, conc_bloco)
-            if desenho is None
-            else _criterios_do_ponto(censo_bloco, mercado_bloco, conc_bloco, onde="na área")
+            if not tem_recorte
+            else _criterios_do_ponto(
+                censo_bloco, mercado_bloco, conc_bloco,
+                onde="na área" if desenho is not None else _ONDE_DO_ALCANCE[alcance.tipo],
+                fator_regua=fator_regua,
+            )
         ),
     }
+    if tem_recorte:
+        # So' fora do raio de 1 km: o GET continua com as chaves de sempre no bloco.
+        payload["reguas"]["fator_regua"] = fator_regua
     if desenho is not None:
+        from motor_expansao.dashboard.alcance_ponto import contorno_geojson
+
         # Chaves SÓ da área desenhada (DEC-071): o GET continua com as chaves de sempre.
         # `geometria` são os anéis do Polygon GeoJSON normalizado (um anel, fechado, em
         # [lng, lat]) — o que o mapa desenha em volta do pin, na cor do item.
@@ -7195,8 +7484,43 @@ def _payload_ponto(
             "area_km2": _num(desenho.area_km2, 2),
             "n_vertices": desenho.n_vertices,
             "metodo": _texto(res.get("metodo")),
+            # DEC-074: o fator EXATO (sem arredondar) e o contorno no formato único dos
+            # recortes -- a tela desenha desenho e isócrona pelo mesmo caminho.
+            "fator_regua": fator_regua,
+            "contorno": contorno_geojson(desenho.poligono),
         }
+    elif alcance is not None:
+        payload["recorte"] = _recorte_do_alcance(alcance, res, fator_regua)
     return payload
+
+
+def _recorte_do_alcance(
+    alcance: _AlcanceResolvido, res: dict[str, Any], fator_regua: float
+) -> dict[str, Any]:
+    """Bloco `recorte` do raio de 2 km e da isócrona (DEC-074).
+
+    `area_km2` arredondada é só EXIBIÇÃO; o `fator_regua` vai exato. Na isócrona o
+    `contorno` é o GeoJSON (Polygon ou MultiPolygon, com buracos) e `parametros` carimba o
+    cálculo (motor, perfil, minutos, sem trânsito, versão dos tiles) -- sem isso dois PDFs
+    do mesmo ponto não seriam comparáveis depois de reconstruir a malha viária. No raio o
+    contorno é `None`: a tela gera o círculo a partir de `raio_km`.
+    """
+    from motor_expansao.dashboard.alcance_ponto import contorno_geojson
+
+    iso = alcance.isocrona
+    area = res.get("area_km2_exata")
+    if area is None:
+        area = iso.area_km2 if iso is not None else math.pi * float(alcance.raio_km or 0) ** 2
+    return {
+        # Identificador cru, NÃO acentuar.
+        "tipo": alcance.tipo,
+        "metodo": _texto(res.get("metodo")),
+        "area_km2": _num(area, 2),
+        "fator_regua": fator_regua,
+        "contorno": None if iso is None else contorno_geojson(iso.geometria),
+        "origem": {"lat": _num(alcance.lat, 6), "lng": _num(alcance.lng, 6)},
+        "parametros": None if iso is None else iso.parametros,
+    }
 
 
 def _ultra_do_mercado(info: Any, *, com_consumo: bool = False) -> dict[str, Any] | None:
@@ -11156,6 +11480,10 @@ async def relatorio_pontual(
     origem_centroide_hex: bool = False,
     so_estudo: bool = False,
     excluir_ultra_proxima: bool = False,
+    # DEC-074: campos do CORPO multipart (Form), NAO query -- o poligono do desenho nao cabe
+    # numa URL (HTTP 431). `Annotated` mantem o default `None` numa chamada Python direta.
+    alcance: Annotated[str | None, Form()] = None,
+    geometria: Annotated[str | None, Form()] = None,
     fotos: list[UploadFile] | None = None,
     remote_user: str | None = Header(default=None, alias="Remote-User"),
 ) -> Response:
@@ -11190,6 +11518,14 @@ async def relatorio_pontual(
     consumo da unidade Ultra a ate' 150 m do ponto, e o Big Numbers DECLARA isso. Vale com
     e sem `so_estudo`. Sem unidade na tolerancia -> 400.
 
+    `alcance` (`raio_2km`/`carro_10min`) OU `geometria` (o GeoJSON do desenho), campos Form
+    (DEC-074, fase 2 da DEC-071): o Estudo do RECORTE escolhido na ficha. So' com
+    `so_estudo` -- o relatorio completo (viabilidade, zona morta) e' do raio de 1 km, e um
+    PDF com o selo demografico num recorte e o financeiro em outro seria dois estudos
+    colados. O servidor RECALCULA o recorte (a isocrona sai do cache do servico de rotas, o
+    desenho passa pelo mesmo validador da ficha) -- nunca confia num poligono "de alcance"
+    vindo do cliente. Sem os campos (ou com `raio_1km`), comportamento identico ao de antes.
+
     Esta funcao so faz a parte ASSINCRONA (ler os uploads) e delega o resto ao
     threadpool — ver `_gerar_relatorio_pontual_pdf`.
     """
@@ -11219,6 +11555,18 @@ async def relatorio_pontual(
     # Parquet (`carregar_ultra_mercado`, `lru_cache`), e dentro deste `async def` isso parava
     # o event loop do unico worker -- inclusive o /api/health (revisao do admin, 2026-10-15).
     # Continua ANTES de registrar o relatorio: o `await` so' devolve depois da validacao.
+    # DEC-074: o recorte tambem se resolve (e se recusa) AQUI, antes do registro -- no
+    # threadpool, porque a isocrona pode chamar o servico de rotas.
+    recorte = None
+    if alcance or geometria:
+        recorte = await run_in_threadpool(
+            _resolver_recorte_do_pdf, lat, lng, alcance, geometria, so_estudo,
+            excluir_ultra_proxima,
+        )
+        if recorte is not None:
+            # A coordenada do PDF passa a ser a do RECORTE: a origem da isocrona (ja'
+            # garantida dentro dela) ou o ponto interno do desenho.
+            lat, lng = recorte.lat, recorte.lng
     if excluir_ultra_proxima:
         await run_in_threadpool(_validar_estudo_da_unidade, lat, lng)
     report_id = await _registrar_relatorio_gerado_fora_do_loop(
@@ -11249,7 +11597,98 @@ async def relatorio_pontual(
             report_id,
             so_estudo,
             excluir_ultra_proxima,
+            recorte,
         )
+
+
+MSG_RECORTE_SO_NO_ESTUDO = (
+    "O relatório completo é do raio de 1 km; para o recorte use o Estudo."
+)
+MSG_RECORTE_DUPLO = "Envie o alcance OU a área desenhada, não os dois."
+MSG_GEOMETRIA_MALFORMADA = "Área desenhada inválida: o campo não é um GeoJSON legível."
+
+
+@dataclass(frozen=True)
+class _RecorteDoPdf:
+    """O recorte do Estudo (DEC-074), resolvido no servidor.
+
+    `lat`/`lng`: a coordenada com que o PDF inteiro roda -- a origem clicada (raio, ou a da
+    isocrona, garantida dentro dela) ou o ponto interno do desenho. `geometria` (shapely em
+    graus) so' na isocrona e no desenho; `raio_km` so' no raio. `geometria_tipo` e' o
+    rotulo do MOTOR ("poligono"/"isocrona_carro_10min"); `tipo` e' o do payload
+    ("raio_2km"/"carro_10min"/"poligono").
+    """
+
+    tipo: str
+    lat: float
+    lng: float
+    raio_km: float | None = None
+    geometria: Any = None
+    geometria_tipo: str | None = None
+    # Carimbo da malha viaria da isocrona (`Isocrona.versao`): vai impresso no PDF.
+    versao_rotas: str | None = None
+
+
+def _resolver_recorte_do_pdf(
+    lat: float,
+    lng: float,
+    alcance: str | None,
+    geometria: str | None,
+    so_estudo: bool,
+    excluir_ultra_proxima: bool,
+) -> _RecorteDoPdf | None:
+    """Campos Form do Estudo -> recorte pronto, ou `None` (o raio de 1 km de sempre).
+
+    Recusas em portugues (400), na ordem do mais barato ao mais caro: os dois campos
+    juntos; recorte sem `so_estudo`; estudo da unidade Ultra fora do raio de 1 km;
+    geometria ilegivel ou fora das travas do desenho. Servico de rotas fora -> 503 (pela
+    mesma `_resolver_alcance` da ficha: o PDF e a tela recusam com as mesmas frases).
+    """
+    from motor_expansao.dashboard.alcance_ponto import ALCANCE_RAIO_1KM
+    from motor_expansao.dashboard.censo_point import (
+        GEOMETRIA_TIPO_ISOCRONA_CARRO_10MIN,
+        GEOMETRIA_TIPO_POLIGONO,
+    )
+
+    if alcance and geometria:
+        raise HTTPException(400, MSG_RECORTE_DUPLO)
+    if alcance == ALCANCE_RAIO_1KM:
+        # O estudo de sempre: pedir o raio de 1 km explicitamente nao muda nada.
+        return None
+    if not so_estudo:
+        raise HTTPException(400, MSG_RECORTE_SO_NO_ESTUDO)
+    if excluir_ultra_proxima:
+        raise HTTPException(400, MSG_ULTRA_SO_NO_RAIO_1KM)
+
+    if geometria:
+        from motor_expansao.api.coord import CoordenadaInvalidaError, validar_brasil
+        from motor_expansao.dashboard.geometria_desenhada import (
+            GeometriaDesenhadaInvalida,
+            validar_geometria_desenhada,
+        )
+
+        try:
+            bruto = json.loads(geometria)
+        except ValueError as exc:
+            raise HTTPException(400, MSG_GEOMETRIA_MALFORMADA) from exc
+        try:
+            desenho = validar_geometria_desenhada(bruto, validar_coordenada=validar_brasil)
+        except (GeometriaDesenhadaInvalida, CoordenadaInvalidaError) as exc:
+            raise HTTPException(400, str(exc)) from exc
+        return _RecorteDoPdf(
+            GEOMETRIA_TIPO_POLIGONO, desenho.lat, desenho.lng,
+            geometria=desenho.poligono, geometria_tipo=GEOMETRIA_TIPO_POLIGONO,
+        )
+
+    resolvido = _resolver_alcance(lat, lng, str(alcance))
+    if resolvido.isocrona is not None:
+        return _RecorteDoPdf(
+            resolvido.tipo, resolvido.lat, resolvido.lng,
+            geometria=resolvido.geometria,
+            geometria_tipo=GEOMETRIA_TIPO_ISOCRONA_CARRO_10MIN,
+            versao_rotas=resolvido.isocrona.versao,
+        )
+    return _RecorteDoPdf(resolvido.tipo, resolvido.lat, resolvido.lng, raio_km=resolvido.raio_km)
 
 
 def _validar_estudo_da_unidade(lat: float, lng: float) -> None:
@@ -11283,6 +11722,7 @@ def _gerar_relatorio_pontual_pdf(
     report_id: str | None = None,
     so_estudo: bool = False,
     excluir_ultra_proxima: bool = False,
+    recorte: _RecorteDoPdf | None = None,
 ) -> Response:
     """Corpo SINCRONO do Relatorio Pontual — roda no threadpool, nunca no event loop.
 
@@ -11290,6 +11730,10 @@ def _gerar_relatorio_pontual_pdf(
     nao `async def`: e o que mantem o servidor respondendo durante a geracao.
 
     `so_estudo=True`: PDF so' demografico -- ver a docstring da rota.
+
+    `recorte` (DEC-074, so' com `so_estudo`, ja' validado pela rota): carga de vizinhos,
+    motor censitario, mercado, mapas e textos do PDF passam a ler o RECORTE. Cada chamada
+    so' ganha kwarg novo quando ha' recorte -- sem ele, as chamadas sao as de antes.
     """
     if so_estudo:
         # Cinto de seguranca: o modo existe para NAO sair dado financeiro. Zerar aqui, e nao
@@ -11323,6 +11767,7 @@ def _gerar_relatorio_pontual_pdf(
     )
     from motor_expansao.dashboard.censo_report import (
         gerar_pdf_relatorio_pontual_classico,
+        recorte_pdf,
     )
 
     if not CENSO_GEO_DIR.exists():
@@ -11340,8 +11785,31 @@ def _gerar_relatorio_pontual_pdf(
         perfil=PERFIL,
     )
 
+    # DEC-074: os kwargs do RECORTE, montados uma vez e repassados a carga, ao motor, ao
+    # mercado e aos mapas. Vazios sem recorte: cada chamada abaixo fica literalmente a de
+    # antes (os testes substituem essas funcoes por fakes de assinatura antiga).
+    raio_pdf = (
+        recorte.raio_km
+        if recorte is not None and recorte.raio_km is not None
+        else RAIO_CENSITARIO_DEFAULT_KM
+    )
+    carga_kw: dict[str, Any] = {}
+    motor_kw: dict[str, Any] = {}
+    if recorte is not None and recorte.geometria is not None:
+        carga_kw["geometria"] = recorte.geometria
+        # O PDF DESENHA o mapa do recorte: os vizinhos cobrem o quadro dele, nao so' o
+        # contorno (senao a faixa lateral do quadro sai em branco).
+        carga_kw["com_mapa"] = True
+        motor_kw = {
+            "geometria_wgs84": recorte.geometria,
+            "geometria_tipo": recorte.geometria_tipo,
+        }
+    elif recorte is not None:
+        # Raio de 2 km: o frame de vizinhos cresce com o raio (classe DEC-065).
+        carga_kw["raio_km"] = raio_pdf
+
     try:
-        uf, cod_municipio, setores_df = _resolver_e_carregar(lat, lng, cfg)
+        uf, cod_municipio, setores_df = _resolver_e_carregar(lat, lng, cfg, **carga_kw)
     except Exception as exc:  # noqa: BLE001
         raise HTTPException(400, f"Nao foi possivel resolver a coordenada: {exc}") from exc
 
@@ -11350,10 +11818,13 @@ def _gerar_relatorio_pontual_pdf(
         lat,
         lng,
         setores_df,
-        raio_km=RAIO_CENSITARIO_DEFAULT_KM,
+        raio_km=raio_pdf,
         competitors_df=comp_df,
         ultra_df=ultra_df,
+        **motor_kw,
     )
+    # O fator da regua sai do MOTOR (area exata), o mesmo que a ficha usou. 1.0 sem recorte.
+    fator_regua = float(result.get("fator_regua") or 1.0)
 
     perfil_bairro = agregar_perfil_bairro_distrito(
         setores_df,
@@ -11372,6 +11843,16 @@ def _gerar_relatorio_pontual_pdf(
     # None -> a camada residual cai no fallback textual (nao derruba o PDF).
     hexes_residual = _residual_hexes_do_ponto(lat, lng, STAGING_DIR)
 
+    # DEC-074: com recorte, os mapas recebem o `result` JA' calculado (sem pagar a
+    # intersecao duas vezes e sem os pins/faixas sairem de outro recorte) e, na geometria,
+    # o poligono e o rotulo dele. Sem recorte, nenhum kwarg novo.
+    mapas_kw: dict[str, Any] = {}
+    if recorte is not None:
+        mapas_kw["result"] = result
+        if recorte.geometria is not None:
+            mapas_kw["geometria_wgs84"] = recorte.geometria
+            mapas_kw["geometria_tipo"] = recorte.geometria_tipo
+
     def _mapas(basemap: bool):
         return render_mapas_censitarios_combinados(
             lat,
@@ -11380,7 +11861,8 @@ def _gerar_relatorio_pontual_pdf(
             # DEC-021: mapa e analise voltam a usar O MESMO raio. A divergencia display 1,0 x
             # analise 1,5 durou algumas horas em 2026-07-29 e era, por construcao, um PDF que
             # desenhava um raio e contava outro. Agora o canonico vale 1,0 km e nao ha dois.
-            raio_km=RAIO_CENSITARIO_DEFAULT_KM,
+            # DEC-074: o raio do recorte (2 km) quando houver; 1,0 km sem ele.
+            raio_km=raio_pdf,
             competitors_df=comp_df,
             ultra_df=ultra_df,
             basemap=basemap,
@@ -11392,6 +11874,7 @@ def _gerar_relatorio_pontual_pdf(
             # nas TRES superficies (dashboard, API/bot e piloto). Era override em duas delas —
             # 110 na API e 255 aqui — e a divergencia so aparecia comparando PDFs lado a lado.
             hexes_df=hexes_residual,
+            **mapas_kw,
         )
 
     # Ruas online -> offline -> sem mapas. O PDF nunca falha por causa do basemap.
@@ -11412,6 +11895,17 @@ def _gerar_relatorio_pontual_pdf(
             # 400: um PDF "sem o consumo da unidade" que saisse com ele seria o pior caso.
             residual = _mercado_do_ponto(
                 lat, lng, cfg, result.get("pop_total_raio"), excluir_ultra_proxima=True
+            )
+        elif recorte is not None:
+            # DEC-074: o mercado no MESMO recorte, com o gate do SAM escalado pelo MESMO
+            # fator dos cards e da Conclusao (a tela usa o mesmo par de kwargs).
+            mercado_kw: dict[str, Any] = {"fator_regua": fator_regua}
+            if recorte.geometria is not None:
+                mercado_kw["geometria"] = recorte.geometria
+            else:
+                mercado_kw["raio_km"] = raio_pdf
+            residual = _mercado_do_ponto(
+                lat, lng, cfg, result.get("pop_total_raio"), **mercado_kw
             )
         else:
             residual = _mercado_do_ponto(lat, lng, cfg, result.get("pop_total_raio"))
@@ -11463,6 +11957,20 @@ def _gerar_relatorio_pontual_pdf(
     # turquesa com margem e icone, banda magenta no rodape, Realizacao com link clicavel e data
     # por extenso) e sem o slide "Imagem do Entorno" (8 -> 7 paginas de base). E o efeito
     # PRETENDIDO da unificacao, nao colateral — mas e' perceptivel para quem usa o piloto.
+    #
+    # DEC-074: com recorte, o gerador recebe `recorte` (rotulos do recorte e o fator que
+    # escala as metas de TOTAL). Sem recorte o kwarg nem e' passado: metas e textos de hoje.
+    # O dict sai de `censo_report.recorte_pdf`, a fonte UNICA dos rotulos (capa, notas) --
+    # a rota so' entrega o que o motor mediu: o fator e a area EXATOS.
+    gerador_kw: dict[str, Any] = {}
+    if recorte is not None:
+        area_exata = float(result.get("area_km2_exata") or math.pi * raio_pdf**2)
+        gerador_kw["recorte"] = recorte_pdf(
+            recorte.tipo,
+            fator_regua=fator_regua,
+            area_km2=area_exata,
+            versao_rotas=recorte.versao_rotas,
+        )
     pdf = gerar_pdf_relatorio_pontual_classico(
         result,
         mapas,
@@ -11486,6 +11994,7 @@ def _gerar_relatorio_pontual_pdf(
         # Botao "Estudo" (decisao 4, 2026-10-14): Conclusao so' com o selo DEMOGRAFICO, como
         # no bot. `False` = comportamento de sempre (sem viabilidade, sem pagina de Conclusao).
         conclusao_so_estudo=so_estudo,
+        **gerador_kw,
     )
     return Response(
         content=pdf,
@@ -11669,6 +12178,16 @@ def _gerar_comparacao_pdf(
     )
 
 
+class ComparacaoRecorteIn(BaseModel):
+    """Recorte de UM item do deck de comparação (DEC-074). O servidor só imprime."""
+
+    # Identificador cru (o mesmo `recorte.tipo` da ficha), NÃO acentuar.
+    tipo: Literal["raio_1km", "raio_2km", "carro_10min", "poligono"]
+    rotulo: str | None = Field(default=None, max_length=120)
+    area_km2: float | None = Field(default=None, gt=0, allow_inf_nan=False)
+    fator_regua: float | None = Field(default=None, gt=0, allow_inf_nan=False)
+
+
 class ComparacaoItemIn(BaseModel):
     # extra="allow": o item traz o ranking JA CALCULADO da tela (rotulo, posicao,
     # melhor/pior...) e o servidor so' desenha — deixar passar sem acoplar release do
@@ -11676,6 +12195,10 @@ class ComparacaoItemIn(BaseModel):
     # vetor sem teto, entao e' o unico limitado aqui.
     model_config = ConfigDict(extra="allow")
     porDimensao: list[dict[str, Any]] = Field(default_factory=list, max_length=12)
+    # DEC-074: o recorte do item (raio de 1/2 km, 10 min de carro, área desenhada), para o
+    # deck imprimir na linha do item e explicar os critérios escalados. Tipado (e não só
+    # `extra`) porque vira TEXTO no PDF: rótulo com teto e números finitos.
+    recorte: ComparacaoRecorteIn | None = None
 
 
 class ComparacaoCoordIn(BaseModel):

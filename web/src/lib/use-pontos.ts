@@ -1,8 +1,9 @@
 import { useCallback, useMemo, useRef, useState } from 'react'
 
+import { ALCANCE_PADRAO, ehAlcance, type Alcance } from './alcance'
 import { api, ApiError } from './api'
 import { MAX_PONTOS, chaveDaCoordenada, indiceDoMesmoPonto, type PosicaoGeoJson } from './comparacao-pontos'
-import { avisoDeEstudoDePonto, ehEstudoDaUnidade, ehRecusaDoEstudoDaUnidade } from './estudo-ultra'
+import { avisoDeEstudoDePonto, ehRecusaDoEstudoDaUnidade } from './estudo-ultra'
 import { pontoInterno } from './geometria-desenho'
 import {
   PONTOS_VAZIO,
@@ -14,6 +15,8 @@ import {
   decidirPedido,
   falhou,
   itemAtivo,
+  LEITURA_ULTRA,
+  leituraDaFicha,
   limpar as limparTudo,
   limparTrocas,
   mostrar as mostrarItem,
@@ -28,7 +31,17 @@ import {
   type EstadoPontos,
   type TrocasDeModo,
 } from './pontos-estado'
+import { ehAreaDesenhada } from './recorte'
 import type { PontoPayload } from './types'
+
+/** Lê o ponto na leitura descrita (`leituraDaFicha`) — a rota de sempre para o raio de 1 km. */
+function lerNoModo(lat: number, lng: number, leitura: string): Promise<PontoPayload> {
+  if (leitura === LEITURA_ULTRA) return api.ponto(lat, lng, { excluirUltraProxima: true })
+  /* O raio de 1 km volta pela rota de SEMPRE (`GET /api/ponto`), byte a byte igual à
+     ficha que o ponto teve ao entrar — e funciona com servidor anterior à DEC-074. */
+  if (leitura === ALCANCE_PADRAO || !ehAlcance(leitura)) return api.ponto(lat, lng)
+  return api.pontoAlcance(lat, lng, leitura)
+}
 
 /**
  * A lista de pontos analisados, viva no `App` — a fiação React das regras puras de
@@ -77,17 +90,17 @@ export function usePontos() {
    * geração, e só a vigente é aplicada — "liga, desliga" rápido cancela a primeira, e uma
    * resposta velha que chegue depois da nova é descartada (`pedirTroca`/`concluirTroca`).
    */
-  const trocarModo = useCallback(
-    async (i: number, estudoUltra: boolean) => {
+  const trocarLeitura = useCallback(
+    async (i: number, querida: string, falha: string) => {
       const f = ref.current.fichas[i]
-      if (!f || f.geometria?.length) return
+      if (!f || ehAreaDesenhada(f)) return
       const chave = chaveDaCoordenada(f.lat, f.lng)
-      const { trocas, decisao } = pedirTroca(trocasRef.current, chave, ehEstudoDaUnidade(f), estudoUltra)
+      const { trocas, decisao } = pedirTroca(trocasRef.current, chave, leituraDaFicha(f), querida)
       aplicarTrocas(trocas)
       if (decisao.tipo !== 'ler') return
       setErro(null)
       try {
-        const nova = await api.ponto(f.lat, f.lng, { excluirUltraProxima: estudoUltra })
+        const nova = await lerNoModo(f.lat, f.lng, querida)
         const fim = concluirTroca(trocasRef.current, chave, decisao.geracao)
         if (!fim.vale) return
         aplicarTrocas(fim.trocas)
@@ -95,13 +108,34 @@ export function usePontos() {
       } catch (e) {
         const fim = concluirTroca(trocasRef.current, chave, decisao.geracao)
         /* A falha de um pedido que o operador já desfez não é notícia: o modo que ele quer
-           é o que está na tela. */
+           é o que está na tela. Falhou de verdade (o serviço de rotas fora do ar, 503): a
+           ficha anterior FICA, e o motivo do servidor é dito — nunca cai em silêncio para
+           o raio de 1 km. */
         if (!fim.vale) return
         aplicarTrocas(fim.trocas)
-        setErro(e instanceof ApiError ? e.message : 'Falha ao trocar o modo do estudo.')
+        setErro(e instanceof ApiError ? e.message : falha)
       }
     },
     [aplicar, aplicarTrocas],
+  )
+
+  const trocarModo = useCallback(
+    /* O estudo da unidade Ultra é só do raio de 1 km (como o servidor): ligar a chave num
+       ponto de outro alcance o devolve ao raio de 1 km; desligar mantém o raio de 1 km. */
+    (i: number, estudoUltra: boolean) =>
+      trocarLeitura(i, estudoUltra ? LEITURA_ULTRA : ALCANCE_PADRAO, 'Falha ao trocar o modo do estudo.'),
+    [trocarLeitura],
+  )
+
+  /**
+   * Troca o ALCANCE do ponto `i` (DEC-074): raio de 1 km, de 2 km ou 10 min de carro. A
+   * ficha é relida e TROCADA no lugar — mesmo nome, mesma cor, mesma posição na lista —,
+   * pela mesma regra de "último clique vence" do modo. Escolher outro alcance com o estudo
+   * da unidade Ultra ligado sai do estudo da unidade: ele só existe no raio de 1 km.
+   */
+  const trocarAlcance = useCallback(
+    (i: number, alcance: Alcance) => trocarLeitura(i, alcance, 'Falha ao trocar o alcance do ponto.'),
+    [trocarLeitura],
   )
 
   /**
@@ -202,7 +236,7 @@ export function usePontos() {
       aplicar((e) => removerFicha(e, i))
       /* A troca de modo em voo deste ponto morre com ele: senão, remover e analisar de novo
          o mesmo lugar deixava a resposta antiga trocar o modo da ficha nova. */
-      if (f && !f.geometria?.length) aplicarTrocas(esquecerTroca(trocasRef.current, chaveDaCoordenada(f.lat, f.lng)))
+      if (f && !ehAreaDesenhada(f)) aplicarTrocas(esquecerTroca(trocasRef.current, chaveDaCoordenada(f.lat, f.lng)))
     },
     [aplicar, aplicarTrocas],
   )
@@ -233,7 +267,9 @@ export function usePontos() {
     analisarGeometria,
     /** Troca o modo de estudo do ponto `i` (estudo de ponto <-> unidade Ultra). */
     trocarModo,
-    /** `chaveDaCoordenada` dos pontos em releitura de modo. */
+    /** Troca o alcance do ponto `i` no lugar (raio de 1 km, de 2 km, 10 min de carro). */
+    trocarAlcance,
+    /** `chaveDaCoordenada` dos pontos em releitura de modo ou de alcance. */
     trocandoModo,
     abrir,
     mostrar,
