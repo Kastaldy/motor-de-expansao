@@ -8888,6 +8888,58 @@ def _rede_kpis(unidades: pd.DataFrame, m1: pd.DataFrame) -> dict[str, Any]:
     return saida
 
 
+#: Colunas da linha "rede inteira" da Carteira: as métricas da tabela mais a contagem
+#: que acompanha o churn.
+_REDE_LINHA_REDE = ("faturamento", "ativos", "churn_pct", "cancelados", "nps")
+
+
+def _rede_linha_rede(contexto: dict[str, Any]) -> dict[str, Any]:
+    """A linha da REDE INTEIRA no topo da Carteira, em duas leituras (pedido do Vinicius,
+    2026-10-20): "como a Ultra está indo como um todo".
+
+    - `media`: a média SIMPLES por unidade, a MESMA régua do "% vs média da rede" de cada
+      célula (`rede_metricas.medias_da_rede`) -- uma unidade com o valor da linha lê 0%
+      ali. Só entra quem operou a janela inteira, como no ranking.
+    - `total`: o que os KPIs do topo calculam (`_rede_kpis`): soma para volume e taxa
+      PONDERADA para churn (por pagantes) e NPS (por ativos) -- somar taxa não significa
+      nada.
+
+    As duas são da rede INTEIRA, nunca do recorte: o filtro muda as linhas da tabela, e a
+    linha da rede é a referência fixa contra a qual o recorte se compara (é por isso que o
+    `vs_media` também ignora o filtro). O delta sai da MESMA cesta nos dois meses, pelo
+    mesmo motivo dos KPIs: inauguração muda a cesta, não o desempenho.
+    """
+    atual: pd.DataFrame = contexto["atual"]
+    m1: pd.DataFrame = contexto["m1"]
+    kpis = _rede_kpis(atual, m1)
+    total = {c: kpis[c] for c in _REDE_LINHA_REDE if c in kpis}
+
+    mascara = rede_metricas.mascara_comparaveis(atual)
+    comparaveis = atual.loc[mascara].set_index("unidade_id")
+    medias = rede_metricas.medias_da_rede(atual, _REDE_LINHA_REDE)
+    cesta = comparaveis.index.intersection(m1.index)
+    media: dict[str, Any] = {}
+    for chave in _REDE_LINHA_REDE:
+        casas = _rede_casas(chave)
+        valor = medias.get(chave)
+        anterior = atual_cesta = None
+        if len(cesta) and chave in m1.columns and chave in comparaveis.columns:
+            anterior = _numf(pd.to_numeric(m1.loc[cesta, chave], errors="coerce").mean())
+            atual_cesta = _numf(pd.to_numeric(comparaveis.loc[cesta, chave], errors="coerce").mean())
+        delta = (
+            100.0 * (atual_cesta - anterior) / anterior
+            if (atual_cesta is not None and anterior)
+            else None
+        )
+        media[chave] = {"atual": _num(valor, casas), "m1": _num(anterior, casas), "delta_pct": _num(delta, 1)}
+    return {
+        "media": media,
+        "total": total,
+        "n_unidades": int(len(atual)),
+        "n_comparaveis": int(mascara.sum()),
+    }
+
+
 #: O que dizer do faturamento do PERÍODO, conforme a janela alcance ou não a planilha.
 #: A planilha é mensal: ela responde por competência coberta INTEIRA e por mais nada.
 _NOTA_DO_PERIODO: dict[str, str] = {
@@ -9239,6 +9291,7 @@ def _rede_carteira_payload(
             "com_coordenada": len(com_coordenada),
         },
         "kpis": kpis,
+        "rede_inteira": _rede_linha_rede(contexto),
         "split": {
             "recorrentes": _num(total_pagantes),
             "agregadores": _num(total_agregadores),

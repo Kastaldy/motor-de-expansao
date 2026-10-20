@@ -11,6 +11,7 @@ import { rotuloDoPeriodo } from './periodo'
 import type {
   RedeCarteira,
   RedeFonteFaturamento,
+  RedeLinhaRede,
   RedeMetrica,
   RedeSeveridade,
   RedeUnidade,
@@ -637,4 +638,45 @@ export function creditoDaFonte(fonte?: RedeFonteFaturamento, longo = false): str
   return origens.size === 1
     ? 'Fonte: faturamento da planilha do Financeiro (base dos royalties); demais métricas da Growth API, read-only sobre o M1.'
     : 'Fonte: faturamento da planilha do Financeiro nos meses fechados e da Growth API no período parcial; demais métricas da Growth API, read-only sobre o M1.'
+}
+
+/* ---------------------------------------------------------------------------
+   Linha da REDE INTEIRA no topo da Carteira (pedido do Vinicius, 2026-10-20): "uma noção
+   geral de como a Ultra está indo como um todo", com a troca entre MÉDIA e TOTAL.
+
+   Os números vêm prontos do servidor (`rede_inteira`): a média é a mesma régua do
+   "% vs média da rede" de cada célula, e recalculá-la aqui sobre `carteira.unidades`
+   daria outro número — a lista é a do RECORTE filtrado, e a linha é da rede.
+   --------------------------------------------------------------------------- */
+
+export type LeituraDaRede = 'media' | 'total'
+
+export interface LinhaDaRede {
+  rotulo: string
+  detalhe: string
+  metricas: Record<string, RedeMetrica>
+}
+
+export function linhaDaRede(
+  rede: RedeLinhaRede | undefined,
+  leitura: LeituraDaRede,
+): LinhaDaRede | null {
+  if (!rede) return null
+  const fonte = leitura === 'media' ? rede.media : rede.total
+  const metricas: Record<string, RedeMetrica> = {}
+  for (const [chave, v] of Object.entries(fonte)) {
+    // O resto do quarteto (ranking, % vs média) não existe para a rede: ela É a média.
+    metricas[chave] = { ...v, rank: null, rank_total: null, vs_media_pct: null }
+  }
+  return leitura === 'media'
+    ? {
+        rotulo: 'Média da rede',
+        detalhe: `por unidade · ${num(rede.n_comparaveis)} comparáveis`,
+        metricas,
+      }
+    : {
+        rotulo: 'Total da rede',
+        detalhe: `${num(rede.n_unidades)} unidades · churn e NPS ponderados`,
+        metricas,
+      }
 }

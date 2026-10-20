@@ -1143,6 +1143,15 @@ export interface RedeMetrica {
 
 export type RedeSeveridade = 'alta' | 'media' | 'ok' | 'sem_base'
 
+export type RedeValorDaLinha = Pick<RedeMetrica, 'atual' | 'm1' | 'delta_pct'>
+
+export interface RedeLinhaRede {
+  media: Record<string, RedeValorDaLinha>
+  total: Record<string, RedeValorDaLinha>
+  n_unidades: number
+  n_comparaveis: number
+}
+
 export interface RedeAlerta {
   codigo: string
   titulo: string
@@ -1279,6 +1288,11 @@ export interface RedeCarteira {
   competencia_diagnostico: string | null
   totais: { rede: number; no_recorte: number; com_coordenada: number }
   kpis: Record<string, RedeMetrica>
+  /** A linha da REDE INTEIRA no topo da Carteira (ignora os filtros). `media` = média
+   *  simples por unidade comparável, a régua do "% vs média da rede"; `total` = os KPIs
+   *  da rede (soma para volume, taxa ponderada para churn e NPS). Opcional porque a
+   *  resposta de um servidor anterior a ela não traz o campo. */
+  rede_inteira?: RedeLinhaRede
   split: {
     recorrentes: number | null
     agregadores: number | null
