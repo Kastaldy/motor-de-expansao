@@ -180,6 +180,55 @@ def test_gate_passa_no_limite_exato() -> None:
     assert m["sam_fitness_potencial"] == pytest.approx(POP_MIN_SAM_GATE * 0.2)
 
 
+# --------------------------------------------------------------------------- #
+# (c') gate escalado pela area do recorte (DEC-074)                            #
+# --------------------------------------------------------------------------- #
+def test_fator_1_e_o_gate_de_sempre() -> None:
+    """Default e fator 1.0 explicito: MESMO dict, mesmo piso inteiro, mesma frase."""
+    padrao = _mercado(pop_area=POP_MIN_SAM_GATE - 1)
+    explicito = _mercado(pop_area=POP_MIN_SAM_GATE - 1, fator_regua=1.0)
+    assert explicito == padrao
+    assert padrao["pop_minima_gate"] == POP_MIN_SAM_GATE
+    assert isinstance(padrao["pop_minima_gate"], int)
+    # Fator 1 nao acrescenta chave: o dict do raio de 1 km e' o de antes da DEC-074.
+    assert "fator_regua" not in padrao
+    assert padrao["motivo_gate"] == mr.MOTIVO_POP_INSUFICIENTE
+    assert mr.motivo_pop_insuficiente(POP_MIN_SAM_GATE) == mr.MOTIVO_POP_INSUFICIENTE
+
+
+def test_gate_escalado_no_raio_de_2km() -> None:
+    piso = POP_MIN_SAM_GATE * 4.0
+    reprova = _mercado(pop_area=piso - 1, raio_km=2.0, fator_regua=4.0)
+    assert reprova["pop_minima_gate"] == piso
+    assert reprova["fator_regua"] == 4.0
+    assert reprova["gate_pop_ok"] is False
+    assert reprova["sam_fitness_potencial"] == 0.0
+    # O texto diz o piso que DE FATO reprovou, nao o de 5.000.
+    assert "20.000" in reprova["motivo_gate"]
+    assert reprova["motivo_gate"] != mr.MOTIVO_POP_INSUFICIENTE
+
+    passa = _mercado(pop_area=piso, raio_km=2.0, fator_regua=4.0)
+    assert passa["flag_sam"] is True
+    assert passa["sam_fitness_potencial"] == pytest.approx(piso * 0.2)
+    # Com o piso de 1 km, 12.000 habitantes num raio de 2 km passariam -- escalado, nao.
+    assert _mercado(pop_area=12_000.0, raio_km=2.0, fator_regua=4.0)["flag_sam"] is False
+    assert _mercado(pop_area=12_000.0, raio_km=2.0)["flag_sam"] is True
+
+
+def test_score_do_residual_nao_escala() -> None:
+    """`100 x residual / 2.500` e' "cabe uma unidade cheia" -- por unidade, nao por area."""
+    m = _mercado(pop_area=40_000.0, raio_km=2.0, fator_regua=4.0)
+    assert m["score_oportunidade_residual"] == pytest.approx(
+        min(100.0, 100.0 * m["oferta_efetiva_disponivel"] / 2_500.0)
+    )
+
+
+@pytest.mark.parametrize("ruim", [0.0, -1.0, float("nan"), None])
+def test_fator_invalido_recusa(ruim) -> None:
+    with pytest.raises(ValueError):
+        _mercado(fator_regua=ruim)
+
+
 def test_hexagono_fora_da_base_reprova_com_motivo_proprio() -> None:
     m = _mercado(faixa_oportunidade=None)
     assert m["flag_sam"] is False
