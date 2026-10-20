@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+import math
+import re
 import warnings
 from collections.abc import Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime
 from io import BytesIO
 from pathlib import Path
@@ -170,6 +172,292 @@ _META_DOMICILIOS_TOTAL_RAIO = _METAS.domicilios_total_raio  # mantido junto com 
 _META_SCORE_SETOR_MEDIO = _METAS.score_setor_medio
 _META_SAM_FITNESS_POTENCIAL = _METAS.sam_fitness_potencial
 _META_RESIDUAL_FITNESS_DISPONIVEL = _METAS.residual_fitness_disponivel
+
+
+# ── DEC-074: o RECORTE do estudo (raio de 1 km, raio de 2 km, 10 min de carro, area) ─────────
+# Ate a fase 2 da DEC-071 este modulo so conhecia o raio de 1 km: o rotulo vinha de
+# `_RAIO_LABEL` e as metas de `_METAS`, os dois de MODULO. O Estudo por recorte precisa de
+# OUTRO texto (o leitor tem de saber que recorte esta lendo) e de OUTRAS metas de total (uma
+# isocrona de 80 km2 bate 10.000 habitantes so por ser grande). Os dois viajam JUNTOS neste
+# objeto, passado as paginas -- metas e frases nunca se separam, entao o card do Big Numbers
+# e o parecer da Conclusao leem a MESMA regua. `_RECORTE_PADRAO` reproduz caractere a
+# caractere os textos e as metas de sempre: e o que sai quando o chamador nao passa recorte.
+#
+# Identificadores CRUS (sem acento): os mesmos `tipo` do payload da tela.
+TIPO_RECORTE_POLIGONO = "poligono"
+TIPO_RECORTE_ISOCRONA = "carro_10min"
+_RAIO_DO_TIPO_RECORTE = {"raio_1km": 1.0, "raio_2km": 2.0}
+TIPOS_RECORTE = (*_RAIO_DO_TIPO_RECORTE, TIPO_RECORTE_ISOCRONA, TIPO_RECORTE_POLIGONO)
+
+#: As 4 metas de TOTAL (somam com a area). As de MEDIA -- renda per capita, renda
+#: domiciliar e score -- nao escalam: dobrar a area nao dobra a renda media de ninguem.
+_METAS_DE_TOTAL = (
+    "pop_total_raio",
+    "domicilios_total_raio",
+    "sam_fitness_potencial",
+    "residual_fitness_disponivel",
+)
+
+
+@dataclass(frozen=True)
+class _RecortePdf:
+    """Textos e metas do recorte do estudo. Ver o bloco DEC-074 acima.
+
+    Os campos de texto sao as FORMAS que as frases do PDF precisam (com a preposicao e o
+    artigo ja concordados), para nenhuma pagina montar "do isocrona" por concatenacao.
+    """
+
+    tipo: str
+    rotulo_capa: str  # "Raio 1,0 km" -- subtitulo da capa
+    rotulo_longo: str  # "raio de 1,0 km" -- notas que nomeiam o recorte
+    onde: str  # "no raio" -- rotulos curtos (cards do Big Numbers)
+    onde_longo: str  # "no raio de 1,0 km" -- faixa de redes do slide Concorrentes
+    do_recorte: str  # "do raio" -- "metas censitarias do raio"
+    de_longo: str  # "do raio de 1,0 km" -- notas da Conclusao
+    artigo_nome: str  # "o raio de 1,0 km" -- "(nao o raio de 1,0 km)" no Perfil do Bairro
+    mesmo_recorte: str  # "no mesmo raio de 1,0 km" -- mercado na nota do Big Numbers
+    pop_do: str  # "população do raio" -- SAM = populacao do recorte x taxa
+    descricao_censo: str  # "círculo de 1,0 km" -- intersecao dos setores (Big Numbers, Realizacao)
+    metas: Any  # `perfil.Metas`, com as 4 de total ja escaladas pelo `fator_regua`
+    fator_regua: float = 1.0
+    nota_regua: str | None = None  # frase da escala; None no raio de 1 km
+    no_ponto: bool = False  # True -> as paginas presas ao ponto avisam isso
+    area_km2: float = math.pi  # area do recorte -- o "para X km2" do minimo dos cards
+
+
+def _km_txt(valor: float, casas: int) -> str:
+    """Numero pt-BR com `casas` decimais (virgula), sem separador de milhar."""
+    return f"{float(valor):.{casas}f}".replace(".", ",")
+
+
+def _novo_recorte(
+    tipo: str,
+    textos: Mapping[str, str],
+    metas: Any,
+    *,
+    fator_regua: float = 1.0,
+    nota_regua: str | None = None,
+    no_ponto: bool = False,
+    area_km2: float = math.pi,
+) -> _RecortePdf:
+    """`_RecortePdf` a partir do dict de textos (campo a campo, para o type checker)."""
+    return _RecortePdf(
+        tipo=tipo,
+        rotulo_capa=textos["rotulo_capa"],
+        rotulo_longo=textos["rotulo_longo"],
+        onde=textos["onde"],
+        onde_longo=textos["onde_longo"],
+        do_recorte=textos["do_recorte"],
+        de_longo=textos["de_longo"],
+        artigo_nome=textos["artigo_nome"],
+        mesmo_recorte=textos["mesmo_recorte"],
+        pop_do=textos["pop_do"],
+        descricao_censo=textos["descricao_censo"],
+        metas=metas,
+        fator_regua=fator_regua,
+        nota_regua=nota_regua,
+        no_ponto=no_ponto,
+        area_km2=area_km2,
+    )
+
+
+def _recorte_do_raio(raio_km: float) -> dict[str, str]:
+    r = f"{_km_txt(raio_km, 1)} km"
+    return {
+        "rotulo_capa": f"Raio {r}",
+        "rotulo_longo": f"raio de {r}",
+        "onde": "no raio",
+        "onde_longo": f"no raio de {r}",
+        "do_recorte": "do raio",
+        "de_longo": f"do raio de {r}",
+        "artigo_nome": f"o raio de {r}",
+        "mesmo_recorte": f"no mesmo raio de {r}",
+        "pop_do": "população do raio",
+        "descricao_censo": f"círculo de {r}",
+    }
+
+
+_RECORTE_PADRAO = _novo_recorte(
+    "raio_1km", _recorte_do_raio(RAIO_CENSITARIO_DEFAULT_KM), _METAS
+)
+
+
+def recorte_pdf(
+    tipo: str,
+    *,
+    fator_regua: float,
+    area_km2: float | None = None,
+    versao_rotas: str | None = None,
+) -> dict[str, Any]:
+    """O dict `recorte` canonico de `gerar_pdf_relatorio_pontual_classico` (DEC-074).
+
+    `{"tipo", "rotulo_curto", "rotulo_longo", "fator_regua", "area_km2"}`, com os rotulos
+    derivados do `tipo` -- quem chama (a rota do Estudo) passa so o que o motor ja mediu:
+    o `fator_regua` EXATO (`area / pi`; no raio, `raio^2`) e a area exata. A area do dict
+    arredondada para exibicao NAO serve: 3,14 em vez de pi faria o fator do raio de 1 km
+    sair 0,9995 e moveria as metas que tinham de ficar paradas.
+
+    `versao_rotas` (so' na isocrona): o carimbo da malha viaria do Valhalla (`Isocrona.versao`).
+    Vai a nota de fonte do Big Numbers e a Realizacao: sem ele, dois PDFs dos 10 min de carro
+    do mesmo ponto, um antes e outro depois de reconstruir os tiles, sairiam indistinguiveis
+    -- o carimbo so' existia no JSON da tela. Ausente, o dict nao ganha a chave.
+    """
+    entrada: dict[str, Any] = {"tipo": tipo, "fator_regua": fator_regua, "area_km2": area_km2}
+    if versao_rotas:
+        entrada["versao_rotas"] = str(versao_rotas)
+    ctx = _contexto_recorte(entrada)
+    saida: dict[str, Any] = {
+        "tipo": tipo,
+        "rotulo_curto": ctx.rotulo_capa,
+        "rotulo_longo": ctx.rotulo_longo,
+        "fator_regua": float(fator_regua),
+        "area_km2": None if area_km2 is None else float(area_km2),
+    }
+    if versao_rotas:
+        saida["versao_rotas"] = str(versao_rotas)
+    return saida
+
+
+def _texto_da_malha_viaria(versao: Any) -> str | None:
+    """Carimbo da malha viaria em texto do PDF: "malha viária de 01/10/2026" (data dos
+    tiles) ou "Valhalla 3.9.0" (sem data, a versao do servico). `None` sem carimbo."""
+    bruto = str(versao or "").strip()
+    if not bruto:
+        return None
+    data = re.match(r"(\d{4})-(\d{2})-(\d{2})", bruto)
+    if data:
+        return f"malha viária de {data.group(3)}/{data.group(2)}/{data.group(1)}"
+    return f"Valhalla {bruto}"
+
+
+def _contexto_recorte(recorte: Mapping[str, Any] | None) -> _RecortePdf:
+    """`_RecortePdf` do dict `recorte`; `None` -> `_RECORTE_PADRAO` (o PDF de sempre).
+
+    `tipo` desconhecido ou fator nao positivo LEVANTA: rotular o PDF com um recorte que nao
+    existe, ou escalar as metas por zero, sairia como relatorio valido e errado.
+    """
+    if recorte is None:
+        return _RECORTE_PADRAO
+    tipo = str(recorte.get("tipo") or "")
+    if tipo not in TIPOS_RECORTE:
+        raise ValueError(f"tipo de recorte desconhecido: {tipo!r}")
+    fator = float(recorte.get("fator_regua", 1.0))
+    if not math.isfinite(fator) or fator <= 0:
+        raise ValueError(f"fator_regua tem de ser positivo e finito: {fator!r}")
+    area_bruta = recorte.get("area_km2")
+    area = float(area_bruta) if area_bruta is not None else fator * math.pi
+    if tipo in _RAIO_DO_TIPO_RECORTE:
+        # No raio a area e' EXATA (pi*r2), nunca a arredondada do dict: e' ela que o minimo
+        # dos cards imprime, e o raio de 1 km pedido explicitamente tem de cair no padrao.
+        area = math.pi * _RAIO_DO_TIPO_RECORTE[tipo] ** 2
+    area_txt = f"{_km_txt(area, 2)} km2"
+
+    if tipo in _RAIO_DO_TIPO_RECORTE:
+        textos = _recorte_do_raio(_RAIO_DO_TIPO_RECORTE[tipo])
+    elif tipo == TIPO_RECORTE_ISOCRONA:
+        malha = _texto_da_malha_viaria(recorte.get("versao_rotas"))
+        carimbo = f"{area_txt}; {malha}" if malha else area_txt
+        textos = {
+            "rotulo_capa": "10 min de carro (sem trânsito)",
+            "rotulo_longo": f"isócrona de 10 min de carro sem trânsito, {area_txt}",
+            "onde": "em 10 min de carro",
+            "onde_longo": "em 10 min de carro, sem trânsito",
+            "do_recorte": "da isócrona",
+            "de_longo": "da isócrona de 10 min de carro (sem trânsito)",
+            "artigo_nome": "a isócrona de 10 min de carro",
+            "mesmo_recorte": "na mesma isócrona",
+            "pop_do": "população da isócrona",
+            "descricao_censo": f"isócrona de 10 min de carro sem trânsito ({carimbo})",
+        }
+    else:
+        textos = {
+            "rotulo_capa": f"Área desenhada ({area_txt})",
+            "rotulo_longo": f"área desenhada de {area_txt}",
+            "onde": "na área",
+            "onde_longo": "na área desenhada",
+            "do_recorte": "da área",
+            "de_longo": f"da área desenhada ({area_txt})",
+            "artigo_nome": "a área desenhada",
+            "mesmo_recorte": "na mesma área desenhada",
+            "pop_do": "população da área",
+            "descricao_censo": f"área desenhada de {area_txt}",
+        }
+    # Os rotulos do dict (montados por `recorte_pdf` ou pela rota) tem precedencia: e' o
+    # mesmo texto que a tela mostra para o item.
+    if recorte.get("rotulo_curto"):
+        textos["rotulo_capa"] = str(recorte["rotulo_curto"])
+    if recorte.get("rotulo_longo"):
+        textos["rotulo_longo"] = str(recorte["rotulo_longo"])
+
+    if fator == 1.0:
+        metas = _METAS
+        nota_regua = None
+    else:
+        # As metas multiplicam o valor DO PERFIL (BR/AR), nunca um literal: `replace` troca
+        # so as 4 de total e carrega as 3 de media intactas.
+        metas = replace(
+            _METAS, **{campo: getattr(_METAS, campo) * fator for campo in _METAS_DE_TOTAL}
+        )
+        # SO' latin-1 (fonte core do fpdf2): "x", "/" e "km2" -- pi, "aprox." e o sinal de
+        # multiplicacao tipografico fora de latin-1 viram "?" em silencio.
+        nota_regua = (
+            f"Metas de totais escaladas x{_km_txt(fator, 1)} pela área do recorte "
+            f"({area_txt} / {_km_txt(math.pi, 2)} km2 do raio de 1 km)."
+        )
+    ctx = _novo_recorte(
+        tipo,
+        textos,
+        metas,
+        fator_regua=fator,
+        nota_regua=nota_regua,
+        no_ponto=tipo != "raio_1km",
+        area_km2=area,
+    )
+    # O raio de 1 km pedido EXPLICITAMENTE (rota nova, `recorte_pdf("raio_1km", ...)`) e' o
+    # estudo de sempre: devolve o MESMO objeto padrao, e com ele as mesmas constantes de
+    # texto -- o PDF sai identico ao de quem nao passou recorte nenhum.
+    return _RECORTE_PADRAO if ctx == _RECORTE_PADRAO else ctx
+
+
+#: Aviso das paginas que ficam PRESAS ao ponto num Estudo por recorte (DEC-074). O recorte
+#: (2 km, 10 min de carro, area desenhada) vale para os Mapas de calor, Concorrentes, Big
+#: Numbers e a Conclusao; as paginas abaixo continuam lendo o entorno do PONTO -- hexagonos
+#: em volta dele, a pressao de 750 m, o bairro do setor, o hexagono do ponto, a vista aerea
+#: de 400 m. Sem o aviso, o leitor tomaria aquela pagina como leitura do recorte inteiro.
+_AVISO_NO_PONTO = "Em volta do ponto de origem (recorte do estudo: {recorte})."
+
+
+#: Largura da coluna do aviso: da metade da pagina ate a margem direita da banda.
+_AVISO_NO_PONTO_LARGURA = 520.0
+
+
+def _aviso_no_ponto(
+    pdf: _UltraPDF,
+    contexto: _RecortePdf | None,
+    *,
+    y: float | None = None,
+    rgb: tuple[int, int, int] = _CINZA_TEXTO,
+) -> None:
+    """Escreve `_AVISO_NO_PONTO` alinhado a direita na linha `y`; no raio de 1 km, nada.
+
+    Uma linha so', em corpo pequeno, na mesma faixa do titulo da secao: o titulo fica a
+    esquerda e e' curto, entao o aviso cabe sem empurrar o conteudo da pagina (que e' FIXA,
+    sem quebra automatica). `y=None` = a linha do titulo da secao do template classico.
+    """
+    if contexto is None or not contexto.no_ponto:
+        return
+    if y is None:
+        y = _CLASSICO_MARGIN + _CLASSICO_BAND_H + 12.0 + 8.0
+    texto = _ascii(_AVISO_NO_PONTO.format(recorte=contexto.rotulo_longo))
+    # Metade direita da linha (o titulo da secao ocupa a esquerda, ate ~350 pt no mais longo,
+    # "Socioeconomia e Residual Fitness"): o aviso encolhe ate caber nela, sem cruzar o titulo.
+    largura = _AVISO_NO_PONTO_LARGURA
+    pdf.set_text_color(*rgb)
+    _ajustar_fonte_para_largura(pdf, texto, largura, estilo="", tamanho=9.0, minimo=6.0)
+    pdf.set_xy(_PAGE_W - _CLASSICO_MARGIN - 18.0 - largura, y)
+    pdf.cell(largura, 12, texto, align="R")
+
+
 
 # Geometria do grid 4x2 do Big Numbers (8 cards; o card "Score censitario medio" foi removido do
 # PDF por pedido de Felipe 2026-07-17 — segue em result/CSV). A pagina e' FIXA 960x540 com
@@ -925,8 +1213,12 @@ def _foto_satelite_page(
     *,
     primary: tuple[int, int, int] = ULTRA_TURQUESA,
     grande: bool = False,
+    contexto: _RecortePdf | None = None,
 ) -> None:
     """Pagina da VISTA AEREA (BLK-SAT, TESTE): faixa de titulo + 1 foto + rodape.
+
+    `contexto` (DEC-074): num Estudo por recorte a foto continua sendo os 400 m em volta do
+    ponto, e a banda diz isso (`_aviso_no_ponto`).
 
     Pagina PROPRIA (nao a de fotos do imovel) para nao ocupar as 2 vagas de upload.
 
@@ -946,6 +1238,7 @@ def _foto_satelite_page(
     pdf.add_page()
     _draw_full_page_background(pdf, assets.get("conteudo"), ULTRA_BRANCO_GELO)
     _draw_title_band(pdf, _SATELITE_PAGE_TITLE, rgb=primary)
+    _aviso_no_ponto(pdf, contexto, y=22.0, rgb=_BRANCO)
 
     cx, cy, cw, ch = _foto_satelite_cell_grande() if grande else _fotos_cells(1)[0]
     recorte = _recortar_cover(png, cw / ch)
@@ -1849,6 +2142,37 @@ _CONCLUSAO_NOTA_ESTUDO = (
     "mesmo tempo; as demais observações rebaixam para 'Aprovado com ressalvas'. Dado "
     "ausente nunca reprova, apenas deixa o item sem avaliar."
 )
+
+
+def _textos_conclusao(ctx: _RecortePdf) -> tuple[str, str, str, str]:
+    """(aprovado demografico, aprovado estudo, nota, nota estudo) do recorte (DEC-074).
+
+    No raio de 1 km devolve as CONSTANTES acima, as mesmas strings de sempre (o PDF do
+    estudo de hoje nao muda um caractere). Num recorte, as frases dizem qual recorte as
+    metas e o mercado leram, e a nota ganha a escala das metas de total -- sem ela, "meta de
+    40.000 habitantes" no card leria como erro de digitacao.
+    """
+    if ctx is _RECORTE_PADRAO:
+        return (
+            _CONCLUSAO_APROVADO_TEXTO_DEMOGRAFICO,
+            _CONCLUSAO_APROVADO_TEXTO_ESTUDO,
+            _CONCLUSAO_NOTA,
+            _CONCLUSAO_NOTA_ESTUDO,
+        )
+    escala = f" {ctx.nota_regua}" if ctx.nota_regua else ""
+    aprovado_demografico = (
+        "Nenhuma restrição encontrada na praça: o ponto atende às metas censitárias "
+        f"{ctx.do_recorte} e à leitura de mercado do mesmo recorte."
+    )
+    aprovado_estudo = (
+        "Nenhuma restrição encontrada na base do estudo: o ponto atende às metas censitárias "
+        f"e à leitura de mercado {ctx.do_recorte}."
+    )
+    nota = _CONCLUSAO_NOTA.replace(f"do raio de {_RAIO_LABEL}", ctx.de_longo, 1) + escala
+    nota_estudo = (
+        _CONCLUSAO_NOTA_ESTUDO.replace(f"do raio de {_RAIO_LABEL}", ctx.de_longo, 1) + escala
+    )
+    return aprovado_demografico, aprovado_estudo, nota, nota_estudo
 # Piso da area de observacoes: a pagina e FIXA (auto_page_break OFF), entao texto que nao
 # cabe NAO vaza para a pagina seguinte -- ele some por baixo do rodape, em silencio.
 _CONCLUSAO_OBS_LIMITE_Y = _PAGE_H - 74.0
@@ -2143,14 +2467,23 @@ def _conclusao_motivo_zona_morta(bruto: str) -> str:
 
 
 def _conclusao_metas_vermelhas(
-    result: Mapping[str, Any], residual: Mapping[str, Any]
+    result: Mapping[str, Any],
+    residual: Mapping[str, Any],
+    *,
+    metas: Any = None,
+    onde: str = "no raio",
 ) -> tuple[tuple[str, str, str], ...]:
     """(rotulo, valor formatado, meta formatada) dos cards com meta NAO atingida.
 
     Reusa `_cor_por_meta` e as mesmas constantes `_META_*` que colorem o Big Numbers, em
     vez de reimplementar a comparacao: mexer numa meta muda o card E a conclusao juntos,
     sem drift entre a pagina que mostra o numero e a que da o parecer.
+
+    `metas`/`onde` (DEC-074): o objeto de metas do recorte (`_RecortePdf.metas`, com as de
+    total escaladas) e o rotulo do recorte -- os MESMOS que `_big_numbers_page` recebe.
+    Default = metas do perfil e "no raio", o parecer de sempre.
     """
+    m = _METAS if metas is None else metas
     def _brl(valor: Any) -> str:
         return "R$ " + _format_number(valor, 2)
 
@@ -2158,35 +2491,35 @@ def _conclusao_metas_vermelhas(
         return _format_number(valor, 0)
 
     avaliados: tuple[tuple[str, Any, float, Any], ...] = (
-        ("População total no raio", result.get("pop_total_raio"), _META_POP_TOTAL_RAIO, _int),
+        (f"População total {onde}", result.get("pop_total_raio"), m.pop_total_raio, _int),
         (
             "Renda per capita média",
             result.get("renda_per_capita_media_raio"),
-            _META_RENDA_PER_CAPITA_MEDIA_RAIO,
+            m.renda_per_capita_media_raio,
             _brl,
         ),
         (
             "Número de domicílios",
             result.get("domicilios_total_raio"),
-            _META_DOMICILIOS_TOTAL_RAIO,
+            m.domicilios_total_raio,
             _int,
         ),
         (
             "Renda média domiciliar",
             result.get("renda_domiciliar_total_raio"),
-            _META_RENDA_DOMICILIAR_TOTAL_RAIO,
+            m.renda_domiciliar_total_raio,
             _brl,
         ),
         (
             "SAM Fitness",
             residual.get("sam_fitness_potencial"),
-            _META_SAM_FITNESS_POTENCIAL,
+            m.sam_fitness_potencial,
             _int,
         ),
         (
             "Residual Fitness",
             residual.get("oferta_efetiva_disponivel"),
-            _META_RESIDUAL_FITNESS_DISPONIVEL,
+            m.residual_fitness_disponivel,
             _int,
         ),
     )
@@ -2405,8 +2738,12 @@ def _conclusao_canibalizacao(
     *,
     sem_a_estudada: bool = False,
     estudada: Mapping[str, Any] | None = None,
+    do_recorte: str = "do raio",
 ) -> str | None:
     """Alerta de unidade Ultra no raio, ou `None` quando nao ha nenhuma. Funcao pura.
+
+    `do_recorte` (DEC-074): "do raio" de sempre, ou o recorte do Estudo ("da isócrona",
+    "da área") -- `ultra_raio` ja' e' a lista do recorte, so' a frase precisa acompanhar.
 
     `sem_a_estudada` (emenda da DEC-070, estudo da unidade Ultra): a unidade no CENTRO do
     estudo nao canibaliza a si mesma, e sai da contagem e da distancia; sobrando nenhuma,
@@ -2436,9 +2773,9 @@ def _conclusao_canibalizacao(
         unidades = _conclusao_sem_a_mais_proxima(unidades)
     dist_km = _conclusao_menor_dist_km(unidades)
     sujeito = (
-        "1 unidade Ultra dentro do raio"
+        f"1 unidade Ultra dentro {do_recorte}"
         if quantas == 1
-        else f"{quantas} unidades Ultra dentro do raio"
+        else f"{quantas} unidades Ultra dentro {do_recorte}"
     )
     if dist_km is None:
         return f"Canibalização da rede: {sujeito} do estudo."
@@ -2475,8 +2812,14 @@ def _avaliar_conclusao(
     dados_viab: Mapping[str, Any],
     *,
     somente_estudo: bool = False,
+    contexto: _RecortePdf | None = None,
 ) -> _ConclusaoPonto:
     """Aplica a regua e devolve o parecer. FUNCAO PURA: sem I/O, sem motor, sem estado.
+
+    `contexto` (DEC-074) e' o recorte do Estudo: as metas de total ja' escaladas -- o MESMO
+    objeto que pinta o Big Numbers, entao card e parecer nunca divergem -- e as frases do
+    recorte. `None` = raio de 1 km, o parecer de sempre. O corte E5 (4 de 6) NAO escala: e'
+    contagem de metas, e as metas ja' vieram na escala do recorte.
 
     `dados_viab` e o dict ja achatado por `_viab_normalizado` -- a conclusao LE os mesmos
     numeros que a pagina de Viabilidade imprime, nunca recalcula nenhum deles.
@@ -2493,6 +2836,7 @@ def _avaliar_conclusao(
     result = result or {}
     residual = residual or {}
     info = info_imovel or {}
+    ctx = contexto or _RECORTE_PADRAO
     eliminatorios: list[str] = []
     ressalvas: list[str] = []
 
@@ -2526,7 +2870,7 @@ def _avaliar_conclusao(
         )
     ):
         ressalvas.append(
-            "Metas censitárias não avaliadas: nenhum setor censitário no raio do ponto."
+            f"Metas censitárias não avaliadas: nenhum setor censitário {ctx.onde} do ponto."
         )
 
     # --- Canibalizacao (alerta de rede propria no raio) ---
@@ -2538,6 +2882,7 @@ def _avaliar_conclusao(
         sem_a_estudada=bool(residual.get("unidade_ultra_estudada"))
         or residual.get("modo_estudo") == "unidade_ultra",
         estudada=residual.get("unidade_ultra_estudada"),
+        do_recorte=ctx.do_recorte,
     )
     if alerta_canibalizacao is not None:
         ressalvas.append(alerta_canibalizacao)
@@ -2545,7 +2890,9 @@ def _avaliar_conclusao(
     # --- Mercado e metas censitarias (R7 / R4) ---
     sam = residual.get("sam_fitness_potencial")
     disponivel = residual.get("oferta_efetiva_disponivel")
-    mercado_consumido = _cor_consumo_concorrentes(sam, disponivel) == _CARD_VERMELHO_RGB
+    mercado_consumido = (
+        _cor_consumo_concorrentes(sam, disponivel, metas=ctx.metas) == _CARD_VERMELHO_RGB
+    )
     if mercado_consumido:
         ressalvas.append(
             "Mercado já consumido pela oferta instalada: residual de "
@@ -2566,10 +2913,13 @@ def _avaliar_conclusao(
     # Conta sobre a lista CRUA, nao sobre a exibida: a linha do Residual e' suprimida logo
     # abaixo quando o mercado consumido ja a disse com mais contexto, e descontar isso do
     # gate faria o mesmo ponto reprovar ou nao conforme uma decisao de TEXTO.
-    metas_vermelhas = _conclusao_metas_vermelhas(result, residual)
+    metas_vermelhas = _conclusao_metas_vermelhas(
+        result, residual, metas=ctx.metas, onde=ctx.onde
+    )
     if len(metas_vermelhas) >= _CONCLUSAO_METAS_ELIMINATORIO_MIN:
         eliminatorios.append(
-            f"{len(metas_vermelhas)} das {_CONCLUSAO_METAS_AVALIADAS} metas censitárias do raio "
+            f"{len(metas_vermelhas)} das {_CONCLUSAO_METAS_AVALIADAS} metas censitárias "
+            f"{ctx.do_recorte} "
             "não atingidas ao mesmo tempo: a praça não sustenta a operação."
         )
     for rotulo, valor_txt, meta_txt in metas_vermelhas:
@@ -2775,7 +3125,10 @@ def _conclusao_itens(eixo: _ConclusaoEixo, confirmacao: str) -> tuple[tuple[str,
 
 
 def _conclusao_blocos(
-    parecer: _ConclusaoPonto, *, somente_estudo: bool = False
+    parecer: _ConclusaoPonto,
+    *,
+    somente_estudo: bool = False,
+    contexto: _RecortePdf | None = None,
 ) -> tuple[tuple[str, tuple[tuple[str, str], ...]], ...]:
     """(eixo, itens) na ordem de leitura da coluna: praca antes de imovel e retorno.
 
@@ -2783,10 +3136,10 @@ def _conclusao_blocos(
     coluna esquerda seja lida de par com eles. No modo so-estudo sai um bloco so, porque
     o eixo financeiro nao existe naquele parecer (`financeiro is None`).
     """
-    demografico = (
-        _CONCLUSAO_APROVADO_TEXTO_ESTUDO if somente_estudo
-        else _CONCLUSAO_APROVADO_TEXTO_DEMOGRAFICO
+    texto_demografico, texto_estudo, _nota, _nota_estudo = _textos_conclusao(
+        contexto or _RECORTE_PADRAO
     )
+    demografico = texto_estudo if somente_estudo else texto_demografico
     blocos = [
         (CONCLUSAO_EIXO_DEMOGRAFICO, _conclusao_itens(parecer.demografico, demografico))
     ]
@@ -2998,8 +3351,12 @@ def _conclusao_page(
     primary: tuple[int, int, int] = ULTRA_TURQUESA,
     secondary: tuple[int, int, int] = ULTRA_MAGENTA,
     somente_estudo: bool = False,
+    contexto: _RecortePdf | None = None,
 ) -> None:
     """Pagina de parecer do ponto, em 2 COLUNAS: conteudo a esquerda, selos a direita.
+
+    `contexto` (DEC-074): o recorte do Estudo, repassado ao parecer e as frases; `None` =
+    raio de 1 km, a pagina de sempre.
 
     Estrutura pedida por Vinicius (2026-08-07), com DOIS selos desde a DEC-030. A direita
     ficam so eles, empilhados -- demografico em cima, financeiro embaixo --, cada um com a
@@ -3017,8 +3374,9 @@ def _conclusao_page(
     metodologica troca junto -- ver `_CONCLUSAO_NOTA_ESTUDO`.
     """
     dados = _viab_normalizado(viabilidade) if viabilidade else {}
+    ctx = contexto or _RECORTE_PADRAO
     parecer = _avaliar_conclusao(
-        result, residual, info_imovel, dados, somente_estudo=somente_estudo
+        result, residual, info_imovel, dados, somente_estudo=somente_estudo, contexto=ctx
     )
 
     pdf.add_page()
@@ -3048,7 +3406,7 @@ def _conclusao_page(
         y_selo += _CONCLUSAO_SELO_H + _CONCLUSAO_SELO_GAP
 
     # --- Coluna ESQUERDA: cards de aluguel + cards de observacao, centrados na vertical ---
-    blocos = _conclusao_blocos(parecer, somente_estudo=somente_estudo)
+    blocos = _conclusao_blocos(parecer, somente_estudo=somente_estudo, contexto=ctx)
     elementos = _conclusao_elementos(pdf, blocos, largura_esq)
     # No modo so-estudo os cards de aluguel nao existem -- e a altura deles NAO pode entrar
     # na conta, senao o bloco de observacoes nasce 94 pt abaixo do centro da area.
@@ -3092,11 +3450,24 @@ def _conclusao_page(
     # da coluna de observacoes, e presa aos 652 pt da esquerda ganharia varias linhas.
     pdf.set_text_color(*_CINZA_TEXTO)
     pdf.set_font("Helvetica", "", 8)
-    pdf.set_xy(margem, _CONCLUSAO_NOTA_Y)
+    _a, _b, nota, nota_estudo = _textos_conclusao(ctx)
+    texto_nota = _ascii(nota_estudo if somente_estudo else nota)
+    nota_y = _CONCLUSAO_NOTA_Y
+    if ctx is not _RECORTE_PADRAO:
+        # A frase da escala pode dar uma linha a mais; a pagina e' FIXA (auto_page_break
+        # OFF), entao a nota SOBE o que crescer em vez de descer para cima do rodape. No
+        # raio de 1 km a nota fica onde sempre esteve.
+        saida = pdf.multi_cell(
+            _PAGE_W - 2 * margem, 11, texto_nota, dry_run=True, output="LINES"
+        )
+        # Mesma guarda de tipo de `_conclusao_altura_obs` (o retorno e' uma uniao).
+        linhas = len(saida) if isinstance(saida, (list, tuple)) else 1
+        nota_y = min(_CONCLUSAO_NOTA_Y, _PAGE_H - 29.0 - 11.0 * linhas)
+    pdf.set_xy(margem, nota_y)
     pdf.multi_cell(
         _PAGE_W - 2 * margem,
         11,
-        _ascii(_CONCLUSAO_NOTA_ESTUDO if somente_estudo else _CONCLUSAO_NOTA),
+        texto_nota,
     )
     _draw_footer(pdf, with_attribution=False)
 
@@ -3187,22 +3558,47 @@ def _cor_por_meta(valor: Any, meta: float) -> tuple[int, int, int]:
     return _CARD_VERDE_RGB if float(valor) >= meta else _CARD_VERMELHO_RGB
 
 
-def _cor_consumo_concorrentes(sam: Any, residual_disponivel: Any) -> tuple[int, int, int]:
+def _cor_consumo_concorrentes(
+    sam: Any, residual_disponivel: Any, *, metas: Any = None
+) -> tuple[int, int, int]:
     """Cor assimetrica do card "Mercado ocupado" (consumo instalado: conc. + Ultra) -- tambem usada para colorir
     "Concorrentes no raio" (D3: esse card ESPELHA a cor do card acima, sem meta propria).
 
     Regra (D3): VERMELHO quando o mercado ja esta consumido (SAM Fitness >= meta E Residual
     Fitness < meta); VERDE caso contrario. Sem dado em SAM OU em Residual -> neutro (condicao
     indecidivel, mesmo criterio de `_cor_por_meta`). Funcao pura.
+
+    `metas` (DEC-074): as do recorte, ja' escaladas (`_RecortePdf.metas`); default = as do
+    perfil, a regua do raio de 1 km.
     """
+    m = _METAS if metas is None else metas
     if sam is None or pd.isna(sam) or residual_disponivel is None or pd.isna(residual_disponivel):
         return _CARD_NEUTRO_RGB
     if (
-        float(sam) >= _META_SAM_FITNESS_POTENCIAL
-        and float(residual_disponivel) < _META_RESIDUAL_FITNESS_DISPONIVEL
+        float(sam) >= m.sam_fitness_potencial
+        and float(residual_disponivel) < m.residual_fitness_disponivel
     ):
         return _CARD_VERMELHO_RGB
     return _CARD_VERDE_RGB
+
+
+def _minimos_dos_cards(ctx: _RecortePdf) -> dict[int, str]:
+    """Indice do card -> "Mínimo para 12,57 km2: 40.000" (o criterio do recorte analisado).
+
+    Totais citam a AREA, porque a meta deles escala com ela (DEC-074); medias dizem que valem
+    para qualquer area, para o leitor nao procurar uma escala que nao existe. So' latin-1.
+    """
+    m = ctx.metas
+    para = f"Mínimo para {_km_txt(ctx.area_km2, 2)} km2: "
+    media = " (média, qualquer área)"
+    return {
+        0: para + _format_number(m.pop_total_raio, 0),
+        1: "Mínimo: R$ " + _format_number(m.renda_per_capita_media_raio, 0) + media,
+        2: para + _format_number(m.domicilios_total_raio, 0),
+        3: "Mínimo: R$ " + _format_number(m.renda_domiciliar_total_raio, 0) + media,
+        4: para + _format_number(m.sam_fitness_potencial, 0) + " alunos",
+        5: para + _format_number(m.residual_fitness_disponivel, 0) + " alunos",
+    }
 
 
 def _big_numbers_page(
@@ -3213,8 +3609,12 @@ def _big_numbers_page(
     *,
     primary: tuple[int, int, int] = ULTRA_TURQUESA,
     secondary: tuple[int, int, int] = ULTRA_MAGENTA,
+    contexto: _RecortePdf | None = None,
 ) -> None:
     """(e) Big Numbers — grid 4x2 das 8 metricas. READ-ONLY; sem dado auditavel.
+
+    `contexto` (DEC-074): rotulos e metas do recorte do Estudo -- o MESMO objeto que a
+    Conclusao recebe. `None` = raio de 1 km, a pagina de sempre.
 
     SAM Fitness e Residual Fitness saem em NUMERO DE ALUNOS (sizing absoluto da camada de
     mercado), nao em score. Desde a DEC-070 o `residual` vem de `api.service._mercado_do_ponto`
@@ -3228,9 +3628,11 @@ def _big_numbers_page(
     _draw_title_band(pdf, "Big Numbers", rgb=primary)
 
     residual = residual or {}
+    ctx = contexto or _RECORTE_PADRAO
+    m = ctx.metas
     sam = residual.get("sam_fitness_potencial")
     oferta_disponivel = residual.get("oferta_efetiva_disponivel")
-    cor_consumo = _cor_consumo_concorrentes(sam, oferta_disponivel)
+    cor_consumo = _cor_consumo_concorrentes(sam, oferta_disponivel, metas=m)
     # DEC-070: consumo INSTALADO = concorrentes + Ultra. Dict no formato antigo (so' a parcela
     # de concorrentes) nao tem o total: soma so' quando as DUAS parcelas existem -- metade da
     # conta impressa como "conc. + Ultra" seria afirmar uma soma que nao foi feita.
@@ -3255,43 +3657,43 @@ def _big_numbers_page(
 
     cards = [
         (
-            "População total no raio",
+            f"População total {ctx.onde}",
             _format_number(result.get("pop_total_raio"), 0),
-            _cor_por_meta(result.get("pop_total_raio"), _META_POP_TOTAL_RAIO),
+            _cor_por_meta(result.get("pop_total_raio"), m.pop_total_raio),
         ),
         (
             "Renda per capita média",
             "R$ " + _format_number(result.get("renda_per_capita_media_raio"), 2),
-            _cor_por_meta(result.get("renda_per_capita_media_raio"), _META_RENDA_PER_CAPITA_MEDIA_RAIO),
+            _cor_por_meta(result.get("renda_per_capita_media_raio"), m.renda_per_capita_media_raio),
         ),
         (
             "Número de domicílios",
             _format_number(result.get("domicilios_total_raio"), 0),
-            _cor_por_meta(result.get("domicilios_total_raio"), _META_DOMICILIOS_TOTAL_RAIO),
+            _cor_por_meta(result.get("domicilios_total_raio"), m.domicilios_total_raio),
         ),
         (
             "Renda média domiciliar",
             "R$ " + _format_number(result.get("renda_domiciliar_total_raio"), 2),
             _cor_por_meta(
-                result.get("renda_domiciliar_total_raio"), _META_RENDA_DOMICILIAR_TOTAL_RAIO
+                result.get("renda_domiciliar_total_raio"), m.renda_domiciliar_total_raio
             ),
         ),
         (
             "SAM Fitness (alunos)",
             _format_number(sam, 0),
-            _cor_por_meta(sam, _META_SAM_FITNESS_POTENCIAL),
+            _cor_por_meta(sam, m.sam_fitness_potencial),
         ),
         (
             "Residual Fitness (alunos)",
             _format_number(oferta_disponivel, 0),
-            _cor_por_meta(oferta_disponivel, _META_RESIDUAL_FITNESS_DISPONIVEL),
+            _cor_por_meta(oferta_disponivel, m.residual_fitness_disponivel),
         ),
         # DEC-046: o numero passa a ser o TOTAL (cadeia + independente) e o rotulo diz isso.
         # A cor continua ESPELHANDO o card de consumo, que e' calculado so' sobre cadeias --
         # por isso o universo de cada um vai NOMEADO, senao a pagina mostraria "14 academias"
         # em verde ao lado de um consumo estimado de 2,8 unidades sem explicar a diferenca.
         (
-            "Academias no raio (todas)",
+            f"Academias {ctx.onde} (todas)",
             _format_number(result.get("n_concorrentes"), 0),
             cor_consumo,
         ),
@@ -3305,6 +3707,14 @@ def _big_numbers_page(
             cor_consumo,
         ),
     ]
+
+    # Subtitulo de cada card com meta propria: o MINIMO para um recorte deste tamanho (pedido
+    # de Vinicius, 2026-10-20). Mesmo objeto `m` que pinta o card -- o texto e a cor nunca
+    # divergem. "Academias" e "Mercado ocupado" nao tem minimo proprio (a cor e' a regra
+    # SAM x residual) e o de consumo ja' usa esta linha para a decomposicao.
+    minimos = _minimos_dos_cards(ctx)
+    for indice, texto in minimos.items():
+        apoio.setdefault(indice, texto)
 
     # 4x2: 8 cards (o "Score censitario medio" foi removido em 2026-07-17 p/ a grade fechar certa).
     # Geometria em constantes de modulo (_BIG_NUMBERS_*) para o invariante "cabe na pagina 960x540"
@@ -3349,9 +3759,12 @@ def _big_numbers_page(
         # o valor termina em y+102 e a linha ocupa y+108..y+119 de um card de 132.
         if index in apoio:
             pdf.set_text_color(*_CINZA_TEXTO)
-            pdf.set_font("Helvetica", "", 8)
+            apoio_txt = _ascii(apoio[index])
+            _ajustar_fonte_para_largura(
+                pdf, apoio_txt, card_w - 28, estilo="", tamanho=8.0, minimo=6.0
+            )
             pdf.set_xy(x + 14, y + card_h - 24)
-            pdf.cell(card_w - 28, 11, _ascii(apoio[index]))
+            pdf.cell(card_w - 28, 11, apoio_txt)
 
     # Nota de fonte auditavel.
     pdf.set_text_color(*_CINZA_TEXTO)
@@ -3363,15 +3776,17 @@ def _big_numbers_page(
         11,
         _ascii(
             (f"{declaracao_modo} " if declaracao_modo else "")
-            + "Fontes: pop/renda/domicílios/score = censo (interseção de setores IBGE 2022 com círculo de "
-            f"{_RAIO_LABEL}, método {metodo}); SAM Fitness, consumo e Residual Fitness (em alunos) = "
-            f"mercado no mesmo raio de {_RAIO_LABEL} (SAM = população do raio x taxa calibrada; "
+            + "Fontes: pop/renda/domicílios/score = censo (interseção de setores IBGE 2022 com "
+            f"{ctx.descricao_censo}, método {metodo}); SAM Fitness, consumo e Residual Fitness "
+            f"(em alunos) = mercado {ctx.mesmo_recorte} (SAM = {ctx.pop_do} x taxa calibrada; "
             "consumo = concorrentes de rede + Ultra pela área de influência de 1 km de cada unidade; "
             # "com piso em zero": quando o consumo passa do SAM o card mostra 0, e sem o piso
             # escrito a conta da propria pagina daria negativo (revisao de 2026-10-14).
             "residual = SAM - consumo, com piso em zero). Fundo do card: verde = meta "
             f"atingida, vermelho = meta não atingida, cinza = '{TEXTO_SEM_DADO}' (dado "
             "ausente para o ponto)."
+            # DEC-074: a escala das metas de total, quando o recorte nao e' o raio de 1 km.
+            + (f" {ctx.nota_regua}" if ctx.nota_regua else "")
         ),
     )
     _draw_footer(pdf, with_attribution=True)
@@ -3407,16 +3822,20 @@ def _safe_len(points: pd.DataFrame | None) -> int:
         return 0
 
 
-def _redes_no_raio(result: dict[str, Any], *, max_nomes: int = 12) -> tuple[str, str]:
+def _redes_no_raio(
+    result: dict[str, Any], *, max_nomes: int = 12, contexto: _RecortePdf | None = None
+) -> tuple[str, str]:
     """(header, texto) compactos das redes no raio p/ a faixa inferior do slide Concorrentes.
 
     So NOMES de rede (deduplicados), sem PII de pessoas nem enderecos. Ultra entra como
     contagem de unidades (o parquet de Ultra nao traz nome de unidade). Trunca com "(+N)".
+    `contexto` (DEC-074) troca "no raio de 1,0 km" pelo recorte do Estudo.
     """
+    ctx = contexto or _RECORTE_PADRAO
     conc = result.get("concorrentes_raio", pd.DataFrame())
     ultra = result.get("ultra_raio", pd.DataFrame())
     total = _safe_len(conc) + _safe_len(ultra)
-    header = f"Redes no raio de {_RAIO_LABEL}"
+    header = f"Redes {ctx.onde_longo}"
     if total > 10:
         header = f"{header} ({total} no total)"
 
@@ -3463,8 +3882,8 @@ def _redes_no_raio(result: dict[str, Any], *, max_nomes: int = 12) -> tuple[str,
     nomes = _nomes(conc)
     n_ultra = _safe_len(ultra)
     if not nomes and not n_ultra:
-        return header, f"Nenhuma rede mapeada no raio de {_RAIO_LABEL}."
-    prefixo = f"Ultra: {n_ultra} unidade(s) no raio.  " if n_ultra else ""
+        return header, f"Nenhuma rede mapeada {ctx.onde_longo}."
+    prefixo = f"Ultra: {n_ultra} unidade(s) {ctx.onde}.  " if n_ultra else ""
     if not nomes:
         return header, prefixo.strip()
     mostrados = nomes[:max_nomes]
@@ -3689,8 +4108,9 @@ def _draw_perfil_panel(
     pdf.set_line_width(0)
 
 
-def _perfil_nota_metodo(pdf: _UltraPDF) -> None:
+def _perfil_nota_metodo(pdf: _UltraPDF, contexto: _RecortePdf | None = None) -> None:
     """Nota de metodo auditavel do Perfil do Bairro/Distrito (rodape do slide)."""
+    ctx = contexto or _RECORTE_PADRAO
     pdf.set_text_color(*_CINZA_TEXTO)
     pdf.set_font("Helvetica", "", 8)
     pdf.set_xy(36, _PAGE_H - 40)
@@ -3698,7 +4118,7 @@ def _perfil_nota_metodo(pdf: _UltraPDF) -> None:
         _PAGE_W - 72,
         10,
         _ascii(
-            f"Agregado sobre todos os setores do bairro/distrito (não o raio de {_RAIO_LABEL}). "
+            f"Agregado sobre todos os setores do bairro/distrito (não {ctx.artigo_nome}). "
             "Fonte: Censo IBGE 2022; renda média ponderada por domicílios."
         ),
     )
@@ -3833,6 +4253,7 @@ def _classico_cover_page(
     rotulo: str | None = None,
     now: datetime | None = None,
     origem_centroide_hex: bool = False,
+    contexto: _RecortePdf | None = None,
 ) -> None:
     """Capa classica: texto por baseline, todo na coluna limpa da arte (x>=460, y 300-450).
 
@@ -3853,7 +4274,10 @@ def _classico_cover_page(
     )
     nome = str(rotulo or "").strip()
     endereco = _ascii(nome if (nome and not _parece_coordenada(nome)) else f"Coordenada: {coord}")
-    subtitulo = f"Relatório Pontual Censitário - Raio {_RAIO_LABEL} | {_classico_mes_ano(now)}"
+    # DEC-074: o recorte do Estudo no subtitulo ("Raio 2,0 km", "10 min de carro (sem
+    # trânsito)", "Área desenhada (12,57 km2)"); o default e' o "Raio 1,0 km" de sempre.
+    rotulo_capa = (contexto or _RECORTE_PADRAO).rotulo_capa
+    subtitulo = f"Relatório Pontual Censitário - {rotulo_capa} | {_classico_mes_ano(now)}"
 
     # Zona limpa inferior-direita quando ha fundo de marca; centro quando nao ha.
     base_x = _CAPA_BASE_X_COM_ARTE if has_bg else _CAPA_BASE_X_SEM_ARTE
@@ -3932,6 +4356,7 @@ def _classico_socioeconomia_residual_page(
     *,
     banda_texto: str,
     primary: tuple[int, int, int] = ULTRA_MAGENTA,
+    contexto: _RecortePdf | None = None,
 ) -> list[tuple[float, float, float, float]]:
     """(BLK-RELPON-10) Slide-hero "Socioeconomia e Residual Fitness".
 
@@ -3945,6 +4370,8 @@ def _classico_socioeconomia_residual_page(
     pdf.add_page()
     _draw_full_page_background(pdf, assets.get("conteudo"), ULTRA_BRANCO_GELO)
     _classico_title_band(pdf, banda_texto, _SOCIOECONOMIA_RESIDUAL_TITULO, assets, rgb=primary)
+    # Hexagonos do disco em volta do PONTO (nao do recorte): dito na pagina (DEC-074).
+    _aviso_no_ponto(pdf, contexto)
     boxes = _classico_draw_maps_grid(
         pdf,
         [layers.get("socioeconomia"), layers.get("residual")],
@@ -3990,9 +4417,11 @@ def _classico_competitors_page(
     banda_texto: str,
     primary: tuple[int, int, int] = ULTRA_TURQUESA,
     secondary: tuple[int, int, int] = ULTRA_MAGENTA,
+    contexto: _RecortePdf | None = None,
 ) -> None:
     """Concorrentes classica: banda classica + mapa CENTRALIZADO (so-pins) + faixa inferior
-    com as redes no raio. Mesmo pedido de Felipe 2026-07-23 aplicado a variante classica."""
+    com as redes no raio. Mesmo pedido de Felipe 2026-07-23 aplicado a variante classica.
+    `contexto` (DEC-074): a faixa nomeia o recorte do Estudo em vez do raio de 1 km."""
     pdf.add_page()
     _draw_full_page_background(pdf, assets.get("conteudo"), ULTRA_BRANCO_GELO)
     _classico_title_band(pdf, banda_texto, "Concorrentes", assets, rgb=primary)
@@ -4015,7 +4444,7 @@ def _classico_competitors_page(
                 pass
 
     # Faixa inferior: redes no raio (compacta, sem PII).
-    header, texto = _redes_no_raio(result)
+    header, texto = _redes_no_raio(result, contexto=contexto)
     pdf.set_text_color(*secondary)
     pdf.set_font("Helvetica", "B", 12)
     pdf.set_xy(_CLASSICO_MARGIN, map_bottom + 2.0)
@@ -4093,10 +4522,13 @@ def _linha_rotulo_valor(pdf: _UltraPDF, x: float, y: float, w: float, rotulo: st
 def _praca_pressao_page(
     pdf: _UltraPDF, praca: PracaDoPonto, layers: dict[str, bytes], assets: dict[str, bytes | None],
     *, banda_texto: str, primary: tuple[int, int, int], secondary: tuple[int, int, int],
+    contexto: _RecortePdf | None = None,
 ) -> None:
     pdf.add_page()
     _draw_full_page_background(pdf, assets.get("conteudo"), ULTRA_BRANCO_GELO)
     _classico_title_band(pdf, banda_texto, TITULO_PRESSAO_CONCORRENCIAL, assets, rgb=primary)
+    # A pressao e' sempre a 750 m do PONTO, qualquer que seja o recorte (DEC-074).
+    _aviso_no_ponto(pdf, contexto)
     mapa_w = 600.0
     altura = _PAGE_H - 30.0 - _PRACA_TOPO
     if not _imagem_na_caixa(pdf, layers.get("pressao_raios"), _CLASSICO_MARGIN, _PRACA_TOPO, mapa_w, altura):
@@ -4145,10 +4577,13 @@ def _praca_pressao_page(
 def _praca_cidade_page(
     pdf: _UltraPDF, praca: PracaDoPonto, assets: dict[str, bytes | None],
     *, banda_texto: str, primary: tuple[int, int, int], secondary: tuple[int, int, int],
+    contexto: _RecortePdf | None = None,
 ) -> None:
     pdf.add_page()
     _draw_full_page_background(pdf, assets.get("conteudo"), ULTRA_BRANCO_GELO)
     _classico_title_band(pdf, banda_texto, TITULO_COMO_A_CIDADE_ESTA_INDO, assets, rgb=primary)
+    # "No hexagono do ponto": o hexagono e' o do PONTO, nao o do recorte (DEC-074).
+    _aviso_no_ponto(pdf, contexto)
     c = praca.crescimento
     x = _CLASSICO_MARGIN + 20.0
     w = _PAGE_W - 2 * x
@@ -4216,6 +4651,7 @@ def _classico_perfil_bairro_page(
     banda_texto: str,
     primary: tuple[int, int, int] = ULTRA_TURQUESA,
     secondary: tuple[int, int, int] = ULTRA_MAGENTA,
+    contexto: _RecortePdf | None = None,
 ) -> None:
     """(BLK-RELPON-07) Perfil do Bairro/Distrito: banda classica + painel "Microarea".
 
@@ -4227,6 +4663,8 @@ def _classico_perfil_bairro_page(
     pdf.add_page()
     _draw_full_page_background(pdf, assets.get("conteudo"), ULTRA_BRANCO_GELO)
     _classico_title_band(pdf, banda_texto, "Perfil do Bairro/Distrito", assets, rgb=primary)
+    # O bairro e' o do setor que CONTEM o ponto, nao o do recorte (DEC-074).
+    _aviso_no_ponto(pdf, contexto)
 
     perfil = perfil_bairro or {}
     flag_disponivel = bool(perfil.get("flag_perfil_disponivel"))
@@ -4265,7 +4703,7 @@ def _classico_perfil_bairro_page(
         pdf.set_xy(36, 486.0)
         pdf.cell(_PAGE_W - 72, 10, _ascii(nota_nome), align="C")
 
-    _perfil_nota_metodo(pdf)
+    _perfil_nota_metodo(pdf, contexto)
     _draw_footer(pdf, with_attribution=True)
 
 
@@ -4285,6 +4723,7 @@ def _classico_credit_page(
     rotulo: str | None = None,
     now: datetime | None = None,
     origem_centroide_hex: bool = False,
+    contexto: _RecortePdf | None = None,
 ) -> None:
     """Realizacao/Credito: fundo turquesa solido + credito/metodo + aviso de dados
     dinamicos (`_AVISO_DADOS_DINAMICOS`) + link clicavel do ponto + data por extenso.
@@ -4311,7 +4750,8 @@ def _classico_credit_page(
         _PAGE_W - 320,
         16,
         _ascii(
-            f"Interseção de setores censitários IBGE 2022 com círculo de {_RAIO_LABEL}; "
+            "Interseção de setores censitários IBGE 2022 com "
+            f"{(contexto or _RECORTE_PADRAO).descricao_censo}; "
             "distribuição intrassetor por área."
         ),
         align="C",
@@ -4390,8 +4830,18 @@ def gerar_pdf_relatorio_pontual_classico(
     conclusao_so_estudo: bool = False,
     aviso_rodape: str | None = None,
     praca: PracaDoPonto | None = None,
+    recorte: Mapping[str, Any] | None = None,
 ) -> bytes:
     """Gera o PDF "Apresentacao Classica Ultra" (estetica GeoFusion antiga, motor novo).
+
+    `recorte` (DEC-074, Estudo por recorte): `{"tipo", "rotulo_curto", "rotulo_longo",
+    "fator_regua", "area_km2"}` -- o dict de `recorte_pdf`. Com ele a capa, o slide
+    Concorrentes, os Big Numbers, a Conclusao e a Realizacao nomeiam o recorte (raio de 2
+    km, 10 min de carro, area desenhada), as 4 metas de TOTAL do Big Numbers e do parecer
+    saem escaladas pelo `fator_regua` (um objeto so', para card e parecer nunca divergirem)
+    e as paginas que ficam presas ao ponto dizem isso. `result`, `residual` e `mapas` tem de
+    ser do MESMO recorte -- este modulo so' desenha. `None` (default, bot/API, Viabilidade)
+    = o PDF do raio de 1 km de sempre, caractere a caractere.
 
     `praca` (piloto web) acrescenta DUAS paginas: "Pressao concorrencial" (depois de
     "Concorrentes") e "Como a cidade esta indo", com o hexagono do ponto (depois de "Big
@@ -4440,6 +4890,10 @@ def gerar_pdf_relatorio_pontual_classico(
     nenhum carimbo, saida identica a de antes do parametro. Sem payload de
     `viabilidade` nao existe pagina financeira e nada e carimbado, mesmo com texto.
     """
+    contexto = _contexto_recorte(recorte)
+    # Contexto so' e' repassado quando NAO e' o padrao: as paginas recebem exatamente os
+    # argumentos de sempre no PDF do raio de 1 km (quem as espiona em teste nao ve diferenca).
+    kw_ctx: dict[str, Any] = {} if contexto is _RECORTE_PADRAO else {"contexto": contexto}
     assets = _load_branding_assets(ultra_dir)
     layers = dict(_normalize_mapas_by_key(mapas))
     if praca is not None and praca.mapas:
@@ -4478,7 +4932,8 @@ def gerar_pdf_relatorio_pontual_classico(
         pdf.set_subject(f"report_id {report_id}")
         pdf.set_keywords(f"report_id={report_id}")
     _classico_cover_page(
-        pdf, result, assets, rotulo=rotulo, now=now, origem_centroide_hex=origem_centroide_hex
+        pdf, result, assets, rotulo=rotulo, now=now, origem_centroide_hex=origem_centroide_hex,
+        **kw_ctx,
     )
     # Imovel: FOTOS primeiro, DEPOIS a vista aerea (item Felipe 2026-07-23) — cada uma em
     # pagina propria; nao disputam vagas entre si. A intencao do BLK-SAT-01 fica preservada:
@@ -4493,35 +4948,43 @@ def gerar_pdf_relatorio_pontual_classico(
     if fotos:
         _fotos_imovel_page(pdf, fotos, assets, primary=p1)
     if foto_satelite:
-        _foto_satelite_page(pdf, foto_satelite, assets, primary=p1, grande=foto_satelite_grande)
+        _foto_satelite_page(
+            pdf, foto_satelite, assets, primary=p1, grande=foto_satelite_grande, **kw_ctx
+        )
     if info_imovel:
         _info_imovel_page(
             pdf, info_imovel, assets, primary=p2, secondary=s2,
-            alerta_canibalizacao=_conclusao_canibalizacao(result),
+            alerta_canibalizacao=_conclusao_canibalizacao(
+                result, do_recorte=contexto.do_recorte
+            ),
         )
     _classico_socioeconomia_residual_page(
-        pdf, layers, assets, banda_texto=banda_texto, primary=p0
+        pdf, layers, assets, banda_texto=banda_texto, primary=p0, **kw_ctx
     )
     _classico_mapas_calor_page(pdf, layers, assets, banda_texto=banda_texto, primary=p1)
     _classico_competitors_page(
         pdf, result, layers.get("concorrentes"), assets, banda_texto=banda_texto,
-        primary=p2, secondary=s2,
+        primary=p2, secondary=s2, **kw_ctx,
     )
     # Ordinais 7 e 8 para as paginas da praca: livres (0..5 em uso) e ABSOLUTOS, entao nenhuma
     # pagina existente troca de cor.
     if praca is not None:
         p7, s7 = _tema_bicolor(7)
         _praca_pressao_page(
-            pdf, praca, layers, assets, banda_texto=banda_texto, primary=p7, secondary=s7
+            pdf, praca, layers, assets, banda_texto=banda_texto, primary=p7, secondary=s7,
+            **kw_ctx,
         )
     _classico_perfil_bairro_page(
         pdf, perfil_bairro, assets, banda_texto=banda_texto, primary=p3, secondary=s3,
+        **kw_ctx,
     )
-    _big_numbers_page(pdf, result, residual, assets, primary=p4, secondary=s4)
+    _big_numbers_page(pdf, result, residual, assets, primary=p4, secondary=s4, **kw_ctx)
     _classico_banda_magenta_rodape(pdf)
     if praca is not None:
         p8, s8 = _tema_bicolor(8)
-        _praca_cidade_page(pdf, praca, assets, banda_texto=banda_texto, primary=p8, secondary=s8)
+        _praca_cidade_page(
+            pdf, praca, assets, banda_texto=banda_texto, primary=p8, secondary=s8, **kw_ctx
+        )
     # Paginas de RESULTADO FINANCEIRO (numeros de viabilidade, graficos e conclusao com
     # parecer financeiro), anotadas POR NUMERO na ordem em que nascem: e nelas — e so
     # nelas — que o `aviso_rodape` do Bloco C+ e carimbado, mais abaixo, pelo mesmo
@@ -4558,13 +5021,15 @@ def gerar_pdf_relatorio_pontual_classico(
             primary=p5,
             secondary=s5,
             somente_estudo=not viabilidade,
+            **kw_ctx,
         )
         # No modo so-estudo a conclusao NAO tem eixo financeiro (nem cards de aluguel,
         # nem selo) — nao e pagina de resultado financeiro e nao leva o carimbo.
         if viabilidade:
             paginas_financeiras.extend(range(antes + 1, pdf.pages_count + 1))
     _classico_credit_page(
-        pdf, result, assets, rotulo=rotulo, now=now, origem_centroide_hex=origem_centroide_hex
+        pdf, result, assets, rotulo=rotulo, now=now, origem_centroide_hex=origem_centroide_hex,
+        **kw_ctx,
     )
 
     # Carimbo do aviso do perfil (Bloco C+, decisao 0.7) nas paginas financeiras —
