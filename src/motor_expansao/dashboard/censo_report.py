@@ -1580,6 +1580,7 @@ def _viab_normalizado(viabilidade: Mapping[str, Any]) -> dict[str, Any]:
         # rodape e' o de sempre, byte a byte.
         "demanda_v2": viabilidade.get("demanda_v2"),
         "demanda_fonte": viabilidade.get("demanda_fonte"),
+        "demanda_v2_aviso": viabilidade.get("demanda_v2_aviso"),
         # Reguas do veredito, servidas pelo proprio payload (`premissas.*`). A pagina de
         # Conclusao precisa saber se `flag_viavel=False` falhou em UM criterio ou nos DOIS,
         # e le os limites daqui em vez de importar `dimensionamento.config` -- e' a mesma
@@ -1605,6 +1606,17 @@ def _viab_linha_demanda_v2(dados: Mapping[str, Any]) -> str | None:
     Pontuacao ASCII de proposito (fonte core do fpdf2, latin-1): sem travessao, seta,
     reticencias nem sinal de menos tipografico. Acento portugues e' latin-1 e sai normal.
     """
+    aviso = dados.get("demanda_v2_aviso")
+    if aviso == "nao_reconhecida":
+        return (
+            "Demanda: a sugestão da v2 não foi reconhecida (de outro ponto, metragem ou "
+            "estúdios); os números usam a demanda informada pelo operador, sem a v2."
+        )
+    if aviso == "indisponivel":
+        return (
+            "Demanda: a v2 está indisponível neste servidor; os números usam a demanda "
+            "informada pelo operador, sem a v2."
+        )
     v2 = dados.get("demanda_v2")
     if not isinstance(v2, Mapping):
         return None

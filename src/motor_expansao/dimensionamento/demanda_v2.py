@@ -367,17 +367,33 @@ def converter_em_alunos(
 # --------------------------------------------------------------------------- #
 # Token de procedencia (critica C5)                                            #
 # --------------------------------------------------------------------------- #
-def token_procedencia(entradas: EntradasV2, sha_coeficientes: str, fat_p50: float) -> str:
-    """Hash das entradas + sha dos coeficientes + p50.
+# Casas decimais do PONTO no token: 5 casas = ~1,1 m no equador. Arredondado de forma
+# declarada para que a mesma coordenada, ida e volta pelo JSON, gere o mesmo hash.
+CASAS_PONTO_TOKEN = 5
+
+
+def token_procedencia(
+    entradas: EntradasV2,
+    sha_coeficientes: str,
+    fat_p50: float,
+    *,
+    lat: float,
+    lng: float,
+) -> str:
+    """Hash do PONTO + entradas + sha dos coeficientes + p50.
 
     E' o que permite a Viabilidade, o PDF e a planilha carimbarem "demanda sugerida pela
     v2" SEM nova chamada externa: o cliente devolve as entradas da isocrona e o token, e o
     servidor recalcula o p50 a partir delas (conta pura) e confere o hash. Muda o m2, os
-    estudios ou os coeficientes -> o token deixa de conferir. NAO e' assinatura: protege
+    estudios, o PONTO ou os coeficientes -> o token deixa de conferir. O ponto entra porque as
+    entradas da isocrona vem do CLIENTE: sem ele, uma sugestao tirada em Londrina conferia
+    numa requisicao em Manaus (achado da revisao de 2026-10-20). NAO e' assinatura: protege
     contra carimbo errado por acidente (sugestao velha), nao contra quem forje o hash de
     proposito — os usuarios sao operadores autenticados.
     """
     canon = {
+        "lat": round(float(lat), CASAS_PONTO_TOKEN),
+        "lng": round(float(lng), CASAS_PONTO_TOKEN),
         "m2": round(float(entradas.m2), 6),
         "studios": int(entradas.studios),
         "pop_c10": round(float(entradas.pop_c10), 6),
@@ -391,6 +407,7 @@ def token_procedencia(entradas: EntradasV2, sha_coeficientes: str, fat_p50: floa
 
 
 __all__ = [
+    "CASAS_PONTO_TOKEN",
     "COVARIAVEIS_ENVELOPE",
     "ORDEM_X",
     "CoeficientesInvalidos",

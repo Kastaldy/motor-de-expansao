@@ -28,6 +28,7 @@ from typing import Annotated, Any
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from motor_expansao.dimensionamento.demanda_v2 import (
+    CASAS_PONTO_TOKEN,
     CoeficientesInvalidos,
     CoeficientesV2,
     EntradasInvalidas,
@@ -52,7 +53,7 @@ MOTIVO_SEM_ROTAS = (
     "neste servidor."
 )
 MSG_TOKEN_NAO_CONFERE = (
-    "A sugestão da Viabilidade v2 não confere com a metragem, os estúdios ou os "
+    "A sugestão da Viabilidade v2 não confere com o ponto, a metragem, os estúdios ou os "
     "coeficientes atuais. Peça uma nova sugestão antes de calcular."
 )
 
@@ -214,7 +215,12 @@ def _flags(prev: PrevisaoV2) -> dict[str, Any]:
 
 
 def _bloco(
-    entradas: EntradasV2, coef: CoeficientesV2, premissas: Any
+    entradas: EntradasV2,
+    coef: CoeficientesV2,
+    premissas: Any,
+    *,
+    lat: float,
+    lng: float,
 ) -> tuple[PrevisaoV2, dict[str, Any]]:
     prev = prever_faturamento_v2(entradas, coef)
     conv = converter_em_alunos(prev.fat_p10, prev.fat_p50, prev.fat_p90, premissas)
@@ -230,6 +236,11 @@ def _bloco(
             "p90": _n(conv.alunos_p90, 1),
         },
         "conversao": {"fixo": _n(conv.fixo, 2), "r_aluno": _n(conv.r_aluno, 4)},
+        # O ponto a que a sugestao pertence (o mesmo arredondamento do token).
+        "ponto": {
+            "lat": round(float(lat), CASAS_PONTO_TOKEN),
+            "lng": round(float(lng), CASAS_PONTO_TOKEN),
+        },
         "entradas": {
             "m2": _n(entradas.m2, 2),
             "studios": int(entradas.studios),
@@ -241,7 +252,7 @@ def _bloco(
         **_flags(prev),
         "diagnostico": {"ep_log": _n(prev.ep_log, 4)},
         "coeficientes": {"versao": coef.versao, "sha256": coef.sha256, "data": coef.data},
-        "token": token_procedencia(entradas, coef.sha256, prev.fat_p50),
+        "token": token_procedencia(entradas, coef.sha256, prev.fat_p50, lat=lat, lng=lng),
     }
     return prev, bloco
 
@@ -264,7 +275,9 @@ def montar_sugestao_v2(
         renda_pc_c10=float(renda_pc_c10),
     )
     try:
-        _prev, bloco = _bloco(entradas, coef, _premissas_da_sugestao(body))
+        _prev, bloco = _bloco(
+            entradas, coef, _premissas_da_sugestao(body), lat=body.lat, lng=body.lng
+        )
     except EntradasInvalidas as exc:
         raise V2Indisponivel(f"A Viabilidade v2 não se aplica a este ponto: {exc}") from exc
     return {**bloco, **(extras or {})}
@@ -292,7 +305,7 @@ def conferir_demanda_v2(
     """Bloco `demanda_v2` da Viabilidade em modo v2. SEM chamada externa.
 
     Recalcula o p50 das entradas devolvidas pelo cliente com os coeficientes de agora,
-    confere o token (`TokenV2Invalido` se nao conferir) e classifica a demanda do corpo:
+    NO PONTO DO CORPO (`body.lat`/`body.lng`, que entram no hash), confere o token (`TokenV2Invalido` se nao conferir) e classifica a demanda do corpo:
     igual ao p50 sugerido (ate' meio aluno) -> "modelo_v2"; diferente -> "premissa_editada".
     """
     coef = carregar()
@@ -305,7 +318,10 @@ def conferir_demanda_v2(
         renda_pc_c10=float(ref.renda_pc_c10),
     )
     try:
-        _prev, bloco = _bloco(entradas, coef, premissas)
+        # O ponto conferido e' o do CORPO: token tirado em outro ponto nao confere.
+        _prev, bloco = _bloco(
+            entradas, coef, premissas, lat=float(body.lat), lng=float(body.lng)
+        )
     except EntradasInvalidas as exc:
         raise TokenV2Invalido(MSG_TOKEN_NAO_CONFERE) from exc
     if bloco["token"] != ref.token:

@@ -859,6 +859,11 @@ def base_calibracao(staging_dir: Path | str) -> tuple[pd.DataFrame | None, str]:
     return None, FONTE_BASE_INDISPONIVEL
 
 
+# O PDF pediu a v2 e ela nao entrou (ver `montar_payload_para_pdf`).
+DEMANDA_V2_AVISO_NAO_RECONHECIDA = "nao_reconhecida"
+DEMANDA_V2_AVISO_INDISPONIVEL = "indisponivel"
+
+
 def montar_payload_para_pdf(
     body: ViabilidadeIn,
     *,
@@ -882,17 +887,40 @@ def montar_payload_para_pdf(
 
     Devolve o payload v1 + as chaves PLANAS que o slide legado consome + `graficos`.
     `None` em qualquer falha -> o PDF cai no payload so-numeros (`viabilidade_json`).
+
+    Modo v2 com a sugestao NAO reconhecida (token de outro ponto/metragem/estudios, ou a v2
+    indisponivel): o PDF nao cai e tambem nao sai CALADO. Os numeros saem com a demanda do
+    corpo no modo densidade (a demanda e' sempre a do operador, D10a) e a chave
+    `demanda_v2_aviso` ("nao_reconhecida" | "indisponivel") faz o slide DIZER que a v2 nao
+    foi usada. Antes a falha era engolida e o slide saia sem aviso nenhum.
     """
     from motor_expansao.dashboard.viabilidade_charts import montar_payload_pdf_viabilidade
+    from motor_expansao.dimensionamento.viabilidade_v2 import TokenV2Invalido, V2Indisponivel
 
+    aviso_v2: str | None = None
     try:
         payload = montar_payload_viabilidade(
             body, staging_dir=staging_dir, setores_df=setores_df
         )
+    except (TokenV2Invalido, V2Indisponivel) as exc:
+        aviso_v2 = (
+            DEMANDA_V2_AVISO_NAO_RECONHECIDA
+            if isinstance(exc, TokenV2Invalido)
+            else DEMANDA_V2_AVISO_INDISPONIVEL
+        )
+        try:
+            densidade = body.model_copy(update={"modelo_demanda": None, "demanda_v2": None})
+            payload = montar_payload_viabilidade(
+                densidade, staging_dir=staging_dir, setores_df=setores_df
+            )
+        except Exception:  # noqa: BLE001 — o PDF nunca cai por causa da viabilidade
+            return None
     except Exception:  # noqa: BLE001 — o PDF nunca cai por causa da viabilidade
         return None
 
     saida: dict[str, Any] = dict(payload)
+    if aviso_v2 is not None:
+        saida["demanda_v2_aviso"] = aviso_v2
     try:
         saida.update(montar_payload_pdf_viabilidade(payload) or {})
     except Exception:  # noqa: BLE001 — sem graficos o slide sai so com os numeros

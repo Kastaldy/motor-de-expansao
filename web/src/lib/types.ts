@@ -660,6 +660,8 @@ export interface DemandaV2Out {
   faturamento: FaixaV2
   alunos: FaixaV2
   conversao: { fixo: number | null; r_aluno: number | null }
+  /** O ponto a que a sugestão pertence (5 casas, as mesmas do token). */
+  ponto: { lat: number; lng: number }
   entradas: {
     m2: number | null
     studios: number

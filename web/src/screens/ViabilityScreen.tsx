@@ -388,7 +388,7 @@ export default function ViabilityScreen({
     return {
       // Modo v2 só com sugestão válida para a metragem e os estúdios de agora; sem ela,
       // o pedido sai como sempre (modo densidade) e nada muda.
-      ...camposDeV2(sug, m2, nStudios),
+      ...camposDeV2(sug, { lat: alvoLat, lng: alvoLng, m2, nStudios }),
       lat: alvoLat!,
       lng: alvoLng!,
       m2,
@@ -517,6 +517,9 @@ export default function ViabilityScreen({
     if (!ponto) return
     let vivo = true
     setDemandaTocada(false)
+    // A tela NÃO é remontada ao trocar de ponto: a sugestão da v2 do ponto anterior
+    // morre aqui, antes de a nova chegar, senão PDF/planilha levariam o token velho.
+    setSugestaoV2(null)
     ;(async () => {
       let seed = demanda
       try {
@@ -614,7 +617,9 @@ export default function ViabilityScreen({
   }, [chaveSugestaoV2, estadoV2])
 
   /** Sugestão da v2 que vale para o cenário de agora (`null` = modo densidade). */
-  const v2Vigente = sugestaoValePara(sugestaoV2, m2, nStudios) ? sugestaoV2 : null
+  const v2Vigente = sugestaoValePara(sugestaoV2, { lat: alvoLat, lng: alvoLng, m2, nStudios })
+    ? sugestaoV2
+    : null
   const motivoDaV2 = motivoV2(estadoV2, erroV2)
 
   async function gerarPdf() {

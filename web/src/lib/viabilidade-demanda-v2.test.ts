@@ -11,11 +11,17 @@ import {
   v2Disponivel,
 } from './viabilidade-demanda-v2'
 
+// O caso da revisão de 2026-10-20: sugestão tirada em Londrina, ponto trocado para Manaus.
+const LONDRINA = { lat: -23.33, lng: -51.16 }
+const MANAUS = { lat: -3.0, lng: -60.0 }
+const cen = (m2: number, nStudios: number, ponto = LONDRINA) => ({ ...ponto, m2, nStudios })
+
 function sug(parcial: Partial<DemandaV2Out> = {}): DemandaV2Out {
   return {
     faturamento: { p10: 189000, p50: 300000, p90: 474000 },
     alunos: { p10: 1450.4, p50: 2303.6, p90: 3640.2 },
     conversao: { fixo: 5000, r_aluno: 128.1 },
+    ponto: { lat: LONDRINA.lat, lng: LONDRINA.lng },
     entradas: {
       m2: 1500,
       studios: 0,
@@ -64,22 +70,32 @@ describe('semente pelo p50 da v2', () => {
 
 describe('o pedido só carimba v2 com sugestão válida para o cenário', () => {
   it('mesma metragem e mesma presença de estúdio -> v2 + token + entradas', () => {
-    expect(camposDeV2(sug(), 1500, 0)).toEqual({
+    expect(camposDeV2(sug(), cen(1500, 0))).toEqual({
       modelo_demanda: 'v2',
       demanda_v2: { token: 'v2-abc', pop_c10: 300000, dom_c10: 100000, renda_pc_c10: 1800 },
     })
   })
   it('metragem mudou -> sugestão velha, pedido no modo densidade (sem chaves)', () => {
-    expect(camposDeV2(sug(), 1600, 0)).toEqual({})
+    expect(camposDeV2(sug(), cen(1600, 0))).toEqual({})
+  })
+  it('ponto mudou (Londrina -> Manaus) -> sugestão velha, pedido sem token', () => {
+    expect(sugestaoValePara(sug(), cen(1500, 0, MANAUS))).toBe(false)
+    expect(camposDeV2(sug(), cen(1500, 0, MANAUS))).toEqual({})
+    // ~1 m de diferença (5ª casa) ainda é o mesmo ponto; sem ponto na tela, não vale.
+    expect(sugestaoValePara(sug(), cen(1500, 0, { lat: -23.330004, lng: -51.16 }))).toBe(true)
+    expect(sugestaoValePara(sug(), cen(1500, 0, { lat: -23.3301, lng: -51.16 }))).toBe(false)
+    expect(sugestaoValePara(sug(), { lat: undefined, lng: undefined, m2: 1500, nStudios: 0 })).toBe(
+      false,
+    )
   })
   it('estúdio é binário: 1 -> 2 estúdios mantém a sugestão; 0 -> 1 a invalida', () => {
     const com = sug({ entradas: { ...sug().entradas, studios: 1 } })
-    expect(sugestaoValePara(com, 1500, 1)).toBe(true)
-    expect(sugestaoValePara(com, 1500, 2)).toBe(true)
-    expect(sugestaoValePara(sug(), 1500, 1)).toBe(false)
+    expect(sugestaoValePara(com, cen(1500, 1))).toBe(true)
+    expect(sugestaoValePara(com, cen(1500, 2))).toBe(true)
+    expect(sugestaoValePara(sug(), cen(1500, 1))).toBe(false)
   })
   it('sem sugestão (v2 indisponível) -> nada muda no pedido', () => {
-    expect(camposDeV2(null, 1500, 0)).toEqual({})
+    expect(camposDeV2(null, cen(1500, 0))).toEqual({})
   })
 })
 

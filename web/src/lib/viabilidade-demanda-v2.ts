@@ -45,18 +45,40 @@ export function corpoSugestaoV2(p: {
   }
 }
 
+/** O cenário que a sugestão precisa casar: o PONTO, a metragem e os estúdios. */
+export interface CenarioV2 {
+  lat: number | null | undefined
+  lng: number | null | undefined
+  m2: number
+  nStudios: number
+}
+
+/** Casas do ponto no token (`CASAS_PONTO_TOKEN` do servidor): 5 casas, ~1,1 m. */
+const TOLERANCIA_PONTO = 1e-5
+
+function mesmoPonto(a: number | null | undefined, b: number | null | undefined): boolean {
+  if (a == null || b == null || !Number.isFinite(a) || !Number.isFinite(b)) return false
+  return Math.abs(a - b) <= TOLERANCIA_PONTO
+}
+
 /**
- * A sugestão ainda vale para o cenário? O token amarra a metragem e a PRESENÇA de
- * estúdio (binária no modelo). Mudou qualquer das duas, a sugestão é velha e o pedido
- * NÃO pode carimbar "sugerida pela v2" (o servidor recusaria com 422).
+ * A sugestão ainda vale para o cenário? O token amarra o PONTO, a metragem e a PRESENÇA
+ * de estúdio (binária no modelo). Mudou qualquer um, a sugestão é velha e o pedido NÃO
+ * pode carimbar "sugerida pela v2" (o servidor recusaria com 422). O ponto entra porque
+ * a tela não é remontada ao trocar de ponto: sem ele, a sugestão de Londrina seguia
+ * valendo em Manaus até a nova chegar.
  */
 export function sugestaoValePara(
   sug: DemandaV2Out | null | undefined,
-  m2: number,
-  nStudios: number,
+  cenario: CenarioV2,
 ): sug is DemandaV2Out {
-  if (!sug) return false
-  return sug.entradas.m2 === m2 && sug.entradas.studios === (nStudios > 0 ? 1 : 0)
+  if (!sug || !sug.ponto) return false
+  return (
+    mesmoPonto(sug.ponto.lat, cenario.lat) &&
+    mesmoPonto(sug.ponto.lng, cenario.lng) &&
+    sug.entradas.m2 === cenario.m2 &&
+    sug.entradas.studios === (cenario.nStudios > 0 ? 1 : 0)
+  )
 }
 
 /** Demanda semeada pela v2: o p50 em alunos, arredondado. `null` sem número válido. */
@@ -69,10 +91,9 @@ export function sementeDaDemandaV2(sug: DemandaV2Out | null | undefined): number
 /** Campos do pedido da Viabilidade: `v2` + token quando a sugestão vale; nada senão. */
 export function camposDeV2(
   sug: DemandaV2Out | null | undefined,
-  m2: number,
-  nStudios: number,
+  cenario: CenarioV2,
 ): Pick<ViabilidadeIn, 'modelo_demanda' | 'demanda_v2'> {
-  if (!sugestaoValePara(sug, m2, nStudios)) return {}
+  if (!sugestaoValePara(sug, cenario)) return {}
   const { pop_c10, dom_c10, renda_pc_c10 } = sug.entradas
   if (pop_c10 == null || dom_c10 == null || renda_pc_c10 == null) return {}
   return {

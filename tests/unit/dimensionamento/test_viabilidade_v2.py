@@ -245,18 +245,34 @@ def test_piso_de_um_aluno():
 
 
 # --------------------------------------------------------------------------- token
+LONDRINA = dict(lat=-23.33, lng=-51.16)
+MANAUS = dict(lat=-3.0, lng=-60.0)
+
+
 def test_token_e_deterministico_e_muda_com_cada_parte():
-    base = token_procedencia(ENTRADAS, "s" * 64, 300_000.0)
-    assert base == token_procedencia(ENTRADAS, "s" * 64, 300_000.0)
+    base = token_procedencia(ENTRADAS, "s" * 64, 300_000.0, **LONDRINA)
+    assert base == token_procedencia(ENTRADAS, "s" * 64, 300_000.0, **LONDRINA)
     assert base.startswith("v2-")
     variantes = [
-        token_procedencia(EntradasV2(**{**ENTRADAS.__dict__, "m2": 1501}), "s" * 64, 300_000.0),
-        token_procedencia(EntradasV2(**{**ENTRADAS.__dict__, "studios": 1}), "s" * 64, 300_000.0),
-        token_procedencia(EntradasV2(**{**ENTRADAS.__dict__, "pop_c10": 300_001}), "s" * 64, 300_000.0),
-        token_procedencia(ENTRADAS, "t" * 64, 300_000.0),
-        token_procedencia(ENTRADAS, "s" * 64, 300_000.5),
+        token_procedencia(EntradasV2(**{**ENTRADAS.__dict__, "m2": 1501}), "s" * 64, 300_000.0, **LONDRINA),
+        token_procedencia(EntradasV2(**{**ENTRADAS.__dict__, "studios": 1}), "s" * 64, 300_000.0, **LONDRINA),
+        token_procedencia(EntradasV2(**{**ENTRADAS.__dict__, "pop_c10": 300_001}), "s" * 64, 300_000.0, **LONDRINA),
+        token_procedencia(ENTRADAS, "t" * 64, 300_000.0, **LONDRINA),
+        token_procedencia(ENTRADAS, "s" * 64, 300_000.5, **LONDRINA),
+        token_procedencia(ENTRADAS, "s" * 64, 300_000.0, **MANAUS),
+        token_procedencia(ENTRADAS, "s" * 64, 300_000.0, lat=-23.3301, lng=-51.16),
+        token_procedencia(ENTRADAS, "s" * 64, 300_000.0, lat=-23.33, lng=-51.1601),
     ]
     assert base not in variantes and len(set(variantes)) == len(variantes)
+
+
+def test_token_arredonda_o_ponto_em_5_casas_declaradas():
+    from motor_expansao.dimensionamento.demanda_v2 import CASAS_PONTO_TOKEN
+
+    assert CASAS_PONTO_TOKEN == 5
+    base = token_procedencia(ENTRADAS, "s" * 64, 300_000.0, **LONDRINA)
+    # abaixo da 5a casa (~1 m) e' o MESMO ponto: ida e volta pelo JSON nao muda o hash.
+    assert base == token_procedencia(ENTRADAS, "s" * 64, 300_000.0, lat=-23.330001, lng=-51.160002)
 
 
 # --------------------------------------------------------------------------- c10
@@ -381,6 +397,58 @@ def test_token_de_outra_metragem_nao_confere(coef):
     falso = _corpo_v2(sug).demanda_v2.model_copy(update={"pop_c10": 400_000.0})
     with pytest.raises(v2.TokenV2Invalido):
         _payload(_corpo_v2(sug).model_copy(update={"demanda_v2": falso}))
+
+
+def test_token_de_outro_ponto_nao_confere_londrina_para_manaus(coef):
+    """Achado da revisao de 2026-10-20: a sugestao tirada em Londrina era ACEITA numa
+    requisicao perto de Manaus e carimbava `modelo_v2`. O ponto agora esta' no token."""
+    sug = _sugestao(coef)
+    assert sug["ponto"] == {"lat": GOLDEN["lat"], "lng": GOLDEN["lng"]}
+    with pytest.raises(v2.TokenV2Invalido, match="ponto"):
+        _payload(_corpo_v2(sug, **MANAUS))
+    # O mesmo token no ponto certo segue valendo.
+    assert _payload(_corpo_v2(sug))["demanda_fonte"] == "modelo_v2"
+
+
+def test_pdf_com_token_de_outro_ponto_avisa_no_slide_e_nao_sai_calado(coef):
+    from motor_expansao.dashboard.censo_report import _viab_linha_demanda_v2, _viab_normalizado
+    from motor_expansao.dimensionamento.payload_viabilidade import montar_payload_para_pdf
+
+    sug = _sugestao(coef)
+    with tempfile.TemporaryDirectory() as d:
+        saida = montar_payload_para_pdf(_corpo_v2(sug, **MANAUS), staging_dir=d, setores_df=None)
+    assert saida is not None, "o PDF nao pode perder a pagina de viabilidade"
+    assert saida["demanda_v2_aviso"] == "nao_reconhecida"
+    assert "demanda_v2" not in saida  # os numeros sao do modo densidade, com a demanda do corpo
+    assert saida["demanda_premissa"] == round(sug["alunos"]["p50"])
+    linha = _viab_linha_demanda_v2(_viab_normalizado(saida))
+    assert linha is not None and "não foi reconhecida" in linha
+    linha.encode("latin-1")  # fonte core do fpdf2: nada fora de latin-1
+
+
+def test_pdf_com_v2_indisponivel_avisa_no_slide(coef, tmp_path, monkeypatch):
+    from motor_expansao.dashboard.censo_report import _viab_linha_demanda_v2, _viab_normalizado
+    from motor_expansao.dimensionamento.payload_viabilidade import montar_payload_para_pdf
+
+    sug = _sugestao(coef)
+    monkeypatch.setattr(v2, "caminho_coeficientes", lambda: tmp_path / "sumiu.json")
+    v2.limpar_cache()
+    with tempfile.TemporaryDirectory() as d:
+        saida = montar_payload_para_pdf(_corpo_v2(sug), staging_dir=d, setores_df=None)
+    assert saida is not None and saida["demanda_v2_aviso"] == "indisponivel"
+    linha = _viab_linha_demanda_v2(_viab_normalizado(saida))
+    assert linha is not None and "indisponível" in linha
+    linha.encode("latin-1")
+
+
+def test_pdf_com_token_valido_nao_carrega_aviso(coef):
+    from motor_expansao.dimensionamento.payload_viabilidade import montar_payload_para_pdf
+
+    sug = _sugestao(coef)
+    with tempfile.TemporaryDirectory() as d:
+        saida = montar_payload_para_pdf(_corpo_v2(sug), staging_dir=d, setores_df=None)
+    assert saida is not None and "demanda_v2_aviso" not in saida
+    assert saida["demanda_fonte"] == "modelo_v2"
 
 
 def test_trocar_o_ticket_nao_invalida_o_token(coef):

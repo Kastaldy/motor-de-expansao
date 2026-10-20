@@ -359,6 +359,25 @@ def test_uma_constante_do_config_reverte_o_padrao(monkeypatch, pilot_app) -> Non
     assert reta.forma_rampa == SIM_FORMA_RAMPA_RETA
 
 
+def test_caminhos_legados_seguem_a_mesma_constante(monkeypatch) -> None:
+    """Achado 4 da revisao de 2026-10-20: `_premissas_do_ponto` (dashboard, backtest,
+    batch) usava o default do DATACLASS e ficaria na reta com a constante trocada. Hoje
+    sai a reta (nada muda); com a constante trocada, a curva. Escolha explicita vence, e
+    `rampa_apenas_balcao` (so' a reta e' suportada) nao quebra."""
+    from motor_expansao.dimensionamento import config
+    from motor_expansao.dimensionamento.viabilidade_ponto import _premissas_do_ponto
+
+    hoje = _premissas_do_ponto(147.0, 30000.0, 0.6, None, {})
+    assert hoje.forma_rampa == SIM_FORMA_RAMPA_RETA
+
+    monkeypatch.setattr(config, "SIM_FORMA_RAMPA_PADRAO", SIM_FORMA_RAMPA_CURVA_UNI03)
+    assert _premissas_do_ponto(147.0, 30000.0, 0.6, None, {}).forma_rampa == SIM_FORMA_RAMPA_CURVA_UNI03
+    escolhida = _premissas_do_ponto(147.0, 30000.0, 0.6, None, {"forma_rampa": "reta"})
+    assert escolhida.forma_rampa == SIM_FORMA_RAMPA_RETA
+    so_balcao = _premissas_do_ponto(147.0, 30000.0, 0.6, None, {"rampa_apenas_balcao": True})
+    assert so_balcao.forma_rampa == SIM_FORMA_RAMPA_RETA
+
+
 def test_payload_recusa_forma_desconhecida_em_portugues() -> None:
     with pytest.raises(ValidationError) as exc:
         ViabilidadeInputs(m2=1500, aluguel=30000, demanda=1600, forma_rampa="logistica")
