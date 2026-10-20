@@ -64,10 +64,14 @@ from motor_expansao.dimensionamento.config import (
     SIM_COFINS,
     SIM_CSLL_ALIQUOTA,
     SIM_CSLL_EFETIVO,
+    SIM_CURVA_RAMPA_UNI03,
     SIM_CUSTO_PRE_OPERACIONAL_MES,
     SIM_CUSTO_STUDIO,
     SIM_DEVOLUCOES_PCT,
     SIM_FOLHA_PCT,
+    SIM_FORMA_RAMPA_CURVA_UNI03,
+    SIM_FORMA_RAMPA_RETA,
+    SIM_FORMAS_RAMPA,
     SIM_HORIZONTE_MESES,
     SIM_INADIMPLENCIA,
     SIM_IR_EFETIVO,
@@ -205,6 +209,14 @@ class Premissas:
     # Neste modo `alunos_inicial` esta em unidades de BALCAO.
     rampa_apenas_balcao: bool = False
 
+    # FORMA da rampa (DEC-075). "reta" (default DO NUCLEO, que preserva o motor antigo byte
+    # a byte): `alunos_inicial` no mes 1 ate a demanda em `maturacao_meses`. "curva_uni03":
+    # alunos(t) = demanda x `curva_rampa[t-1]` nos meses 1..len(curva) e a demanda cheia
+    # depois — `alunos_inicial` e `maturacao_meses` NAO entram. O default do PRODUTO (tela,
+    # PDF, API) e' a curva, e e' o payload que a escolhe (`SIM_FORMA_RAMPA_PADRAO`).
+    forma_rampa: str = SIM_FORMA_RAMPA_RETA
+    curva_rampa: tuple[float, ...] = SIM_CURVA_RAMPA_UNI03
+
     def __post_init__(self) -> None:
         # Normaliza para tupla de float (chamadores podem mandar lista) e falha FECHADO
         # no que o modelo nao sabe representar.
@@ -227,6 +239,45 @@ class Premissas:
             # qual total" nao tem resposta ali. Nenhum chamador legado usa studios.
             if self.rampa_apenas_balcao:
                 raise ValueError("studios nao sao suportados com rampa_apenas_balcao=True")
+
+        if self.forma_rampa not in SIM_FORMAS_RAMPA:
+            raise ValueError(
+                f"forma_rampa deve ser um de {SIM_FORMAS_RAMPA} (veio {self.forma_rampa!r})"
+            )
+        curva = tuple(float(f) for f in self.curva_rampa)
+        object.__setattr__(self, "curva_rampa", curva)
+        if not curva or any(not 0.0 < f <= 1.0 for f in curva):
+            raise ValueError("curva_rampa: fracoes da demanda em (0, 1], ao menos um mes")
+        # A curva e' fracao da demanda TOTAL; no modo historico so' o balcao rampa e
+        # "fracao de qual total" nao tem resposta. Nenhum chamador legado usa a curva.
+        if self.forma_rampa == SIM_FORMA_RAMPA_CURVA_UNI03 and self.rampa_apenas_balcao:
+            raise ValueError("forma_rampa='curva_uni03' nao e' suportada com rampa_apenas_balcao=True")
+
+    # ---- Rampa ------------------------------------------------------------------
+
+    @property
+    def usa_curva(self) -> bool:
+        return self.forma_rampa == SIM_FORMA_RAMPA_CURVA_UNI03
+
+    def fracao_curva(self, t: int) -> float:
+        """Fracao da demanda no mes de operacao `t` na curva (1,0 depois do ultimo mes)."""
+        if t < 1:
+            return 0.0
+        return self.curva_rampa[t - 1] if t <= len(self.curva_rampa) else 1.0
+
+    @property
+    def mes_maturidade_rampa(self) -> int:
+        """Primeiro mes de operacao com a demanda CHEIA — o fim da rampa, nas duas formas.
+
+        Reta: `maturacao_meses`. Curva: o primeiro mes com fracao >= 1 (10 na curva UNI-03),
+        ou o mes seguinte ao ultimo da tabela. E' daqui que sai o mes de steady-state.
+        """
+        if not self.usa_curva:
+            return max(int(self.maturacao_meses), 1)
+        return next(
+            (i for i, f in enumerate(self.curva_rampa, start=1) if f >= 1.0),
+            len(self.curva_rampa) + 1,
+        )
 
     # ---- Studios ----------------------------------------------------------------
 
@@ -810,11 +861,17 @@ def gerar_serie_mensal_completa(
         f_custos = _fator_reajuste(t, p.reajuste_custos_aa)
 
         frac = min(t / maturacao, 1.0)
-        if p.rampa_apenas_balcao:
+        studios: tuple[float, ...]
+        if p.usa_curva:
+            # Curva observada (DEC-075): fracao do mes sobre a demanda madura, mesmo split
+            # da reta. `alunos_inicial`/`maturacao_meses` nao entram nesta forma.
+            alunos_total = float(demanda_total) * p.fracao_curva(t)
+            bal, agr, studios = p.split_alunos(alunos_total)
+        elif p.rampa_apenas_balcao:
             bal = alunos_inicial + (bal_maturidade - alunos_inicial) * frac
             agr = agr_maturidade
             alunos_total = bal + agr
-            studios: tuple[float, ...] = ()
+            studios = ()
         else:
             # Os studios rampam junto com o total (8% de uma demanda que rampa) e o split
             # balcao/agregador vale so' sobre o restante — `split_alunos` e a regua unica.
@@ -905,7 +962,7 @@ def simular(
     # O mes de referencia do steady-state e o primeiro em REGIME PLENO: alunos
     # maduros E anuidade ja em cobranca. Sem isso a DRE de steady ficaria sem a
     # anuidade enquanto o break-even ja a considera — duas reguas diferentes.
-    mes_ref = max(int(p.maturacao_meses), 1)
+    mes_ref = p.mes_maturidade_rampa
     if p.anuidade_valor > 0:
         mes_ref = max(mes_ref, int(p.anuidade_mes_inicio))
     steady = operacao[min(mes_ref, len(operacao)) - 1]

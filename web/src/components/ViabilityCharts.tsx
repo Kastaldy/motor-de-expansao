@@ -7,6 +7,7 @@ import type {
 } from '../lib/types'
 import { Glass } from './primitives'
 import { TEXTO_SEM_DADO } from '../lib/constants'
+import { mesFimDaRampa } from '../lib/viabilidade-rampa'
 
 /* ---------------------------------------------------------------------------
    Graficos da Viabilidade. Formas herdadas do template de referencia.
@@ -430,7 +431,11 @@ export function CascataDre({
             <strong style={{ color: 'var(--tx-soft)' }}>mês {num(mesRef)}</strong> — o primeiro em
             regime pleno
             {premissas
-              ? `: alunos maduros (rampa de ${num(premissas.maturacao_meses)} meses) e anuidade já em cobrança`
+              ? `: alunos maduros (${
+                  premissas.forma_rampa === 'curva_uni03'
+                    ? `curva observada, demanda cheia no mês ${num(mesFimDaRampa(premissas))}`
+                    : `rampa de ${num(premissas.maturacao_meses)} meses`
+                }) e anuidade já em cobrança`
               : ''}
             .
           </div>
@@ -604,13 +609,19 @@ function LinhaReceita({
  * Antes era uma reta sintética de 0 até a demanda total, desenhada aqui e sem
  * contrapartida no simulador: a operação começa com `alunos_inicial` no mês 1 e
  * o mix balcão/agregadores escala junto até o platô.
+ *
+ * Desde a DEC-075 a série pode vir da CURVA observada (padrão) ou da reta; o desenho
+ * é o mesmo (é a série do motor), e `maturacaoMeses` é o fim da rampa SERVIDO
+ * (`mes_maturidade_rampa`), não o parâmetro da reta.
  */
 export function RampaAlunos({
   serie,
   maturacaoMeses,
+  formaRampa = null,
 }: {
   serie: SerieMensalLinha[]
   maturacaoMeses: number | null
+  formaRampa?: string | null
 }) {
   const pts = pontos(
     serie.filter((l) => l.fase === 'operacao'),
@@ -666,7 +677,11 @@ export function RampaAlunos({
     >
       <Cabecalho
         titulo="Rampa de alunos"
-        sub={mat != null ? `alunos totais · platô no mês ${mat}` : 'alunos totais (motor)'}
+        sub={
+          mat != null
+            ? `${formaRampa === 'curva_uni03' ? 'curva observada' : 'reta'} · platô no mês ${mat}`
+            : 'alunos totais (motor)'
+        }
         valor={alunos(plateau)}
         cor="var(--ac-text)"
       />

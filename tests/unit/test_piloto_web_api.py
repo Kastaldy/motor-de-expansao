@@ -275,8 +275,19 @@ def test_viabilidade_contrato_e_coerencia() -> None:
     ano1 = operacao[:12]
     assert len({linha["folha"] for linha in ano1}) == 1, "a folha voltou a escalar"
     assert ano1[0]["folha"] == pytest.approx(dre["folha"], abs=0.01)
-    assert ano1[0]["ebitda_mensal"] < 0  # o mes 1 nasce no vermelho por causa dela
+    # Com a CURVA observada (default do produto desde a DEC-075) o mes 1 ja' tem 68% da
+    # demanda e, neste cenario, nasce no AZUL; o peso da folha fixa aparece como EBITDA
+    # do mes 1 abaixo do maduro. O "nasce no vermelho" e' da reta, travado logo abaixo.
+    assert ano1[0]["ebitda_mensal"] < dre["ebitda"]
     assert operacao[12]["folha"] > ano1[0]["folha"]  # reajuste anual so no mes 13
+    reta = pilot_app.viabilidade(
+        pilot_app.ViabilidadeIn(
+            lat=-23.5, lng=-46.6, m2=1500, aluguel=30000, demanda=1600, ticket=177,
+            obra=800_000, equipamentos=700_000, forma_rampa="reta",
+        )
+    )
+    reta_m1 = next(linha for linha in reta["serie_mensal"] if linha["mes"] == 1)
+    assert reta_m1["ebitda_mensal"] < 0  # na reta o mes 1 nasce no vermelho por causa dela
 
     # TAXA DE FRANQUIA PARCELADA (mesma decisao): N parcelas iguais nos meses de
     # contrato 1..N, e a SOMA das parcelas == taxa_franquia.

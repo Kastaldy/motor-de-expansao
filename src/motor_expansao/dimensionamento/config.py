@@ -95,6 +95,35 @@ SIM_ALUNOS_INICIAL = 500                 # E9
 SIM_CHURN = 0.06                         # E12
 SIM_MATURACAO_MESES = 8                  # E13
 
+# Forma da rampa de alunos (DEC-075). "reta" e' a rampa historica da planilha (parte de
+# SIM_ALUNOS_INICIAL no mes 1 e chega a demanda em SIM_MATURACAO_MESES). "curva_uni03" e'
+# a curva OBSERVADA na rede pelo BLK-UNI-03: alunos(t) = demanda x fracao do mes t.
+SIM_FORMA_RAMPA_RETA = "reta"
+SIM_FORMA_RAMPA_CURVA_UNI03 = "curva_uni03"
+SIM_FORMAS_RAMPA = (SIM_FORMA_RAMPA_CURVA_UNI03, SIM_FORMA_RAMPA_RETA)
+# Default do PRODUTO (payload da tela, PDF, planilha da rota e API publica), pedido do dono
+# em 2026-10-20. O `Premissas` do nucleo segue com "reta" por default, de proposito: os
+# adaptadores historicos (`viabilidade()`, lote, backtest, risco) e o golden do FIN-VIAB-01
+# reproduzem o motor antigo byte a byte, e a curva entra so' por quem a pede.
+SIM_FORMA_RAMPA_PADRAO = SIM_FORMA_RAMPA_CURVA_UNI03
+# Transcricao LITERAL da tabela P1 de data/analysis/uni/uni03/resultado_uni03.md, coluna
+# "alunos (mediana)", meses de vida 0..12, como fracao do nivel maduro (media dos meses de
+# vida 11-13 da propria unidade; 33 unidades de exploracao). NAO e' o que o motor usa:
+# fica aqui para a derivacao abaixo ser auditavel (um teste refaz a conta).
+SIM_CURVA_UNI03_ALUNOS_P1 = (
+    0.80, 0.68, 0.77, 0.84, 0.88, 0.90, 0.92, 0.97, 0.95, 0.99, 1.00, 1.01, 1.01,
+)
+# O que o MOTOR usa: fracao da demanda nos meses de OPERACAO 1..12 (mes 13 em diante = 1,0).
+# Tres regras sobre a tabela bruta, todas declaradas na DEC-075:
+#   1. o mes 0 (inauguracao parcial + pre-venda, 80%) SAI: o simulador nao tem mes de
+#      operacao parcial — os meses de pre-abertura sao de obra, sem aluno nem receita;
+#   2. maximo acumulado (a rampa nunca decresce): o mes 8 bruto (95%) vira 97% do mes 7;
+#   3. teto de 100%: a demanda assumida E' o nivel maduro; os 101% dos meses 11-12 sao
+#      ruido da propria definicao (o nivel e' a media dos meses 11-13).
+SIM_CURVA_RAMPA_UNI03 = (
+    0.68, 0.77, 0.84, 0.88, 0.90, 0.92, 0.97, 0.97, 0.99, 1.00, 1.00, 1.00,
+)
+
 # Drivers financeiros (Simulador — celulas J9, N9, N11, R9)
 SIM_MENSALIDADE_BALCAO = 137             # J9 cenario 0 (=IF(N12=0,137,...))
 SIM_TICKET_AGREGADOR = 82                # aba Simulador linha 11 (~R$82/aluno/mes)

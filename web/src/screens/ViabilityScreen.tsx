@@ -36,6 +36,15 @@ import {
 } from '../lib/studios'
 import { avisoDeViabilidade, sementeDaDemanda } from '../lib/viabilidade-demanda'
 import {
+  FORMA_RAMPA_PADRAO,
+  FORMAS_RAMPA,
+  ROTULO_FORMA_RAMPA,
+  ajudaDaRampa,
+  mesFimDaRampa,
+  usaMesesDeRampa,
+  type FormaRampa,
+} from '../lib/viabilidade-rampa'
+import {
   type ChaveComLimite,
   LIMITES_DO_MOTOR,
   foraDaFaixa,
@@ -265,6 +274,9 @@ export default function ViabilityScreen({
   // Rampa de maturação (Simulador E13; padrão 8). Controlável na sidebar: alonga
   // a curva de alunos e o fluxo de caixa (afeta payback), não a margem steady.
   const [rampaMeses, setRampaMeses] = useState(8)
+  // Forma da rampa (DEC-075): curva observada (padrão) ou reta. Os meses acima ficam
+  // guardados mesmo na curva, para voltarem intactos quando o operador escolher a reta.
+  const [formaRampa, setFormaRampa] = useState<FormaRampa>(FORMA_RAMPA_PADRAO)
   // Studios (0..3): cada um atende uma fatia da demanda com ticket PRÓPRIO e soma um
   // custo fixo mensal (valores do motor). O estado dos tickets guarda SEMPRE as três
   // posições: baixar de 3 para 1 e voltar devolve o que o operador já digitou.
@@ -349,6 +361,7 @@ export default function ViabilityScreen({
       juros_equipamentos_am: jurosEquip !== undefined ? jurosEquip / 100 : undefined,
       carencia_aluguel_meses: carencia,
       rampa_meses: rampaMeses,
+      forma_rampa: formaRampa,
       taxa_franquia: paraReais(taxaFranquia, reaisPorUn),
       parcelas_franquia: parcelasFranquia,
       // % a.a. digitado -> FRAÇÃO, mesma conversão de unidade.
@@ -1221,7 +1234,7 @@ export default function ViabilityScreen({
             </div>
           </div>
 
-          {/* ---- Rampa de maturação (meses) ---- */}
+          {/* ---- Rampa de maturação: forma (curva observada x reta) e, na reta, meses ---- */}
           <div
             style={{
               marginTop: 14,
@@ -1231,43 +1244,93 @@ export default function ViabilityScreen({
               borderRadius: 'var(--r-lg)',
             }}
           >
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-              <span style={{ font: '500 11px/1 var(--f-ui)', color: 'var(--tx-label)' }}>
-                Rampa de maturação
-              </span>
-              <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                <button
-                  type="button"
-                  aria-label="Diminuir meses de rampa"
-                  onClick={() => setRampaMeses((m) => Math.max(1, m - 1))}
-                  style={stepper}
-                >
-                  −
-                </button>
-                <span
-                  className="num"
-                  style={{
-                    font: '700 14px/1 var(--f-num)',
-                    color: 'var(--tx-max)',
-                    minWidth: 58,
-                    textAlign: 'center',
-                  }}
-                >
-                  {rampaMeses} {rampaMeses === 1 ? 'mês' : 'meses'}
-                </span>
-                <button
-                  type="button"
-                  aria-label="Aumentar meses de rampa"
-                  onClick={() => setRampaMeses((m) => Math.min(36, m + 1))}
-                  style={stepper}
-                >
-                  +
-                </button>
-              </div>
+            <span
+              style={{
+                display: 'block',
+                font: '500 11px/1 var(--f-ui)',
+                color: 'var(--tx-label)',
+                marginBottom: 8,
+              }}
+            >
+              Rampa de maturação
+            </span>
+            <div
+              role="radiogroup"
+              aria-label="Forma da rampa de maturação"
+              style={{ display: 'flex', gap: 6 }}
+            >
+              {FORMAS_RAMPA.map((id) => {
+                const ativo = formaRampa === id
+                return (
+                  <button
+                    key={id}
+                    type="button"
+                    role="radio"
+                    aria-checked={ativo}
+                    onClick={() => setFormaRampa(id)}
+                    style={{
+                      flex: 1,
+                      padding: '8px 10px',
+                      borderRadius: 'var(--r-md)',
+                      border: `1px solid ${ativo ? 'var(--ac)' : 'var(--line-soft)'}`,
+                      background: ativo ? 'var(--surf-raised)' : 'transparent',
+                      color: ativo ? 'var(--tx-max)' : 'var(--tx-sub)',
+                      font: `${ativo ? 600 : 500} 12px/1 var(--f-ui)`,
+                    }}
+                  >
+                    {ROTULO_FORMA_RAMPA[id]}
+                  </button>
+                )
+              })}
             </div>
+            {usaMesesDeRampa(formaRampa) && (
+              <div
+                style={{
+                  display: 'flex',
+                  justifyContent: 'space-between',
+                  alignItems: 'center',
+                  marginTop: 10,
+                }}
+              >
+                <span style={{ font: '500 11px/1 var(--f-ui)', color: 'var(--tx-label)' }}>
+                  Meses até o platô
+                </span>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                  <button
+                    type="button"
+                    aria-label="Diminuir meses de rampa"
+                    onClick={() => setRampaMeses((m) => Math.max(1, m - 1))}
+                    style={stepper}
+                  >
+                    −
+                  </button>
+                  <span
+                    className="num"
+                    style={{
+                      font: '700 14px/1 var(--f-num)',
+                      color: 'var(--tx-max)',
+                      minWidth: 58,
+                      textAlign: 'center',
+                    }}
+                  >
+                    {rampaMeses} {rampaMeses === 1 ? 'mês' : 'meses'}
+                  </span>
+                  <button
+                    type="button"
+                    aria-label="Aumentar meses de rampa"
+                    onClick={() => setRampaMeses((m) => Math.min(36, m + 1))}
+                    style={stepper}
+                  >
+                    +
+                  </button>
+                </div>
+              </div>
+            )}
             <div style={{ font: '400 10.5px/1.4 var(--f-ui)', color: 'var(--tx-sub)', marginTop: 8 }}>
-              Meses até o platô de alunos (Simulador E13, padrão 8). Alonga a curva de
-              maturação e o fluxo de caixa; recalcule para atualizar o payback.
+              {ajudaDaRampa(
+                formaRampa,
+                premissas?.forma_rampa === 'curva_uni03' ? premissas.curva_rampa : null,
+              )}
             </div>
           </div>
 
@@ -2086,7 +2149,11 @@ export default function ViabilityScreen({
               />
             </div>
             <div style={{ flex: 1, minWidth: 240, display: 'flex' }}>
-              <RampaAlunos serie={serie} maturacaoMeses={premissas?.maturacao_meses ?? null} />
+              <RampaAlunos
+                serie={serie}
+                maturacaoMeses={mesFimDaRampa(premissas)}
+                formaRampa={premissas?.forma_rampa ?? null}
+              />
             </div>
           </div>
 

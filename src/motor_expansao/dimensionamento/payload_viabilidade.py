@@ -30,7 +30,7 @@ from pathlib import Path
 from typing import Annotated, Any
 
 import pandas as pd
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 
 def num_json_safe(v: Any, casas: int = 0) -> float | None:
@@ -116,6 +116,12 @@ class ViabilidadeInputs(BaseModel):
     # Meses de rampa de maturacao (Simulador E13; default do motor = 8). Controlavel
     # pelo operador; afeta a serie e o payback, nao a margem/breakeven de steady-state.
     rampa_meses: int | None = Field(default=None, ge=1, le=36)
+    # FORMA da rampa (DEC-075): "curva_uni03" (curva observada na rede, BLK-UNI-03) ou
+    # "reta" (a rampa historica, com `rampa_meses` e os alunos iniciais do config). None =
+    # SIM_FORMA_RAMPA_PADRAO, a curva. Na curva, `rampa_meses` e' aceito e IGNORADO pelo
+    # motor (a tela guarda o numero para quando o operador voltar a reta) — o payload
+    # devolve `mes_maturidade_rampa`, que e' o fim da rampa que de fato valeu.
+    forma_rampa: str | None = None
 
     # --- Premissas explicitas (FIN-VIAB-01) ---------------------------------
     # Todas OPCIONAIS: None = default do config.py (fonte unica). Estavam escondidas
@@ -145,6 +151,18 @@ class ViabilidadeInputs(BaseModel):
     custo_pre_operacional_mes: float | None = Field(default=None, ge=0)
     valor_residual_mes_60: float | None = Field(default=None, ge=0)
     capex_renovacao: float | None = Field(default=None, ge=0)
+
+    @field_validator("forma_rampa")
+    @classmethod
+    def _forma_rampa_conhecida(cls, v: str | None) -> str | None:
+        from motor_expansao.dimensionamento.config import SIM_FORMAS_RAMPA
+
+        if v is not None and v not in SIM_FORMAS_RAMPA:
+            raise ValueError(
+                f"forma_rampa desconhecida: {v!r}. Use 'curva_uni03' (curva observada) "
+                f"ou 'reta'"
+            )
+        return v
 
     @model_validator(mode="after")
     def _studios_coerentes(self) -> ViabilidadeInputs:
@@ -233,7 +251,10 @@ def premissas_do_body(body: ViabilidadeIn):  # -> simulador.Premissas
     `Premissas.custo_studio_mes` (e nao mais somado em `outros_fixos_mes` aqui): assim a
     planilha .xlsx mostra a linha "Studios" em vez de ratear o valor pelas contas fixas.
     """
-    from motor_expansao.dimensionamento.config import SIM_MENSALIDADE_BALCAO
+    from motor_expansao.dimensionamento.config import (
+        SIM_FORMA_RAMPA_PADRAO,
+        SIM_MENSALIDADE_BALCAO,
+    )
     from motor_expansao.dimensionamento.simulador import Premissas
 
     opcionais: dict[str, Any] = {
@@ -261,6 +282,9 @@ def premissas_do_body(body: ViabilidadeIn):  # -> simulador.Premissas
         ticket_cheio=float(body.ticket or SIM_MENSALIDADE_BALCAO),
         aluguel_mes=float(body.aluguel),
         tickets_studios=tickets_studios_do_body(body),
+        # O default do PRODUTO e' a curva (DEC-075); o do nucleo segue "reta". Por isso a
+        # forma vai SEMPRE explicita daqui, e nunca cai no default do dataclass.
+        forma_rampa=body.forma_rampa or SIM_FORMA_RAMPA_PADRAO,
         **{k: v for k, v in opcionais.items() if v is not None},
     )
 
@@ -468,7 +492,18 @@ def montar_payload_viabilidade(
             "carencia_aluguel_meses": int(premissas.carencia_aluguel_meses),
             "mes_inicio_aluguel": mes_inicio_aluguel,
             "custo_pre_operacional_mes": num_json_safe(premissas.custo_pre_operacional_mes, 2),
+            # `maturacao_meses` e' o PARAMETRO da reta (ecoado mesmo na curva, onde nao
+            # vale). O fim da rampa que de fato valeu e' `mes_maturidade_rampa`: LEIA dele.
             "maturacao_meses": int(premissas.maturacao_meses),
+            # Forma da rampa (DEC-075) e, na curva, as fracoes da demanda nos meses 1..N
+            # (depois, 1,0). Na reta `curva_rampa` vai null: a forma e' a do parametro acima.
+            "forma_rampa": str(premissas.forma_rampa),
+            "mes_maturidade_rampa": int(premissas.mes_maturidade_rampa),
+            "curva_rampa": (
+                [num_json_safe(f, 4) for f in premissas.curva_rampa]
+                if premissas.usa_curva
+                else None
+            ),
             "horizonte_meses": int(premissas.horizonte_meses),
             # Anuidade (Simulador J10/J12): R$ por aluno de BALCAO que completa
             # `anuidade_mes_inicio` meses, cobrada 1x/ano e reconhecida pro-rata.

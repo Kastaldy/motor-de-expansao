@@ -278,6 +278,10 @@ _NOTA_ESTIMATIVA = (
 # folha pelo faturamento MADURO e o valor resultante vale desde o mes 1.
 _MODOS_FOLHA = ("percentual do faturamento maduro", "quadro de pessoal")
 _MODOS_RAMPA = ("demanda total", "apenas balcão")
+# Forma da rampa (DEC-075), na ordem de `SIM_FORMAS_RAMPA`: o texto da celula e' rotulo de
+# usuario; o identificador (`curva_uni03`/`reta`) fica no motor.
+_FORMAS_RAMPA = ("curva observada", "reta")
+_FORMA_RAMPA_RETA_XLSX = _FORMAS_RAMPA[1]
 _SIM_NAO = ("Sim", "Não")
 
 # Fatores da grade de sensibilidade.
@@ -556,15 +560,25 @@ def _bloco_demanda(demanda_total: float, p: Premissas, modo_rampa: str) -> list[
         _e("demanda", "Demanda total (alunos na maturidade)", valor=float(demanda_total),
            unidade="alunos", fonte="Entrada do operador (DEC-009: nunca de lat/lng)",
            fmt=_FMT_ALUNOS),
+        _e("forma_rampa", "Forma da rampa",
+           valor=_FORMAS_RAMPA[0] if p.usa_curva else _FORMA_RAMPA_RETA_XLSX, unidade="lista",
+           fonte="DEC-075 (curva observada, BLK-UNI-03) ou a reta histórica",
+           nota="\"curva observada\": alunos do mês = demanda × fração da tabela \"Curva "
+                "observada da rampa\" (1,0 depois do último mês); alunos iniciais e "
+                "maturação NÃO entram. \"reta\": parte dos alunos iniciais e chega à "
+                "demanda na maturação. No modo \"apenas balcão\" vale sempre a reta."),
         _e("alunos_inicial", "Alunos no mês 1 (início da rampa)", valor=float(p.alunos_inicial),
-           unidade="alunos", fonte="config.py SIM_ALUNOS_INICIAL", fmt=_FMT_ALUNOS),
+           unidade="alunos", fonte="config.py SIM_ALUNOS_INICIAL", fmt=_FMT_ALUNOS,
+           nota="Só vale na forma \"reta\"."),
         _e("alunos_ini_ef", "Alunos iniciais efetivos (piso da rampa)",
            formula='=MIN({alunos_inicial},IF({modo_rampa}="apenas balcão",'
                    "{demanda}*{share},{demanda}))",
            unidade="alunos", fonte="Derivado: a rampa nunca decresce",
            quem=_QUEM_DERIVADO, kind=_DERIV, fmt=_FMT_ALUNOS),
         _e("maturacao", "Maturação da rampa", valor=int(p.maturacao_meses), unidade="meses",
-           fonte="config.py SIM_MATURACAO_MESES", fmt=_FMT_INT),
+           fonte="config.py SIM_MATURACAO_MESES", fmt=_FMT_INT,
+           nota="Só vale na forma \"reta\". Na curva, o fim da rampa é o primeiro mês "
+                "da tabela com 100% (linha \"Mês em que a rampa termina\")."),
         _e("modo_rampa", "Modo da rampa", valor=modo_rampa, unidade="lista",
            fonte="simulador.Premissas.rampa_apenas_balcao",
            nota="No modo \"apenas balcão\" o motor não suporta studios: a planilha "
@@ -606,6 +620,29 @@ def _bloco_demanda(demanda_total: float, p: Premissas, modo_rampa: str) -> list[
            unidade="R$/aluno/mês", fonte="Derivado (base do break-even)",
            quem=_QUEM_DERIVADO, kind=_DERIV, fmt=_FMT_CONTABIL),
     ]
+
+
+def _bloco_curva_rampa(p: Premissas) -> list[dict[str, Any]]:
+    """Fracoes da curva observada (DEC-075), uma linha por mes, e o mes em que ela fecha."""
+    n = len(p.curva_rampa)
+    linhas = [
+        _e(f"curva_m{i}", f"Curva observada — mês {i}", valor=float(f), unidade="% da demanda",
+           fonte="BLK-UNI-03, tabela P1 (alunos, mediana), DEC-075", fmt=_FMT_PCT2)
+        for i, f in enumerate(p.curva_rampa, start=1)
+    ]
+    linhas.append(
+        _e("mes_mat_rampa", "Mês em que a rampa termina",
+           formula=(
+               f'=IF(OR({{forma_rampa}}="{_FORMA_RAMPA_RETA_XLSX}",'
+               '{modo_rampa}="apenas balcão"),'
+               f'MAX(1,{{maturacao}}),COUNTIF({{RANGE:curva_m1:curva_m{n}}},"<1")+1)'
+           ),
+           unidade="mês",
+           fonte="Derivado: maturação na reta; na curva, o primeiro mês com 100%",
+           quem=_QUEM_DERIVADO, kind=_DERIV, fmt=_FMT_INT,
+           nota="Na curva, conta os meses abaixo de 100% (a tabela não decresce)."),
+    )
+    return linhas
 
 
 def _bloco_studios(p: Premissas) -> list[dict[str, Any]]:
@@ -1067,7 +1104,7 @@ def _bloco_horizonte(p: Premissas) -> list[dict[str, Any]]:
            unidade="R$", fonte="config.py SIM_CAPEX_RENOVACAO", fmt=_FMT_CONTABIL,
            nota="Default ZERO de propósito: o corte em 60 meses hoje ignora a renovação."),
         _e("mes_steady", "Mês de referência do regime pleno",
-           formula="=MIN({horizonte},MAX(1,{maturacao},"
+           formula="=MIN({horizonte},MAX(1,{mes_mat_rampa},"
                    "IF({anuidade_valor}>0,{anuidade_mes_inicio},0)))",
            unidade="mês", fonte="Derivado: alunos maduros E anuidade já em cobrança",
            quem=_QUEM_DERIVADO, kind=_DERIV, fmt=_FMT_INT),
@@ -1101,6 +1138,7 @@ def _blocos_premissas(
     modo_rampa = _MODOS_RAMPA[1] if p.rampa_apenas_balcao else _MODOS_RAMPA[0]
     return [
         ("Demanda e ticket", _bloco_demanda(demanda_total, p, modo_rampa)),
+        ("Curva observada da rampa (% da demanda madura)", _bloco_curva_rampa(p)),
         ("Studios (ticket próprio, fração fixa da demanda)", _bloco_studios(p)),
         ("Deduções e impostos", _bloco_impostos(p)),
         ("Custo variável (% da receita líquida)", _bloco_custo_variavel(p)),
@@ -1202,6 +1240,7 @@ def _write_aba_premissas(
 
     # Validacoes de lista nas premissas de texto.
     _validacao_lista(ws, _MODOS_RAMPA, [refs["modo_rampa"]])
+    _validacao_lista(ws, _FORMAS_RAMPA, [refs["forma_rampa"]])
     _validacao_lista(
         ws, tuple(str(i) for i in range(SIM_STUDIOS_MAX + 1)), [refs["n_studios"]]
     )
@@ -1479,7 +1518,17 @@ def _dre_formulas(j: int, meses: list[int], refs: dict[str, str]) -> dict[str, A
 
     t = c("t")
     frac = f"MIN({t}/{P['maturacao']},1)"
-    rampa_total = f"{P['alunos_ini_ef']}+({P['demanda']}-{P['alunos_ini_ef']})*{frac}"
+    reta_total = f"{P['alunos_ini_ef']}+({P['demanda']}-{P['alunos_ini_ef']})*{frac}"
+    # Curva observada (DEC-075): fracao do mes t na tabela das Premissas, 1 depois dela.
+    # CHOOSE com o indice ja' travado em 1..n: a recalculadora pode avaliar o ramo mesmo
+    # quando o IF de fora o descarta (pre-abertura, t = 0).
+    n_curva = sum(1 for k in P if re.fullmatch(r"curva_m\d+", k))
+    fracs = ",".join(P[f"curva_m{i}"] for i in range(1, n_curva + 1))
+    frac_curva = f"IF({t}>{n_curva},1,CHOOSE(MAX(1,MIN({t},{n_curva})),{fracs}))"
+    rampa_total = (
+        f"IF({P['forma_rampa']}=\"{_FORMA_RAMPA_RETA_XLSX}\",{reta_total},"
+        f"{P['demanda']}*{frac_curva})"
+    )
     rampa_bal = f"{P['alunos_ini_ef']}+({P['demanda']}*{P['share']}-{P['alunos_ini_ef']})*{frac}"
 
     f: dict[str, Any] = {
@@ -2306,10 +2355,12 @@ def _pares_afericao(
          rrefs["teto_excecao"], brl),
         ("EBITDA do mês 1 (negativo por construção)", m1.get("ebitda_mensal", 0.0),
          rrefs["ebitda_m1"], brl),
-        ("EBITDA do mês 4 (meio da rampa)", serie.get(4, {}).get("ebitda_mensal", 0.0),
-         dre_mes("ebitda", 4), brl),
-        ("EBITDA do mês 8 (fim da rampa)", serie.get(8, {}).get("ebitda_mensal", 0.0),
-         dre_mes("ebitda", 8), brl),
+        # "meio/fim da rampa" so' e' verdade na reta de 8 meses; na curva (DEC-075) a
+        # rampa fecha no mes 10 e o rotulo diria uma coisa falsa.
+        ("EBITDA do mês 4 (meio da rampa)" if not p.usa_curva else "EBITDA do mês 4 (rampa)",
+         serie.get(4, {}).get("ebitda_mensal", 0.0), dre_mes("ebitda", 4), brl),
+        ("EBITDA do mês 8 (fim da rampa)" if not p.usa_curva else "EBITDA do mês 8 (rampa)",
+         serie.get(8, {}).get("ebitda_mensal", 0.0), dre_mes("ebitda", 8), brl),
         # Franquia PARCELADA: o motor nao expoe a parcela isolada na serie (e nada aqui
         # pode re-derivar formula financeira fora do simulador), entao a afericao usa o
         # investimento TOTAL de cada mes, que a serie expoe. Isso ja e suficiente: com a
@@ -2524,7 +2575,7 @@ _NOMES_DEFINIDOS = (
     "receita_por_aluno", "personal_mes", "obra", "equip", "taxa_franquia",
     "parcelas_franquia", "franquia_parcela", "pmt",
     "investimento_total", "aporte_inicial", "mes_steady",
-    "maturacao", "horizonte", "meses_pre",
+    "maturacao", "horizonte", "meses_pre", "forma_rampa", "mes_mat_rampa",
     "n_studios", "share_studio", "ticket_studio_1", "ticket_studio_2", "ticket_studio_3",
     "custo_studio", "share_studios", "share_musculacao", "custo_studios", "n_studios_ef",
 )

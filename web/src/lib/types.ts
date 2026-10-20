@@ -579,8 +579,11 @@ export interface ViabilidadeIn {
   margem_alvo?: number
   /** Meses iniciais sem pagar aluguel (beneficio de rampa; melhora payback/FCF). */
   carencia_aluguel_meses?: number
-  /** Meses de rampa de maturacao do balcao (Simulador E13; default do motor = 8). */
+  /** Meses de rampa de maturacao do balcao (Simulador E13; default do motor = 8). So'
+   *  vale na forma `reta`; na curva o motor o aceita e ignora. */
   rampa_meses?: number
+  /** Forma da rampa (DEC-075): `curva_uni03` (padrao, curva observada) ou `reta`. */
+  forma_rampa?: 'curva_uni03' | 'reta'
   /* --- Premissas explícitas (FIN-VIAB-01). Todas OPCIONAIS: vazio = default do
      `dimensionamento/config.py`, a fonte única. Estavam escondidas como literal no
      meio do código; hoje o operador pode sobrescrever. --------------------- */
@@ -786,7 +789,15 @@ export interface PremissasViabilidade {
    *  da serie). `null` quando nenhum mes tem aluguel (aluguel zerado no cenario). */
   mes_inicio_aluguel: number | null
   custo_pre_operacional_mes: number
+  /** Parametro da RETA (ecoado mesmo na curva, onde nao vale). O fim da rampa que de
+   *  fato valeu e' `mes_maturidade_rampa`. */
   maturacao_meses: number
+  /** Forma da rampa usada (DEC-075). Ausente = backend anterior, que era sempre a reta. */
+  forma_rampa?: 'curva_uni03' | 'reta'
+  /** Primeiro mes de operacao com a demanda cheia, na forma usada. */
+  mes_maturidade_rampa?: number
+  /** Na curva: fracao da demanda nos meses 1..N (depois, 1,0). Na reta: null. */
+  curva_rampa?: number[] | null
   horizonte_meses: number
   /* --- Anuidade (Simulador J10/J12) -----------------------------------------
      Linha de receita SEPARADA da mensalidade: R$ `anuidade_valor` UMA VEZ POR ANO

@@ -1,6 +1,7 @@
 import { alunos, brl, pctFrac, rotuloMes } from '../lib/format'
 import type { DreViabilidade, PremissasViabilidade } from '../lib/types'
 import { Glass } from './primitives'
+import { notaDaRampa } from '../lib/viabilidade-rampa'
 
 /* ---------------------------------------------------------------------------
    Notas metodologicas — o "manual" da tela de Viabilidade.
@@ -335,9 +336,7 @@ function montarSecoes(p: PremissasViabilidade, demandaPremissa: number | null): 
         },
         {
           kpi: 'Rampa de maturação',
-          como:
-            `${p.maturacao_meses} meses para a demanda sair do piso inicial e chegar ao ` +
-            'valor assumido. Afeta o caixa e o payback, não a margem de steady-state.',
+          como: notaDaRampa(p),
         },
         {
           kpi: 'Reajuste anual',

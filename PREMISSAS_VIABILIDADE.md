@@ -55,8 +55,10 @@
 | `SIM_ANUIDADE_ELEGIVEL_PCT` | `None` (= **deriva do churn**) | % dos alunos de balcão | derivado, não arbitrado: `(1 − churn)^12` = `0,94^12` = **47,59%** | Felipe (dono do produto) | `config.py` → `Premissas.anuidade_elegivel_efetivo`; payload `premissas.anuidade_elegivel_pct` |
 | `SIM_ANUIDADE_PRO_RATA` | `True` | booleano | decisão de Felipe (2026-07-24): reconhecimento mensal de `99 ÷ 12` a partir do mês 12 | Felipe (dono do produto) | `config.py` → `Premissas.anuidade_por_aluno_balcao_mes`; linha `receita_anuidade` da série |
 | `demanda_total` | — (input obrigatório) | alunos totais | **premissa explícita do operador** (DEC-009 — nunca prevista pela geografia) | Operador | argumento de `simular()`; payload `demanda_premissa` / `demanda_fonte` |
-| `SIM_ALUNOS_INICIAL` | `500` | alunos | `Simulador!E9` | Felipe | `config.py` → `Premissas.alunos_inicial` (piso da rampa) |
-| `SIM_MATURACAO_MESES` | `8` | meses | `Simulador!E13` | Felipe | `config.py` → `Premissas.maturacao_meses`; entra no mês de *steady* junto com `SIM_ANUIDADE_MES_INICIO` — ver §2.1 |
+| `SIM_FORMA_RAMPA_PADRAO` | `"curva_uni03"` | lista (`curva_uni03` \| `reta`) | **DEC-075** (pedido de Vinicius, 2026-10-20) | Comitê + DEC | `config.py`; payload `forma_rampa` (vazio = este padrão), eco em `premissas.forma_rampa`; tela "Rampa de maturação" → **Curva observada / Reta**. O `Premissas` do núcleo segue com `"reta"` por default (adaptadores históricos e golden do FIN-VIAB-01) — ver §2.2 |
+| `SIM_CURVA_RAMPA_UNI03` | `0,68 0,77 0,84 0,88 0,90 0,92 0,97 0,97 0,99 1 1 1` | fração da demanda, meses de operação 1–12 (1,0 depois) | **BLK-UNI-03**, tabela P1 (alunos, mediana), derivada de `SIM_CURVA_UNI03_ALUNOS_P1` (sem o mês 0, máximo acumulado, teto 100%) | Comitê + DEC | `config.py` → `Premissas.curva_rampa`; payload `premissas.curva_rampa` (null na reta); fecha no mês 10 (`premissas.mes_maturidade_rampa`) |
+| `SIM_ALUNOS_INICIAL` | `500` | alunos | `Simulador!E9` | Felipe | `config.py` → `Premissas.alunos_inicial` (piso da rampa). **Só na forma "reta"** |
+| `SIM_MATURACAO_MESES` | `8` | meses | `Simulador!E13` | Felipe | `config.py` → `Premissas.maturacao_meses`. **Só na forma "reta"**; o fim da rampa que entra no mês de *steady* (junto com `SIM_ANUIDADE_MES_INICIO`, §2.1) é `Premissas.mes_maturidade_rampa` (reta: este valor; curva: 10) |
 | `SIM_ALUNOS_BALCAO_MATURIDADE` | `938` | alunos | `Simulador!E10` | **congelado (legado)** | `config.py`; só o caminho `viabilidade()` legado |
 | `SIM_ALUNOS_AGREGADORES_MATURIDADE` | `651` | alunos | `Simulador!E11` | **congelado (legado)** | `config.py`; só o caminho `viabilidade()` legado |
 | `rampa_apenas_balcao` | `False` | booleano | contrato de rampa do FIN-VIAB-01 | Engenharia (compat) | `Premissas`; `True` só nos adaptadores históricos |
@@ -90,6 +92,15 @@ mês diferente do card ao lado no mesmo slide.
 
 **No caso de referência:** elegibilidade **47,59%** → **R$ 3,9263** de anuidade por aluno de
 balcão por mês → **R$ 6.241,94/mês** dentro de um faturamento de R$ 288.257,57 (**2,2%**).
+
+### 2.2 Forma da rampa de alunos (DEC-075, PROPOSTA)
+
+| Forma | Alunos no mês `t` de operação | Usa |
+|---|---|---|
+| **curva observada** (`curva_uni03`, padrão do produto) | `demanda × SIM_CURVA_RAMPA_UNI03[t−1]` até o mês 12; a demanda cheia depois | só a demanda |
+| **reta** (`reta`, a rampa da planilha) | `alunos_iniciais + (demanda − alunos_iniciais) × min(t / maturação, 1)` | `SIM_ALUNOS_INICIAL`, `SIM_MATURACAO_MESES` |
+
+Nas duas o split balcão/agregador/studios é o mesmo (`Premissas.split_alunos`) e o faturamento é alunos × ticket. **Não modelado na curva:** o ticket menor dos primeiros meses (o faturamento observado rampa mais devagar que os alunos: 52% contra 68% no mês 1) e a participação crescente do agregador — o caixa do 1º ano sai otimista em relação ao observado. Efeito no golden (Boulevard Londrina): payback 31 → 25, TIR do sócio 38,98% → 56,30%, menor demanda viável 2.164 → 2.037; margem e EBITDA de steady idênticos. Amarras declaradas na DEC-075: BLK-UNI-05 (rampa nova sem a demanda nova aumenta aprovações) e UNI-14 (curva medida em unidades que abriram com agregador).
 
 ---
 

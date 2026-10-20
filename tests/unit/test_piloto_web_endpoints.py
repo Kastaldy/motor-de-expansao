@@ -546,7 +546,9 @@ def test_payload_serve_folha_fixa_desde_o_mes_1(empty_data: Path) -> None:
     Consequencias visiveis no payload: `dre.folha` == folha de QUALQUER mes do ano 1,
     e o EBITDA do mes 1 fica bem mais negativo do que com a folha escalonada.
     """
-    corpo = _viab()
+    # Na RETA (DEC-075: a curva observada virou o default e comeca em 68% da demanda, o
+    # que tiraria o "mais que dobrando" abaixo — o ponto aqui e' a folha, nao a forma).
+    corpo = _viab(forma_rampa="reta")
     operacao = [linha for linha in corpo["serie_mensal"] if linha["fase"] == "operacao"]
     ano1 = operacao[:12]
     assert [linha["mes"] for linha in ano1] == list(range(1, 13))
