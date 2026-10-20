@@ -583,7 +583,12 @@ export default function ViabilityScreen({
   // v2: metragem, estúdios, tickets ou mix mudaram -> nova sugestão (o servidor reconverte
   // o faturamento previsto em alunos com as premissas novas). Ressemeia a demanda só
   // enquanto o operador não a tocou; tocada, a sugestão nova só atualiza a faixa e o token.
+  // O PONTO exato entra na chave: trocar de endereço DENTRO do mesmo hexágono não remonta a
+  // tela nem dispara o efeito da chegada (que olha o hex), e a sugestão velha ficava recusada
+  // sem ninguém pedir outra.
   const chaveSugestaoV2 = [
+    alvoLat,
+    alvoLng,
     m2,
     nStudios,
     ticketDaConta,

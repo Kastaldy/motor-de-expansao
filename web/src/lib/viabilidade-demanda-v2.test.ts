@@ -130,3 +130,23 @@ describe('avisos', () => {
     expect(a[1]).toBe('Sem agregador: a rampa usada é a reta.')
   })
 })
+
+describe('mesmoPonto arredonda como o servidor (5 casas)', () => {
+  it('dois pontos dos dois lados da fronteira de arredondamento não são o mesmo', async () => {
+    const { mesmoPonto } = await import('./viabilidade-demanda-v2')
+    expect(mesmoPonto(-23.330004, -23.330006)).toBe(false)
+    expect(mesmoPonto(-23.330001, -23.330004)).toBe(true)
+    expect(mesmoPonto(-23.33, -23.3301)).toBe(false)
+    expect(mesmoPonto(null, -23.33)).toBe(false)
+  })
+})
+
+describe('a chave da sugestão v2 inclui o ponto exato', () => {
+  it('trocar de endereço no mesmo hexágono pede sugestão nova', async () => {
+    const { readFileSync } = await import('node:fs')
+    const { fileURLToPath } = await import('node:url')
+    const fonte = readFileSync(fileURLToPath(new URL('../screens/ViabilityScreen.tsx', import.meta.url)), 'utf-8')
+    const i = fonte.indexOf('const chaveSugestaoV2 = [')
+    expect(fonte.slice(i, i + 120)).toMatch(/alvoLat,\s+alvoLng,/)
+  })
+})

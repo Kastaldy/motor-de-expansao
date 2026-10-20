@@ -54,11 +54,14 @@ export interface CenarioV2 {
 }
 
 /** Casas do ponto no token (`CASAS_PONTO_TOKEN` do servidor): 5 casas, ~1,1 m. */
-const TOLERANCIA_PONTO = 1e-5
+const CASAS_PONTO = 5
 
-function mesmoPonto(a: number | null | undefined, b: number | null | undefined): boolean {
+/* Compara ARREDONDANDO como o servidor (5 casas), e não por tolerância: dois pontos a menos
+   de 1e-5 um do outro, cada um de um lado da fronteira de arredondamento, passavam aqui e
+   levavam 422 lá. `toFixed` arredonda o valor binário exato, como o `round` do Python. */
+export function mesmoPonto(a: number | null | undefined, b: number | null | undefined): boolean {
   if (a == null || b == null || !Number.isFinite(a) || !Number.isFinite(b)) return false
-  return Math.abs(a - b) <= TOLERANCIA_PONTO
+  return a.toFixed(CASAS_PONTO) === b.toFixed(CASAS_PONTO)
 }
 
 /**
