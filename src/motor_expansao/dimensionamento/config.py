@@ -113,6 +113,31 @@ SIM_FORMA_RAMPA_PADRAO = SIM_FORMA_RAMPA_RETA
 # Padrao quando a demanda vier da Viabilidade v2. Nenhum chamador do produto o usa hoje:
 # fica declarado para a v2 nascer com a forma que a decisao amarrou a ela.
 SIM_FORMA_RAMPA_PADRAO_DEMANDA_V2 = SIM_FORMA_RAMPA_CURVA_UNI03
+
+# Viabilidade v2 (DEC-075, ampliada em 2026-10-20): demanda madura SUGERIDA por um modelo de
+# praca + estudios, SEM masters (decisao de Felipe, 20/10). Fonte dos dois modos de demanda:
+# "densidade" (o de sempre: a demanda e' a do operador, semeada pela faixa de comparaveis) e
+# "v2" (semeada pelo p50 da v2, editavel). O padrao do NUCLEO e da API segue "densidade": a
+# v2 so' entra quando a TELA a pede, e a tela so' a pede quando o servidor diz que ela esta
+# disponivel (`/api/demanda-v2/estado`).
+SIM_MODELO_DEMANDA_DENSIDADE = "densidade"
+SIM_MODELO_DEMANDA_V2 = "v2"
+SIM_MODELOS_DEMANDA = (SIM_MODELO_DEMANDA_DENSIDADE, SIM_MODELO_DEMANDA_V2)
+SIM_MODELO_DEMANDA_PADRAO = SIM_MODELO_DEMANDA_DENSIDADE
+# CHAVE UNICA de servidor que desliga a v2 (critica C4): env com "0"/"false"/"nao"/"off"
+# -> a v2 fica INDISPONIVEL em toda superficie (estado, sugestao, viabilidade, PDF e
+# planilha), e a tela volta sozinha ao modo densidade. Ausente = ligada SE os coeficientes
+# existirem e forem validos.
+V2_ENV_CHAVE = "MOTOR_VIABILIDADE_V2"
+# Arquivo dos coeficientes, exportado pelo Felipe (ficha_v2). AUSENTE no repo por enquanto:
+# sem ele a v2 fica indisponivel com motivo, nunca erro 500. Schema em `demanda_v2.py`.
+V2_COEFICIENTES_ARQUIVO = "v2_coeficientes.json"
+# A isocrona do modelo: 10 min de carro sem transito (DEC-074). Nunca o raio.
+V2_MINUTOS_ISOCRONA = 10
+# Predicado de "abre SEM agregador" (achado UNI-14, critica A3): a curva da rampa foi medida
+# em unidades que abriram COM agregador, entao no modo v2 com share de balcao >= este valor
+# a rampa e' FORCADA para a reta, com flag. Fracao, nunca percentual.
+V2_SHARE_BALCAO_SEM_AGREGADOR = 0.999
 # Transcricao LITERAL da tabela P1 de data/analysis/uni/uni03/resultado_uni03.md, coluna
 # "alunos (mediana)", meses de vida 0..12, como fracao do nivel maduro (media dos meses de
 # vida 11-13 da propria unidade; 33 unidades de exploracao). NAO e' o que o motor usa:

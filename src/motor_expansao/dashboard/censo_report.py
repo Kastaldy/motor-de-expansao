@@ -1576,6 +1576,10 @@ def _viab_normalizado(viabilidade: Mapping[str, Any]) -> dict[str, Any]:
         "flag_fora_envelope": viabilidade.get("flag_fora_envelope"),
         "flag_zona_morta": viabilidade.get("flag_zona_morta"),
         "motivo_zona_morta": viabilidade.get("motivo_zona_morta"),
+        # Viabilidade v2 (DEC-075 ampliada): so' existe no payload do modo v2. Ausente, o
+        # rodape e' o de sempre, byte a byte.
+        "demanda_v2": viabilidade.get("demanda_v2"),
+        "demanda_fonte": viabilidade.get("demanda_fonte"),
         # Reguas do veredito, servidas pelo proprio payload (`premissas.*`). A pagina de
         # Conclusao precisa saber se `flag_viavel=False` falhou em UM criterio ou nos DOIS,
         # e le os limites daqui em vez de importar `dimensionamento.config` -- e' a mesma
@@ -1593,6 +1597,33 @@ def _viab_normalizado(viabilidade: Mapping[str, Any]) -> dict[str, Any]:
     if "flag_viavel" in viabilidade or viavel is not None:
         dados["flag_viavel"] = viavel
     return dados
+
+
+def _viab_linha_demanda_v2(dados: Mapping[str, Any]) -> str | None:
+    """Linha da origem da demanda no modo v2 (DEC-075 ampliada); `None` no modo densidade.
+
+    Pontuacao ASCII de proposito (fonte core do fpdf2, latin-1): sem travessao, seta,
+    reticencias nem sinal de menos tipografico. Acento portugues e' latin-1 e sai normal.
+    """
+    v2 = dados.get("demanda_v2")
+    if not isinstance(v2, Mapping):
+        return None
+    fat = v2.get("faturamento") or {}
+    if dados.get("demanda_fonte") == "modelo_v2":
+        texto = "Demanda: sugerida pela v2 (faixa provisória)."
+    else:
+        sugerida = v2.get("demanda_sugerida")
+        quanto = f"{_format_number(sugerida, 0)} alunos" if sugerida is not None else "outro valor"
+        texto = f"Demanda: editada pelo operador (a v2 sugeriu {quanto}; faixa provisória)."
+    texto += (
+        f" Faturamento maduro previsto pela v2: p10 {_viab_brl(fat.get('p10'))}, "
+        f"p50 {_viab_brl(fat.get('p50'))}, p90 {_viab_brl(fat.get('p90'))}."
+    )
+    if v2.get("flag_extrapolacao"):
+        texto += " Fora do envelope do treino da v2 (extrapolação)."
+    if v2.get("rampa_reta_forcada_sem_agregador"):
+        texto += " Rampa reta forçada: abertura sem agregador."
+    return texto
 
 
 def _viab_unidade_breakeven(viabilidade: dict[str, Any]) -> str:
@@ -1914,7 +1945,11 @@ def _viabilidade_page(
     # Sem o "READ-ONLY sobre o M1" que fechava esta frase: jargao interno de governanca,
     # que nao diz nada a quem RECEBE o estudo (limpeza de 2026-08-19; o guardrail em si
     # continua valendo — e' regra de codigo, nao de rodape).
-    rodape += " A demanda é uma PREMISSA do operador (não prevista pela geografia)."
+    linha_v2 = _viab_linha_demanda_v2(dados)
+    if linha_v2:
+        rodape += " " + linha_v2
+    else:
+        rodape += " A demanda é uma PREMISSA do operador (não prevista pela geografia)."
 
     pdf.set_text_color(*_CINZA_TEXTO)
     pdf.set_font("Helvetica", "", 9)

@@ -36,6 +36,15 @@ import {
 } from '../lib/studios'
 import { avisoDeViabilidade, sementeDaDemanda } from '../lib/viabilidade-demanda'
 import {
+  avisosV2,
+  camposDeV2,
+  corpoSugestaoV2,
+  motivoV2,
+  sementeDaDemandaV2,
+  sugestaoValePara,
+  v2Disponivel,
+} from '../lib/viabilidade-demanda-v2'
+import {
   FORMAS_RAMPA,
   ROTULO_FORMA_RAMPA,
   ajudaDaRampa,
@@ -59,6 +68,8 @@ import {
   type MoedaDeEntrada,
 } from '../lib/viabilidade-moeda'
 import type {
+  DemandaV2Out,
+  EstadoDemandaV2,
   FaixaAlunos,
   InfoImovel,
   MunicipioPayload,
@@ -272,6 +283,12 @@ export default function ViabilityScreen({
   // A busca da faixa já respondeu (com ou sem p50)? Só depois disso a tela pode
   // afirmar "sem comparáveis" e trocar o número pelo campo de digitação.
   const [faixaBuscada, setFaixaBuscada] = useState(false)
+  // Viabilidade v2 (DEC-075 ampliada): o SERVIDOR diz se ela está disponível; só então a
+  // demanda é semeada pelo p50 dela (editável, mesma `demandaTocada`). Indisponível ou
+  // com erro -> o modo densidade de sempre, com o motivo discreto.
+  const [estadoV2, setEstadoV2] = useState<EstadoDemandaV2 | null>(null)
+  const [sugestaoV2, setSugestaoV2] = useState<DemandaV2Out | null>(null)
+  const [erroV2, setErroV2] = useState<string | null>(null)
   // Rampa de maturação (Simulador E13; padrão 8). Controlável na sidebar: alonga
   // a curva de alunos e o fluxo de caixa (afeta payback), não a margem steady.
   const [rampaMeses, setRampaMeses] = useState(8)
@@ -335,8 +352,43 @@ export default function ViabilityScreen({
   const alvoLat = alvo?.lat
   const alvoLng = alvo?.lng
 
-  function montarPayload(demandaUsar: number): ViabilidadeIn {
+  /** Tickets de studio ativos, em REAIS (a mesma conversão do pedido da viabilidade). */
+  function ticketsStudiosEmReais(): number[] {
+    return ticketsAtivos(ticketsStudios, nStudios).map((t) => paraReais(t, reaisPorUn) ?? t)
+  }
+
+  /** Pede a sugestão da v2 para o cenário atual. Falha -> `null` e o motivo na tela. */
+  async function pedirSugestaoV2(): Promise<DemandaV2Out | null> {
+    if (alvoLat == null || alvoLng == null) return null
+    try {
+      const s = await api.demandaV2(
+        corpoSugestaoV2({
+          lat: alvoLat,
+          lng: alvoLng,
+          m2,
+          ticket: ticketDaConta,
+          shareBalcao: mixEditavel ? fracaoDoPercentual(pctBalcao) : undefined,
+          ticketsStudios: ticketsStudiosEmReais(),
+        }),
+      )
+      setSugestaoV2(s)
+      setErroV2(null)
+      return s
+    } catch (e) {
+      setSugestaoV2(null)
+      setErroV2(e instanceof ApiError ? e.message : 'A Viabilidade v2 não respondeu.')
+      return null
+    }
+  }
+
+  function montarPayload(
+    demandaUsar: number,
+    sug: DemandaV2Out | null = sugestaoV2,
+  ): ViabilidadeIn {
     return {
+      // Modo v2 só com sugestão válida para a metragem e os estúdios de agora; sem ela,
+      // o pedido sai como sempre (modo densidade) e nada muda.
+      ...camposDeV2(sug, m2, nStudios),
       lat: alvoLat!,
       lng: alvoLng!,
       m2,
@@ -408,7 +460,10 @@ export default function ViabilityScreen({
     return null
   }
 
-  async function calcular(demandaUsar: number | null = demanda) {
+  async function calcular(
+    demandaUsar: number | null = demanda,
+    sug: DemandaV2Out | null = sugestaoV2,
+  ) {
     // AS TRES guardas, e nenhuma substitui a outra: demanda ausente e ticket nao
     // convertivel sao deste PR; ticket de studio <= 0 e' da DEC-068. Escolher um lado
     // aqui compila limpo e reabre o buraco que o outro tapava.
@@ -421,7 +476,7 @@ export default function ViabilityScreen({
     setCalculando(true)
     setErro(null)
     try {
-      const r = await api.viabilidade(montarPayload(demandaUsar))
+      const r = await api.viabilidade(montarPayload(demandaUsar, sug))
       setRes(r)
     } catch (e) {
       setErro(e instanceof ApiError ? e.message : 'Falha ao calcular a viabilidade.')
@@ -472,10 +527,24 @@ export default function ViabilityScreen({
       } catch {
         /* sem faixa: mantém a demanda atual */
       }
+      // v2: o servidor decide. Disponível -> a semente é o p50 da v2 (a faixa de
+      // comparáveis segue buscada, como referência e para o modo densidade).
+      let sug: DemandaV2Out | null = null
+      let estado = estadoV2
+      if (estado == null) {
+        estado = await api.demandaV2Estado().catch(() => null)
+        if (!vivo) return
+        setEstadoV2(estado)
+      }
+      if (v2Disponivel(estado)) {
+        sug = await pedirSugestaoV2()
+        if (!vivo) return
+        seed = sementeDaDemandaV2(sug) ?? seed
+      }
       if (vivo) {
         setFaixaBuscada(true)
         setDemanda(seed)
-        void calcular(seed)
+        void calcular(seed, sug)
       }
     })()
     return () => {
@@ -493,7 +562,10 @@ export default function ViabilityScreen({
         const f = await api.faixaAlunos(m2)
         if (!vivo) return
         setFaixa(f)
-        if (!demandaTocada && f.p50 != null) setDemanda(Math.round(f.p50))
+        // Com a v2 disponível quem ressemeia é o efeito da v2 (abaixo), não a faixa.
+        if (!demandaTocada && f.p50 != null && !v2Disponivel(estadoV2)) {
+          setDemanda(Math.round(f.p50))
+        }
       } catch {
         /* ignora */
       }
@@ -504,6 +576,46 @@ export default function ViabilityScreen({
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [m2])
+
+  // v2: metragem, estúdios, tickets ou mix mudaram -> nova sugestão (o servidor reconverte
+  // o faturamento previsto em alunos com as premissas novas). Ressemeia a demanda só
+  // enquanto o operador não a tocou; tocada, a sugestão nova só atualiza a faixa e o token.
+  const chaveSugestaoV2 = [
+    m2,
+    nStudios,
+    ticketDaConta,
+    pctBalcao,
+    ticketsStudiosEmReais().join(','),
+  ].join('|')
+  const primeiraChaveV2 = useRef<string | null>(null)
+  useEffect(() => {
+    if (!ponto || !v2Disponivel(estadoV2)) return
+    // A sugestão da chegada ao ponto é do efeito acima; aqui só as MUDANÇAS.
+    if (primeiraChaveV2.current == null) {
+      primeiraChaveV2.current = chaveSugestaoV2
+      return
+    }
+    if (primeiraChaveV2.current === chaveSugestaoV2) return
+    primeiraChaveV2.current = chaveSugestaoV2
+    let vivo = true
+    const t = setTimeout(async () => {
+      const s = await pedirSugestaoV2()
+      if (!vivo) return
+      // Sugestão falhou (ex.: serviço de rotas fora): volta à semente da densidade, como
+      // a tela faria sem a v2 — nunca fica com a semente de uma metragem antiga.
+      const semente = sementeDaDemandaV2(s) ?? (faixa?.p50 != null ? Math.round(faixa.p50) : null)
+      if (!demandaTocada && semente != null) setDemanda(semente)
+    }, 350)
+    return () => {
+      vivo = false
+      clearTimeout(t)
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [chaveSugestaoV2, estadoV2])
+
+  /** Sugestão da v2 que vale para o cenário de agora (`null` = modo densidade). */
+  const v2Vigente = sugestaoValePara(sugestaoV2, m2, nStudios) ? sugestaoV2 : null
+  const motivoDaV2 = motivoV2(estadoV2, erroV2)
 
   async function gerarPdf() {
     if (!ponto) return
@@ -1064,17 +1176,19 @@ export default function ViabilityScreen({
                   color: demandaTocada || semComparaveis ? 'var(--warn-text)' : 'var(--ac-text)',
                 }}
               >
-                {semComparaveis
-                  ? 'premissa do operador'
-                  : demandaTocada
-                    ? 'ajuste manual'
-                    : 'padrão · p50'}
+                {demandaTocada
+                  ? 'ajuste manual'
+                  : v2Vigente
+                    ? 'sugestão · v2'
+                    : semComparaveis
+                      ? 'premissa do operador'
+                      : 'padrão · p50'}
               </span>
             </div>
             <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
               {/* O numero grande saia sem unidade nenhuma ("800"). `alunos()` ja'
                   aplica o separador de milhar; faltava a palavra. */}
-              {semComparaveis ? (
+              {semComparaveis && !v2Vigente ? (
                 // Sem faixa de comparáveis não existe padrão: o operador DIGITA a
                 // premissa. Vazio volta a `null` e a tela deixa de calcular.
                 <span style={{ flex: 1, minWidth: 0 }}>
@@ -1187,8 +1301,45 @@ export default function ViabilityScreen({
                 marginTop: 8,
               }}
             >
-              {faixa && faixa.p50 != null ? (
+              {v2Vigente ? (
                 <>
+                  Sugestão da Viabilidade v2 (praça em 10 min de carro, metragem e estúdios),
+                  editável. Faixa provisória: {alunos(v2Vigente.alunos.p10)}–
+                  {alunos(v2Vigente.alunos.p90)} alunos (p10–p90).
+                  {avisosV2(v2Vigente).map((a) => (
+                    <span key={a} style={{ display: 'block', color: 'var(--warn-text)' }}>
+                      {a}
+                    </span>
+                  ))}
+                  {demandaTocada && (
+                    <>
+                      {' '}
+                      <button
+                        type="button"
+                        onClick={() => {
+                          const s = sementeDaDemandaV2(v2Vigente)
+                          setDemandaTocada(false)
+                          if (s != null) setDemanda(s)
+                        }}
+                        style={{
+                          color: 'var(--ac-text)',
+                          font: '600 10.5px/1.4 var(--f-ui)',
+                          padding: 0,
+                          textDecoration: 'underline',
+                        }}
+                      >
+                        voltar à sugestão da v2
+                      </button>
+                    </>
+                  )}
+                </>
+              ) : faixa && faixa.p50 != null ? (
+                <>
+                  {motivoDaV2 && (
+                    <span style={{ display: 'block', color: 'var(--tx-muted)' }}>
+                      {motivoDaV2}
+                    </span>
+                  )}
                   Padrão = p50 da curva tamanho→densidade para {num(m2)} m² (
                   {alunos(faixa.p10)}–{alunos(faixa.p90)}, {faixa.n_comparaveis} comparáveis).
                   {demandaTocada && (

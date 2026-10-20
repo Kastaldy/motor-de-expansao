@@ -90,6 +90,9 @@ REGRAS_DE_ACESSO: tuple[tuple[str, frozenset[str]], ...] = (
     ("/api/relatorio/pontual", frozenset({"mapa", "viabilidade"})),
     ("/api/viabilidade", frozenset({"mapa", "viabilidade"})),
     ("/api/faixa-alunos", frozenset({"viabilidade"})),
+    # Viabilidade v2 (DEC-075 ampliada): estado e sugestao da demanda. Mesmo gate da faixa
+    # de alunos, que e' a outra fonte da semente da demanda na mesma tela.
+    ("/api/demanda-v2", frozenset({"viabilidade"})),
     ("/api/simulador/", frozenset({"viabilidade"})),
     ("/api/uf/", frozenset({"mapa", "oportunidades"})),
     ("/api/municipio/", frozenset({"mapa", "oportunidades"})),
@@ -158,6 +161,9 @@ SUPERFICIE_DA_ROTA: tuple[tuple[str, frozenset[str]], ...] = (
     ("/api/relatorio/comparacao", frozenset({"mapa"})),
     ("/api/viabilidade", frozenset({"viabilidade"})),
     ("/api/faixa-alunos", frozenset({"viabilidade"})),
+    # `/api/demanda-v2` (DEC-075 ampliada) NAO entra aqui: ela e' rota de MALHA, com
+    # checagem propria em `ROTAS_QUE_EXIGEM_MALHA_MUNICIPAL` (e o gate do usuario e' o da
+    # viabilidade em `REGRAS_DE_ACESSO`).
     ("/api/simulador/", frozenset({"viabilidade"})),
     ("/api/uf/", frozenset({"mapa"})),
     ("/api/municipio/", frozenset({"mapa"})),
@@ -196,6 +202,8 @@ ROTAS_QUE_EXIGEM_MALHA_MUNICIPAL: frozenset[str] = frozenset(
         "/api/resolver-ponto",
         "/api/relatorio/municipal",
         "/api/relatorio/pontual",
+        # A v2 le a malha de setores na isocrona (DEC-075 ampliada): sem malha, 404 honesto.
+        "/api/demanda-v2",
     }
 )
 
@@ -614,6 +622,7 @@ REGRAS_POR_CAPACIDADE: tuple[tuple[str, tuple[str, ...] | None, str], ...] = (
     ("/api/relatorio/pontual", None, "relatorio.pontual"),
     ("/api/viabilidade", None, "viabilidade.calcular"),
     ("/api/faixa-alunos", None, "viabilidade.simular"),
+    ("/api/demanda-v2", None, "viabilidade.simular"),
     ("/api/simulador/", None, "viabilidade.simular"),
     ("/api/uf/", None, "territorio.explorar"),
     ("/api/municipio/", None, "territorio.explorar"),

@@ -102,12 +102,14 @@ from motor_expansao.dashboard import renda_hex as _renda_hex  # noqa: E402
 # Contrato financeiro do ponto — REGUA UNICA (FIN-VIAB-01). Estas funcoes moravam aqui
 # dentro; foram para o `src/` para que a API GeoEspacial as use SEM importar esta app.
 from motor_expansao.dimensionamento import payload_viabilidade as _viab  # noqa: E402
+from motor_expansao.dimensionamento import viabilidade_v2 as _viab_v2  # noqa: E402
 from motor_expansao.dimensionamento.payload_viabilidade import (  # noqa: E402
     ViabilidadeIn,
     base_calibracao,
     montar_payload_para_pdf,
     montar_payload_viabilidade,
 )
+from motor_expansao.dimensionamento.viabilidade_v2 import DemandaV2In  # noqa: E402
 
 # --- Superficie que este modulo continua expondo, por ATRIBUICAO ------------------
 # Os nomes abaixo nao sao usados AQUI DENTRO — sao lidos de fora, por `app.<nome>`
@@ -7864,6 +7866,118 @@ def faixa_alunos(m2: float, formato: str | None = None) -> dict[str, Any]:
     }
 
 
+# ============================================================================
+# Viabilidade v2 (DEC-075 ampliada): demanda madura SUGERIDA por modelo de praca +
+# estudios, sem masters. A tela consulta o ESTADO no servidor (chave unica
+# `MOTOR_VIABILIDADE_V2` + coeficientes + servico de rotas) e so' entao pede a
+# SUGESTAO. Indisponivel -> 503 com o motivo, e a tela segue no modo densidade.
+# NUNCA cai no raio: as entradas sao da isocrona de 10 min de carro.
+# ============================================================================
+
+
+@app.get("/api/demanda-v2/estado")
+def demanda_v2_estado() -> dict[str, Any]:
+    """A v2 está disponível neste servidor? Nunca levanta (a tela decide o modo por aqui)."""
+    from motor_expansao.dashboard.alcance_ponto import rotas_configuradas
+
+    return _viab_v2.estado_v2(rotas_configuradas())
+
+
+def _entradas_c10_do_ponto(lat: float, lng: float) -> tuple[Any, dict[str, Any]]:
+    """Isócrona de 10 min de carro + setores alcançados -> entradas c10. 503/400 em português.
+
+    O polígono é SEMPRE calculado aqui (nunca aceito do cliente) e a malha é a união das
+    partições que ele alcança (`_resolver_e_carregar(geometria=...)`, DEC-065/071).
+    """
+    from motor_expansao.api.coord import CoordenadaInvalidaError, validar_brasil
+    from motor_expansao.api.errors import APIError
+    from motor_expansao.api.service import Settings, _resolver_e_carregar
+    from motor_expansao.dashboard.alcance_ponto import (
+        AlcanceInvalido,
+        RotasIndisponiveis,
+        isocrona_carro,
+    )
+    from motor_expansao.dimensionamento.config import V2_MINUTOS_ISOCRONA
+    from motor_expansao.dimensionamento.entradas_c10 import (
+        EntradasC10Indisponiveis,
+        agregar_entradas_c10,
+    )
+
+    try:
+        validar_brasil(lat, lng)
+    except CoordenadaInvalidaError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    try:
+        iso = isocrona_carro(lat, lng, V2_MINUTOS_ISOCRONA)
+    except RotasIndisponiveis as exc:
+        _LOG_ALCANCE.warning("v2: rotas indisponiveis: %s", exc.detalhe, exc_info=True)
+        raise HTTPException(503, "A Viabilidade v2 está indisponível: " + str(exc)) from exc
+    except AlcanceInvalido as exc:
+        raise HTTPException(
+            400,
+            "A Viabilidade v2 não pôde montar a área de 10 min de carro deste ponto. "
+            "Informe a demanda.",
+        ) from exc
+    cfg = Settings(
+        censo_geo_dir=CENSO_GEO_DIR,
+        ibge_dir=IBGE_DIR,
+        ultra_dir=ULTRA_DIR,
+        staging_dir=STAGING_DIR,
+        perfil=PERFIL,
+    )
+    try:
+        _uf, _cod, setores = _resolver_e_carregar(lat, lng, cfg, geometria=iso.geometria)
+        entradas = agregar_entradas_c10(setores, iso.geometria, lat, lng)
+    except APIError as exc:
+        raise HTTPException(
+            503, "A Viabilidade v2 está indisponível: malha de setores ausente para este ponto."
+        ) from exc
+    except EntradasC10Indisponiveis as exc:
+        raise HTTPException(503, f"A Viabilidade v2 está indisponível: {exc}") from exc
+    recorte = {
+        "minutos": int(V2_MINUTOS_ISOCRONA),
+        "area_km2": _num(iso.area_km2, 2),
+        "n_setores": int(entradas.n_setores),
+        "renda_fonte": entradas.renda_fonte,
+        "parametros": iso.parametros,
+    }
+    return entradas, recorte
+
+
+@app.post("/api/demanda-v2")
+def demanda_v2(body: DemandaV2In) -> dict[str, Any]:
+    """Sugestão da Viabilidade v2 para (ponto, metragem, estúdios, premissas).
+
+    Devolve a faixa de faturamento maduro (p10/p50/p90, PROVISÓRIA), os alunos pela
+    conversão das premissas da própria requisição, as entradas da isócrona, as flags, a
+    versão/sha dos coeficientes e o TOKEN de procedência que a Viabilidade, o PDF e a
+    planilha recebem de volta. 503 com o motivo quando a v2 está indisponível (chave
+    desligada, sem coeficientes, sem rotas, sem malha). Síncrona de propósito: roda no
+    threadpool e passa pelo semáforo das análises de área. READ-ONLY sobre o M1.
+    """
+    try:
+        coef = _viab_v2.carregar_coeficientes()
+    except _viab_v2.V2Indisponivel as exc:
+        raise HTTPException(503, str(exc)) from exc
+    from motor_expansao.dashboard.alcance_ponto import rotas_configuradas
+
+    if not rotas_configuradas():
+        raise HTTPException(503, _viab_v2.MOTIVO_SEM_ROTAS)
+    with _vaga_de_analise_de_area():
+        entradas, recorte = _entradas_c10_do_ponto(float(body.lat), float(body.lng))
+    try:
+        return _viab_v2.montar_sugestao_v2(
+            body,
+            pop_c10=entradas.pop_c10,
+            dom_c10=entradas.dom_c10,
+            renda_pc_c10=entradas.renda_pc_c10,
+            coef=coef,
+            extras={"recorte": recorte},
+        )
+    except _viab_v2.V2Indisponivel as exc:
+        raise HTTPException(503, str(exc)) from exc
+
+
 
 
 
@@ -7932,11 +8046,16 @@ def _payload_viabilidade(body: ViabilidadeIn) -> dict[str, Any]:
     `flag_zona_morta` sai `None` em 100% das chamadas, apagando em silencio o aviso da
     tela e o gate E4 da Conclusao (DEC-042).
     """
-    return montar_payload_viabilidade(
-        body,
-        staging_dir=STAGING_DIR,
-        setores_df=_setores_para_catchment(body.lat, body.lng),
-    )
+    try:
+        return montar_payload_viabilidade(
+            body,
+            staging_dir=STAGING_DIR,
+            setores_df=_setores_para_catchment(body.lat, body.lng),
+        )
+    except _viab_v2.V2Indisponivel as exc:  # so' no modo v2 (DEC-075 ampliada)
+        raise HTTPException(503, str(exc)) from exc
+    except _viab_v2.TokenV2Invalido as exc:
+        raise HTTPException(422, str(exc)) from exc
 
 
 @app.post("/api/viabilidade")
@@ -12110,6 +12229,18 @@ def _gerar_simulador_xlsx_response(
     gerar = _gerador_simulador_xlsx()
     premissas = _premissas_do_body(body)
     inv = _investimento(body)
+    # Modo v2 (DEC-075 ampliada): o bloco "Origem da demanda" da planilha, conferido pelo
+    # MESMO token da Viabilidade. Modo densidade: nada, e a planilha e' a de antes.
+    bloco_v2: dict[str, Any] | None = None
+    if _viab.modo_v2(body):
+        try:
+            bloco_v2 = _viab_v2.conferir_demanda_v2(
+                body, premissas, rampa_reta_forcada=_viab.forma_rampa_do_body(body)[1]
+            ).bloco
+        except _viab_v2.V2Indisponivel as exc:
+            raise HTTPException(503, str(exc)) from exc
+        except _viab_v2.TokenV2Invalido as exc:
+            raise HTTPException(422, str(exc)) from exc
     # Bloco C+ (decisao 0.7): se o perfil da instancia declara o aviso de viabilidade
     # com "xlsx" em `onde`, o `texto_curto` entra como linha de nota com fundo de
     # alerta na aba Premissas. No Brasil (`avisos` = {}) isto e `None` e a planilha
@@ -12123,6 +12254,8 @@ def _gerar_simulador_xlsx_response(
         solicitante=solicitante,
         report_id=report_id,
     )
+    if bloco_v2 is not None:
+        extras.update(_kwargs_aceitos(gerar, demanda_v2=bloco_v2))
 
     conteudo = gerar(float(body.demanda), premissas, inv, **extras)
 

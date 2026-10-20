@@ -555,7 +555,84 @@ def _e(
     }
 
 
-def _bloco_demanda(demanda_total: float, p: Premissas, modo_rampa: str) -> list[dict[str, Any]]:
+def _fonte_da_demanda(demanda_v2: Mapping[str, Any] | None) -> str:
+    """Rotulo da fonte da demanda. Sem v2: o de sempre, byte a byte."""
+    if not demanda_v2:
+        return "Entrada do operador (DEC-009: nunca de lat/lng)"
+    if demanda_v2.get("demanda_fonte") == "modelo_v2":
+        return "Sugerida pela Viabilidade v2 (faixa provisória; DEC-075)"
+    sugerida = demanda_v2.get("demanda_sugerida")
+    extra = (
+        f"; a v2 sugeriu {_num_br(float(sugerida), 0)}"
+        if sugerida is not None and _finito(sugerida)
+        else ""
+    )
+    return f"Editada pelo operador{extra} (DEC-075)"
+
+
+def _bloco_origem_v2(v2: Mapping[str, Any]) -> list[dict[str, Any]]:
+    """Origem da demanda na v2: faturamento previsto (valor) -> alunos (FORMULA viva).
+
+    FIXO e R_ALUNO sao REFERENCIAS as premissas desta propria aba ("Receita fixa de
+    personal" e "Receita por aluno total"), entao mudar o ticket, o mix ou os studios aqui
+    dentro recalcula os alunos que cada faturamento sustenta — a mesma conversao do motor
+    (`demanda_v2.converter_em_alunos`). Os coeficientes do modelo NAO entram na planilha.
+    """
+    fat = v2.get("faturamento") or {}
+    ent = v2.get("entradas") or {}
+    coef = v2.get("coeficientes") or {}
+    flags = []
+    if v2.get("faixa_provisoria"):
+        flags.append("faixa provisória")
+    if v2.get("flag_extrapolacao"):
+        flags.append("fora do envelope do treino (" + ", ".join(v2.get("fora_do_envelope") or []) + ")")
+    if v2.get("rampa_reta_forcada_sem_agregador"):
+        flags.append("rampa reta forçada (sem agregador)")
+    quem = "Ninguem (modelo v2)"
+    linhas = [
+        _e(f"v2_fat_{k}", f"Faturamento maduro previsto ({k})", valor=float(fat.get(k) or 0.0),
+           unidade="R$/mês",
+           fonte=f"Viabilidade v2 {coef.get('versao', '')} (sha {str(coef.get('sha256', ''))[:12]})",
+           quem=quem, kind=_DERIV, fmt=_FMT_CONTABIL)
+        for k in ("p10", "p50", "p90")
+    ]
+    linhas += [
+        _e("v2_fixo", "FIXO: faturamento com 0 alunos", formula="={personal_mes}",
+           unidade="R$/mês", fonte="Derivado (receita fixa de personal)",
+           quem=_QUEM_DERIVADO, kind=_DERIV, fmt=_FMT_CONTABIL),
+        _e("v2_r_aluno", "R_ALUNO: faturamento de cada aluno a mais", formula="={receita_por_aluno}",
+           unidade="R$/aluno/mês", fonte="Derivado (receita por aluno total, com anuidade)",
+           quem=_QUEM_DERIVADO, kind=_DERIV, fmt=_FMT_CONTABIL),
+    ]
+    linhas += [
+        _e(f"v2_alunos_{k}", f"Alunos que o faturamento {k} sustenta",
+           formula=f"=MAX(({{v2_fat_{k}}}-{{v2_fixo}})/{{v2_r_aluno}},1)",
+           unidade="alunos", fonte="Derivado: (faturamento - FIXO) / R_ALUNO, mínimo 1",
+           quem=_QUEM_DERIVADO, kind=_DERIV, fmt=_FMT_ALUNOS)
+        for k in ("p10", "p50", "p90")
+    ]
+    linhas += [
+        _e("v2_pop_c10", "População na área de 10 min de carro", valor=float(ent.get("pop_c10") or 0.0),
+           unidade="pessoas", fonte="Censo 2022 na isócrona (entrada do modelo)",
+           quem=quem, kind=_DERIV, fmt=_FMT_INT),
+        _e("v2_renda_dom_c10", "Renda domiciliar na área de 10 min de carro",
+           valor=float(ent.get("renda_dom_c10") or 0.0), unidade="R$/domicílio/mês",
+           fonte="Per capita calibrada x pessoas / domicílios (sem uplift)",
+           quem=quem, kind=_DERIV, fmt=_FMT_CONTABIL),
+        _e("v2_flags", "Avisos da v2", valor="; ".join(flags) or "nenhum", unidade="texto",
+           fonte="Viabilidade v2", quem=quem, kind=_DERIV,
+           nota="A demanda acima é a sugestão do modelo (editável). A faixa p10-p90 é "
+                "provisória: cobriu 72% no teste fora da amostra, medida com renda per capita."),
+    ]
+    return linhas
+
+
+def _bloco_demanda(
+    demanda_total: float,
+    p: Premissas,
+    modo_rampa: str,
+    demanda_v2: Mapping[str, Any] | None = None,
+) -> list[dict[str, Any]]:
     # A premissa "Forma da rampa" (e as notas de "so' vale na reta") existem SO' na planilha
     # da curva (DEC-075). Na reta a planilha e' a de antes da DEC, byte a byte: a curva so'
     # entra quando foi pedida, e nada dela aparece no arquivo de quem nao a pediu.
@@ -570,7 +647,7 @@ def _bloco_demanda(demanda_total: float, p: Premissas, modo_rampa: str) -> list[
     ] if curva else []
     return [
         _e("demanda", "Demanda total (alunos na maturidade)", valor=float(demanda_total),
-           unidade="alunos", fonte="Entrada do operador (DEC-009: nunca de lat/lng)",
+           unidade="alunos", fonte=_fonte_da_demanda(demanda_v2),
            fmt=_FMT_ALUNOS),
         *forma,
         _e("alunos_inicial", "Alunos no mês 1 (início da rampa)", valor=float(p.alunos_inicial),
@@ -1149,6 +1226,7 @@ def _blocos_premissas(
     juros_equipamentos_am: float,
     taxa_franquia: float,
     parcelas_franquia: int,
+    demanda_v2: Mapping[str, Any] | None = None,
 ) -> list[tuple[str, list[dict[str, Any]]]]:
     """Especificacao declarativa da aba Premissas, bloco a bloco.
 
@@ -1162,8 +1240,14 @@ def _blocos_premissas(
         if p.usa_curva
         else []
     )
+    origem_v2: list[tuple[str, list[dict[str, Any]]]] = (
+        [("Origem da demanda (Viabilidade v2, faixa provisória)", _bloco_origem_v2(demanda_v2))]
+        if demanda_v2
+        else []
+    )
     return [
-        ("Demanda e ticket", _bloco_demanda(demanda_total, p, modo_rampa)),
+        ("Demanda e ticket", _bloco_demanda(demanda_total, p, modo_rampa, demanda_v2)),
+        *origem_v2,
         *curva,
         ("Studios (ticket próprio, fração fixa da demanda)", _bloco_studios(p)),
         ("Deduções e impostos", _bloco_impostos(p)),
@@ -2857,6 +2941,7 @@ def gerar_simulador_xlsx(
     aviso_nota: str | None = None,
     solicitante: str | None = None,
     report_id: str | None = None,
+    demanda_v2: Mapping[str, Any] | None = None,
 ) -> bytes:
     """Gera o simulador financeiro completo em .xlsx com FORMULAS VIVAS.
 
@@ -2899,6 +2984,11 @@ def gerar_simulador_xlsx(
         `relatorio.gerado`. Carimbados em DUAS camadas -- ver o bloco "Rastreio do
         arquivo" acima. Os dois `None` (default) = nada e carimbado e o arquivo sai
         identico ao anterior, byte a byte.
+    demanda_v2:
+        Bloco `demanda_v2` CONFERIDO (`viabilidade_v2.conferir_demanda_v2`), so' no modo v2
+        (DEC-075 ampliada): acrescenta o bloco "Origem da demanda" (faturamento previsto
+        p10/p50/p90 como valor; FIXO, R_ALUNO e os alunos como FORMULA) e troca a fonte da
+        linha "Demanda". `None` (default) = a planilha de antes, byte a byte.
 
     Returns
     -------
@@ -2950,7 +3040,7 @@ def gerar_simulador_xlsx(
         demanda_total, premissas, obra=obra, parcelas_obra=parcelas_obra,
         equipamentos=equipamentos, prazo_equipamentos=prazo_equipamentos,
         juros_equipamentos_am=juros_equipamentos_am, taxa_franquia=taxa_franquia,
-        parcelas_franquia=parcelas_franquia,
+        parcelas_franquia=parcelas_franquia, demanda_v2=demanda_v2,
     )
     refs = _write_aba_premissas(wb, blocos, titulo_ponto, aviso_nota=aviso_nota)
     _write_aba_folha(wb, premissas, refs, letra_st_dre)

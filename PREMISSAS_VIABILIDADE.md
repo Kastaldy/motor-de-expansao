@@ -56,7 +56,12 @@
 | `SIM_ANUIDADE_PRO_RATA` | `True` | booleano | decisão de Felipe (2026-07-24): reconhecimento mensal de `99 ÷ 12` a partir do mês 12 | Felipe (dono do produto) | `config.py` → `Premissas.anuidade_por_aluno_balcao_mes`; linha `receita_anuidade` da série |
 | `demanda_total` | — (input obrigatório) | alunos totais | **premissa explícita do operador** (DEC-009 — nunca prevista pela geografia) | Operador | argumento de `simular()`; payload `demanda_premissa` / `demanda_fonte` |
 | `SIM_FORMA_RAMPA_PADRAO` | `"reta"` | lista (`curva_uni03` \| `reta`) | **DEC-075**: com a demanda do operador o padrão é a reta; a curva só é padrão com a demanda da v2 (Vinicius, 2026-10-20) | Comitê + DEC | `config.py` → `payload_viabilidade.forma_rampa_padrao()`; payload `forma_rampa` (vazio = este padrão), eco em `premissas.forma_rampa`; tela "Rampa de maturação" → **Curva observada / Reta**, sem padrão próprio (lê a forma servida). ÚNICA fonte do padrão — ver §2.2 |
-| `SIM_FORMA_RAMPA_PADRAO_DEMANDA_V2` | `"curva_uni03"` | lista | **DEC-075**: "A Viabilidade v2 entra junto com o ramp-up" | Comitê + DEC | `config.py` → `forma_rampa_padrao(demanda_v2=True)`; nenhum chamador do produto hoje (a v2 ainda não entrou) |
+| `SIM_FORMA_RAMPA_PADRAO_DEMANDA_V2` | `"curva_uni03"` | lista | **DEC-075**: "A Viabilidade v2 entra junto com o ramp-up" | Comitê + DEC | `config.py` → `forma_rampa_padrao(demanda_v2=True)`; vale quando o corpo vem com `modelo_demanda = "v2"` (v2 desligada até o JSON de coeficientes) |
+| `SIM_MODELO_DEMANDA_PADRAO` | `"densidade"` | lista (`densidade` \| `v2`) | **DEC-075** (Parte 2) | Comitê + DEC | payload `modelo_demanda`; ausente = densidade (o de sempre). A tela só pede a v2 quando `GET /api/demanda-v2/estado` diz disponível |
+| `V2_ENV_CHAVE` | `MOTOR_VIABILIDADE_V2` | env (`0`/`false`/`nao`/`off` desliga) | **DEC-075** (Parte 2), crítica C4 | Dono do deploy | chave ÚNICA de servidor da v2: desligada, some do estado, da sugestão, da viabilidade, do PDF e da planilha |
+| `V2_COEFICIENTES_ARQUIVO` | `v2_coeficientes.json` (ao lado de `dimensionamento/`) | JSON (schema em `demanda_v2.py`) | Felipe (ficha_v2, variante sem masters) | Felipe + DEC | **ausente hoje** -> v2 indisponível com motivo |
+| `V2_MINUTOS_ISOCRONA` | `10` | minutos de carro | **DEC-075** (Parte 2) / DEC-074 | Comitê + DEC | entradas `pop_c10`, `dom_c10`, `renda_pc_c10` na isócrona do Valhalla; nunca no raio |
+| `V2_SHARE_BALCAO_SEM_AGREGADOR` | `0,999` | fração | **DEC-075** (Parte 2), achado UNI-14 | Comitê + DEC | no modo v2, `share_balcao >= 0,999` força a rampa reta (flag `rampa_reta_forcada_sem_agregador`) |
 | `SIM_CURVA_RAMPA_UNI03` | `0,68 0,77 0,84 0,88 0,90 0,92 0,97 0,97 0,99 1 1 1` | fração da demanda, meses de operação 1–12 (1,0 depois) | **BLK-UNI-03**, tabela P1 (alunos, mediana), derivada de `SIM_CURVA_UNI03_ALUNOS_P1` (sem o mês 0, máximo acumulado, teto 100%) | Comitê + DEC | `config.py` → `Premissas.curva_rampa`; payload `premissas.curva_rampa` (null na reta); fecha no mês 10 (`premissas.mes_maturidade_rampa`) |
 | `SIM_ALUNOS_INICIAL` | `500` | alunos | `Simulador!E9` | Felipe | `config.py` → `Premissas.alunos_inicial` (piso da rampa). **Só na forma "reta"** |
 | `SIM_MATURACAO_MESES` | `8` | meses | `Simulador!E13` | Felipe | `config.py` → `Premissas.maturacao_meses`. **Só na forma "reta"**; o fim da rampa que entra no mês de *steady* (junto com `SIM_ANUIDADE_MES_INICIO`, §2.1) é `Premissas.mes_maturidade_rampa` (reta: este valor; curva: 10) |
@@ -95,6 +100,8 @@ mês diferente do card ao lado no mesmo slide.
 balcão por mês → **R$ 6.241,94/mês** dentro de um faturamento de R$ 288.257,57 (**2,2%**).
 
 ### 2.2 Forma da rampa de alunos (DEC-075, PROPOSTA)
+
+> **Viabilidade v2 (DEC-075, Parte 2):** com `modelo_demanda = "v2"`, a demanda é SEMEADA pelo p50 da v2 (`exp(X·β + cal_2026)`, convertido em alunos por `FIXO = faturamento_maduro(0)` e `R_ALUNO = faturamento_maduro(1) − FIXO`, com as premissas da própria requisição) e continua editável; a rampa padrão é a curva (a reta quando `share_balcao >= 0,999`). Desligada até o JSON de coeficientes.
 
 Padrão: **reta** com a demanda do operador (o produto de hoje, byte a byte o de antes da DEC); a curva observada é escolha explícita e só vira padrão junto com a demanda da Viabilidade v2.
 

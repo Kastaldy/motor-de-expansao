@@ -589,6 +589,11 @@ export interface ViabilidadeIn {
   /** Forma da rampa (DEC-075): `curva_uni03` (curva observada) ou `reta`. Ausente = o
    *  padrao do SERVIDOR (hoje a reta: a curva so' e' padrao com a demanda da v2). */
   forma_rampa?: 'curva_uni03' | 'reta'
+  /** Fonte da demanda (DEC-075 ampliada). Ausente/`densidade` = o de sempre. `v2` exige
+   *  `demanda_v2` (o token devolvido por `/api/demanda-v2`); a `demanda` continua a do
+   *  corpo — o servidor só confere se ela é a sugerida ou foi editada. */
+  modelo_demanda?: 'densidade' | 'v2'
+  demanda_v2?: DemandaV2Ref
   /* --- Premissas explícitas (FIN-VIAB-01). Todas OPCIONAIS: vazio = default do
      `dimensionamento/config.py`, a fonte única. Estavam escondidas como literal no
      meio do código; hoje o operador pode sobrescrever. --------------------- */
@@ -611,6 +616,68 @@ export interface ViabilidadeIn {
   custo_pre_operacional_mes?: number
   valor_residual_mes_60?: number
   capex_renovacao?: number
+}
+
+/** Estado da Viabilidade v2 NO SERVIDOR (`GET /api/demanda-v2/estado`): é ele que decide
+ *  se a tela semeia a demanda pela v2. Indisponível traz o motivo, em português. */
+export interface EstadoDemandaV2 {
+  disponivel: boolean
+  motivo: string | null
+  versao: string | null
+  sha256: string | null
+  faixa_provisoria?: boolean
+}
+
+/** Corpo de `POST /api/demanda-v2`: ponto, metragem e as premissas da conversão. */
+export interface DemandaV2In {
+  lat: number
+  lng: number
+  m2: number
+  ticket?: number
+  share_balcao?: number
+  n_studios?: number
+  tickets_studios?: number[]
+}
+
+/** O que volta à Viabilidade/PDF/planilha: o token e as entradas da isócrona. */
+export interface DemandaV2Ref {
+  token: string
+  pop_c10: number
+  dom_c10: number
+  renda_pc_c10: number
+}
+
+/** Faixa p10/p50/p90 (faturamento em R$/mês ou alunos). */
+export interface FaixaV2 {
+  p10: number | null
+  p50: number | null
+  p90: number | null
+}
+
+/** Sugestão da Viabilidade v2 (resposta de `/api/demanda-v2`; o mesmo bloco volta,
+ *  conferido, em `ViabilidadeOut.demanda_v2`). */
+export interface DemandaV2Out {
+  faturamento: FaixaV2
+  alunos: FaixaV2
+  conversao: { fixo: number | null; r_aluno: number | null }
+  entradas: {
+    m2: number | null
+    studios: number
+    pop_c10: number | null
+    dom_c10: number | null
+    renda_pc_c10: number | null
+    renda_dom_c10: number | null
+  }
+  flag_extrapolacao: boolean
+  fora_do_envelope: string[]
+  faixa_provisoria: boolean
+  coeficientes: { versao: string; sha256: string; data: string }
+  token: string
+  /** Só na resposta conferida pela Viabilidade. */
+  demanda_sugerida?: number | null
+  demanda_usada?: number | null
+  demanda_fonte?: string
+  rampa_reta_forcada_sem_agregador?: boolean
 }
 
 /** Faixa de alunos por metragem (curva tamanho->densidade), independe da demanda. */
@@ -1043,8 +1110,11 @@ export interface ViabilidadeOut {
   mes_caixa_operacional_positivo: number | null
   acumulado_mes_final: number | null
   demanda_premissa: number
-  /** Sempre "premissa_explicita" (DEC-009): a demanda nunca vem de lat/lng. */
+  /** "premissa_explicita" (DEC-009) no modo densidade; no modo v2, "modelo_v2" (a
+   *  sugestão da v2) ou "premissa_editada" (o operador mudou a sugestão). */
   demanda_fonte: string
+  /** Só no modo v2 (DEC-075 ampliada): a sugestão conferida pelo servidor. */
+  demanda_v2?: DemandaV2Out
   /** Alunos assumidos por canal. `studios` traz um valor por studio, na ordem dos
    *  tickets (vazio ou ausente sem studio). */
   split: { balcao: number | null; agregadores: number | null; studios?: (number | null)[] }

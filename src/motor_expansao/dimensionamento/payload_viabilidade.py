@@ -32,6 +32,8 @@ from typing import Annotated, Any
 import pandas as pd
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
+from motor_expansao.dimensionamento.viabilidade_v2 import DemandaV2Ref
+
 
 def num_json_safe(v: Any, casas: int = 0) -> float | None:
     """Converte para float JSON-safe (NaN/inf viram None).
@@ -185,6 +187,58 @@ class ViabilidadeIn(ViabilidadeInputs):
 
     lat: float = Field(ge=-90, le=90)
     lng: float = Field(ge=-180, le=180)
+    # Viabilidade v2 (DEC-075 ampliada). So' no PILOTO (a API publica monta o corpo de
+    # `ViabilidadeInputs`, que nao tem estes campos). None/"densidade" = o de sempre, e o
+    # payload sai byte a byte igual. "v2" exige `demanda_v2` (o token de procedencia e as
+    # entradas da isocrona devolvidos pela rota de sugestao): a `demanda` continua a do
+    # corpo (D10a) — o servidor so' CONFERE se ela e' a sugerida ou foi editada.
+    modelo_demanda: str | None = None
+    demanda_v2: DemandaV2Ref | None = None
+
+    @field_validator("modelo_demanda")
+    @classmethod
+    def _modelo_demanda_conhecido(cls, v: str | None) -> str | None:
+        from motor_expansao.dimensionamento.config import SIM_MODELOS_DEMANDA
+
+        if v is not None and v not in SIM_MODELOS_DEMANDA:
+            raise ValueError(f"modelo_demanda desconhecido: {v!r}. Use 'densidade' ou 'v2'")
+        return v
+
+    @model_validator(mode="after")
+    def _v2_com_referencia(self) -> ViabilidadeIn:
+        if self.modelo_demanda == "v2" and self.demanda_v2 is None:
+            raise ValueError(
+                "modelo_demanda='v2' exige demanda_v2 (o token da sugestão); peça a "
+                "sugestão em /api/demanda-v2"
+            )
+        if self.modelo_demanda != "v2" and self.demanda_v2 is not None:
+            raise ValueError("demanda_v2 só vale com modelo_demanda='v2'")
+        return self
+
+
+def modo_v2(body: Any) -> bool:
+    """O corpo pede a demanda da v2? (`getattr`: a API publica nao tem o campo.)"""
+    return getattr(body, "modelo_demanda", None) == "v2"
+
+
+def forma_rampa_do_body(body: Any) -> tuple[str, bool]:
+    """(forma da rampa, reta FORCADA por "sem agregador").
+
+    Densidade: a escolha do operador, senao o padrao da demanda do operador (a reta) — o
+    de antes. V2: a escolha, senao a curva (`forma_rampa_padrao(demanda_v2=True)`); e, se
+    o share de balcao efetivo e' de "sem agregador" (UNI-14: a curva foi medida em
+    unidades COM agregador), a RETA, mesmo com a curva escolhida, com flag.
+    """
+    from motor_expansao.dimensionamento.config import SIM_FORMA_RAMPA_RETA, SIM_SHARE_BALCAO
+    from motor_expansao.dimensionamento.demanda_v2 import sem_agregador
+
+    v2 = modo_v2(body)
+    forma = body.forma_rampa or forma_rampa_padrao(demanda_v2=v2)
+    if v2 and forma != SIM_FORMA_RAMPA_RETA:
+        share = SIM_SHARE_BALCAO if body.share_balcao is None else float(body.share_balcao)
+        if sem_agregador(share):
+            return SIM_FORMA_RAMPA_RETA, True
+    return forma, False
 
 
 def investimento_do_body(body: ViabilidadeIn) -> dict[str, Any]:
@@ -298,7 +352,8 @@ def premissas_do_body(body: ViabilidadeIn):  # -> simulador.Premissas
         # O default do PRODUTO sai de `forma_rampa_padrao()` (DEC-075), nunca do default do
         # dataclass: e' ele que a constante do config controla. A demanda deste corpo e' a
         # do operador, entao o padrao e' o da demanda do operador.
-        forma_rampa=body.forma_rampa or forma_rampa_padrao(),
+        # Na v2 a curva e' o padrao (e a reta e' forcada sem agregador): ver a funcao.
+        forma_rampa=forma_rampa_do_body(body)[0],
         **{k: v for k, v in opcionais.items() if v is not None},
     )
 
@@ -409,6 +464,16 @@ def montar_payload_viabilidade(
 
     premissas = premissas_do_body(body)
     inv = investimento_do_body(body)
+    # Modo v2: confere o token ANTES de rodar o motor (falha cedo: `V2Indisponivel` sem
+    # coeficientes, `TokenV2Invalido` com sugestao velha). No modo densidade nada disto
+    # roda e o payload e' o de antes.
+    conferida = None
+    if modo_v2(body):
+        from motor_expansao.dimensionamento.viabilidade_v2 import conferir_demanda_v2
+
+        conferida = conferir_demanda_v2(
+            body, premissas, rampa_reta_forcada=forma_rampa_do_body(body)[1]
+        )
     base, fonte_base = base_calibracao(staging_dir)
 
     res = analisar_viabilidade_ponto(
@@ -450,7 +515,7 @@ def montar_payload_viabilidade(
         (linha for linha in serie if linha["mes"] == int(r.mes_referencia_steady)), {}
     )
 
-    return {
+    payload = {
         "versao": VIABILIDADE_PAYLOAD_VERSAO,
         "premissas": {
             "ticket_cheio": num_json_safe(premissas.ticket_cheio, 2),
@@ -719,6 +784,13 @@ def montar_payload_viabilidade(
             serie, num_json_safe(r.payback_meses, 1), float(body.aluguel), float(r.investimento_total)
         ),
     }
+    if conferida is not None:
+        # ADITIVO e so' no modo v2: `faixa_alunos` e `aluguel_teto.teto_p10` seguem sendo os
+        # da DENSIDADE (comparaveis), com o significado de sempre — a faixa da v2 mora aqui
+        # dentro. Por isso `viabilidade_payload_v1` nao muda de versao.
+        payload["demanda_v2"] = conferida.bloco
+        payload["demanda_fonte"] = conferida.demanda_fonte
+    return payload
 
 
 def _melhoria_payback(
