@@ -1,0 +1,60 @@
+# ============================================================================
+# Valhalla self-host — servico de rotas do motor (isocrona de carro, DEC-074)
+#
+# Stack SEPARADA, no molde do openmaptiles-infra/: roda na MESMA rede do motor
+# (app_net EXTERNA) para o `web` alcancar o servico pelo nome do container.
+#
+# SEM porta publicada no host e SEM rota no Caddy: diferente do tileserver, quem
+# chama o Valhalla e' so' o SERVIDOR do piloto (`MOTOR_ROTAS_URL`), nunca o
+# navegador. Expor a porta poria na internet um servico sem autenticacao nenhuma.
+#
+# Os tiles sao gerados FORA da VPS (scripts/build-brazil.sh) e chegam prontos em
+# ./custom_files. O container so' SERVE: `use_tiles_ignore_pbf=True` +
+# `force_rebuild=False` impedem que ele decida rebuildar o Brasil no boot, dentro
+# da caixa de producao (ver README, "Por que o build e' fora").
+#
+# Os nomes das envs abaixo sao os da imagem `valhalla-scripted` NA VERSAO PINADA;
+# trocar a versao exige reconferir (a imagem mudou de layout entre versoes).
+# ============================================================================
+name: valhalla-rotas
+
+services:
+  valhalla:
+    # Pin por TAG E DIGEST, como o tileserver: um `:latest` que mudasse o layout de
+    # /custom_files ou o nome das envs quebraria o servico sem aviso. A tag fica
+    # junto so' para leitura humana; quem manda e' o digest.
+    image: ghcr.io/valhalla/valhalla-scripted:3.9.0@sha256:89daaf61547167893cf58c03defd43c6eba0071dc965988c16a629260f8ac683
+    container_name: motor_expansao_valhalla   # segue o padrao motor_expansao_*; o healthcheck resolve por ESTE nome
+    environment:
+      use_tiles_ignore_pbf: "True"   # serve o valhalla_tiles.tar pronto; nao procura .pbf
+      force_rebuild: "False"         # nunca rebuilda no boot (o build e' fora da VPS)
+      build_elevation: "False"
+      build_transit: "False"
+      serve_tiles: "True"
+      server_threads: "2"            # cabe no teto de CPU abaixo; a rota do piloto ja' tem semaforo proprio
+    volumes:
+      # valhalla_tiles.tar + valhalla.json + VERSAO_TILES, publicados pelo
+      # build-brazil.sh. NAO e' `:ro`: o script de entrada da imagem reescreve o
+      # valhalla.json no boot quando faltar alguma chave.
+      - ./custom_files:/custom_files
+    expose:
+      - "8002"                       # SO' interno; o `web` chama http://motor_expansao_valhalla:8002
+    networks:
+      - app_net
+    # Teto de memoria MEDIDO, nao chutado: o compose ABORTA sem ele. O numero sai
+    # de `docker stats` com isocronas reais (README, "Verificacao") e vai no .env
+    # desta stack. A KVM4 ja' tem tetos declarados acima dos 16 GB fisicos
+    # (docs/infra_producao.md) — um servico novo sem teto e' o que derrubaria o motor.
+    mem_limit: ${VALHALLA_MEM_LIMIT:?defina o teto de memoria MEDIDO do Valhalla no .env (valhalla-infra/README.md, Verificacao)}
+    cpus: 1.0
+    security_opt:
+      - no-new-privileges:true       # mesmo hardening dos servicos do motor
+    restart: unless-stopped
+
+# Rede EXTERNA — a mesma criada pelo docker-compose.prod.yml do motor.
+# `external` faz o `up` FALHAR se a rede nao existir, em vez de criar uma rede
+# propria isolada do `web` (servico verde e inalcancavel).
+networks:
+  app_net:
+    external: true
+    name: app_app_net
