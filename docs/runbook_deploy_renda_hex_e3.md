@@ -8,7 +8,7 @@
 
 | Artefato | Caminho na VPS | Como chega |
 |---|---|---|
-| Malha do hexágono | `/opt/motor-expansao/data/staging/censo2022_hex_da_malha.parquet` | **scp** do enxerto (abaixo). Ganha `renda_domiciliar_2022_malha`, `renda_per_capita_domiciliar_2022_malha` e 2 pesos de auditoria; as 17 colunas existentes saem bit a bit. |
+| Malha do hexágono | `/opt/motor-expansao/data/staging/censo2022_hex_da_malha.parquet` | **scp** da malha regenerada (abaixo). Ganha `renda_domiciliar_2022_malha`, `renda_per_capita_domiciliar_2022_malha` e 2 pesos de auditoria; as 17 colunas existentes saem bit a bit. |
 | Enriquecido (derivado) | `/opt/motor-expansao/data/outputs/hexagonos_dashboard_enriquecido/` | **remontado NA VPS** pelo `run_regen_mercado.sh` (DEC-059), do staging da própria VPS + a malha nova. |
 
 **O enriquecido local NÃO sobe.** Ele foi montado do `hexagonos_mercado_mapeado.parquet` local, de
@@ -17,31 +17,26 @@ vivo voltaria a concorrência do piloto à foto de setembro, sem erro nenhum. O 
 do staging (`calcular_colunas_mercado` e `fase1_bi_exports` chamam `sobrepor_renda_da_malha`), então
 basta trocar a malha e remontar lá.
 
-## Artefatos candidatos (estação do Felipe)
+## Artefato a subir (estação do Felipe)
 
 Pasta (`$E3` nos passos): `C:\Users\Felipe\AppData\Local\Temp\claude\C--dev-motor-de-expansao\411836a7-8cdf-4529-a5f5-8144d8073500\scratchpad\e3\`
 
 | Arquivo | md5 | O que é |
 |---|---|---|
-| `antes\censo2022_hex_da_malha.parquet` | `5d344e3c93857a4a0b6388614b8ae74c` | **base** do enxerto: a malha de 2026-08-31 (a mesma do checkout principal). |
-| `malhas\malha_enxerto_e3.parquet` | `851edc8097df74d073cbe9a573dc21f2` | enxerto: base + colunas E3 da regeneração completa. |
-| `entrega\malha_enxerto_e3_isolado.parquet` | `cae3384e11ff56c207536814a8738fcb` | o mesmo, com as colunas E3 **anuladas** nos 10 hexágonos de deriva do CE (abaixo). |
-| `malhas\malha_regen_completa.parquet` | `16ee68113f53b58bbf67397a8195d69e` | regeneração completa (fonte das colunas E3). **Não subir** sem decisão: muda o score de 33 hexágonos. |
-| `entrega\gerar_enxerto_e3.py` | — | script que gera os dois enxertos (reproduz o `851edc80…` bit a bit; relatórios em `entrega\*.json`). |
+| `antes\censo2022_hex_da_malha.parquet` | `5d344e3c93857a4a0b6388614b8ae74c` | a malha VIVA da VPS (2026-08-31), conferida em 2026-10-21. |
+| `malhas\malha_regen_geo_vps.parquet` | `07af732b5d9d50d61461fbf018bcbcf1` | **o que sobe**: regeneração COMPLETA da malha sobre a malha de setores da VPS. |
 
-**Nenhum enxerto isola a E3 por inteiro da partição reescrita do CE** (`uf=CE/cod_municipio=2313955`,
-reescrita em 2026-09-02, depois da malha de 31/08; a versão antiga não existe mais em disco):
+**Escolha do dono (2026-10-21): regeneração completa (opção c).** Ela foi feita sobre os MESMOS
+insumos da VPS, conferidos por md5 em 2026-10-21: as 5.571 partições de `setores_censitarios_2022_geo`,
+os dois uplifts e a `pop_total_setor_2022` do `hexagonos_mercado_mapeado` (hash da coluna). Resultado
+contra a malha viva: os mesmos 1.293.425 hexágonos, todas as colunas existentes idênticas valor a valor
+(score, renda e população inclusive; só `data_agregacao_censo_hex` muda) e as 4 colunas novas da E3
+(as duas rendas com valor em 1.194.976 hexágonos). **Nenhum score muda.**
 
-- no `malha_enxerto_e3`, as colunas E3 de **10 hexágonos** (`878002531ffffff`, `878002c80ffffff`,
-  `878002c9affffff`, `878002c9bffffff`, `878002c9cffffff`, `878002cb1ffffff`, `878002cb2ffffff`,
-  `878015248ffffff`, `87801524cffffff`, `878015265ffffff`) vêm do dado NOVO do CE, enquanto
-  `pop_malha`, `renda_malha` e o score da mesma linha seguem o dado ANTIGO;
-- no `malha_enxerto_e3_isolado`, esses 10 ficam sem as colunas E3 e a renda exibida neles cai na
-  fórmula municipal de antes (como antes da E3);
-- nos dois, os **23 hexágonos** que só existem na regeneração ficam de fora (não estão na malha vigente).
-
-**Qual dos dois subir é decisão do dono.** Nos passos, `ENXERTO` é o escolhido e `MD5_ENXERTO`, o md5
-dele na tabela.
+**Não usar a malha de setores do checkout principal da estação.** Nela, a partição
+`uf=CE/cod_municipio=2313955` foi regravada em 2026-09-02 (md5 `d554f82b…`) e difere da VPS
+(`2b2bb4f3…`, de 2026-08-28, a que gerou a malha viva). Regenerar sobre ela mudava o score de 33
+hexágonos e criava 23 novos — era essa a origem das opções (a)/(b)/(c) anteriores, hoje sem objeto.
 
 ## Pré-condições (todas obrigatórias; qualquer uma falhando = abortar)
 
@@ -50,19 +45,19 @@ dele na tabela.
    código cai na fórmula municipal por linha). Ordem: código primeiro, dado depois.
 2. **Janela fora do cron de domingo** (DEC-059). De segunda a sexta, longe da terça/quinta dos
    monitores, e sem regen rodando: `pgrep -af run_regen_mercado` vazio.
-3. **A malha viva da VPS é a base do enxerto.** O enxerto é a malha LOCAL + colunas; se a da VPS for
-   outra, o scp troca `score_malha`/`renda_malha` (e o score do hexágono) sem nada acusar.
+3. **A malha viva e a malha de setores da VPS são as mesmas da regeneração.** Se alguma mudou, o scp
+   trocaria `score_malha`/`renda_malha` (e o score do hexágono) sem nada acusar.
 
    ```bash
    md5sum /opt/motor-expansao/data/staging/censo2022_hex_da_malha.parquet
    # tem de ser 5d344e3c93857a4a0b6388614b8ae74c
+   md5sum /opt/motor-expansao/data/outputs/setores_censitarios_2022_geo/uf=CE/cod_municipio=2313955/part-000.parquet
+   # tem de ser 2b2bb4f3f921441fef7b7769b1f9c255
    ```
 
-   Divergiu: **abortar**. Trazer a malha viva para a estação e rodar
-   `python entrega\gerar_enxerto_e3.py <malha_viva.parquet> malhas\malha_regen_completa.parquet <saida.parquet> [--isolar]`;
-   o JSON lista os hexágonos em que a base viva diverge da regeneração. Só seguir com o enxerto gerado
-   SOBRE a malha viva, com a lista de divergentes conferida (esperado: os 10 do CE) e o md5 novo
-   no lugar de `MD5_ENXERTO`.
+   Divergiu: **abortar** e regenerar a malha de novo sobre a malha de setores da VPS
+   (`python -m motor_expansao.pipelines.agregar_censo_hex_da_malha --output <saida.parquet>`, rodando
+   numa pasta com `data/` igual à da VPS), conferir contra a malha viva e usar o md5 novo.
 
 ## Passos
 
@@ -76,9 +71,9 @@ TS=$(date +%Y%m%d-%H%M%S) && echo "CARIMBO DO DEPLOY E3: $TS" &&
 ```
 
 ```powershell
-# 1) (estacao) enviar o enxerto ESCOLHIDO para nome TEMPORARIO -- nunca por cima do vivo
+# 1) (estacao) enviar a malha regenerada para nome TEMPORARIO -- nunca por cima do vivo
 $E3 = "C:\Users\Felipe\AppData\Local\Temp\claude\C--dev-motor-de-expansao\411836a7-8cdf-4529-a5f5-8144d8073500\scratchpad\e3"
-$ENXERTO = "$E3\malhas\malha_enxerto_e3.parquet"   # ou "$E3\entrega\malha_enxerto_e3_isolado.parquet"
+$ENXERTO = "$E3\malhas\malha_regen_geo_vps.parquet"
 (Get-FileHash -Algorithm MD5 $ENXERTO).Hash        # tem de bater com a tabela
 scp -i "$env:USERPROFILE\.ssh\id_ultra" $ENXERTO `
     root@2.25.137.241:/opt/motor-expansao/data/staging/censo2022_hex_da_malha.parquet.novo
@@ -87,7 +82,7 @@ scp -i "$env:USERPROFILE\.ssh\id_ultra" $ENXERTO `
 ```bash
 # 2) (VPS) conferir o que chegou: md5 E as colunas novas no schema
 D=/opt/motor-expansao/data
-MD5_ENXERTO=851edc8097df74d073cbe9a573dc21f2   # ou cae3384e11ff56c207536814a8738fcb (isolado)
+MD5_ENXERTO=07af732b5d9d50d61461fbf018bcbcf1
 echo "$MD5_ENXERTO  $D/staging/censo2022_hex_da_malha.parquet.novo" | md5sum -c - &&
   cd /opt/motor-expansao/app &&
   docker compose -f docker-compose.prod.yml exec -T api python -c "
