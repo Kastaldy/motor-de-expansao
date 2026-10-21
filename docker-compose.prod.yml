@@ -300,7 +300,8 @@ services:
       MOTOR_DOSSIES_DIR: "/app/data/oportunidades/dossies"
       # DEC-027 — trilha de acesso do piloto (quem fez o que): JSONL diario com
       # usuario (Remote-User do Authelia), IP real (X-Forwarded-For), rota+query,
-      # status e latencia; retencao de 90 dias podada pelo proprio backend.
+      # status e latencia; SEM PRAZO de retencao desde a emenda 2 da DEC-027
+      # (20/10/2026) -- so' poda se MOTOR_ACESSO_RETENCAO_DIAS for definida aqui.
       # Mora FORA do MOTOR_DATA_DIR pelo mesmo motivo do cadastro (DEC-023):
       # nenhum artefato do M1 sob mount de escrita. Sem o volume, o app sobe
       # igual e a trilha degrada em silencio (1 aviso no stderr).

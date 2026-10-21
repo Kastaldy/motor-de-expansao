@@ -140,8 +140,12 @@ def test_rollup_e_write_once_o_historico_sobrevive_a_poda(tmp_path: Path) -> Non
     assert dias["2026-08-18"]["acoes"] == 1  # ...e o histórico fica de pé
 
 
-def test_arquivo_do_rollup_escapa_da_poda_da_trilha(tmp_path: Path) -> None:
-    """O nome `uso-diario.json` NÃO casa com o padrão `acesso-*.jsonl` da poda."""
+def test_arquivo_do_rollup_escapa_da_poda_da_trilha(tmp_path: Path, monkeypatch) -> None:
+    """O nome `uso-diario.json` NÃO casa com o padrão `acesso-*.jsonl` da poda.
+
+    A poda só existe com retenção configurada (sem prazo por padrão desde a emenda 2
+    da DEC-027): liga-se aqui para o teste continuar provando que ela poupa o rollup."""
+    monkeypatch.setenv("MOTOR_ACESSO_RETENCAO_DIAS", "90")
     _gravar(tmp_path, AGORA - timedelta(days=1))
     aa.consolidar_rollup(tmp_path, agora_utc=AGORA)
     assert aa.caminho_rollup(tmp_path).exists()

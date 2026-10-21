@@ -31,6 +31,7 @@ def _reset_estado_do_gravador():
     """O gravador tem estado de processo (gatilho da poda + aviso unico de falha)."""
     acesso_log._ultimo_dia_podado = None
     acesso_log._avisou_falha = False
+    acesso_log._avisou_retencao_invalida = False
     yield
 
 
@@ -134,7 +135,11 @@ def test_registrar_escreve_jsonl_do_dia(tmp_path: Path) -> None:
     assert registro["quando"][:10] in {antes.isoformat(), depois.isoformat()}
 
 
-def test_poda_remove_apenas_antigos_com_o_padrao_proprio(tmp_path: Path) -> None:
+def test_poda_remove_apenas_antigos_com_o_padrao_proprio(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    # Poda LIGADA explicitamente: sem a env a trilha e' sem prazo (emenda 2 da DEC-027).
+    monkeypatch.setenv("MOTOR_ACESSO_RETENCAO_DIAS", "90")
     hoje = datetime.now(UTC).date()
     antigo = tmp_path / "acesso-2020-01-01.jsonl"
     recente = tmp_path / f"acesso-{(hoje - timedelta(days=1)).isoformat()}.jsonl"
@@ -145,7 +150,7 @@ def test_poda_remove_apenas_antigos_com_o_padrao_proprio(tmp_path: Path) -> None
 
     acesso_log.registrar({"rota": "/", "status": 200}, base=tmp_path)
 
-    assert not antigo.exists(), "alem da retencao (90d) e' podado"
+    assert not antigo.exists(), "alem da retencao configurada (90d) e' podado"
     assert recente.exists()
     assert alheio.exists()
     assert invalido.exists()
@@ -154,8 +159,8 @@ def test_poda_remove_apenas_antigos_com_o_padrao_proprio(tmp_path: Path) -> None
 def test_poda_preserva_o_dia_limite_exato(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    """Fronteira da retencao: exatamente `hoje - 90d` ainda esta DENTRO do prazo."""
-    monkeypatch.delenv("MOTOR_ACESSO_RETENCAO_DIAS", raising=False)
+    """Fronteira da retencao configurada: exatamente `hoje - 90d` ainda esta DENTRO do prazo."""
+    monkeypatch.setenv("MOTOR_ACESSO_RETENCAO_DIAS", "90")
     hoje = date(2026, 8, 17)  # `_podar` recebe o dia: a fronteira fica deterministica
     no_limite = tmp_path / f"acesso-{(hoje - timedelta(days=90)).isoformat()}.jsonl"
     alem = tmp_path / f"acesso-{(hoje - timedelta(days=91)).isoformat()}.jsonl"
@@ -184,14 +189,98 @@ def test_poda_roda_uma_vez_por_dia_e_reativa_na_virada(
     assert len(chamadas) == 2, "virada de dia tem de reativar a poda"
 
 
-def test_retencao_dias_configuravel_com_fallback(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_retencao_padrao_e_sem_prazo(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Emenda 2 da DEC-027 (20/10/2026): sem env, a trilha nao tem prazo."""
+    assert acesso_log.RETENCAO_DIAS_DEFAULT is None
     monkeypatch.delenv("MOTOR_ACESSO_RETENCAO_DIAS", raising=False)
-    assert acesso_log.retencao_dias() == acesso_log.RETENCAO_DIAS_DEFAULT
+    assert acesso_log.retencao_dias() is None
+    for vazio in ("", "   "):
+        monkeypatch.setenv("MOTOR_ACESSO_RETENCAO_DIAS", vazio)
+        assert acesso_log.retencao_dias() is None
+
+
+def test_retencao_dias_configuravel_e_invalido_nunca_vira_prazo(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
     monkeypatch.setenv("MOTOR_ACESSO_RETENCAO_DIAS", "30")
     assert acesso_log.retencao_dias() == 30
-    for invalido in ("0", "-5", "abc"):
+    assert capsys.readouterr().err == ""
+    for invalido in ("0", "-5", "abc", "30d"):
         monkeypatch.setenv("MOTOR_ACESSO_RETENCAO_DIAS", invalido)
-        assert acesso_log.retencao_dias() == acesso_log.RETENCAO_DIAS_DEFAULT
+        assert acesso_log.retencao_dias() is None, f"{invalido!r} nao pode virar prazo"
+    erro = capsys.readouterr().err
+    assert erro.count("MOTOR_ACESSO_RETENCAO_DIAS") == 1, "um aviso por processo, nao por chamada"
+    assert "SEM PRAZO" in erro
+
+
+def test_sem_env_a_trilha_antiga_sobrevive(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """O pedido do dono: o arquivo segue salvo. 400 dias atras, nada some."""
+    monkeypatch.delenv("MOTOR_ACESSO_RETENCAO_DIAS", raising=False)
+    hoje = datetime.now(UTC).date()
+    velho = tmp_path / f"acesso-{(hoje - timedelta(days=400)).isoformat()}.jsonl"
+    velho.write_text("{}\n", encoding="utf-8")
+
+    acesso_log.registrar({"rota": "/", "status": 200}, base=tmp_path)  # caminho real
+    acesso_log._podar(tmp_path, hoje)  # e a poda chamada direto
+
+    assert velho.exists()
+    assert velho.read_text(encoding="utf-8") == "{}\n"
+
+
+def test_env_30_poda_o_de_31_dias_e_mantem_o_de_30(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.setenv("MOTOR_ACESSO_RETENCAO_DIAS", "30")
+    hoje = date(2026, 10, 20)
+    no_limite = tmp_path / f"acesso-{(hoje - timedelta(days=30)).isoformat()}.jsonl"
+    alem = tmp_path / f"acesso-{(hoje - timedelta(days=31)).isoformat()}.jsonl"
+    for arquivo in (no_limite, alem):
+        arquivo.write_text("{}\n", encoding="utf-8")
+
+    acesso_log._podar(tmp_path, hoje)
+
+    assert no_limite.exists()
+    assert not alem.exists()
+
+
+@pytest.mark.parametrize("invalido", ["0", "-1", "abc"])
+def test_env_invalida_nao_apaga_nada(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, invalido: str
+) -> None:
+    """Erro de digitacao na env nao pode ser o motivo de apagar a trilha."""
+    monkeypatch.setenv("MOTOR_ACESSO_RETENCAO_DIAS", invalido)
+    velho = tmp_path / "acesso-2020-01-01.jsonl"
+    velho.write_text("{}\n", encoding="utf-8")
+
+    acesso_log.registrar({"rota": "/", "status": 200}, base=tmp_path)
+
+    assert velho.exists()
+
+
+def test_hook_do_rollup_roda_na_virada_mesmo_sem_poda(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Deixar de podar nao pode deixar de consolidar: o hook roda 1x por dia, sem env."""
+    monkeypatch.delenv("MOTOR_ACESSO_RETENCAO_DIAS", raising=False)
+    chamadas: list[Path] = []
+    monkeypatch.setattr(acesso_log, "_hooks_virada_de_dia", [chamadas.append])
+
+    acesso_log.registrar({"rota": "/", "status": 200}, base=tmp_path)
+    acesso_log.registrar({"rota": "/", "status": 200}, base=tmp_path)
+    assert chamadas == [tmp_path], "uma vez por dia, com o diretorio da trilha"
+
+    acesso_log._ultimo_dia_podado = datetime.now(UTC).date() - timedelta(days=1)
+    acesso_log.registrar({"rota": "/", "status": 200}, base=tmp_path)
+    assert len(chamadas) == 2, "virada de dia reativa o hook"
+
+
+def test_rollup_real_esta_registrado_como_hook() -> None:
+    """O hook de producao e' o `consolidar_rollup_seguro` (registrado no import)."""
+    from motor_expansao.dashboard import acesso_analytics
+
+    assert acesso_analytics.consolidar_rollup_seguro in acesso_log._hooks_virada_de_dia
 
 
 def test_registrar_nunca_levanta_com_destino_invalido(tmp_path: Path) -> None:

@@ -14,7 +14,7 @@ descartar uma área, atribuir um consultor. Uma linha por decisão.
 
 **Não entra: telemetria.** A trilha da **DEC-027** grava uma linha por requisição HTTP, incluindo as
 que a SPA dispara sozinha ao abrir uma tela (`/api/me`, `/api/ufs`, a carga da UF). Ela continua em
-JSONL, com retenção de 90 dias podada pelo backend.
+JSONL, sem prazo de retenção desde a emenda 2 da DEC-027 (20/10/2026; era podada em 90 dias).
 
 A separação não é estética. A trilha é ordens de grandeza maior — dezenas a centenas de requisições
 por sessão contra um punhado de ações — e juntar as duas afogaria as consultas de auditoria do
@@ -63,8 +63,9 @@ um valor é editar esta tabela primeiro.
 >
 > - **o IP fica FORA.** O **P15** (base legal e prazo) segue aberto, e há teste de contrato no
 >   motor que recusa qualquer `INSERT` em `eventos` mencionando a coluna. Quem guarda o IP da
->   tentativa é a **trilha da DEC-027**, em arquivo, por 90 dias — e ela **já grava** o `POST
->   /api/login` hoje (`relevante()` só exclui `/api/health`, `/assets/` e estáticos);
+>   tentativa é a **trilha da DEC-027**, em arquivo, sem prazo desde a emenda 2 (era 90 dias)
+>   — e ela **já grava** o `POST /api/login` hoje (`relevante()` só exclui `/api/health`,
+>   `/assets/` e estáticos);
 > - **o login digitado fica fora** — a §2.7 proíbe login e e-mail em `metadados` (PII), e é
 >   justamente o único identificador quando o usuário digitado não existe;
 > - **o que sobra é o que importa:** login existente → `id_usuario` preenchido, e a pergunta
@@ -165,7 +166,7 @@ fora dele. **Nem todos são ação no mesmo grau**, e por isso só dois sobem pa
 > quando o imóvel não tem dossiê, caso em que ele manda `detalhe: relatorio-pontual` — e só busca o
 > PDF quando `tem_dossie`. Produzir no gesto registraria "dossiê baixado" em downloads que não
 > aconteceram; produzir nos dois contaria cada um duas vezes. O evento nasce onde o arquivo é
-> entregue, e o gesto continua no rastro de 90 dias da DEC-027, como os outros quatro.
+> entregue, e o gesto continua no rastro da DEC-027, como os outros quatro.
 
 ### 2.5 Análise pedida
 
@@ -379,7 +380,7 @@ rastro — ver *"O que continua descoberto"* no fim da §2.7.
 **Grava (desde 16/09):** `dossie.baixado` (§2.2), pelo **`GET` do PDF** — e não pelo gesto
 `abrir-dossie`, que dispara mesmo quando o imóvel não tem dossiê (ver a correção no fim da §2.4).
 E `imovel.visita_marcada` / `imovel.visita_desmarcada` (§2.4), pelos dois gestos que aquela seção
-manda subir; os outros cinco continuam só na trilha de 90 dias. E `viabilidade.calculada` (§2.5),
+manda subir; os outros cinco continuam só na trilha da DEC-027. E `viabilidade.calculada` (§2.5),
 pela rota que devolve o payload — com as PREMISSAS, sem alvo, pela razão medida que está no fim
 daquela seção.
 

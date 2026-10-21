@@ -832,8 +832,9 @@ _LOG_D17 = logging.getLogger("piloto.d17")
 # requisicao. Travado por `tests/unit/test_falha_5xx_loga.py` (BLK-SAUDE-01).
 #
 # NAO carrega identidade de proposito: quem fez o que e' a trilha da DEC-027, que tem
-# retencao declarada de 90 dias e poda. O log do container nao tem governanca nenhuma, e
-# jogar login de pessoa nele seria criar um segundo cadastro de acesso sem regra.
+# retencao DECLARADA (sem prazo desde a emenda 2, 20/10/2026, por decisao do dono). O log
+# do container nao tem governanca nenhuma, e jogar login de pessoa nele seria criar um
+# segundo cadastro de acesso sem regra.
 _LOG_FALHA = logging.getLogger("piloto.falha")
 
 
@@ -1007,14 +1008,14 @@ def _registrar_visita_imovel(remote_user: str | None, *, acao: str, imovel: str 
             origem="web",
         )
     except BancoNaoConfigurado:
-        # Sem banco configurado a decisao de visita fica so' na trilha de 90 dias, e isso e' o
+        # Sem banco configurado a decisao de visita fica so' na trilha da DEC-027, e isso e' o
         # esperado deste deploy. A guarda de ALVO AUSENTE, logo acima, segue sendo ERRO: la' o
         # gesto chegou incompleto, que e' defeito, e nao configuracao.
         _LOG_D17.debug("deploy sem banco — gesto %s no imovel %s sem evento", acao, imovel)
     except Exception:  # noqa: BLE001 — a trilha nunca derruba o gesto
         _LOG_D17.exception(
             "gesto %s no imovel %s SEM evento no banco — a decisao de visita ficou so' na "
-            "trilha de 90 dias",
+            "trilha da DEC-027",
             acao,
             imovel,
         )
@@ -2563,6 +2564,11 @@ def bairros_por_hex(uf: str, cod_municipio: str) -> dict[str, str]:
     Sem isso, todo item do ranking repetiria o nome do municipio ("Brasília",
     "Brasília", …) — o que mata a leitura. Reusa o helper do Relatorio Municipal;
     fallback gracioso para {} se a particao geo nao existir.
+
+    DEC-076: o nome vem do CNEFE (artefato em `STAGING_DIR/bairro_cnefe_setor/`). Este
+    `lru_cache` guarda o nome por (uf, municipio): TODA troca do artefato (subida, atualizacao
+    ou remocao) exige restart do `web`, senao os municipios ja consultados seguem com o nome
+    antigo.
     """
     if not CENSO_GEO_DIR.exists():
         return {}
@@ -2571,7 +2577,10 @@ def bairros_por_hex(uf: str, cod_municipio: str) -> dict[str, str]:
             _carregar_bairros_por_hex,
         )
 
-        return _carregar_bairros_por_hex(uf, cod_municipio, CENSO_GEO_DIR) or {}
+        return (
+            _carregar_bairros_por_hex(uf, cod_municipio, CENSO_GEO_DIR, staging_dir=STAGING_DIR)
+            or {}
+        )
     except Exception:  # noqa: BLE001 — enriquecimento opcional
         return {}
 
@@ -4557,8 +4566,9 @@ def ciencia_confidencialidade() -> dict[str, Any]:
 
 @app.on_event("startup")
 def _consolidar_rollup_de_uso() -> None:
-    # Consolida dias BRT fechados no rollup sem dado pessoal ANTES que a poda de
-    # 90 dias da trilha os alcance; nunca levanta (analytics e' rastro).
+    # Consolida dias BRT fechados no rollup sem dado pessoal ANTES que uma poda da
+    # trilha os alcance (sem prazo por padrao desde a emenda 2 da DEC-027; a poda so'
+    # existe se MOTOR_ACESSO_RETENCAO_DIAS for definida); nunca levanta (analytics e' rastro).
     acesso_analytics.consolidar_rollup_seguro()
 
 
@@ -9214,6 +9224,58 @@ def _rede_kpis(unidades: pd.DataFrame, m1: pd.DataFrame) -> dict[str, Any]:
     return saida
 
 
+#: Colunas da linha "rede inteira" da Carteira: as métricas da tabela mais a contagem
+#: que acompanha o churn.
+_REDE_LINHA_REDE = ("faturamento", "ativos", "churn_pct", "cancelados", "nps")
+
+
+def _rede_linha_rede(contexto: dict[str, Any]) -> dict[str, Any]:
+    """A linha da REDE INTEIRA no topo da Carteira, em duas leituras (pedido do Vinicius,
+    2026-10-20): "como a Ultra está indo como um todo".
+
+    - `media`: a média SIMPLES por unidade, a MESMA régua do "% vs média da rede" de cada
+      célula (`rede_metricas.medias_da_rede`) -- uma unidade com o valor da linha lê 0%
+      ali. Só entra quem operou a janela inteira, como no ranking.
+    - `total`: o que os KPIs do topo calculam (`_rede_kpis`): soma para volume e taxa
+      PONDERADA para churn (por pagantes) e NPS (por ativos) -- somar taxa não significa
+      nada.
+
+    As duas são da rede INTEIRA, nunca do recorte: o filtro muda as linhas da tabela, e a
+    linha da rede é a referência fixa contra a qual o recorte se compara (é por isso que o
+    `vs_media` também ignora o filtro). O delta sai da MESMA cesta nos dois meses, pelo
+    mesmo motivo dos KPIs: inauguração muda a cesta, não o desempenho.
+    """
+    atual: pd.DataFrame = contexto["atual"]
+    m1: pd.DataFrame = contexto["m1"]
+    kpis = _rede_kpis(atual, m1)
+    total = {c: kpis[c] for c in _REDE_LINHA_REDE if c in kpis}
+
+    mascara = rede_metricas.mascara_comparaveis(atual)
+    comparaveis = atual.loc[mascara].set_index("unidade_id")
+    medias = rede_metricas.medias_da_rede(atual, _REDE_LINHA_REDE)
+    cesta = comparaveis.index.intersection(m1.index)
+    media: dict[str, Any] = {}
+    for chave in _REDE_LINHA_REDE:
+        casas = _rede_casas(chave)
+        valor = medias.get(chave)
+        anterior = atual_cesta = None
+        if len(cesta) and chave in m1.columns and chave in comparaveis.columns:
+            anterior = _numf(pd.to_numeric(m1.loc[cesta, chave], errors="coerce").mean())
+            atual_cesta = _numf(pd.to_numeric(comparaveis.loc[cesta, chave], errors="coerce").mean())
+        delta = (
+            100.0 * (atual_cesta - anterior) / anterior
+            if (atual_cesta is not None and anterior)
+            else None
+        )
+        media[chave] = {"atual": _num(valor, casas), "m1": _num(anterior, casas), "delta_pct": _num(delta, 1)}
+    return {
+        "media": media,
+        "total": total,
+        "n_unidades": int(len(atual)),
+        "n_comparaveis": int(mascara.sum()),
+    }
+
+
 #: O que dizer do faturamento do PERÍODO, conforme a janela alcance ou não a planilha.
 #: A planilha é mensal: ela responde por competência coberta INTEIRA e por mais nada.
 _NOTA_DO_PERIODO: dict[str, str] = {
@@ -9565,6 +9627,7 @@ def _rede_carteira_payload(
             "com_coordenada": len(com_coordenada),
         },
         "kpis": kpis,
+        "rede_inteira": _rede_linha_rede(contexto),
         "split": {
             "recorrentes": _num(total_pagantes),
             "agregadores": _num(total_agregadores),
@@ -12570,7 +12633,7 @@ ACOES_IMOBILIARIA: frozenset[str] = frozenset(
 )
 
 #: Os DOIS que sobem para `eventos` (contrato §2.4). Os outros cinco sao uso de tela e ficam
-#: so' na trilha de 90 dias -- e `abrir-dossie` nao entra aqui de proposito: quem grava o
+#: so' na trilha da DEC-027 -- e `abrir-dossie` nao entra aqui de proposito: quem grava o
 #: download e' o GET do PDF, senao o mesmo clique contaria duas vezes (correcao de 16/09).
 GESTOS_QUE_VIRAM_EVENTO: frozenset[str] = frozenset({"marcar-visita", "desmarcar-visita"})
 
