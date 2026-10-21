@@ -504,21 +504,16 @@ def test_hexagono_nas_duas_listas_sai_cortado_com_as_duas_cores():
     assert camada.getpixel((int(cx + meia / 2), int(cy)))[:3] == rpm._COR_TOP_SOCIO
 
 
-def test_tarjas_de_pendente_so_saem_com_a_variavel_ligada(monkeypatch):
+def test_sem_tarja_de_pendente_mesmo_com_a_variavel_antiga(monkeypatch):
+    """As tarjas de lembrete sairam com a DEC-077 (2026-10-22): as areas que elas marcavam
+    (Expansao de Dominio, Bairros por Zona e o card de zonas) deixam o PDF do Brasil ate'
+    chegarem os dados do gestor. A variavel antiga nao pode trazer nada de volta."""
     from tests.unit.test_relatorio_municipal_praca import _df_cidade, _praca, _resultado
 
     df = _df_cidade(2)
-    monkeypatch.delenv("MOTOR_RELMUN_TARJAS_PENDENTES", raising=False)
-    sem = " ".join(_paginas(gerar_pdf_relatorio_municipal(_resultado(df), None, praca=_praca(df))))
-    assert "PENDENTE" not in sem  # producao: nunca sai por descuido
     monkeypatch.setenv("MOTOR_RELMUN_TARJAS_PENDENTES", "1")
-    paginas = _paginas(gerar_pdf_relatorio_municipal(_resultado(df), None, praca=_praca(df)))
-    com_tarja = [p.splitlines()[0] for p in paginas if "PENDENTE" in p]
-    for titulo in ("Expansão de Domínio", "Bairros por Zona", "Síntese"):
-        assert any(t.startswith(titulo) for t in com_tarja), titulo
-    # A coluna Bairro do "Onde crescer" perdeu a tarja em 2026-10-21: o nome vem do CNEFE
-    # (DEC-076), que era o dado que faltava.
-    assert not any(t.startswith("Onde crescer") for t in com_tarja)
+    texto = " ".join(_paginas(gerar_pdf_relatorio_municipal(_resultado(df), None, praca=_praca(df))))
+    assert "PENDENTE" not in texto
 
 
 def test_tabela_de_aprovados_lista_os_mais_populosos_e_fecha_com_o_total():

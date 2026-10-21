@@ -1308,6 +1308,32 @@ def _mercado_df(settings: Settings):
     return _carregar_mercado_full(str(settings.staging_dir / _MERCADO_PARQUET))
 
 
+#: A particao enriquecida por UF (a base da tela do piloto: `web/server/app.py::carregar_uf_completo`),
+#: ao lado da malha de setores em `outputs/` -- o mesmo mount que a API ja tem.
+_ENRIQUECIDO_DIR = "hexagonos_dashboard_enriquecido"
+
+
+def _enriquecido_uf_df(settings: Settings, uf: str):
+    """Particao enriquecida da UF COM a coluna `uf` (DEC-077, item 5 do Felipe), ou `None`.
+
+    `None` quando o pais nao tem regua de recomendacao (Argentina: o PDF segue a camada de
+    mercado, como antes) ou quando a particao nao existe neste ambiente. A particao lida direto
+    do diretorio `uf=XX` nao traz `uf` (chave de particao hive), e a recomendacao a le em cada
+    linha (fator e uplift da renda do card).
+    """
+    import pandas as pd
+
+    from motor_expansao.recomendacao import carregar_regra
+
+    if carregar_regra() is None:
+        return None
+    part = Path(settings.censo_geo_dir).parent / _ENRIQUECIDO_DIR / f"uf={str(uf).strip().upper()}"
+    if not part.is_dir():
+        _LOG_PRACA.warning("particao enriquecida ausente (%s): o PDF usa a camada de mercado", part)
+        return None
+    return pd.read_parquet(part).assign(uf=str(uf).strip().upper())
+
+
 def _dominio_df(settings: Settings):
     """`plano_expansao_dominio.parquet` (opcional; melhora as zonas D2). None se ausente."""
     for p in (
@@ -1404,13 +1430,23 @@ def gerar_pdf_municipio(
             msg += ". Voce quis dizer: " + ", ".join(cands[:6]) + "?"
         raise APIError(404, msg, "municipio_nao_encontrado")
 
-    df = _mercado_df(settings)
-    col = "nome_municipio" if "nome_municipio" in df.columns else "cidade"
-    mask = df[col].astype(str).str.strip().str.casefold() == nome_exato.casefold()
-    if "uf" in df.columns:
-        mask &= df["uf"].astype(str).str.strip().str.upper() == uf
+    # DEC-077 (item 5 do Felipe, 2026-10-21): no pais com regua de recomendacao (Brasil) o bot le
+    # a MESMA base da tela -- a particao enriquecida da UF --, para o Top 10 do PDF ser o da tela.
+    # Sem a particao (ou sem regua: Argentina) segue a camada de mercado, como antes.
+    enriquecido = _enriquecido_uf_df(settings, uf)
+    if enriquecido is not None:
+        from motor_expansao.dashboard.relatorio_municipal import _municipio_mask
+
+        df_muni = enriquecido.loc[_municipio_mask(enriquecido, nome_exato)]
+    else:
+        df = _mercado_df(settings)
+        col = "nome_municipio" if "nome_municipio" in df.columns else "cidade"
+        mask = df[col].astype(str).str.strip().str.casefold() == nome_exato.casefold()
+        if "uf" in df.columns:
+            mask &= df["uf"].astype(str).str.strip().str.upper() == uf
+        df_muni = df.loc[mask]
     return montar_pdf_municipio(
-        df.loc[mask],
+        df_muni,
         uf=uf,
         nome_municipio=nome_exato,
         settings=settings,
@@ -1440,13 +1476,16 @@ def montar_pdf_municipio(
     _reuse_contextily_session()  # mesma aceleracao de tiles do Pontual
 
     from motor_expansao.dashboard.relatorio_municipal import (
+        CHAVE_RESPOSTA_UNICA,
         _carregar_bairros_por_hex,
         agregar_municipio,
         carregar_bairros_geo,
         carregar_poligono_municipio,
+        carregar_setores_com_bairro,
         gerar_payloads_download_relatorio_municipal,
         render_mapas_municipio,
     )
+    from motor_expansao.recomendacao import carregar_regra
     from motor_expansao.renda import (
         FatoresRendaInvalidos,
         InsumoRendaInvalido,
@@ -1458,6 +1497,13 @@ def montar_pdf_municipio(
         raise APIError(
             404, f"Municipio '{nome_municipio}' ({uf}) sem hexagonos", "municipio_sem_dados"
         )
+    # DEC-077 (item 5 do Felipe, 2026-10-21): a recomendacao le `uf` de CADA linha (fator e
+    # uplift da renda do card), e a particao enriquecida lida do diretorio `uf=XX` nao a traz.
+    if "uf" not in df_muni.columns:
+        df_muni = df_muni.assign(uf=uf)
+    # Resposta unica de "onde expandir" so' no pais com regua de recomendacao (Brasil). Regua
+    # invalida sobe como erro, como na subida; sem regua (Argentina) o PDF segue como antes.
+    regra = carregar_regra()
 
     # DEC-046 (emenda 2026-09-17): a rota municipal tambem recebe a UNIAO de oferta, com as
     # independentes (pin da Wellhub) -- o motor ja recebia; o bot lia so os mapeados.
@@ -1498,6 +1544,17 @@ def montar_pdf_municipio(
             )
     except Exception:
         bairros_geo = None
+    # Nomes da recomendacao unica (DEC-077): os MESMOS setores com o bairro do CNEFE de onde sai
+    # o bairro do mapa, para a regiao nunca ganhar dois nomes. Falha aqui so' tira o nome (a
+    # regiao sai com o do municipio), nunca a lista.
+    setores_nomes = None
+    if regra is not None and cod:
+        try:
+            setores_nomes = carregar_setores_com_bairro(
+                uf, cod, settings.censo_geo_dir, staging_dir=settings.staging_dir
+            )
+        except Exception:
+            setores_nomes = None
     # Renda DOMICILIAR por hexagono para a tabela de comparacao: vale nas DUAS unidades
     # (a tabela e' sempre por hexagono), entao fica fora do guard de `unidade` acima.
     # A MESMA formula do card do REP (`motor_expansao.renda.hex`), sobre os hexes que o chamador entregou:
@@ -1534,6 +1591,8 @@ def montar_pdf_municipio(
         raise APIError(
             404, f"Municipio '{nome_municipio}' ({uf}) sem hexagonos", "municipio_sem_dados"
         )
+    # Liga a resposta unica ANTES dos mapas: Visao Geral e Resumo saem sem o verde de aprovado.
+    result[CHAVE_RESPOSTA_UNICA] = regra is not None
 
     # Popula o cache de logos das redes (_ICON_CACHE) ANTES de renderizar os mapas e o PDF.
     # Sem isto, tanto os pins do mapa quanto o breakdown "Concorrentes por rede" (slide 8)
@@ -1559,19 +1618,26 @@ def montar_pdf_municipio(
         praca = _praca_da_cidade(
             df_muni, uf=uf, nome_municipio=nome_municipio, cod=cod, comp_df=comp_df,
             ultra_df=ultra_df, poligono=poligono, renda_dom=renda_dom, settings=settings,
+            regra=regra, setores_nomes=setores_nomes,
         )
     except Exception as exc:  # noqa: BLE001
         _LOG_PRACA.warning("paginas da praca omitidas em %s/%s: %r", nome_municipio, uf, exc)
         praca = None
 
-    hexes_rotulados = (
-        {str(h) for h in praca.onde_crescer.hexagonos["hex_id"]}
-        if praca is not None and len(praca.onde_crescer.hexagonos)
-        else None
-    )
-    # Os 10 melhores pela MESMA regua de "Onde crescer" (os 5 da pagina sao os 5 primeiros):
-    # e' o que a camada de Dominio numera, em vez dos 154 aprovados de Sao Paulo.
-    hexes_top = _top_para_o_dominio(df_muni, renda_dom) if praca is not None else None
+    if regra is not None:
+        # DEC-077: os hexagonos rotulados sao os do Top 10, e nao ha Top 10 do Dominio pela
+        # mediana (`_top_para_o_dominio`) -- a pagina de Dominio sai no Brasil.
+        hexes_rotulados = set(_hexes_da_recomendacao(praca)) or None
+        hexes_top = None
+    else:
+        hexes_rotulados = (
+            {str(h) for h in praca.onde_crescer.hexagonos["hex_id"]}
+            if praca is not None and len(praca.onde_crescer.hexagonos)
+            else None
+        )
+        # Os 10 melhores pela MESMA regua de "Onde crescer" (os 5 da pagina sao os 5 primeiros):
+        # e' o que a camada de Dominio numera, em vez dos 154 aprovados de Sao Paulo.
+        hexes_top = _top_para_o_dominio(df_muni, renda_dom) if praca is not None else None
 
     def _mapas(basemap: bool):
         return render_mapas_municipio(
@@ -1618,6 +1684,27 @@ def _top_para_o_dominio(df_muni, renda_dom: dict | None) -> set[str] | None:
     return {str(h) for h in sel.hexagonos["hex_id"]} or None
 
 
+def _hexes_da_recomendacao(praca) -> list[str]:
+    """Os `hex_id` das vagas preenchidas da recomendacao unica, na ordem da pagina."""
+    rec = getattr(praca, "recomendacao", None)
+    return list(rec.hex_ids) if rec is not None else []
+
+
+def _listas_da_recomendacao(rec):
+    """As duas listas do mapa de "Onde crescer" (`hex_id` + `posicao`) a partir da recomendacao."""
+    import pandas as pd
+
+    from motor_expansao.recomendacao import ItemRecomendado
+
+    def _lista(seg) -> pd.DataFrame:
+        itens = [v for v in seg.vagas if isinstance(v, ItemRecomendado)]
+        return pd.DataFrame(
+            {"hex_id": [v.hex_id for v in itens], "posicao": [v.posicao for v in itens]}
+        )
+
+    return _lista(rec.mata_virgem), _lista(rec.premium)
+
+
 def _praca_da_cidade(
     df_muni,
     *,
@@ -1630,6 +1717,8 @@ def _praca_da_cidade(
     renda_dom: dict | None,
     settings: Settings,
     basemap: bool = True,
+    regra=None,
+    setores_nomes=None,
 ):
     """Monta a `PracaDaCidade` das quatro paginas novas do Relatorio Municipal.
 
@@ -1649,12 +1738,44 @@ def _praca_da_cidade(
 
     hexes = rp.preparar_hexes_da_cidade(df_muni, renda_dom)
     sel = rp.selecionar_onde_crescer(hexes)
-    # "Onde crescer" em duas listas (2026-10-20): maior residual e maior score socioeconomico.
-    top_residual = rp.top_por_coluna(hexes, rp.COL_RESIDUAL)
-    # Empate no teto (score 100): desempata a mesma mistura renda+populacao, sem o teto.
-    top_socio = rp.top_por_coluna(
-        rp.com_socio_sem_teto(hexes), rp.COL_SCORE_SOCIO, desempate=rp.COL_SOCIO_SEM_TETO,
-    )
+    recomendacao = None
+    rotulos_recomendacao: dict[str, str] = {}
+    if regra is not None:
+        # DEC-077 (Felipe, 2026-10-21): no Brasil o "Onde crescer" e' o Top 10 do modulo unico --
+        # 5 Mata Virgem por residual + 5 Premium por populacao --, a mesma lista da tela. O
+        # modulo valida as colunas (fail-closed): base errada derruba a pagina, nunca troca a
+        # lista por outra regua.
+        from motor_expansao.recomendacao import (
+            Recorte,
+            bairros_ordenados_por_hex,
+            montar_recomendacao,
+            rotulos_das_regioes,
+        )
+
+        df_rec = df_muni
+        if cod and "cod_municipio" in df_rec.columns and df_rec["cod_municipio"].isna().any():
+            # A particao pode trazer o codigo nulo (so' flui pelo traco censitario). O recorte e'
+            # UM municipio, e a renda do card le o codigo por linha: sem ele a renda dessas linhas
+            # sumiria e a vaga sairia com o rotulo FALSO "nao ha outra regiao".
+            df_rec = df_rec.assign(cod_municipio=df_rec["cod_municipio"].fillna(cod))
+        recomendacao = montar_recomendacao(
+            df_rec,
+            recorte=Recorte(nivel="municipio", uf=uf, cod_municipio=cod, nome=nome_municipio),
+            staging_dir=settings.staging_dir,
+            regra=regra,
+        )
+        top_residual, top_socio = _listas_da_recomendacao(recomendacao)
+        rotulos_recomendacao = rotulos_das_regioes(
+            [*top_residual["hex_id"], *top_socio["hex_id"]],
+            bairros_ordenados_por_hex(setores_nomes),
+        )
+    else:
+        # "Onde crescer" em duas listas (2026-10-20): maior residual e maior score socioeconomico.
+        top_residual = rp.top_por_coluna(hexes, rp.COL_RESIDUAL)
+        # Empate no teto (score 100): desempata a mesma mistura renda+populacao, sem o teto.
+        top_socio = rp.top_por_coluna(
+            rp.com_socio_sem_teto(hexes), rp.COL_SCORE_SOCIO, desempate=rp.COL_SOCIO_SEM_TETO,
+        )
 
     hexes_muni = _hexes_do_municipio(df_muni)
     conc = filtrar_pins_do_municipio(comp_df, hexes_muni=hexes_muni, poligono=poligono)
@@ -1665,6 +1786,8 @@ def _praca_da_cidade(
     crescimento = rp.resumir_crescimento(
         linha, uf=uf, rotulo_tendencia=_ROTULO_TENDENCIA,
         referencias=rp.referencias_da_uf(cres_df, uf),
+        # DEC-077: sem veredito ("E' praca para entrar") onde ha a resposta unica.
+        com_veredito=regra is None,
     )
 
     # Simbolo do perfil (R$ no BR, USD na AR), como a tabela do proprio relatorio (`_renda`).
@@ -1687,12 +1810,21 @@ def _praca_da_cidade(
         )
 
     pop_municipal = rp.populacao_e_municipal(hexes)
+
+    def _onde_crescer(fundo: bool):
+        if recomendacao is not None:
+            # DEC-077: o mapa diz o que as duas cores sao no Brasil.
+            return rpm.render_onde_crescer_duas_listas(
+                hexes, top_residual, top_socio, basemap=fundo,
+                rotulos_listas=("Mata Virgem", "Premium"),
+                subtitulo="5 Mata Virgem e 5 Premium (DEC-077)",
+            )
+        return rpm.render_onde_crescer_duas_listas(hexes, top_residual, top_socio, basemap=fundo)
+
     desenhos = [
         ("calor_cidade_renda_domiciliar", _calor("renda_domiciliar", "Renda media domiciliar", f"{simbolo} por domicilio", _moeda, rpm.PALETA_RENDA)),
         ("pressao_cidade", lambda fundo: rpm.render_pressao_cidade(hexes, conc, ult, basemap=fundo)),
-        ("onde_crescer", lambda fundo: rpm.render_onde_crescer_duas_listas(
-            hexes, top_residual, top_socio, basemap=fundo,
-        )),
+        ("onde_crescer", _onde_crescer),
     ]
     if not pop_municipal:
         # Com a populacao do municipio repetida em cada hexagono (Manaus: 2.063.689 nos 2.139), a
@@ -1737,6 +1869,8 @@ def _praca_da_cidade(
         top_socio=top_socio,
         renda_municipal=rp.renda_e_municipal(hexes),
         populacao_municipal=pop_municipal,
+        recomendacao=recomendacao,
+        rotulos_recomendacao=rotulos_recomendacao,
     )
 
 

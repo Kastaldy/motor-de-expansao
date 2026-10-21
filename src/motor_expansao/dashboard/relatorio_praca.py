@@ -510,11 +510,16 @@ def resumir_crescimento(
     frase: str | None = None,
     rotulo_tendencia: Mapping[str, str] | None = None,
     referencias: Mapping[str, float] | None = None,
+    com_veredito: bool = True,
 ) -> CrescimentoCidade:
     """Transforma a linha municipal de crescimento nas linhas da pagina.
 
     `municipio` e' o dict com as colunas `cres_*` e `v_frase` do municipio (ou `None`). Sem
     tendencia E sem veredito, a pagina diz que nao ha dado -- nunca some.
+
+    `com_veredito=False` (Relatorio Municipal do Brasil, DEC-077): o `v_frase` ("E' praca para
+    entrar") nao vira a frase da pagina nem conta como dado -- a resposta de onde expandir e' so'
+    a recomendacao unica. A frase passada por `frase` segue valendo.
     """
     m = dict(municipio or {})
 
@@ -530,7 +535,7 @@ def resumir_crescimento(
         return valor
 
     tend = _v("cres_tendencia")
-    veredito = _v("v_frase")
+    veredito = _v("v_frase") if com_veredito else None
     if tend is None and not veredito:
         return CrescimentoCidade(disponivel=False, linhas=[], frase=TEXTO_SEM_CRESCIMENTO)
 
@@ -929,6 +934,12 @@ class PracaDaCidade:
     top_socio: pd.DataFrame = field(default_factory=pd.DataFrame)
     renda_municipal: bool = False
     populacao_municipal: bool = False
+    #: Recomendacao unica do Brasil (DEC-077, `motor_expansao.recomendacao.Recomendacao`): com
+    #: ela, "Onde crescer" mostra Mata Virgem e Premium em vez das listas por coluna. `None` =
+    #: pais sem regua (Argentina), e a pagina segue com `top_residual`/`top_socio`.
+    recomendacao: Any = None
+    #: `hex_id` -> nome da regiao recomendada (`recomendacao.rotulos_das_regioes`).
+    rotulos_recomendacao: dict[str, str] = field(default_factory=dict)
 
 
 def top_por_coluna(

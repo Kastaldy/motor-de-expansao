@@ -589,9 +589,15 @@ def render_onde_crescer_duas_listas(
     top_socio: pd.DataFrame,
     *,
     basemap: bool = True,
+    rotulos_listas: tuple[str, str] = ("Maior residual", "Maior socioeconomico"),
+    subtitulo: str = "Top 5 por residual e top 5 por socioeconomico",
 ) -> bytes | None:
     """A cidade em cinza com as DUAS listas da pagina: maior residual em verde e maior score
-    socioeconomico em azul, cada uma numerada na ordem da sua tabela (2026-10-20)."""
+    socioeconomico em azul, cada uma numerada na ordem da sua tabela (2026-10-20).
+
+    No Brasil as duas listas sao a recomendacao unica (DEC-077): Mata Virgem no verde e Premium
+    no azul, com `rotulos_listas`/`subtitulo` dizendo isso. Ali os segmentos sao exclusivos e o
+    hexagono cortado ao meio nao acontece; ele segue para as listas por coluna (Argentina)."""
     listas = [df for df in (top_residual, top_socio) if df is not None and not df.empty and "hex_id" in df.columns]
     if not listas:
         return None
@@ -606,7 +612,7 @@ def render_onde_crescer_duas_listas(
     quadro = _Quadro(_bounds_de_pontos(
         [min(lats) - folga, max(lats) + folga], [min(lngs) - folga, max(lngs) + folga], margem=0.02,
     ), _W, _H)
-    image, draw, desenhou = _base(quadro, "Onde crescer", "Top 5 por residual e top 5 por socioeconomico", basemap=basemap)
+    image, draw, desenhou = _base(quadro, "Onde crescer", subtitulo, basemap=basemap)
     # Tudo numa camada RECORTADA na caixa do mapa: com o zoom fechado, os hexagonos da cidade
     # que caem fora do quadro invadiam a legenda e a moldura.
     camada = Image.new("RGBA", (_W, _H), (0, 0, 0, 0))
@@ -652,7 +658,7 @@ def render_onde_crescer_duas_listas(
     _legenda(
         draw,
         "Legenda",
-        [("Maior residual", (*_COR_TOP, 255)), ("Maior socioeconomico", (*_COR_TOP_SOCIO, 255)),
+        [(rotulos_listas[0], (*_COR_TOP, 255)), (rotulos_listas[1], (*_COR_TOP_SOCIO, 255)),
          ("Demais da cidade", _COR_CIDADE)],
     )
     return _fechar(image, draw, quadro, desenhou)

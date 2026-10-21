@@ -31,6 +31,28 @@ template GeoFusion/Ultra (turquesa + magenta + laranja; capa escura com hexágon
 > Onde crescer) → Síntese → Espaço e academias. As cores seguem o ordinal
 > de `_tema_bicolor` de cada página, não a posição.
 
+### No Brasil: resposta única de "onde expandir" (DEC-077, desde 2026-10-22)
+
+Onde o país tem régua de recomendação (hoje só o BR), o preparo liga
+`resultado["resposta_unica"]` (`CHAVE_RESPOSTA_UNICA`) e o relatório mostra **uma** lista de
+onde expandir: a do "Onde crescer", que é o Top 10 do módulo único
+(`motor_expansao.recomendacao.montar_recomendacao`, a mesma lista da tela). Sem régua
+(Argentina), tudo fica como descrito nas páginas abaixo.
+
+| Página | No Brasil |
+|---|---|
+| Visão Geral do Município | Só o mapa da cidade, centralizado: sem verde de aprovado, sem a tabela "BAIRROS APROVADOS" e sem contagem. |
+| Resumo da Região | Mapa neutro com Ultra e as maiores redes, no enquadramento de Score e Residual (sem foco em escolhidos). Painel com os números da cidade; "Como calculamos o espaço" fala em "regiões com 2.000 ou mais". |
+| Como chegamos ao Espaço | Fica, com os números por hexágono; o texto diz "regiões com residual a partir de 2.000 alunos (capacidade não atendida)" em vez de "aprovadas". |
+| Expansão de Domínio e Bairros por Zona | Fora, até chegarem os dados do gestor. |
+| Como a cidade está indo | Sem a frase de veredito ("É praça para entrar", `v_frase`): a caixa do topo fica só com o nome da cidade. |
+| Onde crescer | Tabela **Mata Virgem** (5, em ordem de residual) e tabela **Premium** (5, em ordem de população), colunas #, Região, Residual, População e Renda domiciliar. Vaga sem candidato: "Vaga vazia: …" com o motivo do módulo; sem o carimbo k da malha, uma linha "Renda indisponível …" por segmento. Nome = bairro de mais moradores (`rotulos_das_regioes`); sem bairro, o município. Mapa: verde = Mata Virgem, azul = Premium. |
+| Síntese | Dois cards (penetração e residual); o de zonas sai. O residual diz quanto dele está "nas regiões com residual a partir de 2.000 alunos". |
+| Espaço e academias | O número sai como "Espaço para academias: capacidade não atendida nas regiões com residual a partir de 2.000 alunos". |
+
+Base: o bot/API lê a partição enriquecida da UF (a da tela), com a coluna `uf`. Carimbo:
+`BLK-RELMUN | contrato v3`.
+
 ### Página 1 — Capa
 - Eyebrow: "ANÁLISE DE EXPANSÃO".
 - Título: **"Potencial de Entrada de Novas Unidades"**.
@@ -254,7 +276,8 @@ EXATAMENTE 1 município selecionado. READ-ONLY sobre o M1.
   município; reusa `hex_id_res7` quando presente, senão deriva via `h3`). Anti-PII: só `rede`/contagem.
 - **D7 — redação das zonas:** 1 Âncora central / 2 Flancos laterais / 3 Cerco.
 - **D8 — Página 11:** breakdown só das redes de concorrentes realmente mapeadas + carimbo de versão
-  do contrato no rodapé (`VERSAO_CONTRATO_MUNICIPAL`).
+  do contrato (`VERSAO_CONTRATO_MUNICIPAL`), desde 2026-10-20 no `/Info` do PDF (o rodapé saiu;
+  emenda da DEC-005).
 - **D9 — Página 9 (bairros) IMPLEMENTADA (BLK-RELMUN-02):** lista os bairros REAIS agrupados pelas
   3 zonas geométricas (Âncora central / Flancos laterais / Cerco), fonte **IBGE Censo 2022
   `NM_BAIRRO` do setor** (coluna `nome_bairro` agora materializada em

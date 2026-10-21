@@ -36,7 +36,6 @@ pelo MESMO bairro. Sem o artefato, tudo e' o de antes.
 from __future__ import annotations
 
 import math
-import os
 import re
 import unicodedata
 from dataclasses import dataclass
@@ -103,8 +102,29 @@ _REDE_LOGO_RASTER_PX = 64
 # porque a estrutura mudou de verdade: 9 -> 12 paginas, unidade de leitura escolhivel
 # (bairro/hexagono) e renda da tabela virou domiciliar. Manter "v1" faria dois PDFs com o mesmo
 # carimbo e conteudos incomparaveis -- que e' exatamente o que o carimbo existe para evitar.
-VERSAO_CONTRATO_MUNICIPAL = "BLK-RELMUN | contrato v2 | score M1 INALTERADO"
+# v3 (2026-10-22): paginas novas e removidas na reforma dos slides e, no Brasil, a resposta unica
+# de "onde expandir" (DEC-077) no lugar dos aprovados -- de novo estrutura e conteudo diferentes.
+VERSAO_CONTRATO_MUNICIPAL = "BLK-RELMUN | contrato v3 | score M1 INALTERADO"
 METODO_RELATORIO_MUNICIPAL = "agregacao_municipal_h3_res7"
+
+#: Chave do resultado que liga a RESPOSTA UNICA de "onde expandir" (DEC-077) no PDF. O preparo
+#: (`api.service.montar_pdf_municipio`) a liga quando o pais tem regua de recomendacao (Brasil);
+#: sem ela -- Argentina, ou quem chama o PDF direto -- o relatorio segue como antes da DEC-077.
+#: Ligada: "Onde crescer" = Mata Virgem + Premium do modulo unico; Visao Geral e Resumo sem o
+#: verde de aprovado nem a tabela de bairros aprovados; sem Expansao de Dominio, Bairros por Zona
+#: e o card de zonas da Sintese (voltam com os dados do gestor); Espaco so' como leitura.
+CHAVE_RESPOSTA_UNICA = "resposta_unica"
+
+
+def _resposta_unica(result: dict[str, Any] | None) -> bool:
+    return bool((result or {}).get(CHAVE_RESPOSTA_UNICA))
+
+
+def _rotulo_espaco_leitura() -> str:
+    """Rotulo do Espaco para academias na resposta unica (DEC-077): leitura de capacidade, sem
+    sugerir onde abrir (pedido do Felipe, 2026-10-21)."""
+    return ("capacidade não atendida nas regiões com residual a partir de "
+            f"{_format_number(OFERTA_DESTAQUE_MIN, 0)} alunos")
 
 # Cabecalhos canonicos das 13 paginas do modo BAIRRO (11 no modo hexagono, 12 sem bairro
 # na base; desde 2026-10-20 com "Como chegamos ao Espaco para academias" e, em municipio grande,
@@ -547,8 +567,27 @@ def _carregar_bairros_por_hex(
     `staging_dir` (DEC-076): a configuracao de staging do processo, onde mora o artefato do
     CNEFE; `None` cai no fallback derivado de `censo_geo_dir` (ver `bairro_cnefe`).
     """
+    return bairros_por_hex_de_setores(
+        carregar_setores_com_bairro(uf, cod_municipio, censo_geo_dir, staging_dir=staging_dir)
+    )
+
+
+def carregar_setores_com_bairro(
+    uf: str | None,
+    cod_municipio: str | None,
+    censo_geo_dir: Path | None,
+    staging_dir: Path | str | None = None,
+) -> pd.DataFrame | None:
+    """Setores do municipio com o bairro JA' resolvido pelo CNEFE (DEC-076) -- o miolo de
+    `_carregar_bairros_por_hex`, sem a reducao por hexagono.
+
+    Quem nomeia o hexagono pelo bairro de mais moradores parte DESTE frame: o mapa municipal
+    (`bairros_por_hex_de_setores`) e os nomes da recomendacao unica
+    (`recomendacao.bairros_ordenados_por_hex`, DEC-077), para o mesmo hexagono nunca ganhar dois
+    nomes. `None` sem particao/colunas.
+    """
     if censo_geo_dir is None or not uf or not cod_municipio:
-        return {}
+        return None
     _bbox_pop = ["bbox_minx", "bbox_miny", "bbox_maxx", "bbox_maxy", "pop_total_setor_2022"]
     # Tenta a cascata completa (bairro/subdistrito/distrito + nome_municipio p/ o guard); se a
     # particao for de um schema antigo sem essas colunas, cai para so `nome_bairro`.
@@ -563,10 +602,8 @@ def _carregar_bairros_por_hex(
         tentativas = [[*cols, "cod_setor"] for cols in tentativas] + tentativas
     setores = _ler_setores_em_tentativas(censo_geo_dir, uf, cod_municipio, tentativas)
     if setores is None:
-        return {}
-    return bairros_por_hex_de_setores(
-        aplicar_bairro_cnefe(setores, censo_geo_dir=censo_geo_dir, uf=uf, staging_dir=staging_dir)
-    )
+        return None
+    return aplicar_bairro_cnefe(setores, censo_geo_dir=censo_geo_dir, uf=uf, staging_dir=staging_dir)
 
 
 def _ler_setores_em_tentativas(
@@ -2079,6 +2116,8 @@ def _render_mapa_municipio(
     # Sem nome de bairro sobre o hexagono desde 2026-10-20 (Juan): os slides de bairro do inicio
     # (Visao Geral e Bairros Oficiais) ja' dizem onde cada bairro fica; o nome aqui so' cobria o
     # dado. O BLK-RELMUN-08 tinha posto o bairro dominante nos hexagonos destacados.
+    # Resposta unica (DEC-077, Brasil): nao ha "aprovado" -- Visao Geral e Resumo saem neutros.
+    resposta_unica = _resposta_unica(municipio_result)
     for poly, pos in geometrias:
         pixels = [(int(round(px)), int(round(py))) for px, py in (project(x, y) for x, y in poly)]
         if len(pixels) < 3:
@@ -2086,8 +2125,10 @@ def _render_mapa_municipio(
         if camada == "cobertura":
             # Aprovado via fallback municipal sai no cinza do reprovado (Juan, 2026-10-20): a
             # Visao Geral mostra so' onde ha dado proprio aprovado.
-            if destaque_mask[pos]:
-                color = _HEX_APROVADO_RGBA if fonte_propria[pos] else _HEX_REPROVADO_RGBA
+            if resposta_unica:
+                color = _HEX_NEUTRO_RGBA
+            elif destaque_mask[pos] and fonte_propria[pos]:
+                color = _HEX_APROVADO_RGBA
             else:
                 color = _HEX_REPROVADO_RGBA
             odraw.polygon(pixels, fill=color, outline=(255, 255, 255, 90))
@@ -2096,7 +2137,7 @@ def _render_mapa_municipio(
             # 2026-09-17 era que o ZOOM priorizasse os hexagonos verdes quando houvesse cinza nas
             # pontas -- quem faz isso e' o `focus_bounds` (hexagonos escolhidos), nao este desenho.
             # Apagar o cinza foi leitura errada e durou um dia (Juan, 2026-09-18).
-            if destaque_mask[pos]:
+            if destaque_mask[pos] and not resposta_unica:
                 color = _HEX_DESTAQUE_RGBA
             else:
                 color = _HEX_NEUTRO_RGBA
@@ -2106,7 +2147,8 @@ def _render_mapa_municipio(
             # seguem na tabela "Comparacao das Regioes" e o total, no box "Como calculamos o
             # espaco". `rotular_valores=True` reproduz o mapa de antes (o default o mantem para
             # quem chama esta funcao direto).
-            if rotular_valores and destaque_mask[pos] and not math.isnan(oferta_hex[pos]):
+            if (rotular_valores and destaque_mask[pos] and not resposta_unica
+                    and not math.isnan(oferta_hex[pos])):
                 cx = int(sum(p[0] for p in pixels) / len(pixels))
                 cy = int(sum(p[1] for p in pixels) / len(pixels))
                 label_pins.append((cx, cy, _format_number(oferta_hex[pos], 0)))
@@ -2487,8 +2529,12 @@ def _render_mapa_bairros(
     cor_por_bairro: dict[str, tuple[int, int, int]] | None = None,
     marcadores: list[tuple[float, float, str, tuple[int, int, int]]] | None = None,
     localizar: set[str] | None = None,
+    sem_aprovado: bool = False,
 ) -> bytes:
     """PNG dos bairros (BLK-RELMUN-06), no formato do material de Expansao. Dois modos:
+
+    `sem_aprovado` (resposta unica, DEC-077): nas metricas "resumo"/"cobertura" nenhum bairro sai
+    no verde de aprovado -- a lista de onde expandir e' so' a do "Onde crescer".
 
     - `metrica=None` (default): LIMITE TERRITORIAL -- divisa de cada bairro em vermelho sobre o
       basemap claro, divisa do municipio em preto, nome em placa branca.
@@ -2632,6 +2678,10 @@ def _render_mapa_bairros(
             v = _safe_float(bairro.get("score_residual"))
             return _HEX_NEUTRO_RGBA if math.isnan(v) else _score_faixa_color(v, alpha=205)
         if metrica in ("resumo", "cobertura"):
+            if sem_aprovado:
+                # Resposta unica (DEC-077): o mapa so' situa os bairros -- o cinza escuro do
+                # "reprovado" virava uma mancha so' na cidade inteira (SJC, 2026-10-22).
+                return _HEX_NEUTRO_RGBA
             # Mesmas cores/semantica das camadas de hexagono (aprovado x reprovado).
             if bairro.get("destacado"):
                 return _HEX_APROVADO_RGBA
@@ -2739,10 +2789,17 @@ def _render_mapa_bairros(
             if len(pix) >= 3:
                 draw.line([*pix, pix[0]], fill=(17, 17, 17, 255), width=2)
 
-    fonte_txt = _BAIRRO_METRICA_RODAPE.get(
-        str(metrica), "Setores censitários {instituto} 2022 dissolvidos por bairro"
+    # Resposta unica (DEC-077): Visao Geral e Resumo nao medem "aprovacao" -- o rodape so' diz de
+    # onde vem o bairro.
+    sem_metrica = sem_aprovado and metrica in ("resumo", "cobertura")
+    fonte_txt = (
+        "Setores censitários {instituto} 2022 dissolvidos por bairro"
+        if sem_metrica
+        else _BAIRRO_METRICA_RODAPE.get(
+            str(metrica), "Setores censitários {instituto} 2022 dissolvidos por bairro"
+        )
     ).format(instituto=_instituto_censo())
-    if _BAIRRO_METRICAS.get(str(metrica)) == "rateada":
+    if _BAIRRO_METRICAS.get(str(metrica)) == "rateada" and not sem_metrica:
         # Nunca deixar uma estimativa passar por medicao: o hexagono e' MAIOR que a maioria dos
         # bairros, entao este numero desceu do hexagono, nao subiu do setor.
         fonte_txt += " (estimativa: hexágono rateado no bairro)"
@@ -2908,6 +2965,9 @@ def render_mapas_municipio(
     foco, que passa a enquadrar so o que e do municipio.
     """
     zonas = municipio_result.get("zonas", [])
+    # Resposta unica (DEC-077, Brasil): sem o mapa de Dominio (a pagina sai ate' chegarem os
+    # dados do gestor) e sem foco nos aprovados/escolhidos na Visao Geral e no Resumo.
+    resposta_unica = _resposta_unica(municipio_result)
     hexes_muni = _hexes_do_municipio(df_muni)
     competitors_df = filtrar_pins_do_municipio(
         competitors_df, hexes_muni=hexes_muni, poligono=poligono_municipio
@@ -2928,6 +2988,9 @@ def render_mapas_municipio(
         if hexes_top
         else _focus_bounds_mercator(df_muni, pad_frac=_FOCUS_PAD_FRAC_RESUMO)
     ) or focus_bounds
+    if resposta_unica:
+        # Sem escolhidos: o Resumo enquadra como Score e Residual (Juan, 2026-10-22).
+        foco_resumo = focus_bounds
     # Mapas tematicos: so' a Ultra e as maiores redes. A contagem cheia (inclusive independentes)
     # segue nos numeros das paginas e na Pressao concorrencial, que e' onde a oferta e' o assunto.
     redes_principais = principais_redes(competitors_df)
@@ -2951,6 +3014,8 @@ def render_mapas_municipio(
     # Sao Paulo tem 491 academias. Mesma regra que a versao por bairro ja seguia; quem esta
     # instalado aparece em Resumo, Dominio, Pressao concorrencial e Espaco e academias.
     pins_por_camada = {"resumo": True, "score": False, "residual": False, "dominio": True}
+    if resposta_unica:
+        del pins_por_camada["dominio"]
     mapas = {
         camada: _render_mapa_municipio(
             df_muni,
@@ -2996,7 +3061,7 @@ def render_mapas_municipio(
                 df_muni, hexes_foco={str(h) for h in verdes.dropna()},
                 pad_frac=_FOCUS_PAD_FRAC_COBERTURA,
             )
-            if not verdes.dropna().empty else None
+            if not verdes.dropna().empty and not resposta_unica else None
         ),
         hexes_rotulados=hexes_rotulados,
     )
@@ -3114,10 +3179,13 @@ def render_mapas_municipio(
             ("cobertura", "Visão geral do município por bairro", False),
             ("dominio", "Expansão de domínio por bairro", True),
         ):
+            if resposta_unica and camada == "dominio":
+                continue
             mapas[camada] = _render_mapa_bairros(
                 bairros_geo,
                 titulo=titulo,
                 metrica=camada,
+                sem_aprovado=resposta_unica,
                 # Mesmo recorte urbano da pagina 4. Sem ele, um distrito rural extenso domina
                 # o quadro e espreme a cidade a ponto de nao dar para ler onde ha espaco --
                 # Juan viu isso na Expansao de Dominio de Tangara da Serra/MT. E' o analogo do
@@ -3127,7 +3195,7 @@ def render_mapas_municipio(
                 # cortar nenhum verde. Sem aprovado, o recorte urbano de sempre.
                 bounds=(
                     _bounds_bairros_aprovados(bairros_geo) or bounds_urbano
-                    if camada == "cobertura" else bounds_urbano
+                    if camada == "cobertura" and not resposta_unica else bounds_urbano
                 ),
                 competitors_df=comp_principais if com_pins else None,
                 ultra_df=ultra_df if com_pins else None,
@@ -3185,52 +3253,6 @@ class _UltraPDF(FPDF):
         self.set_compression(False)
         self.set_auto_page_break(False)
         self.set_margins(0, 0, 0)
-
-
-# Tarjas de PENDENTE (Juan, 2026-10-20): areas que ainda vao mudar quando chegarem os dados do
-# gestor (Expansao de Dominio, Bairros por Zona e o card de zonas da Sintese; a coluna Bairro do
-# "Onde crescer" saiu da lista em 2026-10-21, quando o nome passou a vir do CNEFE). Lembrete de
-# revisao, NAO conteudo: so' sai com MOTOR_RELMUN_TARJAS_PENDENTES=1, para nunca chegar a um
-# relatorio de producao por descuido.
-_TARJA_TEXTO = "PENDENTE - aguardando dados do gestor"
-_TARJA_RGB = (120, 128, 140)
-
-
-def _tarjas_ligadas() -> bool:
-    return os.environ.get("MOTOR_RELMUN_TARJAS_PENDENTES", "").strip() in ("1", "true", "sim")
-
-
-def _marcar_pendente(pdf: _UltraPDF, x: float, y: float, w: float, h: float) -> None:
-    """Registra uma area pendente da pagina ATUAL; `_desenhar_tarjas` pinta no fim, se ligado."""
-    pdf.__dict__.setdefault("_tarjas_pendentes", []).append((pdf.page, x, y, w, h))
-
-
-def _desenhar_tarjas(pdf: _UltraPDF) -> None:
-    if not _tarjas_ligadas():
-        return
-    for pagina, x, y, w, h in pdf.__dict__.get("_tarjas_pendentes", []):
-        pdf.page = pagina
-        with pdf.local_context(fill_opacity=0.82):
-            # Voltando a uma pagina ja' fechada, o estado de cor do fpdf e' o da ULTIMA pagina
-            # escrita: se ela ja' tinha o cinza, o `set_fill_color` nao emite nada e a tarja
-            # herda a ultima cor desta pagina (saiu laranja no modo hexagono). Uma cor
-            # descartavel antes forca a emissao.
-            pdf.set_fill_color(0, 0, 1)
-            pdf.set_fill_color(*_TARJA_RGB)
-            pdf.rect(x, y, w, h, style="F")
-        # O fpdf so' emite a cor do texto de uma `cell` quando ela difere da cor de PREENCHIMENTO;
-        # saindo do contexto o preenchimento voltava a branco = texto, e a celula herdava a ultima
-        # cor da pagina (laranja). Preenchimento cinza fora do contexto resolve.
-        pdf.set_fill_color(*_TARJA_RGB)
-        pdf.set_text_color(*_BRANCO)
-        tam = 11 if w >= 200 else 7
-        pdf.set_font("Helvetica", "B", tam)
-        linhas = [_TARJA_TEXTO] if w >= 200 else ["PENDENTE", "dados do gestor"]
-        alt = tam * 1.25
-        y0 = y + (h - alt * len(linhas)) / 2.0
-        for i, linha in enumerate(linhas):
-            pdf.set_xy(x, y0 + i * alt)
-            pdf.cell(w, alt, _ascii(linha), align="C")
 
 
 def _draw_full_page_background(
@@ -3569,6 +3591,12 @@ def _cobertura_page(pdf: _UltraPDF, result: dict[str, Any], mapa: bytes | None,
     pdf.add_page()
     _draw_full_page_background(pdf, assets.get("conteudo"), ULTRA_BRANCO_GELO)
     _draw_title_band(pdf, f"Visão Geral do Município - {_local_label(result)}", rgb=primary)
+    if _resposta_unica(result):
+        # DEC-077 (Brasil): sem aprovados, sem a tabela e sem contagem -- so' o municipio, no
+        # centro (Juan, 2026-10-22: "mapa da cidade sem verde e sem tabela").
+        _draw_framed_map(pdf, mapa, max_w=540.0, max_h=380.0, x_anchor=(_PAGE_W - 540.0) / 2.0,
+                         y_anchor=100.0, border_rgb=primary)
+        return
     _draw_framed_map(pdf, mapa, max_w=540.0, max_h=380.0, x_anchor=34.0, y_anchor=100.0,
                      border_rgb=primary)
 
@@ -3724,7 +3752,11 @@ def _resumo_page(pdf: _UltraPDF, result: dict[str, Any], mapa: bytes | None,
     pdf.set_text_color(45, 45, 45)
     pdf.set_font("Helvetica", "", 10)
     pdf.set_xy(px + 12, y_end + 42)
-    pdf.multi_cell(pw - 24, 13, _ascii("Soma dos hexágonos destacados / 2.500"))
+    resposta_unica = _resposta_unica(result)
+    pdf.multi_cell(pw - 24, 13, _ascii(
+        f"Residual das regiões com {_format_number(OFERTA_DESTAQUE_MIN, 0)} ou mais / 2.500"
+        if resposta_unica else "Soma dos hexágonos destacados / 2.500"
+    ))
     parcelas = result.get("parcelas_amarelos") or []
     soma = result.get("soma_oferta_amarelos", 0.0)
     if parcelas:
@@ -3739,6 +3771,10 @@ def _resumo_page(pdf: _UltraPDF, result: dict[str, Any], mapa: bytes | None,
     # do _hex_destacado_mask: OFERTA_DESTAQUE_MIN — SO Residual Fitness, termo de SAM removido).
     _draw_note(
         pdf, 34.0, 490.0, 540.0,
+        # DEC-077 (Brasil): o espaco e' leitura de capacidade; a lista de onde expandir e' so' a
+        # do "Onde crescer".
+        f"Espaço para academias = {_rotulo_espaco_leitura()}. Leitura de capacidade do município."
+        if resposta_unica else
         f"Hexágono considerado quando Residual Fitness >= {_format_number(OFERTA_DESTAQUE_MIN, 0)} (alunos).",
     )
 
@@ -3787,9 +3823,16 @@ def _espaco_explicado_page(pdf: _UltraPDF, result: dict[str, Any], mapa: bytes |
     pdf.set_text_color(45, 45, 45)
     pdf.set_font("Helvetica", "", 11)
     pdf.set_xy(px + 14, y0 + 78)
+    # DEC-077 (Brasil): sem "aprovadas" -- a pagina fica (Juan com o Felipe, 2026-10-22), com o
+    # espaco lido como capacidade nao atendida.
+    regioes = (
+        f"regiões com residual a partir de {_format_number(OFERTA_DESTAQUE_MIN, 0)} alunos "
+        "(capacidade não atendida)"
+        if _resposta_unica(result) else "regiões aprovadas"
+    )
     pdf.multi_cell(pw - 28, 14, _ascii(
         f"academias de {_format_number(CAPACIDADE_UNIDADE, 0)} alunos cabem nas "
-        f"{_format_number(n_aprov, 0)} regiões aprovadas. Cada número no mapa é quantas cabem "
+        f"{_format_number(n_aprov, 0)} {regioes}. Cada número no mapa é quantas cabem "
         "naquela região."
     ))
 
@@ -4029,7 +4072,12 @@ def _residual_page(pdf: _UltraPDF, result: dict[str, Any], mapa: bytes | None,
     for rotulo, valor in (
         # O total e' do MUNICIPIO INTEIRO; a parte das regioes aprovadas e' a que entra no
         # "Espaco para academias" (Juan perguntou se eram os dados da cidade toda, 2026-10-20).
-        ("Nas regiões aprovadas", _format_number(result.get("soma_oferta_amarelos"), 0)),
+        (
+            # DEC-077 (Brasil): sem "aprovadas"; e' o residual das regioes de 2.000 ou mais.
+            f"Em regiões com {_format_number(OFERTA_DESTAQUE_MIN, 0)} ou mais"
+            if _resposta_unica(result) else "Nas regiões aprovadas",
+            _format_number(result.get("soma_oferta_amarelos"), 0),
+        ),
         ("Hab. totais", _format_number(result.get("pop_total_municipio"), 0)),
         ("Renda per capita", _renda(result.get("renda_per_capita_media"), 2)),
         ("Penetração fitness", _format_number(result.get("penetracao_fitness_pct"), 1, "%")),
@@ -4099,7 +4147,6 @@ def _dominio_page(pdf: _UltraPDF, result: dict[str, Any], mapa: bytes | None,
     pdf.add_page()
     _draw_full_page_background(pdf, assets.get("conteudo"), ULTRA_BRANCO_GELO)
     _draw_title_band(pdf, "Expansão de Domínio", rgb=primary)
-    _marcar_pendente(pdf, 0.0, 250.0, _PAGE_W, 40.0)
     # Moldura do mapa = tom principal; painel ESTRATEGIA = acento. Cores de ZONA inalteradas.
     _draw_framed_map(pdf, mapa, max_w=540.0, max_h=380.0, x_anchor=34.0, y_anchor=100.0,
                      border_rgb=primary)
@@ -4592,7 +4639,6 @@ def _bairros_page(pdf: _UltraPDF, result: dict[str, Any], assets: dict[str, byte
     pdf.add_page()
     _draw_full_page_background(pdf, assets.get("conteudo"), ULTRA_BRANCO_GELO)
     _draw_title_band(pdf, "Bairros por Zona", rgb=primary)
-    _marcar_pendente(pdf, 0.0, 250.0, _PAGE_W, 40.0)
 
     bairros_por_zona = result.get("bairros_por_zona") or []
     tem_bairros = any(z.get("bairros") for z in bairros_por_zona)
@@ -4798,7 +4844,9 @@ def _praca_crescimento_page(pdf: _UltraPDF, result: dict[str, Any], praca: Any,
     c = praca.crescimento
     x = 36.0
     w = _PAGE_W - 72.0
-    frase_h = 96.0
+    # Sem frase (no Brasil o veredito "E' praca para entrar" saiu pela DEC-077) a caixa fica so'
+    # com o nome da cidade, e os paineis sobem.
+    frase_h = 96.0 if str(c.frase or "").strip() else 44.0
     _rounded_panel(pdf, x, 76.0, w, frase_h, border_rgb=secondary)
     pdf.set_text_color(*secondary)
     pdf.set_font("Helvetica", "B", 13)
@@ -4836,12 +4884,118 @@ def _praca_crescimento_page(pdf: _UltraPDF, result: dict[str, Any], praca: Any,
     )
 
 
+#: Cores das duas tabelas de "Onde crescer" -- as mesmas das listas no mapa
+#: (`relatorio_praca_mapas._COR_TOP` / `_COR_TOP_SOCIO`).
+_COR_LISTA_1 = (20, 130, 65)
+_COR_LISTA_2 = (37, 99, 235)
+
+
+def _onde_crescer_recomendacao(pdf: _UltraPDF, rec: Any, rotulos: dict[str, str],
+                               x: float, w: float) -> None:
+    """As duas tabelas da recomendacao unica (DEC-077, Brasil), no lugar das listas por coluna.
+
+    Mata Virgem em ordem de residual e Premium em ordem de populacao, `vagas_por_segmento` vagas
+    cada, como o modulo devolve -- nada e' reordenado aqui. Vaga sem candidato sai sinalizada com
+    o motivo do modulo; segmento indisponivel (sem o carimbo k da malha) vira uma linha so' com
+    o motivo. Nome = `rotulos_das_regioes` (o bairro com mais moradores); sem bairro, o municipio.
+    Todo numero da nota sai da regua (`rec.regra`).
+    """
+    from motor_expansao.recomendacao import ROTULO_MOTIVO, ROTULO_SEGMENTO, ItemRecomendado
+
+    colunas = (("#", 18.0), ("Região", 116.0), ("Residual (alunos)", 66.0),
+               ("População", 66.0), ("Renda domiciliar", 78.0))
+    escala = w / sum(c[1] for c in colunas)
+    larguras = [c[1] * escala for c in colunas]
+    renda_municipal = False
+
+    def _linha(y: float, i: int, valores: tuple[str, ...] | None, texto: str | None = None) -> float:
+        pdf.set_fill_color(*((255, 255, 255) if i % 2 == 0 else (240, 242, 245)))
+        pdf.set_text_color(45, 45, 45)
+        if valores is not None:
+            xx = x
+            for valor, lw in zip(valores, larguras, strict=True):
+                pdf.set_xy(xx, y)
+                pdf.cell(lw, 20, _ascii(valor), align="C", fill=True)
+                xx += lw
+        else:
+            # Vaga vazia: posicao + o motivo numa celula so', para nao parecer regiao sem dado.
+            pdf.set_xy(x, y)
+            pdf.cell(larguras[0], 20, _ascii(str(i + 1)), align="C", fill=True)
+            resto = w - larguras[0]
+            pdf.set_font("Helvetica", "I", 8)
+            pdf.set_xy(x + larguras[0], y)
+            pdf.cell(resto, 20, _ascii(_encurtar(pdf, texto or "", resto - 6)), align="L", fill=True)
+            pdf.set_font("Helvetica", "", 9)
+        return y + 20.0
+
+    def _tabela(y: float, seg: Any, titulo: str, cor: tuple[int, int, int]) -> float:
+        nonlocal renda_municipal
+        pdf.set_text_color(*cor)
+        pdf.set_font("Helvetica", "B", 11)
+        pdf.set_xy(x, y)
+        pdf.cell(w, 14, _ascii(titulo))
+        y += 18.0
+        pdf.set_fill_color(*cor)
+        pdf.set_text_color(*_BRANCO)
+        pdf.set_font("Helvetica", "B", 8)
+        pdf.rect(x, y, w, 26.0, style="F")
+        xx = x
+        for (rotulo, _), lw in zip(colunas, larguras, strict=True):
+            uma_linha = pdf.get_string_width(_ascii(rotulo)) <= lw - 4
+            pdf.set_xy(xx, y + (7.0 if uma_linha else 1.0))
+            pdf.multi_cell(lw, 12, _ascii(rotulo), align="C", new_x="RIGHT", new_y="TOP")
+            xx += lw
+        y += 28.0
+        pdf.set_font("Helvetica", "", 9)
+        if seg.status == "indisponivel":
+            motivo = seg.vagas[0].motivo if seg.vagas else "renda_indisponivel"
+            return _linha(y, 0, None, ROTULO_MOTIVO.get(motivo, motivo))
+        for i, vaga in enumerate(seg.vagas):
+            if isinstance(vaga, ItemRecomendado):
+                nome = rotulos.get(vaga.hex_id) or vaga.nome_municipio or TEXTO_SEM_DADO
+                renda = _renda(vaga.renda_domiciliar)
+                if vaga.renda_municipal:
+                    renda_municipal = True
+                    renda += "*"
+                y = _linha(y, i, (
+                    str(vaga.posicao),
+                    _encurtar(pdf, str(nome), larguras[1] - 4),
+                    _format_number(vaga.residual, 0),
+                    _format_number(vaga.populacao, 0),
+                    renda,
+                ))
+            else:
+                y = _linha(y, i, None, f"Vaga vazia: {ROTULO_MOTIVO.get(vaga.motivo, vaga.motivo)}")
+        return y
+
+    y = _tabela(80.0, rec.mata_virgem, f"{ROTULO_SEGMENTO['mata_virgem']} (ordem: residual)", _COR_LISTA_1)
+    y = _tabela(y + 14.0, rec.premium, f"{ROTULO_SEGMENTO['premium']} (ordem: população)", _COR_LISTA_2)
+    mv, pr = rec.regra.mata_virgem, rec.regra.premium
+    pop_premium = (f" e {_format_number(pr.populacao_min, 0)} habitantes ou mais"
+                   if pr.populacao_min is not None else "")
+    _draw_note(
+        pdf, x, y + 10.0, w,
+        f"Mata Virgem = renda domiciliar a partir de {_renda(mv.renda_domiciliar_min)} e residual "
+        f"medido a partir de {_format_number(mv.residual_min, 0)} alunos, em ordem de residual. "
+        f"Premium = região que não é Mata Virgem, com score censitário a partir de "
+        f"{_format_number(pr.score_min, 0)}{pop_premium}, em ordem de população. Região = "
+        "hexágono de ~5 km², com o nome do bairro de mais moradores. Vaga vazia = nenhuma outra "
+        "região da cidade atende à régua. No mapa, verde = Mata Virgem e azul = Premium, "
+        f"numerados como nas tabelas. Régua {rec.regra.versao} ({rec.regra.dec})."
+        + (" * Renda do município: a região não tem renda por setor." if renda_municipal else ""),
+    )
+
+
 def _praca_onde_crescer_page(pdf: _UltraPDF, result: dict[str, Any], praca: Any,
                              assets: dict[str, bytes | None], *,
                              primary: tuple[int, int, int], secondary: tuple[int, int, int]) -> None:
     """"Onde crescer" com DUAS tabelas (Juan, 2026-10-20): top 5 por residual e top 5 por score
     socioeconomico, cada uma pelo valor absoluto. O mapa marca as duas listas em cores proprias.
-    Substitui a lista unica pelo indice de praca e a pagina "Comparacao das Regioes"."""
+    Substitui a lista unica pelo indice de praca e a pagina "Comparacao das Regioes".
+
+    No Brasil (`praca.recomendacao`, DEC-077) as duas tabelas sao a recomendacao unica -- Mata
+    Virgem e Premium do modulo `motor_expansao.recomendacao` --, com o mesmo layout e o mesmo mapa
+    de duas cores; muda so' de onde vem a lista (Felipe, 2026-10-21)."""
     from motor_expansao.dashboard.relatorio_praca import TITULO_ONDE_CRESCER
 
     pdf.add_page()
@@ -4853,6 +5007,10 @@ def _praca_onde_crescer_page(pdf: _UltraPDF, result: dict[str, Any], praca: Any,
     bairros = result.get("bairros_por_hex") or {}
     x = 34.0 + _PRACA_MAPA_W + 30.0
     w = _PAGE_W - x - 36.0
+    rec = getattr(praca, "recomendacao", None)
+    if rec is not None:
+        _onde_crescer_recomendacao(pdf, rec, dict(getattr(praca, "rotulos_recomendacao", None) or {}), x, w)
+        return
     # Densidade no lugar do score (Juan, 2026-10-20): o score ja' ordena a 2a lista e, em Sao
     # Paulo, satura em 100 -- a coluna repetia "100,0". A densidade mostra a "gente" do score.
     colunas = (("#", 18.0), ("Bairro", 110.0), ("Residual (alunos)", 70.0),
@@ -4962,7 +5120,12 @@ def _texto_residual_sintese(result: dict[str, Any]) -> tuple[str, str]:
     texto = (f"{nivel}: {_format_number(por_mil, 0)} alunos sem academia por mil habitantes "
              f"(mediana das cidades grandes: {_format_number(med, 0)}).")
     if residual > 0 and not math.isnan(aprov):
-        texto += f" {_format_number(100.0 * aprov / residual, 0)}% dele está nas regiões aprovadas."
+        # DEC-077 (Brasil): sem "aprovadas" -- a parte do residual nas regioes de 2.000 ou mais.
+        onde = (
+            f"nas regiões com residual a partir de {_format_number(OFERTA_DESTAQUE_MIN, 0)} alunos"
+            if _resposta_unica(result) else "nas regiões aprovadas"
+        )
+        texto += f" {_format_number(100.0 * aprov / residual, 0)}% dele está {onde}."
     return valor, texto
 
 
@@ -4989,9 +5152,13 @@ def _sintese_page(pdf: _UltraPDF, result: dict[str, Any], assets: dict[str, byte
             _texto_zonas_sintese(result.get("zonas_geo")),
         ),
     ]
+    if _resposta_unica(result):
+        # DEC-077 (Brasil): o card de zonas sai ate' chegarem os dados do gestor (Felipe,
+        # 2026-10-21), junto com Expansao de Dominio e Bairros por Zona.
+        cards = cards[:2]
     margin_x = 36.0
     gap = 18.0
-    card_w = (_PAGE_W - 2 * margin_x - 2 * gap) / 3.0
+    card_w = (_PAGE_W - 2 * margin_x - (len(cards) - 1) * gap) / len(cards)
     # FU1: cards mais baixos e CENTRALIZADOS verticalmente (evita excesso de espaco vazio).
     card_h = 210.0
     top = _centered_y(card_h)
@@ -5002,8 +5169,6 @@ def _sintese_page(pdf: _UltraPDF, result: dict[str, Any], assets: dict[str, byte
         # card (mesma sequencia `_ciclo_cor`): card 1 turquesa / 2 magenta / 3 laranja.
         cor_card = _ciclo_cor(idx)
         _rounded_panel(pdf, x, top, card_w, card_h, border_rgb=cor_card)
-        if idx == 2:
-            _marcar_pendente(pdf, x, top, card_w, card_h)
         pdf.set_text_color(*cor_card)
         pdf.set_font("Helvetica", "B", 22)
         pdf.set_xy(x + 16, top + 30)
@@ -5024,10 +5189,16 @@ def _espaco_academias_page(pdf: _UltraPDF, result: dict[str, Any], assets: dict[
     pdf.add_page()
     _draw_full_page_background(pdf, assets.get("conteudo"), ULTRA_BRANCO_GELO)
     _draw_title_band(pdf, "Espaço e academias", rgb=primary)
+    # DEC-077 (Brasil): o espaco so' como leitura, com o rotulo do Felipe (2026-10-21).
+    resposta_unica = _resposta_unica(result)
+    rotulo_espaco = (
+        f"Espaço para academias: {_rotulo_espaco_leitura()}"
+        if resposta_unica else "Espaço total p/ novas academias"
+    )
     big = [
         (ULTRA_TURQUESA, _format_number(result.get("n_ultra"), 0), "Unidades Ultra mapeadas"),
         (ULTRA_MAGENTA, _format_number(result.get("n_concorrentes"), 0), "Unidades concorrentes mapeadas"),
-        (ULTRA_LARANJA, _format_number(result.get("espaco_para_academias"), 0), "Espaço total p/ novas academias"),
+        (ULTRA_LARANJA, _format_number(result.get("espaco_para_academias"), 0), rotulo_espaco),
     ]
     margin_x = 36.0
     gap = 18.0
@@ -5088,8 +5259,9 @@ def _espaco_academias_page(pdf: _UltraPDF, result: dict[str, Any], assets: dict[
     pdf.multi_cell(
         _PAGE_W - 72, 11,
         _ascii(
-            "Método: contagem de pins dentro do território (H3 res 7) - "
-            "Espaço = soma dos hexágonos destacados / 2.500."
+            "Método: contagem de pins dentro do território (H3 res 7) - Espaço = "
+            + (f"residual das regiões com {_format_number(OFERTA_DESTAQUE_MIN, 0)} ou mais alunos / 2.500."
+               if resposta_unica else "soma dos hexágonos destacados / 2.500.")
         ),
     )
 
@@ -5173,8 +5345,12 @@ def gerar_pdf_relatorio_municipal(
     _cobertura_page(pdf, municipio_result, mapas.get("cobertura"), assets, primary=p1, secondary=s1)
     _resumo_page(pdf, municipio_result, mapas.get("resumo"), assets, primary=p5, secondary=s5)
     _espaco_explicado_page(pdf, municipio_result, mapas.get("espaco"), assets, primary=s5)
-    _dominio_page(pdf, municipio_result, mapas.get("dominio"), assets, primary=p8, secondary=s8)
-    _bairros_page(pdf, municipio_result, assets, primary=p9)
+    if not _resposta_unica(municipio_result):
+        # DEC-077 (Brasil): Expansao de Dominio e Bairros por Zona ficam fora ate' chegarem os
+        # dados do gestor (Felipe, 2026-10-21); eram outras listas de "onde expandir". A
+        # Argentina, sem regua de recomendacao, segue com as duas.
+        _dominio_page(pdf, municipio_result, mapas.get("dominio"), assets, primary=p8, secondary=s8)
+        _bairros_page(pdf, municipio_result, assets, primary=p9)
     if praca is not None:
         p14, s14 = _tema_bicolor(14)
         _praca_onde_crescer_page(pdf, municipio_result, praca, assets, primary=p14, secondary=s14)
@@ -5183,7 +5359,6 @@ def gerar_pdf_relatorio_municipal(
     _sintese_page(pdf, municipio_result, assets, primary=p10)
     _espaco_academias_page(pdf, municipio_result, assets, primary=p11)
 
-    _desenhar_tarjas(pdf)
     # Capa SEM marca-d'agua (Juan, 2026-10-20): a pagina 1 e' a que vai para apresentacao. O
     # carimbo segue nas paginas de conteudo e no `/Info`.
     wm_text = _watermark_text(solicitante, report_id)

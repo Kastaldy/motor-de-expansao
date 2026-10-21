@@ -526,7 +526,8 @@ def test_pdf_municipal_12_paginas_e_secoes():
     # reprovar um BUMP legitimo de contrato -- e o bump e' justamente o que mantem dois PDFs de
     # estruturas diferentes distinguiveis.
     assert VERSAO_CONTRATO_MUNICIPAL.encode("latin-1") in pdf_bytes
-    assert b"contrato v2" in pdf_bytes
+    # v3 (2026-10-22): reforma dos slides + resposta unica do Brasil (DEC-077).
+    assert b"contrato v3" in pdf_bytes
     # A atribuicao de tiles (DEC-011) mora na nota do proprio mapa, e so' quando ha basemap;
     # aqui o fundo e' offline, entao nenhum credito de tiles e' impresso.
     assert b"Relat\xf3rio gerado pelo Motor" not in pdf_bytes
