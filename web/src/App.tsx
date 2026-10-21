@@ -327,6 +327,14 @@ export default function App() {
     pontoSoltou.current = true
     setPinPonto(null)
   }, [])
+  /* A UNIDADE escolhida solta tambem o destino de lista (`pinDestino`), e nao so' o ponto:
+     o destino vence o pin local no `searchPin`, entao com um destino ativo a camera nao ia
+     ate' a unidade do MESMO territorio -- e ia ate' a de outro, porque ai' a troca de
+     municipio limpava o destino. O comportamento dependia de onde a unidade estava. */
+  const soltarParaUnidade = useCallback(() => {
+    setPinDestino(null)
+    soltarPonto()
+  }, [soltarPonto])
 
   /**
    * O PONTO ATIVO mudou (pedido novo, leitura que chegou, troca de aba, remoção): leva o
@@ -739,7 +747,7 @@ export default function App() {
               /* Uma UNIDADE da rede foi escolhida (seletor do cabeçalho ou pin da Ultra): o
                  pin dela passa a valer, e o ponto ativo solta a câmera — senão ele seguia
                  vencendo a precedência e a câmera nunca chegava à unidade. */
-              onSoltarPonto={soltarPonto}
+              onSoltarPonto={soltarParaUnidade}
               /* A lupa do cabeçalho vira PONTO ANALISADO nas duas entradas: buscar um
                  endereço ali produz a MESMA ficha que colá-lo. */
               onPontoBuscado={pedirPonto}

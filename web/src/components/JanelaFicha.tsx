@@ -14,6 +14,7 @@ import {
 } from '../lib/janela'
 import { registrarJanela, removerJanela } from '../lib/ocupacao-janelas'
 import { Z_JANELA_FICHA, Z_JANELA_FICHA_TOPO } from '../lib/camadas-mapa'
+import { useCabecalhoMapa } from '../lib/registro-cabecalho'
 
 /** Onde a janela nasce no eixo Y: abaixo do cabeçalho flutuante do mapa. Com o cabeçalho
  *  quebrado em duas linhas, nasce abaixo dele (`topoMinimo`), nunca embaixo. */
@@ -178,20 +179,24 @@ export default function JanelaFicha({
   /* O TOPO MINIMO: a borda de baixo do cabeçalho do mapa (`topoMinimoSobCabecalho`). O
      cabeçalho fica ACIMA das janelas (`Z_CABECALHO_MAPA`), então a barra de título que
      subisse por baixo dele ficaria sem alça. Ele é de outro componente (o `MapScreen`; para
-     a ficha de ponto, o irmão na árvore), então é achado pelo DOM — o primeiro ancestral
-     que contém a `barra-ultra`, como o botão "Ver a ficha" já faz — e medido de novo quando
-     muda de altura (é `flex-wrap`: quebra em duas linhas em tela estreita). Sem cabeçalho,
-     0: a trava de sempre, só o topo da área. */
+     a ficha de ponto, o irmão na árvore), então vem do REGISTRO que o `MapScreen` publica
+     (`lib/registro-cabecalho`) e é medido de novo quando muda de altura (é `flex-wrap`:
+     quebra em duas linhas em tela estreita). Sem cabeçalho, 0: a trava de sempre, só o
+     topo da área.
+
+     Registro, e não busca no DOM na montagem (revisão de 21/10/2026): a janela do ponto
+     existe no Explorar ANTES de o cabeçalho existir (sem UF, o mapa desenha a Landing), e
+     trocar Landing <-> mapa remonta o cabeçalho num elemento novo. Achado uma vez só, o
+     topo ficava 0 para sempre, ou medido num elemento desligado. Agora o efeito refaz a
+     medida a cada cabeçalho que aparece, some ou troca. */
+  const cabecalho = useCabecalhoMapa()
   const [topoMinimo, setTopoMinimo] = useState(0)
   useLayoutEffect(() => {
     const pai = ref.current?.parentElement
-    if (!pai) return
-    let achado: HTMLElement | null = null
-    for (let anc: HTMLElement | null = pai; anc && !achado; anc = anc.parentElement) {
-      achado = anc.querySelector<HTMLElement>('header.barra-ultra')
+    if (!pai || !cabecalho || !cabecalho.isConnected) {
+      setTopoMinimo(0)
+      return
     }
-    if (!achado) return
-    const cabecalho = achado
     const medir = () => {
       const caixa = pai.getBoundingClientRect()
       /* A escala do `#root` (transform), lida do próprio contêiner: tela / layout. */
@@ -206,7 +211,7 @@ export default function JanelaFicha({
       obs?.disconnect()
       window.removeEventListener('resize', medir)
     }
-  }, [])
+  }, [cabecalho])
 
   useEffect(() => {
     if (!area.largura || !area.altura) return

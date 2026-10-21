@@ -68,7 +68,9 @@ describe('clique no pin colorido: abre a aba daquele ponto', () => {
     // ponto central, e pedi-la leria um ponto novo. A regra pura é `mostrar`
     // (pontos-estado.test.ts).
     expect(app).toContain('onPontoComparado={(i) => pontos.mostrar(i)}')
-    expect(mapScreen).toContain('onPontoClicado={onPontoComparado}')
+    // pelo `aoClicarPontoComparado`, que repassa o MESMO índice e cancela a viagem da unidade
+    expect(mapScreen).toContain('onPontoClicado={aoClicarPontoComparado}')
+    expect(mapScreen).toContain('onPontoComparado?.(i)')
   })
 })
 
@@ -142,7 +144,12 @@ describe('Selecionar ponto: o clique é da ferramenta, por cima de tudo', () => 
 
   it('escolher uma UNIDADE solta o ponto ativo, senão ele vence a precedência', () => {
     expect(mapScreen).toContain('onSoltarPonto?.()')
-    expect(app).toContain('onSoltarPonto={soltarPonto}')
+    expect(app).toContain('onSoltarPonto={soltarParaUnidade}')
+    // ...e solta também o destino de lista, que senão venceria o pin da unidade no searchPin
+    const inicio = app.indexOf('const soltarParaUnidade = useCallback(')
+    const corpo = app.slice(inicio, app.indexOf('}, [soltarPonto])', inicio))
+    expect(corpo).toContain('setPinDestino(null)')
+    expect(corpo).toContain('soltarPonto()')
   })
 
   it('Esc desliga a ferramenta, antes da janela que estiver por cima', () => {

@@ -44,6 +44,8 @@ const ACC_16 = 'rgba(221,61,151,.16)'
 import { chaveContexto, fotoAplicavel, type EstadoMapa } from '../lib/mapa-estado'
 import { REDES_LIGADAS_POR_PADRAO, pinsVisiveis, subDaChaveRedes, temAlunos } from '../lib/pins'
 import { Z_CABECALHO_MAPA, Z_CORPO_MAPA } from '../lib/camadas-mapa'
+import { registrarCabecalhoMapa } from '../lib/registro-cabecalho'
+import { criarViagemUnidade } from '../lib/viagem-unidade'
 import {
   ROTULO_SEM_REDE,
   unidadeDoPin,
@@ -557,6 +559,21 @@ export default function MapScreen({
      o operador compara o imovel COM o hexagono, entao as duas ficam lado a lado. */
   const [imovelAberto, setImovelAberto] = useState<Oportunidade | null>(null)
 
+  /* A VIAGEM da unidade ate' o territorio dela (`abrirUnidade`, abaixo): declarada aqui
+     porque os gestos que a cancelam (imovel, hexagono, lista, busca, comparacao) vem antes
+     e depois. Regra e motivo em `lib/viagem-unidade`. */
+  const [viagem] = useState(() =>
+    criarViagemUnidade<{ unidade: UnidadeNoMapa; pin: SearchPin | null }>(),
+  )
+  // Desmontar o mapa (Viabilidade, Executiva...) com a lista ainda em voo: nada muda depois.
+  useEffect(() => () => viagem.cancelar(), [viagem])
+  /* Destino de lista ou ponto analisado NOVO (ranking, lupa, aba de ponto): e' outro pedido
+     de para onde olhar, e vence a viagem. So' quando aparece -- a propria unidade SOLTA o
+     ponto e o destino (`onSoltarPonto`), e isso nao pode cancelar a viagem dela. */
+  useEffect(() => {
+    if (pontoAtivo || pinFixo) viagem.cancelar()
+  }, [pontoAtivo, pinFixo, viagem])
+
   /* Porta UNICA de abertura por gesto humano: o pin da camada e a secao "Imoveis
      disponiveis aqui" da ficha do hexagono passam os dois por aqui, entao o rastro
      (DEC-027) sai UMA vez por clique, nao um por caminho. O fechamento segue chamando
@@ -572,8 +589,9 @@ export default function MapScreen({
       municipio: o.municipio,
       origem: 'mapa',
     })
+    viagem.cancelar()
     setImovelAberto(o)
-  }, [])
+  }, [viagem])
 
   useEffect(() => {
     if (!uf) {
@@ -711,27 +729,26 @@ export default function MapScreen({
 
      TRES CUIDADOS:
      - Trocar de territorio FECHA a ficha da unidade (efeito de contexto, abaixo). Aqui a
-       troca foi causada pela propria unidade, entao ela viaja em `unidadeEmTransito` e o
+       troca foi causada pela propria unidade, entao ela viaja em `viagem` e o
        efeito a reabre -- com o pin -- se o contexto novo for exatamente o que ela pediu.
        Nao re-dispara selecao: reabrir so' poe de volta o estado, nao chama `abrirUnidade`.
      - A lista de municipios tem de ser a da UF DA UNIDADE (`municipiosUf`); se nao for (UF
        trocada ha' pouco, ou unidade de OUTRA UF -- o pin da divisa), ela e' pedida ao
-       servidor. Resposta atrasada de uma escolha anterior e' descartada (`seqUnidade`), e
-       fechar a ficha antes de ela chegar tambem cancela a viagem.
+       servidor. A resposta so' vale se, desde a escolha, o operador nao fez mais nada
+       (`lib/viagem-unidade`): fechar a ficha, escolher outra unidade, clicar num hexagono,
+       num ponto da comparacao ou num imovel, buscar, comparar, um destino de lista, trocar
+       o territorio a mao e SAIR do mapa cancelam a viagem -- senao a resposta atrasada
+       mudaria de cidade por baixo do gesto novo, ou o territorio do App com o operador ja'
+       em outra tela (revisao de 21/10/2026).
      - Nenhuma troca quando a unidade ja' esta' no territorio aberto (`planoDeTroca`). */
-  const seqUnidade = useRef(0)
-  const unidadeEmTransito = useRef<{
-    chave: string
-    unidade: UnidadeNoMapa
-    pin: SearchPin | null
-  } | null>(null)
+  // `viagem` e' declarada antes de `abrirImovel`, que tambem a cancela.
   const atualRef = useRef({ uf, municipio, municipios, municipiosUf, dados, onUf, onMunicipio })
   atualRef.current = { uf, municipio, municipios, municipiosUf, dados, onUf, onMunicipio }
   const levarAoTerritorioDaUnidade = useCallback(
     (u: UnidadeComTerritorio, seq: number, unidade: UnidadeNoMapa, pinU: SearchPin | null) => {
       const ufAlvo = ufDaUnidade(u, atualRef.current.uf)
       const aplicar = (lista: readonly { nome: string }[]) => {
-        if (seq !== seqUnidade.current) return
+        if (!viagem.vale(seq)) return
         const a = atualRef.current
         /* O municipio do HEXAGONO da unidade, se o payload aberto for da UF dela e o tiver. */
         const doHex =
@@ -743,7 +760,7 @@ export default function MapScreen({
         if (plano.uf === null && plano.municipio === null) return
         const ufFinal = plano.uf ?? a.uf
         const munFinal = plano.municipio ?? (plano.uf !== null ? '' : a.municipio)
-        unidadeEmTransito.current = { chave: chaveContexto(ufFinal, munFinal), unidade, pin: pinU }
+        if (!viagem.embarcar(seq, chaveContexto(ufFinal, munFinal), { unidade, pin: pinU })) return
         if (plano.uf !== null) a.onUf(plano.uf)
         if (plano.municipio !== null) a.onMunicipio(plano.municipio)
       }
@@ -757,7 +774,7 @@ export default function MapScreen({
         .then((r) => aplicar((r.uf ?? '').toUpperCase() === ufAlvo ? r.municipios : []))
         .catch(() => aplicar([]))
     },
-    [],
+    [viagem],
   )
   const abrirUnidade = useCallback(
     (u: {
@@ -769,7 +786,7 @@ export default function MapScreen({
       uf?: string | null
       cidade?: string | null
     }) => {
-      const seq = ++seqUnidade.current
+      const seq = viagem.iniciar()
       const unidade: UnidadeNoMapa = { id: u.id, nome: u.nome, semRede: u.semRede ?? false }
       setUnidadeAberta(unidade)
       const pinU =
@@ -784,15 +801,22 @@ export default function MapScreen({
       }
       levarAoTerritorioDaUnidade(u, seq, unidade, pinU)
     },
-    [onSoltarPonto, levarAoTerritorioDaUnidade],
+    [onSoltarPonto, levarAoTerritorioDaUnidade, viagem],
   )
   /* Fechar a ficha cancela a viagem pendente: a lista de municipios que chegar depois nao
      pode trocar o territorio (nem reabrir a ficha) de uma unidade que o operador fechou. */
   const fecharUnidade = useCallback(() => {
-    seqUnidade.current++
-    unidadeEmTransito.current = null
+    viagem.cancelar()
     setUnidadeAberta(null)
-  }, [])
+  }, [viagem])
+  /* Clicar num ponto da comparacao e' pedir para olhar para ele: vence a viagem. */
+  const aoClicarPontoComparado = useCallback(
+    (i: number) => {
+      viagem.cancelar()
+      onPontoComparado?.(i)
+    },
+    [viagem, onPontoComparado],
+  )
 
   /* "Estudar a região desta unidade": fecha a ficha da unidade (a de ponto abre no lugar,
      à esquerda — duas janelas sobre o mesmo lugar seriam duas leituras dele) e pede o
@@ -953,16 +977,14 @@ export default function MapScreen({
     setCenario([])
     setImovelAberto(null)
     /* A ficha da unidade fala de um ponto do território anterior, como a do imóvel — SALVO
-       quando foi a própria unidade que trouxe o mapa até aqui (`unidadeEmTransito`, ver
+       quando foi a própria unidade que trouxe o mapa até aqui (`viagem`, ver
        `abrirUnidade`): aí ela continua aberta, com o pin. Qualquer outra troca cancela uma
-       viagem ainda pendente (`seqUnidade`). */
-    const transito = unidadeEmTransito.current
-    unidadeEmTransito.current = null
-    if (transito && transito.chave === contexto) {
+       viagem ainda pendente (`viagem.chegar`). */
+    const transito = viagem.chegar(contexto)
+    if (transito) {
       setUnidadeAberta(transito.unidade)
       setPin(transito.pin)
     } else {
-      seqUnidade.current++
       setUnidadeAberta(null)
     }
     cameraRef.current = null
@@ -1155,11 +1177,12 @@ export default function MapScreen({
    */
   const [voo, setVoo] = useState<{ hexId: string; n: number } | null>(null)
   const selecionarDaLista = useCallback((hexId: string) => {
+    viagem.cancelar()
     setSelecionado(hexId)
     setSelecaoDaBusca(false)
     setPin(null)
     setVoo((v) => ({ hexId, n: (v?.n ?? 0) + 1 }))
-  }, [])
+  }, [viagem])
 
   /* ---- Deck de comparacao (PDF) --------------------------------------------
      O MapScreen orquestra porque so' ele tem as duas pontas: o mapa (que captura) e a
@@ -1316,19 +1339,21 @@ export default function MapScreen({
    * no clique do mapa.
    */
   const comparar = useCallback((hexId: string) => {
+    viagem.cancelar()
     setModoCenario(true)
     setCenario((cs) => {
       if (cs.includes(hexId)) return cs.filter((x) => x !== hexId)
       if (cs.length >= MAX_COMPARADOS) return cs
       return [...cs, hexId]
     })
-  }, [])
+  }, [viagem])
 
   /* A busca resolveu: vira ponto analisado, e so'. O pin (provisorio e depois o da ficha)
      e a selecao do hexagono voltam pelo `pontoAtivo` — uma regra so' de pin, em vez de um
      pin local que convivia com o da ficha e trazia o cartao "Estudo pontual" junto. Quem
      leva o ponto a' Viabilidade agora e' o "Simulador" da ficha de ponto. */
   function aplicarPonto(lat: number, lng: number, doMapa = false) {
+    viagem.cancelar()
     setBuscaErro(null)
     onPontoBuscado(lat, lng, doMapa)
   }
@@ -1739,7 +1764,7 @@ export default function MapScreen({
           coresHex={coresHex}
           onCliqueDesenho={cliqueNoDesenho}
           pontosComparados={pontosComparados}
-          onPontoClicado={onPontoComparado}
+          onPontoClicado={aoClicarPontoComparado}
           independentes={verIndependentes ? independentes?.itens : undefined}
           imoveis={verImoveis ? imoveisNoMapa : undefined}
           onImovel={abrirImovel}
@@ -1776,6 +1801,7 @@ export default function MapScreen({
                nao chama isto com a regua ligada; a guarda aqui vale tambem para as
                ferramentas novas do trilho, quem quer que as ligue. */
             if (!cliqueSelecionaHex(ferramenta)) return
+            viagem.cancelar()
             setPin(null)
             // Clique DIRETO: a ficha do hexagono abre, mesmo que seja o hexagono do ponto.
             setSelecaoDaBusca(false)
@@ -1800,6 +1826,8 @@ export default function MapScreen({
       {/* ---------------- Header ---------------- */}
       <header
         className="barra-ultra"
+        /* Publicado para quem mede a borda de baixo dele (janelas e camada do ponto). */
+        ref={registrarCabecalhoMapa}
         style={{
           position: 'relative',
           /* ACIMA do corpo, das janelas e das peças soltas do ponto, abaixo da Metodologia

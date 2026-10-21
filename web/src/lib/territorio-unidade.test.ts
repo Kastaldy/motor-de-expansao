@@ -129,14 +129,14 @@ describe('a fiação no MapScreen', () => {
   it('abrirUnidade (porta do seletor E do pin) leva o mapa ao território da unidade', () => {
     const inicio = mapa.indexOf('const abrirUnidade = useCallback(')
     const corpo = mapa.slice(inicio, mapa.indexOf('[onSoltarPonto, levarAoTerritorioDaUnidade]', inicio))
-    expect(corpo).toContain('const seq = ++seqUnidade.current')
+    expect(corpo).toContain('const seq = viagem.iniciar()')
     expect(corpo).toContain('levarAoTerritorioDaUnidade(u, seq, unidade, pinU)')
   })
 
   it('a troca usa os MESMOS onUf/onMunicipio do cabeçalho, e só quando o plano pede', () => {
     const inicio = mapa.indexOf('const levarAoTerritorioDaUnidade = useCallback(')
     const corpo = mapa.slice(inicio, mapa.indexOf('const abrirUnidade = useCallback(', inicio))
-    expect(corpo).toContain('if (seq !== seqUnidade.current) return')
+    expect(corpo).toContain('if (!viagem.vale(seq)) return')
     expect(corpo).toContain('if (plano.uf === null && plano.municipio === null) return')
     expect(corpo).toContain('if (plano.uf !== null) a.onUf(plano.uf)')
     expect(corpo).toContain('if (plano.municipio !== null) a.onMunicipio(plano.municipio)')
@@ -145,19 +145,21 @@ describe('a fiação no MapScreen', () => {
     expect(corpo).toContain('.municipios(ufAlvo)')
     // o hexágono só vale se o payload aberto for da UF da unidade
     expect(corpo).toContain('a.dados.uf.toUpperCase() === ufAlvo')
-    // a viagem é marcada ANTES de pedir a troca
-    expect(corpo.indexOf('unidadeEmTransito.current = {')).toBeLessThan(corpo.indexOf('a.onUf(plano.uf)'))
+    // a viagem é marcada ANTES de pedir a troca, e só se a escolha ainda vale
+    const embarque = 'if (!viagem.embarcar(seq, chaveContexto(ufFinal, munFinal), { unidade, pin: pinU })) return'
+    expect(corpo).toContain(embarque)
+    expect(corpo.indexOf(embarque)).toBeLessThan(corpo.indexOf('a.onUf(plano.uf)'))
   })
 
   it('a troca de território causada pela unidade NÃO fecha a ficha dela', () => {
-    const inicio = mapa.indexOf('const transito = unidadeEmTransito.current')
+    const inicio = mapa.indexOf('const transito = viagem.chegar(contexto)')
     expect(inicio).toBeGreaterThan(-1)
     const corpo = mapa.slice(inicio, mapa.indexOf('}, [uf, municipio])', inicio))
-    expect(corpo).toContain('if (transito && transito.chave === contexto) {')
+    expect(corpo).toContain('if (transito) {')
     expect(corpo).toContain('setUnidadeAberta(transito.unidade)')
     expect(corpo).toContain('setPin(transito.pin)')
-    // qualquer outra troca cancela a viagem pendente e fecha a ficha, como antes
-    expect(corpo).toContain('seqUnidade.current++')
+    // qualquer outra troca fecha a ficha (o cancelamento é do `chegar`, testado em viagem-unidade)
+    expect(corpo).toContain('setUnidadeAberta(null)')
     // reabrir NÃO chama abrirUnidade (sem ciclo de seleção)
     expect(corpo).not.toContain('abrirUnidade(')
   })
@@ -170,9 +172,33 @@ describe('a fiação no MapScreen', () => {
   it('fechar a ficha cancela a viagem pendente', () => {
     expect(mapa).toContain('onFechar={fecharUnidade}')
     const inicio = mapa.indexOf('const fecharUnidade = useCallback(')
-    const corpo = mapa.slice(inicio, mapa.indexOf('}, [])', inicio))
-    expect(corpo).toContain('seqUnidade.current++')
-    expect(corpo).toContain('unidadeEmTransito.current = null')
+    const corpo = mapa.slice(inicio, mapa.indexOf('}, [viagem])', inicio))
+    expect(corpo).toContain('viagem.cancelar()')
+  })
+
+  it('sair do mapa com a lista em voo cancela a viagem (nada muda o território do App depois)', () => {
+    expect(mapa).toContain('useEffect(() => () => viagem.cancelar(), [viagem])')
+  })
+
+  it('todo gesto que reposiciona a atenção cancela a viagem pendente', () => {
+    const corpoDe = (abre: string, fecha: string) => {
+      const i = mapa.indexOf(abre)
+      expect(i, abre).toBeGreaterThan(-1)
+      return mapa.slice(i, mapa.indexOf(fecha, i))
+    }
+    // imóvel, item da lista, comparar, busca/ponto, ponto da comparação
+    expect(corpoDe('const abrirImovel = useCallback(', '}, [viagem])')).toContain('viagem.cancelar()')
+    expect(corpoDe('const selecionarDaLista = useCallback(', '}, [viagem])')).toContain('viagem.cancelar()')
+    expect(corpoDe('const comparar = useCallback(', '}, [viagem])')).toContain('viagem.cancelar()')
+    expect(corpoDe('function aplicarPonto(', 'onPontoBuscado(')).toContain('viagem.cancelar()')
+    expect(corpoDe('const aoClicarPontoComparado = useCallback(', '[viagem, onPontoComparado]')).toContain(
+      'viagem.cancelar()',
+    )
+    expect(mapa).toContain('onPontoClicado={aoClicarPontoComparado}')
+    // clique num hexágono
+    expect(corpoDe('onSelecionar={(h) => {', 'setSelecionado(h.id)')).toContain('viagem.cancelar()')
+    // destino de lista ou ponto analisado NOVO (só quando aparece: a unidade os solta)
+    expect(mapa).toContain('if (pontoAtivo || pinFixo) viagem.cancelar()')
   })
 
   it('o App diz de que UF é a lista de municípios', () => {

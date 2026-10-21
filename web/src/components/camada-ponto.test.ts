@@ -37,7 +37,10 @@ describe('a camada do ponto não cria contexto de empilhamento', () => {
 
   it('a medida do cabeçalho sai da CAMADA, então vale também sem o botão "Ver a ficha"', () => {
     expect(ponto).toContain("<div style={{ position: 'absolute', inset: 0, pointerEvents: 'none' }} ref={setCamadaEl}>")
-    expect(ponto).toContain('}, [camadaEl])')
+    // e é refeita quando o cabeçalho aparece depois (Explorar sem UF) ou é trocado
+    expect(ponto).toContain('const cabecalhoRegistrado = useCabecalhoMapa()')
+    expect(ponto).toContain('}, [camadaEl, cabecalhoRegistrado])')
+    expect(ponto).not.toContain("querySelector<HTMLElement>('header.barra-ultra')")
   })
 
   it('o hero da tela vazia continua cobrindo a tela de propósito', () => {

@@ -53,6 +53,7 @@ import { erroFlutuanteVisivel, janelaNaMontagem } from '../lib/pontos-estado'
 import { TOPO_BOTAO_PADRAO, topoDoBotaoVerFicha } from '../lib/botao-ver-ficha'
 import { LARGURA_FICHA_PONTO } from '../lib/janela'
 import { Z_FLUTUANTE_PONTO } from '../lib/camadas-mapa'
+import { useCabecalhoMapa } from '../lib/registro-cabecalho'
 import {
   AVISO_RELENDO_ALCANCE,
   ESTILO_ROTULO_ALCANCE,
@@ -248,8 +249,11 @@ export default function PontoScreen({
 
   /* Topo do botão "Ver a ficha": logo abaixo do cabeçalho do mapa, MEDIDO — o cabeçalho
      é `flex-wrap` e quebra em duas linhas em tela estreita (regra em `lib/botao-ver-ficha`).
-     O cabeçalho é do `MapScreen` (irmão desta tela na árvore), então ele é achado pelo DOM:
-     sobe-se pelos ancestrais da camada até o primeiro que contém a `barra-ultra`.
+     O cabeçalho é do `MapScreen` (irmão desta tela na árvore), então ele vem do REGISTRO
+     que o mapa publica (`lib/registro-cabecalho`). Desde 21/10/2026, e não mais de uma busca
+     no DOM feita só na montagem: no Explorar a camada existe antes do cabeçalho (sem UF o
+     mapa desenha a Landing), e a busca única deixava o topo no padrão para sempre. Com o
+     registro, a medida é refeita quando o cabeçalho aparece, some ou é trocado.
 
      Medido a partir da CAMADA (o contêiner de tela inteira), e não do botão, desde
      21/10/2026: a caixa de colar usa a mesma medida, e ela existe sem o botão. Com o
@@ -258,13 +262,11 @@ export default function PontoScreen({
      contêiner é o mesmo `offsetParent` do botão, então a régua não muda. */
   const [camadaEl, setCamadaEl] = useState<HTMLDivElement | null>(null)
   const [topoBotaoFicha, setTopoBotaoFicha] = useState(TOPO_BOTAO_PADRAO)
+  const cabecalhoRegistrado = useCabecalhoMapa()
   useLayoutEffect(() => {
     const pai = camadaEl
     if (!pai) return
-    let cabecalho: HTMLElement | null = null
-    for (let anc = pai.parentElement; anc && !cabecalho; anc = anc.parentElement) {
-      cabecalho = anc.querySelector<HTMLElement>('header.barra-ultra')
-    }
+    const cabecalho = cabecalhoRegistrado?.isConnected ? cabecalhoRegistrado : null
     const medir = () => {
       const caixaPai = pai?.getBoundingClientRect()
       /* A escala do `#root` (transform), lida do próprio contêiner: tela / layout. */
@@ -285,7 +287,7 @@ export default function PontoScreen({
       obs?.disconnect()
       window.removeEventListener('resize', medir)
     }
-  }, [camadaEl])
+  }, [camadaEl, cabecalhoRegistrado])
 
   const ficha = fichas[aberto] ?? null
   /* Os mesmos rótulos que o painel de abas usa — desambiguados entre si ("Centro #1",
