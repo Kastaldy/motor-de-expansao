@@ -27,7 +27,7 @@ import {
   Spinner,
 } from '../components/primitives'
 import { api, ApiError, baixar, EXPORTS_REDE_ATIVOS, MOTIVO_EXPORTS_DESLIGADOS } from '../lib/api'
-import type { BaseDoDestaque } from '../lib/exec'
+import type { BaseDoDestaque, LeituraDaRede } from '../lib/exec'
 import {
   COR_SEVERIDADE,
   METRICAS_EM_PONTOS,
@@ -38,6 +38,7 @@ import {
   filtrarUnidades,
   formatarMetrica,
   lerDelta,
+  linhaDaRede,
   narrativaDoRecorte,
   ordenarUnidades,
   rotuloMesCompetencia,
@@ -156,6 +157,9 @@ export default function ExecutiveScreen({
   const [carregando, setCarregando] = useState(true)
   const [erro, setErro] = useState<string | null>(null)
   const [baixando, setBaixando] = useState<string | null>(null)
+  /* Linha da rede no topo da Carteira: média por unidade ou total da rede. Preferência do
+     momento (não vai para a URL nem para o recorte). */
+  const [leituraRede, setLeituraRede] = useState<LeituraDaRede>('media')
 
   // Recorte. Tudo vazio = a rede do Brasil inteiro.
   // O período começa NULO de propósito: quem sabe qual é o último intervalo com dado
@@ -466,6 +470,59 @@ export default function ExecutiveScreen({
     ],
     [carteiraFolgada],
   )
+
+  const linhaRede = linhaDaRede(carteira?.rede_inteira, leituraRede)
+  const celulaDaLinhaRede = (c: Coluna<RedeUnidade>) => {
+    if (!linhaRede) return null
+    if (c.chave === 'nome') {
+      return (
+        <span style={{ display: 'flex', alignItems: 'center', gap: 8, minWidth: 0 }}>
+          <span style={{ minWidth: 0 }}>
+            <span style={{ display: 'block', font: '700 12.5px/1.2 var(--f-ui)', color: 'var(--tx-strong)' }}>
+              {linhaRede.rotulo}
+            </span>
+            <span
+              style={{
+                display: 'block',
+                font: '400 10px/1.2 var(--f-ui)',
+                color: 'var(--tx-muted)',
+                marginTop: 2,
+                overflow: 'hidden',
+                textOverflow: 'ellipsis',
+              }}
+            >
+              {linhaRede.detalhe}
+            </span>
+          </span>
+          <AlternarLeituraRede valor={leituraRede} onTrocar={setLeituraRede} />
+        </span>
+      )
+    }
+    if (c.chave === 'resumo') {
+      return (
+        <span style={{ font: '400 10.5px/1.2 var(--f-ui)', color: 'var(--tx-muted)' }}>
+          rede inteira · não segue os filtros
+        </span>
+      )
+    }
+    const espec = COLUNAS_METRICA.find((x) => x.chave === c.chave)
+    if (!espec) return <span style={{ color: 'var(--tx-muted)' }}>—</span>
+    const m = linhaRede.metricas[espec.chave]
+    const contagem = espec.contagem ? linhaRede.metricas[espec.contagem]?.atual : null
+    return (
+      <span style={{ display: 'inline-flex', flexDirection: 'column', alignItems: 'flex-end', gap: 2 }}>
+        <span className="num" style={{ font: '700 12px/1 var(--f-num)', color: 'var(--tx-strong)', whiteSpace: 'nowrap' }}>
+          {formatarMetrica(m?.atual, espec.formato)}
+          {contagem !== null && contagem !== undefined && (
+            <span style={{ font: '500 10.5px/1 var(--f-num)', color: 'var(--tx-muted)' }}>
+              {' '}({num(Math.round(contagem))})
+            </span>
+          )}
+        </span>
+        <Delta leitura={lerDelta(m, espec.bomSubindo, METRICAS_EM_PONTOS.has(espec.chave))} tamanho={9.5} />
+      </span>
+    )
+  }
 
   if (erro && !carteira) {
     return <Aviso titulo="Rede indisponível" corpo={erro} />
@@ -873,6 +930,7 @@ export default function ExecutiveScreen({
                     onOrdenar={aoOrdenar}
                     onLinha={abrirFicha}
                     vazio="Nenhuma unidade neste recorte. Limpe um filtro ou a busca."
+                    linhaFixa={linhaRede ? celulaDaLinhaRede : undefined}
                   />
                 </div>
               </Glass>
@@ -1231,5 +1289,57 @@ function Rotulo({ children }: { children: React.ReactNode }) {
     >
       {children}
     </div>
+  )
+}
+
+/* A troca MÉDIA | TOTAL da linha da rede. Dois botões e não um select: são só duas
+   leituras, e as duas ficam visíveis. `stopPropagation` porque a linha mora no cabeçalho
+   da tabela, onde um clique não pode virar ordenação. */
+function AlternarLeituraRede({
+  valor,
+  onTrocar,
+}: {
+  valor: LeituraDaRede
+  onTrocar: (v: LeituraDaRede) => void
+}) {
+  const opcoes: [LeituraDaRede, string][] = [
+    ['media', 'Média'],
+    ['total', 'Total'],
+  ]
+  return (
+    <span
+      role="group"
+      aria-label="Leitura da linha da rede"
+      style={{
+        display: 'inline-flex',
+        flexShrink: 0,
+        marginLeft: 'auto',
+        border: '1px solid var(--line-mid)',
+        borderRadius: 6,
+        overflow: 'hidden',
+      }}
+    >
+      {opcoes.map(([v, rotulo]) => (
+        <button
+          key={v}
+          type="button"
+          aria-pressed={valor === v}
+          onClick={(e) => {
+            e.stopPropagation()
+            onTrocar(v)
+          }}
+          style={{
+            font: '600 10px/1 var(--f-ui)',
+            padding: '4px 7px',
+            border: 'none',
+            cursor: 'pointer',
+            background: valor === v ? 'var(--ac-a16)' : 'transparent',
+            color: valor === v ? 'var(--ac-text)' : 'var(--tx-muted)',
+          }}
+        >
+          {rotulo}
+        </button>
+      ))}
+    </span>
   )
 }
