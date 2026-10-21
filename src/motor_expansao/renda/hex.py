@@ -30,6 +30,7 @@ import math
 import os
 import re
 from collections.abc import Callable, Mapping, Sequence
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -161,6 +162,146 @@ def k_calibracao_renda(staging: Path | str | None = None) -> float:
         )
     _LOG_RENDA.info("k de calibracao do hex = %s (carimbo %r)", k, carimbo)
     return k
+
+
+@dataclass(frozen=True)
+class KDaMalha:
+    """O k da coluna calibrada SERVIDA (agregada da malha) e o carimbo de onde ele saiu."""
+
+    valor: float
+    carimbo: str
+
+
+def k_da_malha(staging: Path | str | None = None) -> KDaMalha | None:
+    """k ESTRITO da malha: so `censo2022_hex_da_malha.parquet`, carimbo unico, k plausivel.
+
+    Irma estrita de `k_calibracao_renda` para quem NAO pode errar a escala em silencio (a
+    recomendacao unica: uma lista de 10 hexagonos ordenada por renda tem de sair com a renda do
+    card ou nao sair). As diferencas sao de proposito:
+      - le SO o artefato da malha. O staging hex tem OUTRO k (safra 2026-05) e desfazia a escala
+        errada da coluna servida (20,47% na renda domiciliar);
+      - nunca cai no `K_CALIBRACAO_FALLBACK` (1,0239);
+      - dois carimbos distintos na coluna = artefato misturado -> `None` (a outra usa o modal);
+      - nao levanta: qualquer falha vira `None` + WARNING com o motivo, e o chamador decide (a
+        recomendacao fica indisponivel; a subida de producao e quem transforma isso em erro).
+    `k_calibracao_renda` fica intacta.
+    """
+    coluna = "metodo_calibracao_renda_malha"
+    caminho: Path | None = None
+    try:
+        base = Path(staging) if staging is not None else staging_dir()
+        caminho = base / CENSO_MALHA_PARQUET
+        if not caminho.is_file():
+            raise FileNotFoundError(f"{caminho} ausente")
+        import pyarrow.parquet as pq
+
+        # So os valores DISTINTOS saem do arrow: a coluna tem uma linha por hexagono (~1,3
+        # milhao) e virar cada uma num `str` Python custava ~190 ms e ~100 MB por chamada.
+        distintos = pq.read_table(caminho, columns=[coluna]).column(0).unique().to_pylist()
+        carimbos = sorted({str(v).strip() for v in distintos if v is not None})
+        if not carimbos:
+            raise ValueError(f"coluna {coluna} sem carimbo")
+        if len(carimbos) > 1:
+            raise ValueError(f"{len(carimbos)} carimbos distintos {carimbos!r}")
+        carimbo = carimbos[0]
+        achado = _RE_K_CARIMBO.search(carimbo)
+        if achado is None:
+            raise ValueError(f"carimbo ilegivel {carimbo!r}")
+        k = float(achado.group(1))
+        lo, hi = FAIXA_K
+        if not (math.isfinite(k) and lo <= k <= hi):
+            raise ValueError(f"k fora da faixa plausivel [{lo}, {hi}] ({k})")
+    except Exception as exc:  # noqa: BLE001 -- contrato: nunca levanta, devolve None com motivo
+        _LOG_RENDA.warning("k da malha indisponivel em %s: %s", caminho, exc)
+        return None
+    return KDaMalha(valor=k, carimbo=carimbo)
+
+
+#: Nulos que chegam ESCRITOS como texto (`astype(str)` de uma coluna com nulos): sem este
+#: filtro, `"nan"` virava um municipio de nome "nan" e a renda saia pela mediana da UF.
+_NULOS_TEXTO = frozenset({"nan", "none", "<na>", "nat", "null"})
+
+
+def _texto_da_linha(v: object) -> str | None:
+    """UF/municipio de uma linha como texto: nulo (ate escrito) -> None; `3550308.0` -> `3550308`."""
+    if v is None or v is pd.NA or v is pd.NaT:
+        return None
+    if not isinstance(v, str):
+        # Numero de qualquer dtype (o `np.float32` NaN de uma coluna float32 nao e `float`).
+        try:
+            num = float(v)  # type: ignore[arg-type]
+        except (TypeError, ValueError):
+            num = None
+        if num is not None:
+            if math.isnan(num):
+                return None
+            if num.is_integer():
+                return str(int(num))
+    s = str(v).strip().removesuffix(".0")
+    if not s or s.casefold() in _NULOS_TEXTO:
+        return None
+    return s
+
+
+def renda_domiciliar_por_linha(
+    df: pd.DataFrame, *, k: float, staging_dir: Path | str | None = None
+) -> pd.Series:
+    """Renda media domiciliar (R$/mes) de CADA linha de `df`, com o k INJETADO (float64, NaN sem renda).
+
+    A MESMA conta de `renda_domiciliar_por_hex`, ramo a ramo (paridade bit a bit travada no
+    teste):
+      - leitura SETORIAL com as colunas da malha (E3): `renda_domiciliar_2022_malha x F_dom(uf)`
+        (`renda_2022_da_malha`); as colunas sao anexadas do artefato da malha em `staging_dir`
+        quando o frame nao as traz (`_com_colunas_malha`), como no card;
+      - senao: `serie_renda` -> `base_renda_domiciliar` x `fator_hex(..., "domiciliar")`.
+    Duas diferencas a tornam utilizavel num recorte de varios municipios (Brasil, UF):
+      - UF e municipio sao os da PROPRIA linha (`uf`/`cod_municipio`), nao um argumento unico;
+      - o k e injetado pelo chamador (que o leu de `k_da_malha`); esta funcao NUNCA chama
+        `k_calibracao_renda`, entao nunca cai no fallback 1,0239.
+    Linha sem `cod_municipio` -> NaN (contrato do card: sem municipio nao ha fator municipal, e
+    a renda nao e estimada pela mediana da UF). Linha sem `uf` -> NaN tambem: o fator temporal e
+    da UF (excecoes aprovadas, PE/MS na PNAD 2025), e cair no nacional mudaria a renda sem
+    aviso. Mesmo indice de `df`. Uplift e moradores saem de `insumos.staging_dir()`
+    (`configurar_staging`), como em toda a cadeia do card.
+    """
+    if df is None:
+        return pd.Series(dtype="float64")
+    if isinstance(k, bool) or not isinstance(k, (int, float)) or not math.isfinite(k) or k <= 0:
+        raise ValueError(f"k invalido para a renda por linha: {k!r}")
+    if df.empty:
+        return pd.Series(dtype="float64", index=df.index)
+    k_fixo = float(k)
+
+    def _k() -> float:
+        return k_fixo
+
+    df = _com_colunas_malha(df, staging_dir)
+    valor, origem = serie_renda(df)
+    malha = _serie_malha(df, "domiciliar")
+    vazio = pd.Series([None] * len(df), index=df.index, dtype="object")
+    ufs = df["uf"] if "uf" in df.columns else vazio
+    cods = df["cod_municipio"] if "cod_municipio" in df.columns else vazio
+    fator_por_municipio: dict[tuple[str, str], float] = {}
+    saida: list[float] = []
+    for v, o, m, uf_l, cod_l in zip(valor, origem, malha, ufs, cods, strict=True):
+        cod = _texto_da_linha(cod_l)
+        uf = _texto_da_linha(uf_l)
+        if cod is None or uf is None:
+            saida.append(float("nan"))
+            continue
+        dom_malha = renda_2022_da_malha({COL_RENDA_DOM_MALHA: m}, o, "domiciliar")
+        if dom_malha is not None:
+            saida.append(float(dom_malha * fator(uf, "domiciliar")))
+            continue
+        base = base_renda_domiciliar(v, o, uf, cod, _k)
+        if base is None:
+            saida.append(float("nan"))
+            continue
+        chave = (uf, cod)
+        if chave not in fator_por_municipio:
+            fator_por_municipio[chave] = fator_hex(uf, cod, "domiciliar")
+        saida.append(float(base * fator_por_municipio[chave]))
+    return pd.Series(saida, index=df.index, dtype="float64")
 
 
 def fator_hex(uf: str | None, cod_municipio: str | None, tipo: str) -> float:
