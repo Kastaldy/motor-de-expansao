@@ -15,8 +15,8 @@ E3 (frente c do plano): quando a linha do hexagono traz as colunas da MALHA
 (`renda_domiciliar_2022_malha` / `renda_per_capita_domiciliar_2022_malha`, agregadas dos
 setores com o uplift e os moradores DO SETOR), a renda do hexagono passa a ser
 
-    renda_domiciliar_hex = renda_domiciliar_2022_malha            x F_dom(uf)
-    renda_per_capita_hex = renda_per_capita_domiciliar_2022_malha x F_pc(uf)
+    renda_domiciliar_hex <- renda_domiciliar_2022_malha            x F_dom(uf)
+    renda_per_capita_hex <- renda_per_capita_domiciliar_2022_malha x F_pc(uf)
 
 -- so o fator temporal, uma vez; nada de moradores, uplift ou k de novo, que ja estao dentro
 das colunas. Sem as colunas (artefato antigo) ou sem valor para o hexagono (hexagono sem setor

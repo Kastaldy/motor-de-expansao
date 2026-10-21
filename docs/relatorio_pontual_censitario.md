@@ -177,8 +177,8 @@ Funcao principal: `render_mapas_censitarios_combinados(lat, lng, setores_df, *, 
 **Renda do hexagono (tooltip, ficha do hexagono, ficha da rede, `/api/hexagonos`, Oportunidades e Relatorio Municipal; E3 do plano de correcao da renda, 2026-10).** Uma redacao so, em `motor_expansao.renda.hex`:
 
 - **Com a malha** (o hexagono tem as colunas `renda_domiciliar_2022_malha` / `renda_per_capita_domiciliar_2022_malha` E a leitura dele e a setorial):
-  - `renda_domiciliar_hex = renda_domiciliar_2022_malha x F_dom(uf)`
-  - `renda_per_capita_hex = renda_per_capita_domiciliar_2022_malha x F_pc(uf)` (o proprio fator; nunca a domiciliar dividida)
+  - `renda_domiciliar_hex <- renda_domiciliar_2022_malha x F_dom(uf)`
+  - `renda_per_capita_hex <- renda_per_capita_domiciliar_2022_malha x F_pc(uf)` (o proprio fator; nunca a domiciliar dividida)
   - as duas colunas sao de 2022, SEM fator, produzidas por `pipelines/agregar_censo_hex_da_malha.py` a partir dos pedacos de setor, pela mesma regra de fracao de area da DEC-045:
     - `renda_domiciliar_2022_malha = soma(dom_2022_s x domicilios_s) / soma(domicilios_s)`, com `dom_2022_s = V06004_s x uplift_setor_s` e `domicilios_s` = domicilios particulares ocupados do PEDACO;
     - `renda_per_capita_domiciliar_2022_malha = soma(pc_2022_s x pop_s) / soma(pop_s)`, com `pc_2022_s = V06004_s x uplift_setor_s / moradores_s`;
