@@ -806,7 +806,18 @@ def agregar_perfil_bairro_distrito(
     cod_bairro_str = str(cod_bairro).strip() if cod_bairro is not None else ""
     if cod_bairro_str and cod_bairro_str.lower() != "nan" and "cod_bairro" in setores_df.columns:
         tipo = "bairro"
-        mask = setores_df["cod_bairro"].astype(str).str.strip() == cod_bairro_str
+        # DEC-076: `aplicar_bairro_cnefe` troca o `cod_bairro` dos setores que o CNEFE nomeia por
+        # `cnefe:<mun>:<NOME>`. O setor que fica com o IBGE mantem o codigo do IBGE, mas os
+        # vizinhos da MESMA regiao do IBGE ja' nao o carregam em `cod_bairro` -- filtrar por ele
+        # somaria so' as sobras (Sao Jose dos Campos, "Setor Socioeconomico 13": 68 -> 1 setor).
+        # Codigo do IBGE agrega a regiao COMPLETA por `cod_bairro_ibge`; a chave do CNEFE (e o
+        # frame sem a coluna de auditoria) seguem por `cod_bairro`.
+        coluna_cod = (
+            "cod_bairro_ibge"
+            if "cod_bairro_ibge" in setores_df.columns and not cod_bairro_str.startswith("cnefe:")
+            else "cod_bairro"
+        )
+        mask = setores_df[coluna_cod].astype(str).str.strip() == cod_bairro_str
         nome_bairro_str = str(nome_bairro).strip() if nome_bairro is not None else ""
         nome_unidade = nome_bairro_str or cod_bairro_str
     else:

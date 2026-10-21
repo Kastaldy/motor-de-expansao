@@ -2563,6 +2563,11 @@ def bairros_por_hex(uf: str, cod_municipio: str) -> dict[str, str]:
     Sem isso, todo item do ranking repetiria o nome do municipio ("Brasília",
     "Brasília", …) — o que mata a leitura. Reusa o helper do Relatorio Municipal;
     fallback gracioso para {} se a particao geo nao existir.
+
+    DEC-076: o nome vem do CNEFE (artefato em `STAGING_DIR/bairro_cnefe_setor/`). Este
+    `lru_cache` guarda o nome por (uf, municipio): TODA troca do artefato (subida, atualizacao
+    ou remocao) exige restart do `web`, senao os municipios ja consultados seguem com o nome
+    antigo.
     """
     if not CENSO_GEO_DIR.exists():
         return {}
@@ -2571,7 +2576,10 @@ def bairros_por_hex(uf: str, cod_municipio: str) -> dict[str, str]:
             _carregar_bairros_por_hex,
         )
 
-        return _carregar_bairros_por_hex(uf, cod_municipio, CENSO_GEO_DIR) or {}
+        return (
+            _carregar_bairros_por_hex(uf, cod_municipio, CENSO_GEO_DIR, staging_dir=STAGING_DIR)
+            or {}
+        )
     except Exception:  # noqa: BLE001 — enriquecimento opcional
         return {}
 
