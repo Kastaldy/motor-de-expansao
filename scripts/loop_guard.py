@@ -112,6 +112,14 @@ _DENY_CRITICO: list[tuple[str, str]] = [
         r"^src/motor_expansao/renda/",
         "ponto unico da renda exibida (formula + fatores versionados + VIGENTE)",
     ),
+    # Recomendacao unica (Top 10 = 5 Mata Virgem + 5 Premium; DEC-077): a regua versionada
+    # (`regra/<PAIS>/*.json` + `VIGENTE`) e o nucleo que ordena os hexagonos. Trocar um numero
+    # da regua ou uma linha da ordenacao muda a lista que web, API, bot e PDF mostram ao comite
+    # -- nao pode sair LIMPO num PR "Media" auto-mergeavel.
+    (
+        r"^src/motor_expansao/recomendacao/",
+        "recomendacao unica (regua versionada + VIGENTE + nucleo do Top 10 - DEC-077)",
+    ),
     (
         r"^src/motor_expansao/dimensionamento/config\.py$",
         "premissas financeiras + lista anti-PII do motor de viabilidade (DEC-009/DEC-012)",
