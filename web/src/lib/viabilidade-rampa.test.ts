@@ -30,7 +30,8 @@ const CURVA_PICO_6 = {
   forma_rampa: 'curva_uni03',
   mes_maturidade_rampa: 6,
   mes_pico_rampa: 6,
-  curva_rampa: [0.74, 0.853333, 0.9, 0.953333, 0.976667, 1, 1, 1],
+  // `curva_rampa_com_pico(6)` do motor: a abertura do mês 1 fica a observada (68%).
+  curva_rampa: [0.68, 0.826, 0.892, 0.94, 0.974, 1, 1, 1],
 }
 // Rampa linear: só chega da API pública ou com a constante do servidor revertida.
 const LINEAR = { maturacao_meses: 8, forma_rampa: 'reta', mes_maturidade_rampa: 8, mes_pico_rampa: null }
@@ -89,7 +90,7 @@ describe('ajuda do controle', () => {
   it('os percentuais saem da curva servida, não de número cravado', () => {
     expect(ajudaDaRampa(CURVA)).toContain('68% da demanda no mês 1')
     expect(ajudaDaRampa(CURVA)).toContain('100% a partir do mês 10')
-    expect(ajudaDaRampa(CURVA_PICO_6)).toContain('74% da demanda no mês 1')
+    expect(ajudaDaRampa(CURVA_PICO_6)).toContain('68% da demanda no mês 1')
     expect(ajudaDaRampa(CURVA_PICO_6)).toContain('100% a partir do mês 6')
     // antes do primeiro cálculo não há curva: a ajuda não inventa percentual
     expect(ajudaDaRampa(null)).not.toMatch(/\d+%/)
@@ -132,6 +133,26 @@ describe('nota metodológica', () => {
     expect(notaDaRampa(CURVA)).toContain('mês 10')
     expect(notaDaRampa(CURVA_PICO_6)).toContain('pico de maturação, mês 6')
     expect(notaDaRampa(CURVA)).toContain('não é modelado')
+  })
+
+  it('pico até o mês 12: a rampa não mexe na margem de steady-state', () => {
+    for (const ref of [undefined, null, 10, 12]) {
+      expect(notaDaRampa({ ...CURVA, mes_referencia_steady: ref })).toContain(
+        'não a margem de steady-state',
+      )
+    }
+  })
+
+  it('pico depois do mês 12: a nota NÃO diz que o steady-state fica igual (reajuste do 2º ano)', () => {
+    const tardio = { ...CURVA, mes_maturidade_rampa: 18, mes_pico_rampa: 18, mes_referencia_steady: 18 }
+    const nota = notaDaRampa(tardio)
+    expect(nota).not.toContain('não a margem de steady-state')
+    expect(nota).toContain('mês 18')
+    expect(nota).toContain('reajuste anual')
+    expect(nota).toContain('2º ano')
+    // a rampa linear da API, com maturação longa, tem o mesmo efeito
+    const linearLonga = { ...LINEAR, maturacao_meses: 30, mes_maturidade_rampa: 30, mes_referencia_steady: 30 }
+    expect(notaDaRampa(linearLonga)).toContain('3º ano')
   })
 
   it('"casa vazia" no mês 1 só na rampa linear: na curva o mês 1 já tem boa parte da demanda', () => {

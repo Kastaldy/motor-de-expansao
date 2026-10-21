@@ -224,8 +224,8 @@ _FIXO = "estrutural"
 _QUEM_OPERADOR = "Operador"
 _QUEM_CONTROLADORIA = "Controladoria"
 _QUEM_FRANQUEADORA = "Franqueadora"
-_QUEM_DERIVADO = "Ninguem (fórmula)"
-_QUEM_ESTRUTURAL = "Ninguem (estrutura da planilha)"
+_QUEM_DERIVADO = "Ninguém (fórmula)"
+_QUEM_ESTRUTURAL = "Ninguém (estrutura da planilha)"
 
 # Decomposicao dos outros fixos (comentario do config.py: SIM_OUTROS_FIXOS_MES).
 #
@@ -284,6 +284,9 @@ _MODOS_RAMPA = ("demanda total", "apenas balcão")
 # usuario; o identificador (`curva_uni03`/`reta`) fica no motor.
 _FORMAS_RAMPA = ("curva observada", "reta")
 _FORMA_RAMPA_RETA_XLSX = _FORMAS_RAMPA[1]
+# Opcoes que a LISTA da celula oferece (revisao de 21/10/2026): so' a curva. A reta segue
+# na formula (o motor a reproduz e o modo "apenas balcão" a usa), mas nao e' mais escolha.
+_FORMAS_RAMPA_LISTA = _FORMAS_RAMPA[:1]
 _SIM_NAO = ("Sim", "Não")
 
 # Fatores da grade de sensibilidade.
@@ -592,7 +595,7 @@ def _bloco_origem_v2(v2: Mapping[str, Any]) -> list[dict[str, Any]]:
     flags = []
     if v2.get("flag_extrapolacao"):
         flags.append("fora do envelope do treino (" + ", ".join(v2.get("fora_do_envelope") or []) + ")")
-    quem = "Ninguem (modelo de praça)"
+    quem = "Ninguém (modelo de praça)"
     linhas = [
         _e(f"v2_fat_{k}", f"Faturamento maduro previsto ({k})", valor=float(fat.get(k) or 0.0),
            unidade="R$/mês",
@@ -642,11 +645,10 @@ def _bloco_demanda(
     curva = p.usa_curva
     forma = [
         _e("forma_rampa", "Forma da rampa", valor=_FORMAS_RAMPA[0], unidade="lista",
-           fonte="DEC-077 (curva observada, BLK-UNI-03) ou a reta histórica",
-           nota="\"curva observada\": alunos do mês = demanda × fração da tabela \"Curva "
-                "observada da rampa\" (1,0 depois do último mês); alunos iniciais e "
-                "maturação NÃO entram. \"reta\": parte dos alunos iniciais e chega à "
-                "demanda na maturação. No modo \"apenas balcão\" vale sempre a reta."),
+           fonte="DEC-077 (curva observada, BLK-UNI-03)",
+           nota="Alunos do mês = demanda × fração da tabela \"Curva observada da rampa\" "
+                "(1,0 depois do último mês); alunos iniciais e maturação NÃO entram. O "
+                "pico de maturação já vem aplicado na tabela."),
     ] if curva else []
     return [
         _e("demanda", "Demanda total (alunos na maturidade)", valor=float(demanda_total),
@@ -655,7 +657,7 @@ def _bloco_demanda(
         *forma,
         _e("alunos_inicial", "Alunos no mês 1 (início da rampa)", valor=float(p.alunos_inicial),
            unidade="alunos", fonte="config.py SIM_ALUNOS_INICIAL", fmt=_FMT_ALUNOS,
-           nota="Só vale na forma \"reta\"." if curva else None),
+           nota="Só vale no modo \"apenas balcão\"." if curva else None),
         _e("alunos_ini_ef", "Alunos iniciais efetivos (piso da rampa)",
            formula='=MIN({alunos_inicial},IF({modo_rampa}="apenas balcão",'
                    "{demanda}*{share},{demanda}))",
@@ -663,8 +665,8 @@ def _bloco_demanda(
            quem=_QUEM_DERIVADO, kind=_DERIV, fmt=_FMT_ALUNOS),
         _e("maturacao", "Maturação da rampa", valor=int(p.maturacao_meses), unidade="meses",
            fonte="config.py SIM_MATURACAO_MESES", fmt=_FMT_INT,
-           nota=("Só vale na forma \"reta\". Na curva, o fim da rampa é o primeiro mês "
-                 "da tabela com 100% (linha \"Mês em que a rampa termina\").")
+           nota=("Só vale no modo \"apenas balcão\". Na curva, o fim da rampa é o "
+                 "primeiro mês da tabela com 100% (linha \"Mês em que a rampa termina\").")
            if curva else None),
         _e("modo_rampa", "Modo da rampa", valor=modo_rampa, unidade="lista",
            fonte="simulador.Premissas.rampa_apenas_balcao",
@@ -754,7 +756,7 @@ def _bloco_curva_rampa(p: Premissas) -> list[dict[str, Any]]:
                f'MAX(1,{{maturacao}}),{_primeiro_mes_cheio(n)})'
            ),
            unidade="mês",
-           fonte="Derivado: maturação na reta; na curva, o primeiro mês com 100%",
+           fonte="Derivado: o primeiro mês da curva com 100%",
            quem=_QUEM_DERIVADO, kind=_DERIV, fmt=_FMT_INT,
            nota="Na curva, é o PRIMEIRO mês da tabela com 100% (a mesma regra do motor); "
                 "sem nenhum, o mês seguinte ao último. O motor recusa curva que decresce."),
@@ -1379,7 +1381,7 @@ def _write_aba_premissas(
     # Validacoes de lista nas premissas de texto.
     _validacao_lista(ws, _MODOS_RAMPA, [refs["modo_rampa"]])
     if "forma_rampa" in refs:  # so' a planilha da curva tem a escolha (DEC-077)
-        _validacao_lista(ws, _FORMAS_RAMPA, [refs["forma_rampa"]])
+        _validacao_lista(ws, _FORMAS_RAMPA_LISTA, [refs["forma_rampa"]])
     _validacao_lista(
         ws, tuple(str(i) for i in range(SIM_STUDIOS_MAX + 1)), [refs["n_studios"]]
     )
@@ -1783,21 +1785,21 @@ _SUB_DRE_RETA = (
     "custo operacional INTEGRAL desde o mês 1 — inclusive a FOLHA, que é fixa e não "
     "acompanha a rampa (é por isso que o EBITDA do mês 1 é bem negativo)."
 )
-# Planilha da curva (DEC-077): a celula "Forma da rampa" troca entre curva e reta, entao o
-# texto tem de valer nas DUAS. Na curva o mes 1 ja' abre com 68% da demanda e o EBITDA
-# dele pode ser POSITIVO; "negativo" so' e' a regra na reta. A planilha da reta (sem a
-# celula) mantem o texto de antes da DEC.
+# Planilha da curva (DEC-077): o mes 1 ja' abre com 68% da demanda e o EBITDA dele pode
+# ser POSITIVO; "negativo" so' e' a regra na reta. Desde a revisao de 21/10/2026 o texto
+# da curva nao cita a reta (a lista da celula so' oferece a curva). A planilha da reta
+# (sem a celula) mantem o texto de antes da DEC.
 _SUB_DRE_CURVA = (
     "Reajuste anual por degrau a partir do mês 13; carência de aluguel contada de M-4; "
     "custo operacional INTEGRAL desde o mês 1 — inclusive a FOLHA, que é fixa e não "
-    "acompanha a rampa. Por isso os primeiros meses rendem menos que o regime pleno: na "
-    "reta, que parte dos alunos iniciais, o EBITDA do mês 1 sai bem negativo; na curva "
-    "observada, que já abre com boa parte da demanda, ele pode sair positivo."
+    "acompanha a rampa. Por isso os primeiros meses rendem menos que o regime pleno; "
+    "como a curva observada já abre com boa parte da demanda, o EBITDA do mês 1 pode "
+    "sair positivo."
 )
 _NOTA_EBITDA_M1_RETA = "Negativo por construção: o custo é integral desde o mês 1"
 _NOTA_EBITDA_M1_CURVA = (
-    "Custo integral desde o mês 1 com os alunos ainda na rampa: na reta sai negativo; "
-    "na curva observada pode sair positivo"
+    "Custo integral desde o mês 1 com os alunos ainda na rampa; como a curva observada "
+    "já abre com boa parte da demanda, pode sair positivo"
 )
 
 

@@ -125,10 +125,13 @@ def curva_rampa_com_pico(
 ) -> tuple[float, ...]:
     """A MESMA forma observada, reescalada no tempo para fechar em `mes_pico`.
 
-    `p` = mes de pico da curva base (primeiro com 100%; 10 na UNI-03). Para o mes de
-    operacao `t`, `s = t x p / mes_pico` e a fracao e' a curva base em `s`, interpolada
-    linearmente entre os meses observados; `s <= 1` -> a fracao do mes 1, `s >= p` -> 1,0.
-    A saida tem `mes_pico + (len(curva) - p)` meses (os mesmos meses cheios de cauda da
+    `p` = mes de pico da curva base (primeiro com 100%; 10 na UNI-03). Os DOIS extremos
+    medidos ficam ancorados: o mes 1 abre no nivel observado (68% na UNI-03) e o mes
+    `mes_pico` fecha em 100%. Entre eles, o mes de operacao `t` le a curva base em
+    `s = 1 + (t - 1) x (p - 1) / (mes_pico - 1)`, interpolada linearmente entre os meses
+    observados (`s >= p` -> 1,0). Ate' a revisao de 21/10/2026 era `s = t x p / mes_pico`,
+    que NAO preservava a abertura: pico 6 abria em 74% e pico 24 ficava dois meses parado
+    em 68%. A saida tem `mes_pico + (len(curva) - p)` meses (os mesmos meses cheios de cauda da
     base), arredondada a 6 casas — monotonica porque a base e o arredondamento o sao, e o
     primeiro mes com 100% e' `mes_pico` (o fim da rampa do motor).
 
@@ -146,7 +149,8 @@ def curva_rampa_com_pico(
         return curva
     saida: list[float] = []
     for t in range(1, mes_pico + (len(base) - p) + 1):
-        s = t * p / mes_pico
+        # pico 1: nao ha' meses entre os extremos — a rampa ja' abre cheia.
+        s = float(p) if mes_pico == 1 else 1.0 + (t - 1) * (p - 1) / (mes_pico - 1)
         if s <= 1.0:
             f = base[0]
         elif s >= p:

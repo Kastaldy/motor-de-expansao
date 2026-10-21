@@ -115,15 +115,17 @@ class ViabilidadeInputs(BaseModel):
     # Carencia de aluguel: meses iniciais sem pagar aluguel (beneficio de rampa;
     # melhora payback/FCF, nao muda margem/breakeven de steady-state).
     carencia_aluguel_meses: int | None = Field(default=None, ge=0, le=60)
-    # Meses de rampa de maturacao (Simulador E13; default do motor = 8). Controlavel
-    # pelo operador; afeta a serie e o payback, nao a margem/breakeven de steady-state.
+    # Meses de rampa de maturacao da RETA (Simulador E13; default do motor = 8). So' a API
+    # publica ainda o manda (a tela nao). Afeta a serie e o payback; se passar do mes 12,
+    # o regime pleno cai no 2o ano e o DRE de steady-state ja' sai com o reajuste anual.
     rampa_meses: int | None = Field(default=None, ge=1, le=36)
     # FORMA da rampa (DEC-077): "curva_uni03" (curva observada na rede, BLK-UNI-03) ou
     # "reta" (a rampa historica, com `rampa_meses` e os alunos iniciais do config). None =
-    # `forma_rampa_padrao()`: a CURVA desde a emenda de 21/10/2026, com qualquer origem da
-    # demanda. A tela nao oferece mais a reta; a API publica segue ACEITANDO "reta" por
-    # compatibilidade. Na curva, `rampa_meses` e' aceito e IGNORADO pelo motor — o payload
-    # devolve `mes_maturidade_rampa`, que e' o fim da rampa que de fato valeu.
+    # `forma_rampa_do_body()`: a RETA se o corpo trouxe `rampa_meses` (corpo de quem
+    # integrou antes da emenda, que escolhia a rampa por ele), senao a CURVA
+    # (`forma_rampa_padrao()`, emenda de 21/10/2026). A tela nao oferece mais a reta; a API
+    # publica segue ACEITANDO "reta". Com a curva EXPLICITA, `rampa_meses` e' aceito e
+    # IGNORADO — o payload devolve `mes_maturidade_rampa`, o fim da rampa que valeu.
     forma_rampa: str | None = None
     # PICO de maturacao (emenda da DEC-077): o mes em que a curva chega a 100% da demanda.
     # None = o observado (`SIM_MES_PICO_RAMPA_PADRAO`, mes 10). So' as opcoes de
@@ -239,7 +241,14 @@ def modo_v2(body: Any) -> bool:
 
 
 def forma_rampa_do_body(body: Any) -> str:
-    """Forma da rampa do corpo: a escolha explicita, senao `forma_rampa_padrao()`.
+    """Forma da rampa do corpo: a escolha explicita; sem ela, a RETA se o corpo trouxe
+    `rampa_meses`; senao `forma_rampa_padrao()`.
+
+    O ramo do `rampa_meses` e' compatibilidade de CONTRATO (revisao de 21/10/2026): ate' a
+    emenda, um corpo com `rampa_meses = N` e sem `forma_rampa` era a reta de N meses, e
+    so' a reta le aquele numero. Cair na curva ignoraria o N EM SILENCIO e mudaria o
+    payback de quem ja' integrou (medido no golden com N = 14: 39 -> 25 meses). A tela
+    nao manda `rampa_meses`, entao para ela vale o padrao.
 
     Igual com qualquer origem da demanda. Ate' a emenda de 21/10/2026 o modo v2 FORCAVA a
     reta sem agregador (UNI-14: a curva foi medida em unidades COM agregador); com o
@@ -247,7 +256,13 @@ def forma_rampa_do_body(body: Any) -> str:
     declarada na ajuda da tela. A flag `rampa_reta_forcada_sem_agregador` do bloco v2
     continua no payload (identificador), sempre falsa.
     """
-    return body.forma_rampa or forma_rampa_padrao()
+    if body.forma_rampa:
+        return str(body.forma_rampa)
+    if getattr(body, "rampa_meses", None) is not None:
+        from motor_expansao.dimensionamento.config import SIM_FORMA_RAMPA_RETA
+
+        return str(SIM_FORMA_RAMPA_RETA)
+    return forma_rampa_padrao()
 
 
 def mes_pico_do_body(body: Any) -> int:

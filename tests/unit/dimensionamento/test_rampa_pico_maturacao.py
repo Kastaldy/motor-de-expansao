@@ -3,10 +3,14 @@
 Pedido do Vinicius (21/10/2026): "A rampa de maturacao fica exclusivamente como curva
 observada, mas deve receber a opcao de selecionar um pico de maturacao". O pico e' o MES
 em que a rampa atinge 100% da demanda madura. A MESMA forma observada (BLK-UNI-03) e'
-reescalada no tempo:
+reescalada no tempo, com os DOIS extremos medidos ancorados (mes 1 = abertura observada,
+68%; mes `pico` = 100%):
 
-    fracao(t) = curva_obs(t x 10 / pico), interpolando linearmente entre meses observados;
-    t x 10 / pico <= 1 -> a fracao do mes 1; >= 10 -> 100%.
+    fracao(t) = curva_obs(1 + (t - 1) x 9 / (pico - 1)), interpolando linearmente entre
+    meses observados; >= 10 -> 100%.
+
+(Revisao de 21/10/2026: a 1a versao, `curva_obs(t x 10 / pico)`, abria o pico 6 em 74% e
+deixava o pico 24 parado dois meses em 68% -- a abertura, que e' dado medido, mudava.)
 
 O QUE ESTE ARQUIVO TRAVA
 ------------------------
@@ -169,35 +173,45 @@ def test_pico_10_monta_as_mesmas_premissas_da_curva_de_hoje() -> None:
 
 
 def test_pico_6_conferido_a_mao() -> None:
-    """s = t x 10 / 6. Curva observada (meses 1..10): .68 .77 .84 .88 .90 .92 .97 .97 .99 1.
-    t=1: s=1,667 -> .68 + (2/3)(.77-.68) = .74
-    t=2: s=3,333 -> .84 + (1/3)(.88-.84) = .853333
-    t=3: s=5     -> .90 (mes observado exato)
-    t=5: s=8,333 -> .97 + (1/3)(.99-.97) = .976667
-    t=6: s=10    -> 1,0 (o pico)."""
+    """s = 1 + (t - 1) x 9 / 5. Curva observada (meses 1..10):
+    .68 .77 .84 .88 .90 .92 .97 .97 .99 1.
+    t=1: s=1   -> .68 (a abertura observada, ancorada)
+    t=2: s=2,8 -> .77 + (0,8)(.84-.77) = .826
+    t=3: s=4,6 -> .88 + (0,6)(.90-.88) = .892
+    t=5: s=8,2 -> .97 + (0,2)(.99-.97) = .974
+    t=6: s=10  -> 1,0 (o pico)."""
     c = curva_rampa_com_pico(6)
-    assert c[0] == pytest.approx(0.74, abs=1e-12)
-    assert c[1] == pytest.approx(0.853333, abs=1e-12)
-    assert c[2] == pytest.approx(0.90, abs=1e-12)
-    assert c[4] == pytest.approx(0.976667, abs=1e-12)
+    assert c[0] == pytest.approx(0.68, abs=1e-12)
+    assert c[1] == pytest.approx(0.826, abs=1e-12)
+    assert c[2] == pytest.approx(0.892, abs=1e-12)
+    assert c[4] == pytest.approx(0.974, abs=1e-12)
     assert c[5] == 1.0
     assert len(c) == 8  # o pico + os 2 meses cheios de cauda da observada
 
 
 def test_pico_18_conferido_a_mao() -> None:
-    """s = t x 10 / 18.
-    t=1:  s=0,556 (<= 1) -> .68 (a fracao do mes 1)
-    t=2:  s=1,111 -> .68 + (1/9)(.77-.68) = .69
-    t=9:  s=5     -> .90
-    t=17: s=9,444 -> .99 + (4/9)(1-.99) = .994444
-    t=18: s=10    -> 1,0."""
+    """s = 1 + (t - 1) x 9 / 17.
+    t=1:  s=1        -> .68 (a abertura observada, ancorada)
+    t=2:  s=1,529412 -> .68 + (0,529412)(.77-.68) = .727647
+    t=9:  s=5,235294 -> .90 + (0,235294)(.92-.90) = .904706
+    t=17: s=9,470588 -> .99 + (0,470588)(1-.99)   = .994706
+    t=18: s=10       -> 1,0."""
     c = curva_rampa_com_pico(18)
     assert c[0] == pytest.approx(0.68, abs=1e-12)
-    assert c[1] == pytest.approx(0.69, abs=1e-12)
-    assert c[8] == pytest.approx(0.90, abs=1e-12)
-    assert c[16] == pytest.approx(0.994444, abs=1e-12)
+    assert c[1] == pytest.approx(0.727647, abs=1e-12)
+    assert c[8] == pytest.approx(0.904706, abs=1e-12)
+    assert c[16] == pytest.approx(0.994706, abs=1e-12)
     assert c[17] == 1.0
     assert len(c) == 20
+
+
+@pytest.mark.parametrize("pico", SIM_MESES_PICO_RAMPA)
+def test_toda_opcao_abre_no_nivel_observado(pico: int) -> None:
+    """O mes 1 e' DADO MEDIDO (a abertura da rede): o pico so' move o tempo ate' 100%, e
+    nenhum mes fica parado na abertura (o mes 2 ja' sobe)."""
+    c = curva_rampa_com_pico(pico)
+    assert c[0] == SIM_CURVA_RAMPA_UNI03[0]
+    assert c[1] > SIM_CURVA_RAMPA_UNI03[0]
 
 
 @pytest.mark.parametrize("pico", SIM_MESES_PICO_RAMPA)
@@ -230,14 +244,15 @@ def test_pico_mais_lento_paga_mais_tarde() -> None:
 
 # Numeros da tabela da emenda na DEC-077 (golden de Londrina), medidos rodando o motor:
 # pico -> (alunos no mes 1, payback, TIR do socio a.a., mes de steady).
+# Remedidos na revisao de 21/10/2026 (abertura ancorada): o mes 1 e' o mesmo em todo pico.
 EMENDA_PICO: dict[int, tuple[float, float, float, int]] = {
-    6: (1704.96, 23.0, 0.6279, 12),
-    8: (1618.56, 24.0, 0.5930, 12),
+    6: (1566.72, 23.0, 0.6115, 12),
+    8: (1566.72, 24.0, 0.5857, 12),
     10: (1566.72, 25.0, 0.5630, 12),
-    12: (1566.72, 26.0, 0.5352, 12),
-    15: (1566.72, 27.0, 0.4980, 15),
-    18: (1566.72, 28.0, 0.4638, 18),
-    24: (1566.72, 31.0, 0.4046, 24),
+    12: (1566.72, 25.0, 0.5396, 12),
+    15: (1566.72, 27.0, 0.5090, 15),
+    18: (1566.72, 28.0, 0.4811, 18),
+    24: (1566.72, 30.0, 0.4309, 24),
 }
 
 
@@ -250,6 +265,25 @@ def test_numeros_da_emenda_no_golden(pico: int) -> None:
     assert r.payback_meses == payback
     assert r.tir_socio_anual == pytest.approx(tir, abs=0.00005)
     assert r.mes_referencia_steady == steady
+
+
+def test_pico_tardio_mede_o_steady_no_2o_ano_com_reajuste() -> None:
+    """Revisao de 21/10/2026: com pico depois do mes 12 o regime pleno e' medido no PROPRIO
+    pico, que ja' tem o degrau do reajuste anual (mes 13). O DRE de steady sobe so' pelo
+    reajuste (os alunos sao os mesmos). A nota da tela deixa de dizer "nao a margem de
+    steady-state" nesse caso (`efeitoDaRampaNoSteady`). Se um dia o steady passar a precos
+    do ano 1 (decisao pendente do dono, DEC-077), este teste muda junto com a nota."""
+    r12 = simular(DEMANDA, _premissas_pico(12), **INVEST)  # type: ignore[arg-type]
+    r15 = simular(DEMANDA, _premissas_pico(15), **INVEST)  # type: ignore[arg-type]
+    assert (r12.mes_referencia_steady, r15.mes_referencia_steady) == (12, 15)
+    assert r15.faturamento_mensal_steady > r12.faturamento_mensal_steady
+    assert r15.ebitda_mensal > r12.ebitda_mensal
+    # mesmos alunos no mes de referencia: a diferenca e' preco, nao rampa
+    s12 = next(x for x in r12.serie_mensal if x["mes"] == 12)
+    s15 = next(x for x in r15.serie_mensal if x["mes"] == 15)
+    assert s15["alunos_total"] == pytest.approx(s12["alunos_total"], abs=1e-9)
+    # a margem quase nao se move (39,26% -> 39,20%): o efeito e' de nivel
+    assert abs(r15.margem_ebitda_pct - r12.margem_ebitda_pct) < 0.001
 
 
 def test_pico_invalido_no_nucleo() -> None:
@@ -300,6 +334,25 @@ def test_payload_ecoa_o_pico_e_a_curva_reescalada() -> None:
     assert p["mes_maturidade_rampa"] == 18
     assert p["curva_rampa"] == [round(f, 4) for f in curva_rampa_com_pico(18)]
     assert p["mes_referencia_steady"] == 18  # max(pico 18, anuidade no mes 12)
+
+
+def test_corpo_antigo_com_rampa_meses_sem_forma_segue_na_reta() -> None:
+    """Revisao de 21/10/2026: ate' a emenda, `rampa_meses = N` sem `forma_rampa` era a
+    reta de N meses. Cair na curva ignoraria o N em silencio (payback 39 -> 25 no golden
+    com N = 14). Sem `rampa_meses` (a tela), vale a curva."""
+    antigo = _payload(ViabilidadeIn(**GOLDEN_BODY, rampa_meses=14))
+    pr = antigo["premissas"]
+    assert pr["forma_rampa"] == "reta"
+    assert pr["mes_maturidade_rampa"] == 14
+    assert pr["mes_pico_rampa"] is None
+    assert antigo["retorno"]["payback"] == 39.0
+    assert _payload(ViabilidadeIn(**GOLDEN_BODY))["premissas"]["forma_rampa"] == "curva_uni03"
+    # a curva EXPLICITA vence o `rampa_meses` (aceito e ignorado, como antes)
+    curva = _payload(ViabilidadeIn(**GOLDEN_BODY, rampa_meses=14, forma_rampa="curva_uni03"))
+    assert curva["premissas"]["forma_rampa"] == "curva_uni03"
+    assert curva["premissas"]["mes_maturidade_rampa"] == 10
+    publico = ViabilidadeInputs(m2=1500, aluguel=30000, demanda=1600, rampa_meses=14)
+    assert premissas_do_body(publico).forma_rampa == "reta"
 
 
 def test_na_reta_o_pico_e_aceito_e_ignorado() -> None:

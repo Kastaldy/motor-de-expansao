@@ -156,9 +156,10 @@ SIM_CURVA_RAMPA_UNI03 = (
 # PICO DE MATURACAO (emenda da DEC-077, 21/10/2026): o MES em que a rampa atinge 100% da
 # demanda madura. O observado e' o primeiro mes da curva acima com 100% (mes 10). O
 # operador escolhe outro pico entre as opcoes abaixo e a MESMA forma observada e'
-# reescalada no tempo (`simulador.curva_rampa_com_pico`):
-#   fracao(t) = curva_obs(t x 10 / pico), interpolando linearmente entre meses observados;
-#   t x 10 / pico <= 1 -> a fracao do mes 1; >= 10 -> 100%.
+# reescalada no tempo (`simulador.curva_rampa_com_pico`), com os DOIS extremos medidos
+# ancorados (mes 1 = a abertura observada, 68%; mes `pico` = 100%):
+#   fracao(t) = curva_obs(1 + (t - 1) x 9 / (pico - 1)), interpolando linearmente entre
+#   meses observados; >= 10 -> 100%.
 # Pico 10 devolve a curva acima INTACTA (byte a byte). Opcoes: 6 e 8 (abertura mais
 # rapida que a rede; 8 e' a maturacao historica da planilha), 10 (o observado), 12 (um
 # ano), 15, 18 e 24 (praca que demora; 24 = dois anos). Conjunto pequeno de proposito:

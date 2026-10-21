@@ -25,6 +25,8 @@ export interface PremissasRampa {
   forma_rampa?: string | null
   mes_maturidade_rampa?: number | null
   mes_pico_rampa?: number | null
+  /** Mês de operação do regime pleno (a DRE de steady-state); servido pelo motor. */
+  mes_referencia_steady?: number | null
 }
 
 /** Forma servida pelo payload; ausente (backend anterior à DEC-077) = a rampa linear. */
@@ -73,7 +75,7 @@ export function ajudaDaRampa(
   const base =
     'Curva observada nas unidades da rede. O pico de maturação é o mês em que a unidade ' +
     'chega à demanda madura: o padrão é o pico observado; outro pico estica ou encurta a ' +
-    'mesma curva.'
+    'mesma curva no tempo, com a mesma abertura no mês 1.'
   if (p && formaDoPayload(p) !== 'curva_uni03') {
     return (
       `O servidor está usando a rampa linear de ${p.maturacao_meses} meses, e o pico de ` +
@@ -105,6 +107,27 @@ export function mesFimDaRampa(p: PremissasRampa | null | undefined): number | nu
   return Number.isFinite(m) && m > 0 ? Math.round(m) : null
 }
 
+/**
+ * O que a rampa muda no steady-state. Com o regime pleno até o mês 12 ela só move o
+ * caixa e o payback. Depois do mês 12 (pico tardio), o motor mede o regime pleno no
+ * próprio pico, que já tem o reajuste anual de preços (degrau a partir do mês 13): o
+ * DRE de steady-state sai a preços do 2º ano e fica ACIMA do de um pico curto — dizer
+ * "não muda o steady-state" seria falso (revisão de 21/10/2026).
+ */
+export function efeitoDaRampaNoSteady(p: PremissasRampa): string {
+  const ref = p.mes_referencia_steady
+  if (ref != null && Number.isFinite(ref) && ref > 12) {
+    const ano = Math.floor((Math.round(ref) - 1) / 12) + 1
+    return (
+      `Afeta o caixa e o payback. Como a demanda cheia só chega no mês ${Math.round(ref)}, ` +
+      `o steady-state é medido nesse mês, já com o reajuste anual de preços (preços do ` +
+      `${ano}º ano): por isso o faturamento e o EBITDA de steady-state ficam acima dos de ` +
+      'um pico até o mês 12.'
+    )
+  }
+  return 'Afeta o caixa e o payback, não a margem de steady-state.'
+}
+
 /** Frase da nota metodológica sobre a rampa. */
 export function notaDaRampa(p: PremissasRampa): string {
   const fim = mesFimDaRampa(p)
@@ -114,12 +137,12 @@ export function notaDaRampa(p: PremissasRampa): string {
       `até a demanda cheia no pico de maturação, mês ${fim ?? '?'}. Outro pico reescala a ` +
       'mesma curva no tempo. O faturamento segue alunos × ticket: o ticket menor dos ' +
       'primeiros meses (promoções) não é modelado, e por isso o caixa do 1º ano tende a ' +
-      'sair otimista. Afeta o caixa e o payback, não a margem de steady-state.'
+      `sair otimista. ${efeitoDaRampaNoSteady(p)}`
     )
   }
   return (
     `${p.maturacao_meses} meses para a demanda sair do piso inicial e chegar ao ` +
-    'valor assumido. Afeta o caixa e o payback, não a margem de steady-state.'
+    `valor assumido. ${efeitoDaRampaNoSteady(p)}`
   )
 }
 
