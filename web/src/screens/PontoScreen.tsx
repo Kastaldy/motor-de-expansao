@@ -897,7 +897,6 @@ function Ficha({
             opcoes={opcoesDeAlcance}
             atual={alcance}
             trocando={trocando}
-            comEstudoUltra={ofertaUltra?.ligado === true}
             onTrocar={onTrocarAlcance}
           />
         )}
@@ -932,9 +931,10 @@ function Ficha({
           Vinicius, 2026-10-16): ela muda a PERGUNTA da ficha inteira (estudo de ponto x
           estudo da unidade), e no fim do bloco de mercado exigia rolar a ficha toda para
           ser achada. */}
-      {/* A chave do estudo da unidade Ultra só existe no raio de 1 km: o servidor não
-          oferece o estudo da unidade em outro alcance. */}
-      {ofertaUltra && alcance === 'raio_1km' && (
+      {/* A chave do estudo da unidade Ultra vale em todo alcance a partir do ponto (emenda
+          do item 6 da DEC-074): a unidade sai do consumo do recorte escolhido. Na área
+          desenhada a oferta já não existe (`ofertaDeEstudoUltra`). */}
+      {ofertaUltra && (
         <ChaveEstudoUltra oferta={ofertaUltra} trocando={trocando} onTrocar={onTrocarModo} />
       )}
 
@@ -1137,20 +1137,18 @@ function ChaveEstudoUltra({
  * aqui. Os alcances de carro só aparecem quando a instância tem o serviço de rotas
  * (`alcancesDisponiveis`); opção que não pode acender não é desenhada apagada.
  *
- * O estudo da unidade Ultra é só do raio de 1 km: com ele ligado, escolher outro alcance
- * volta ao estudo de ponto — e a frase embaixo diz isso ANTES do clique.
+ * O estudo da unidade Ultra vale em todo alcance: com ele ligado, escolher outro alcance
+ * MANTÉM o estudo da unidade (emenda do item 6 da DEC-074).
  */
 function SeletorAlcance({
   opcoes,
   atual,
   trocando,
-  comEstudoUltra,
   onTrocar,
 }: {
   opcoes: readonly Alcance[]
   atual: Alcance
   trocando: boolean
-  comEstudoUltra: boolean
   onTrocar: (alcance: Alcance) => void
 }) {
   /* O visual mora em `lib/seletor-alcance` (travado em teste): controle segmentado da
@@ -1206,11 +1204,6 @@ function SeletorAlcance({
           )
         })}
       </div>
-      {comEstudoUltra && (
-        <span style={{ font: '400 11px/1.4 var(--f-ui)', color: 'var(--tx-sub)' }}>
-          O estudo da unidade Ultra é só do raio de 1 km: escolher outro alcance volta ao estudo de ponto.
-        </span>
-      )}
     </div>
   )
 }

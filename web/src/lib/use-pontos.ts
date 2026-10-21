@@ -15,8 +15,10 @@ import {
   decidirPedido,
   falhou,
   itemAtivo,
-  LEITURA_ULTRA,
+  leituraComAlcance,
+  leituraComModo,
   leituraDaFicha,
+  partesDaLeitura,
   limpar as limparTudo,
   limparTrocas,
   mostrar as mostrarItem,
@@ -36,11 +38,16 @@ import type { PontoPayload } from './types'
 
 /** Lê o ponto na leitura descrita (`leituraDaFicha`) — a rota de sempre para o raio de 1 km. */
 function lerNoModo(lat: number, lng: number, leitura: string): Promise<PontoPayload> {
-  if (leitura === LEITURA_ULTRA) return api.ponto(lat, lng, { excluirUltraProxima: true })
+  const { alcance, ultra } = partesDaLeitura(leitura)
   /* O raio de 1 km volta pela rota de SEMPRE (`GET /api/ponto`), byte a byte igual à
      ficha que o ponto teve ao entrar — e funciona com servidor anterior à DEC-074. */
-  if (leitura === ALCANCE_PADRAO || !ehAlcance(leitura)) return api.ponto(lat, lng)
-  return api.pontoAlcance(lat, lng, leitura)
+  if (alcance === ALCANCE_PADRAO || !ehAlcance(alcance)) {
+    return ultra ? api.ponto(lat, lng, { excluirUltraProxima: true }) : api.ponto(lat, lng)
+  }
+  /* O estudo da unidade Ultra vale em todo alcance (emenda do item 6 da DEC-074). */
+  return ultra
+    ? api.pontoAlcance(lat, lng, alcance, { excluirUltraProxima: true })
+    : api.pontoAlcance(lat, lng, alcance)
 }
 
 /**
@@ -91,11 +98,18 @@ export function usePontos() {
    * resposta velha que chegue depois da nova é descartada (`pedirTroca`/`concluirTroca`).
    */
   const trocarLeitura = useCallback(
-    async (i: number, querida: string, falha: string) => {
+    /* `querer` recebe a leitura VIGENTE — a do pedido em voo, se houver, senão a da ficha —
+       e devolve a pedida. Modo e alcance são duas metades da MESMA leitura: "2 km" seguido
+       de "liga o estudo da unidade" antes da resposta tem de pedir o 2 km COM o modo, e não
+       o modo no alcance que a ficha ainda mostra. */
+    async (i: number, querer: (vigente: string) => string, falha: string) => {
       const f = ref.current.fichas[i]
       if (!f || ehAreaDesenhada(f)) return
       const chave = chaveDaCoordenada(f.lat, f.lng)
-      const { trocas, decisao } = pedirTroca(trocasRef.current, chave, leituraDaFicha(f), querida)
+      const daFicha = leituraDaFicha(f)
+      const emVoo = trocasRef.current.emVoo[chave]?.querido
+      const querida = querer(typeof emVoo === 'string' ? emVoo : daFicha)
+      const { trocas, decisao } = pedirTroca(trocasRef.current, chave, daFicha, querida)
       aplicarTrocas(trocas)
       if (decisao.tipo !== 'ler') return
       setErro(null)
@@ -120,10 +134,10 @@ export function usePontos() {
   )
 
   const trocarModo = useCallback(
-    /* O estudo da unidade Ultra é só do raio de 1 km (como o servidor): ligar a chave num
-       ponto de outro alcance o devolve ao raio de 1 km; desligar mantém o raio de 1 km. */
+    /* O estudo da unidade Ultra vale em todo alcance (emenda do item 6 da DEC-074): ligar ou
+       desligar a chave MANTÉM o alcance do ponto e só troca o modo. */
     (i: number, estudoUltra: boolean) =>
-      trocarLeitura(i, estudoUltra ? LEITURA_ULTRA : ALCANCE_PADRAO, 'Falha ao trocar o modo do estudo.'),
+      trocarLeitura(i, (vigente) => leituraComModo(vigente, estudoUltra), 'Falha ao trocar o modo do estudo.'),
     [trocarLeitura],
   )
 
@@ -131,10 +145,11 @@ export function usePontos() {
    * Troca o ALCANCE do ponto `i` (DEC-074): raio de 1 km, de 2 km ou 10 min de carro. A
    * ficha é relida e TROCADA no lugar — mesmo nome, mesma cor, mesma posição na lista —,
    * pela mesma regra de "último clique vence" do modo. Escolher outro alcance com o estudo
-   * da unidade Ultra ligado sai do estudo da unidade: ele só existe no raio de 1 km.
+   * da unidade Ultra ligado MANTÉM o estudo da unidade (emenda do item 6 da DEC-074).
    */
   const trocarAlcance = useCallback(
-    (i: number, alcance: Alcance) => trocarLeitura(i, alcance, 'Falha ao trocar o alcance do ponto.'),
+    (i: number, alcance: Alcance) =>
+      trocarLeitura(i, (vigente) => leituraComAlcance(vigente, alcance), 'Falha ao trocar o alcance do ponto.'),
     [trocarLeitura],
   )
 

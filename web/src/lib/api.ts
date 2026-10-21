@@ -634,13 +634,15 @@ export const api = {
    * A isócrona é calculada no SERVIDOR (serviço de rotas): sem ele, a rota responde 503 com
    * a mensagem em português, que vira `ApiError.message` e é mostrada como veio — nunca
    * cai em silêncio para o raio de 1 km.
+   *
+   * `excluirUltraProxima`: o estudo da unidade Ultra NESTE alcance (emenda do item 6 da
+   * DEC-074). Sem ele, a query sai a mesma de antes.
    */
-  pontoAlcance: (lat: number, lng: number, alcance: Alcance) =>
-    pedir<PontoPayload>(
-      `/api/ponto/alcance?${new URLSearchParams({ lat: String(lat), lng: String(lng), alcance }).toString()}`,
-      {},
-      TIMEOUT_ALCANCE,
-    ),
+  pontoAlcance: (lat: number, lng: number, alcance: Alcance, opts?: { excluirUltraProxima?: boolean }) => {
+    const q = new URLSearchParams({ lat: String(lat), lng: String(lng), alcance })
+    if (opts?.excluirUltraProxima) q.set('excluir_ultra_proxima', 'true')
+    return pedir<PontoPayload>(`/api/ponto/alcance?${q.toString()}`, {}, TIMEOUT_ALCANCE)
+  },
 
   /**
    * Texto colado -> coordenada. Só é chamada quando o front NÃO resolveu sozinho

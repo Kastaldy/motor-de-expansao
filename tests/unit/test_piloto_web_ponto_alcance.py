@@ -13,7 +13,9 @@ no molde de `test_piloto_web_ponto_geometria.py`. O que se trava:
 - `carro_10min`: origem = o ponto clicado, contorno GeoJSON, carimbo do calculo, nota da
   area (media dos setores) -- e, sem a env ou com o servico fora, 503 em portugues,
   NUNCA o raio de 1 km em silencio;
-- o estudo da unidade Ultra so' no raio de 1 km (400);
+- o estudo da unidade Ultra em TODO alcance, com a unidade tirada do consumo medido NO
+  recorte escolhido (emenda do item 6 da DEC-074, Vinicius 2026-10-21; antes, 400 fora do
+  raio de 1 km);
 - o semaforo das analises de area devolve 503 quando lotado;
 - `/api/me` oferece os alcances do deploy e `/api/acessos/saude-artefatos` diz o estado
   do servico de rotas.
@@ -422,12 +424,74 @@ def test_raio_2km_escala_por_4_e_diz_o_recorte(ambiente) -> None:
     assert ambiente[-1] == {"raio_km": 2.0}
 
 
-def test_raio_2km_recusa_o_estudo_da_unidade_ultra(ambiente) -> None:
+# --------------------------------------------------------------------------- #
+# Estudo da unidade Ultra em todo alcance (emenda do item 6 da DEC-074)          #
+# --------------------------------------------------------------------------- #
+def _com_ultras() -> None:
+    """Troca o cadastro Ultra do staging: a unidade ESTUDADA a 50 m da origem e uma vizinha
+    a 1,5 km a leste -- fora do raio de 1 km e dentro do de 2 km e da isocrona de teste.
+
+    A unidade a 50 m tem o disco de 1 km quase inteiro no raio de 1 km e INTEIRO no de
+    2 km: o consumo dela que sai da conta muda com o recorte. E' o que distingue "excluida
+    no alcance escolhido" de "excluida no raio de 1 km"."""
+    from motor_expansao.dashboard import mercado_raio
+
+    estudada, vizinha = _latlng(50, 0), _latlng(1500, 0)
+    pd.DataFrame(
+        {
+            "ultra_id": ["u_estudada", "u_vizinha"],
+            "unidade": ["ULTRA TESTE", "ULTRA VIZINHA"],
+            "lat": [estudada[0], vizinha[0]],
+            "lng": [estudada[1], vizinha[1]],
+            "flag_coord_valida": [True, True],
+        }
+    ).to_parquet(pilot.STAGING_DIR / "unidades_ultra_mapeadas.parquet", index=False)
+    mercado_raio.carregar_ultra_mercado.cache_clear()
+
+
+def _confere_estudo_no_recorte(com: dict, sem: dict) -> float:
+    """O modo ligado, a unidade certa e a conta FECHANDO no mesmo recorte: o consumo Ultra do
+    estudo de ponto menos o do estudo da unidade e' exatamente o consumo excluido."""
+    mc, ms = com["mercado"], sem["mercado"]
+    assert mc["modo_estudo"] == "unidade_ultra"
+    assert ms["modo_estudo"] == "ponto"
+    estudada = mc["unidade_ultra_estudada"]
+    assert estudada["ultra_id"] == "u_estudada"
+    assert estudada["dist_m"] == pytest.approx(50, abs=2)
+    # O MESMO recorte nos dois (grao, raio e area): o modo nao troca o alcance.
+    assert (mc["grao"], mc["raio_km"], mc["area_km2"]) == (ms["grao"], ms["raio_km"], ms["area_km2"])
+    excluido = estudada["consumo_excluido"]
+    assert excluido > 0
+    assert ms["consumo_ultra"] - mc["consumo_ultra"] == pytest.approx(excluido, abs=1)
+    assert com["recorte"]["tipo"] == sem["recorte"]["tipo"]
+    return excluido
+
+
+def test_raio_2km_aceita_o_estudo_da_unidade_e_mede_no_raio_de_2km(ambiente) -> None:
+    _com_ultras()
+    um = pilot.ponto(lat=LAT, lng=LNG, excluir_ultra_proxima=True)
+    com = _alcance("raio_2km", excluir_ultra_proxima=True)
+    sem = _alcance("raio_2km")
+
+    excluido = _confere_estudo_no_recorte(com, sem)
+    assert com["mercado"]["grao"] == "raio" and com["mercado"]["raio_km"] == 2.0
+    assert com["recorte"]["fator_regua"] == 4.0
+    # O disco de 1 km da unidade (a 50 m da origem) cabe INTEIRO no raio de 2 km e so'
+    # QUASE inteiro no de 1 km: medir no 1 km daria um consumo excluido MENOR.
+    assert excluido > um["mercado"]["unidade_ultra_estudada"]["consumo_excluido"]
+    # A vizinha (1,5 km) segue contando no 2 km: o consumo Ultra do estudo da unidade nao
+    # zera -- so' a estudada saiu.
+    assert com["mercado"]["consumo_ultra"] > 0
+
+
+def test_raio_2km_sem_unidade_na_tolerancia_e_400_com_o_motivo(ambiente) -> None:
+    """A tolerancia de 150 m vale a partir da ORIGEM clicada, em qualquer alcance: sem
+    unidade por perto, 400 com o motivo -- nunca o estudo de ponto calado."""
     with pytest.raises(HTTPException) as exc:
         _alcance("raio_2km", excluir_ultra_proxima=True)
     assert exc.value.status_code == 400
-    assert "só do raio de 1 km" in exc.value.detail
-    assert ambiente == []
+    assert "150 m" in exc.value.detail
+    assert "1 km" not in exc.value.detail
 
 
 def test_alcance_desconhecido_e_400_em_portugues(ambiente) -> None:
@@ -537,14 +601,23 @@ def test_carro_10min_sem_via_por_perto_e_400(ambiente, valhalla) -> None:
     assert ambiente == []
 
 
-def test_carro_10min_recusa_o_estudo_da_unidade_antes_de_chamar_o_servico(
-    ambiente, valhalla
-) -> None:
+def test_carro_10min_aceita_o_estudo_da_unidade_e_mede_na_isocrona(ambiente, valhalla) -> None:
+    _com_ultras()
     enviados, _ = valhalla
-    with pytest.raises(HTTPException) as exc:
-        _alcance("carro_10min", excluir_ultra_proxima=True)
-    assert exc.value.status_code == 400
-    assert enviados == []
+    um = pilot.ponto(lat=LAT, lng=LNG, excluir_ultra_proxima=True)
+    com = _alcance("carro_10min", excluir_ultra_proxima=True)
+    sem = _alcance("carro_10min")
+
+    excluido = _confere_estudo_no_recorte(com, sem)
+    assert len(enviados) >= 1  # a isocrona foi pedida ao servico de rotas
+    m = com["mercado"]
+    assert m["grao"] == "geometria" and m["raio_km"] is None
+    assert m["area_km2"] == pytest.approx(6.0, rel=0.02)  # o retangulo de 3 x 2 km
+    # A isocrona corta o disco da unidade a oeste (x < -500): o consumo excluido e' a fatia
+    # DENTRO dela, diferente da do raio de 1 km.
+    assert excluido != pytest.approx(
+        um["mercado"]["unidade_ultra_estudada"]["consumo_excluido"], abs=1
+    )
 
 
 def test_coordenada_fora_do_pais_nao_chama_o_servico(ambiente, valhalla) -> None:
@@ -710,12 +783,13 @@ def test_carro_5min_sem_via_diz_5_min(ambiente, valhalla) -> None:
     assert "5 min de carro" in exc.value.detail
 
 
-def test_carro_5min_recusa_o_estudo_da_unidade(ambiente, valhalla) -> None:
-    enviados, _ = valhalla
-    with pytest.raises(HTTPException) as exc:
-        _alcance("carro_5min", excluir_ultra_proxima=True)
-    assert exc.value.status_code == 400
-    assert enviados == []
+def test_carro_5min_aceita_o_estudo_da_unidade(ambiente, valhalla) -> None:
+    _com_ultras()
+    com = _alcance("carro_5min", excluir_ultra_proxima=True)
+    sem = _alcance("carro_5min")
+    _confere_estudo_no_recorte(com, sem)
+    assert com["mercado"]["grao"] == "geometria"
+    assert com["recorte"]["tipo"] == "carro_5min"
 
 
 def test_tempo_de_carro_fora_da_tabela_e_400(ambiente, valhalla) -> None:
