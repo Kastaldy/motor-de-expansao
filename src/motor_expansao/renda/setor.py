@@ -103,3 +103,78 @@ def _texto(v: Any) -> str | None:
         return None
     s = str(v).strip().removesuffix(".0")
     return s or None
+
+
+# ---------------------------------------------------------------------------------------------
+# Renda de 2022 por setor, SEM fator temporal: insumo da agregacao para o hexagono (E3).
+# ---------------------------------------------------------------------------------------------
+
+#: Domicilios particulares ocupados do setor (v0007, Censo 2022): peso da domiciliar do hex.
+COL_DOMICILIOS = "domicilios_particulares_ocupados_setor_2022"
+
+
+def _uplift_setores(df: pd.DataFrame) -> pd.Series:
+    """Uplift de cada linha pela cascata setor -> municipio -> UF -> nacional (vetorizado).
+
+    O mesmo valor que `insumos.uplift_setor(cod_setor, uf, cod_municipio)` daria linha a
+    linha; aqui a tabela do setor e mapeada de uma vez e so as linhas sem uplift proprio
+    descem a cascata (uma chamada por par UF/municipio distinto, nao por setor).
+    """
+    mapa = _insumos._carregar_uplift_setor()
+    cods = df["cod_setor"].astype("string").str.strip() if "cod_setor" in df.columns else None
+    if cods is not None:
+        uplift = pd.to_numeric(cods.map(mapa), errors="coerce").astype("float64")
+    else:
+        uplift = pd.Series(float("nan"), index=df.index, dtype="float64")
+    falta = uplift.isna()
+    if falta.any():
+        ufs = df["uf"] if "uf" in df.columns else pd.Series([None] * len(df), index=df.index)
+        munis = (
+            df["cod_municipio"]
+            if "cod_municipio" in df.columns
+            else pd.Series([None] * len(df), index=df.index)
+        )
+        chaves = list(zip(ufs[falta].map(_texto), munis[falta].map(_texto), strict=True))
+        cache: dict[tuple[str | None, str | None], float] = {}
+        valores = []
+        for chave in chaves:
+            if chave not in cache:
+                cache[chave] = float(_insumos.uplift_municipio(chave[0], chave[1]))
+            valores.append(cache[chave])
+        uplift.loc[falta] = valores
+    return uplift
+
+
+def rendas_2022_setores(df: pd.DataFrame) -> tuple[pd.Series, pd.Series]:
+    """(domiciliar 2022, per capita 2022) de cada setor de `df`, SEM fator temporal.
+
+        domiciliar_2022 = V06004 x uplift_setor
+        per_capita_2022 = (V06004 x uplift_setor) / moradores_setor (de 2022)
+
+    E a renda do setor na DATA do Censo (secao 9.3 do plano, passos 3 e 5). O fator temporal
+    entra so na exibicao, uma vez, com o tipo certo (`renda.hex`): este par vira coluna de
+    artefato (`agregar_censo_hex_da_malha`) e o artefato nao pode carregar fator nenhum,
+    senao trocar a versao dos fatores exigiria regenera-lo.
+
+    V06004 ausente e reconstruida pela per capita BRUTA x moradores (`v06004_de_fallback`),
+    como no Relatorio Pontual. Sem leitura (ou moradores <= 0, para a per capita) -> NaN.
+    """
+    if df.empty:
+        vazio = pd.Series(dtype="float64", index=df.index)
+        return vazio, vazio.copy()
+
+    def _col(nome: str) -> pd.Series:
+        if nome not in df.columns:
+            return pd.Series(float("nan"), index=df.index, dtype="float64")
+        return pd.to_numeric(df[nome], errors="coerce").astype("float64")
+
+    moradores = _col(COL_MORADORES)
+    base = v06004_de_fallback(_col(COL_V06004), _col(COL_PER_CAPITA_BRUTA), moradores)
+    base = base.where(base > 0)
+    if base.isna().all():
+        # Sem leitura nenhuma: nao toca nos insumos do uplift (frame sem colunas de renda).
+        vazio = pd.Series(float("nan"), index=df.index, dtype="float64")
+        return vazio, vazio.copy()
+    dom = base * _uplift_setores(df)
+    pc = (dom / moradores).where(moradores > 0)
+    return dom.astype("float64"), pc.astype("float64")

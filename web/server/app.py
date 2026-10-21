@@ -1190,6 +1190,10 @@ _COLS_DESEJADAS = [
     "pop_total_setor_2022",
     "renda_per_capita",
     "renda_per_capita_setor_2022_calibrada",
+    # Renda de 2022 do hexagono agregada da malha com moradores e uplift DO SETOR (E3).
+    # Ausentes no artefato antigo: a leitura por intersecao as descarta e a renda do
+    # hexagono cai, linha a linha, na formula municipal de antes.
+    *_renda_hex.COLS_RENDA_MALHA,
     "densidade_pop_setor_hab_km2",
     "faixa_oportunidade",
     "n_unidades_ultra_performance_hex",
@@ -1846,7 +1850,9 @@ def _renda_domiciliar_hex(r: pd.Series) -> float | None:
     base, uf, cod = _base_renda_hex(r)
     if base is None:
         return None
-    return _num(_renda_hex.renda_domiciliar_hex(base, uf, cod))
+    return _num(
+        _renda_hex.renda_domiciliar_hex(base, uf, cod, linha=r, origem=r.get("renda_origem"))
+    )
 
 
 def _renda_per_capita_hex(r: pd.Series) -> float | None:
@@ -1860,7 +1866,9 @@ def _renda_per_capita_hex(r: pd.Series) -> float | None:
     base, uf, cod = _base_renda_hex(r)
     if base is None:
         return None
-    return _num(_renda_hex.renda_per_capita_hex(base, uf, cod))
+    return _num(
+        _renda_hex.renda_per_capita_hex(base, uf, cod, linha=r, origem=r.get("renda_origem"))
+    )
 
 
 @functools.lru_cache(maxsize=1)
@@ -6367,6 +6375,7 @@ _COLS_NACIONAL: tuple[str, ...] = (
     "pop_total",
     "renda_per_capita_setor_2022_calibrada",
     "renda_per_capita",
+    *_renda_hex.COLS_RENDA_MALHA,  # E3: a renda do hexagono pela malha, quando existe
 )
 
 
@@ -10163,6 +10172,17 @@ def _rede_territorio() -> dict[str, dict[str, Any]]:
             )
         except Exception as erro:  # noqa: BLE001
             print(f"[rede] mercado por hexágono ilegível ({erro})", file=sys.stderr)
+    faltam_malha = [
+        c for c in _renda_hex.COLS_RENDA_MALHA if hexes is not None and c not in hexes.columns
+    ]
+    if hexes is not None and len(hexes) and faltam_malha:
+        # E3: o artefato de mercado nao carrega a renda da malha; sem ela a ficha cairia na
+        # formula municipal e divergiria do tooltip para o MESMO hexagono.
+        try:
+            malha = _renda_hex.colunas_malha_por_hex(hexes.index, STAGING_DIR)
+            hexes = hexes.join(malha[faltam_malha])
+        except Exception as erro:  # noqa: BLE001 -- sem a malha, a renda cai na formula de antes
+            print(f"[rede] renda da malha ilegível ({erro})", file=sys.stderr)
 
     oferta = _rede_oferta_sem_estudio()
     ultra = _rede_ler_opcional(
@@ -12506,7 +12526,11 @@ def _op_renda_pc_por_hex(df: pd.DataFrame) -> dict[int, float | None]:
 
             dset = ds.dataset(str(ENRICHED_DIR), partitioning="hive")
             cols = [
-                c for c in ("hex_id", "uf", "cod_municipio", *_renda_hex.COLS_RENDA_LEITURA)
+                c
+                for c in (
+                    "hex_id", "uf", "cod_municipio",
+                    *_renda_hex.COLS_RENDA_LEITURA, *_renda_hex.COLS_RENDA_MALHA,
+                )
                 if c in set(dset.schema.names)
             ]
             base = (

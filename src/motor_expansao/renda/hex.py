@@ -10,6 +10,17 @@ no PDF contra R$ 4.924 no card). Esta e a formula do card, que vale para os dois
 
 onde a base desfaz a escala da coluna de origem (ver `base_renda_domiciliar`). Um hexagono
 res-7 cobre varios setores, entao uplift e moradores sao MUNICIPAIS: um escalar por municipio.
+
+E3 (frente c do plano): quando a linha do hexagono traz as colunas da MALHA
+(`renda_domiciliar_2022_malha` / `renda_per_capita_domiciliar_2022_malha`, agregadas dos
+setores com o uplift e os moradores DO SETOR), a renda do hexagono passa a ser
+
+    renda_domiciliar_hex = renda_domiciliar_2022_malha            x F_dom(uf)
+    renda_per_capita_hex = renda_per_capita_domiciliar_2022_malha x F_pc(uf)
+
+-- so o fator temporal, uma vez; nada de moradores, uplift ou k de novo, que ja estao dentro
+das colunas. Sem as colunas (artefato antigo) ou sem valor para o hexagono (hexagono sem setor
+com renda, origem municipal), a formula de cima vale LINHA A LINHA, bit a bit como antes.
 """
 
 from __future__ import annotations
@@ -18,8 +29,9 @@ import logging
 import math
 import os
 import re
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from pathlib import Path
+from typing import Any
 
 import pandas as pd
 
@@ -42,6 +54,12 @@ CENSO_HEX_STAGING_PARQUET = "censo2022_setores_calibrado.parquet"
 # Artefato da MALHA (agregado dos setores). Quando existe, e ELE quem carrega o k da
 # coluna servida -- ver `k_calibracao_renda`.
 CENSO_MALHA_PARQUET = "censo2022_hex_da_malha.parquet"
+#: Colunas da MALHA (E3): renda de 2022 do hexagono agregada dos setores, SEM fator temporal.
+#: A domiciliar e ponderada pelos domicilios dos pedacos de setor; a per capita, pela populacao.
+COL_RENDA_DOM_MALHA = "renda_domiciliar_2022_malha"
+COL_RENDA_PC_MALHA = "renda_per_capita_domiciliar_2022_malha"
+COLS_RENDA_MALHA: tuple[str, ...] = (COL_RENDA_DOM_MALHA, COL_RENDA_PC_MALHA)
+_COL_MALHA_POR_TIPO = {"domiciliar": COL_RENDA_DOM_MALHA, "per_capita": COL_RENDA_PC_MALHA}
 _RE_K_CARIMBO = re.compile(r"k=([0-9]+(?:\.[0-9]+)?)")
 FAIXA_K = (0.5, 3.0)
 
@@ -177,21 +195,65 @@ def base_renda_domiciliar(
     return float(valor)  # type: ignore[arg-type]
 
 
-def renda_domiciliar_hex(base: float | None, uf: str | None, cod: str | None) -> float | None:
-    """Renda media domiciliar do hex = base x fator_hex(..., "domiciliar"). Sem arredondar."""
+def renda_2022_da_malha(
+    linha: Mapping[str, Any] | None, origem: object, tipo: str
+) -> float | None:
+    """Renda de 2022 do hexagono pela MALHA (coluna do `tipo` pedido), ou None.
+
+    So vale quando a leitura do hexagono e a SETORIAL (`origem` = a coluna calibrada): a malha
+    refina a mesma grandeza com moradores e uplift do setor. Origem municipal (SIDRA), linha
+    sem a coluna (artefato antigo) ou valor ausente/nao positivo -> None, e o chamador cai na
+    formula municipal de antes.
+    """
+    if linha is None or origem != COLS_RENDA_LEITURA[0]:
+        return None
+    try:
+        valor = float(linha.get(_COL_MALHA_POR_TIPO[tipo]))  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        return None
+    return valor if math.isfinite(valor) and valor > 0 else None
+
+
+def renda_domiciliar_hex(
+    base: float | None,
+    uf: str | None,
+    cod: str | None,
+    *,
+    linha: Mapping[str, Any] | None = None,
+    origem: object = None,
+) -> float | None:
+    """Renda media domiciliar do hex. Sem arredondar.
+
+      - com a malha na `linha` (E3): `renda_domiciliar_2022_malha x F_dom(uf)`;
+      - senao: `base x fator_hex(..., "domiciliar")` (moradores e uplift do municipio).
+    """
+    malha = renda_2022_da_malha(linha, origem, "domiciliar")
+    if malha is not None:
+        return malha * fator(uf, "domiciliar")
     if base is None:
         return None
     return base * fator_hex(uf, cod, "domiciliar")
 
 
-def renda_per_capita_hex(base: float | None, uf: str | None, cod: str | None) -> float | None:
-    """Renda domiciliar per capita do hex = round(base x fator_hex(..., "per_capita")) / moradores.
+def renda_per_capita_hex(
+    base: float | None,
+    uf: str | None,
+    cod: str | None,
+    *,
+    linha: Mapping[str, Any] | None = None,
+    origem: object = None,
+) -> float | None:
+    """Renda domiciliar per capita do hex, com o PROPRIO fator -- nunca a domiciliar dividida.
 
-    Com o PROPRIO fator, nunca a domiciliar dividida. O `round` intermediario e um
-    arredondamento de EXIBICAO herdado: reproduz bit a bit o `_num(dom) / moradores` do
-    `app.py` de antes da E0 (que dividia a domiciliar ja arredondada a reais). A revisar na E3,
-    quando a per capita do hex passar a vir das colunas da malha.
+      - com a malha na `linha` (E3): `renda_per_capita_domiciliar_2022_malha x F_pc(uf)`, sem
+        arredondamento intermediario (a per capita ja vem pronta da malha);
+      - senao: `round(base x fator_hex(..., "per_capita")) / moradores_muni`. O `round`
+        intermediario e um arredondamento de EXIBICAO herdado: reproduz bit a bit o
+        `_num(dom) / moradores` do `app.py` de antes da E0.
     """
+    malha = renda_2022_da_malha(linha, origem, "per_capita")
+    if malha is not None:
+        return malha * fator(uf, "per_capita")
     if base is None:
         return None
     bruto = base * fator_hex(uf, cod, "per_capita")
@@ -199,6 +261,66 @@ def renda_per_capita_hex(base: float | None, uf: str | None, cod: str | None) ->
         return None
     moradores = moradores_por_domicilio(uf, cod)
     return round(bruto) / moradores if moradores else None
+
+
+def colunas_malha_por_hex(
+    hex_ids: Sequence[str], staging: Path | str | None = None
+) -> pd.DataFrame:
+    """As colunas da malha (E3) dos `hex_ids`, lidas do artefato da malha no staging.
+
+    Para superficies que leem o hexagono de um artefato que NAO carrega as colunas (a ficha
+    da rede le `hexagonos_mercado_mapeado.parquet`): sem elas a ficha cairia na formula
+    municipal e mostraria outro numero que o tooltip para o mesmo hexagono. Indexado por
+    `hex_id`. Artefato ausente ou sem as colunas (malha anterior a E3) -> frame vazio, e a
+    linha cai sozinha na formula de antes.
+    """
+    caminho = (Path(staging) if staging is not None else staging_dir()) / CENSO_MALHA_PARQUET
+    vazio = pd.DataFrame(columns=list(COLS_RENDA_MALHA), index=pd.Index([], name="hex_id"))
+    ids = sorted({str(h) for h in hex_ids if h is not None})
+    if not ids or not caminho.is_file():
+        return vazio
+    import pyarrow.compute as pc
+    import pyarrow.dataset as ds
+
+    conjunto = ds.dataset(str(caminho))
+    if not set(COLS_RENDA_MALHA) <= set(conjunto.schema.names):
+        return vazio
+    return (
+        conjunto.to_table(
+            filter=pc.field("hex_id").isin(ids), columns=["hex_id", *COLS_RENDA_MALHA]
+        )
+        .to_pandas()
+        .drop_duplicates("hex_id")
+        .set_index("hex_id")
+    )
+
+
+def _com_colunas_malha(df: pd.DataFrame, staging: Path | str | None) -> pd.DataFrame:
+    """`df` com as colunas da malha; anexadas do staging quando o frame nao as traz.
+
+    O Relatorio Municipal do BOT recorta o artefato de MERCADO (sem as colunas) e o do piloto
+    recorta o ENRIQUECIDO (com elas): sem este passo o mesmo municipio sairia com dois numeros
+    conforme a porta. Frame que ja tem as colunas passa intacto (o artefato manda).
+    """
+    faltam = [c for c in COLS_RENDA_MALHA if c not in df.columns]
+    if not faltam or "hex_id" not in df.columns:
+        return df
+    malha = colunas_malha_por_hex(df["hex_id"].astype(str).tolist(), staging)
+    if malha.empty:
+        return df
+    out = df.copy()
+    ids = out["hex_id"].astype(str)
+    for coluna in faltam:
+        out[coluna] = ids.map(malha[coluna]).to_numpy()
+    return out
+
+
+def _serie_malha(df: pd.DataFrame, tipo: str) -> pd.Series:
+    """A coluna da malha do `tipo` (NaN onde o artefato nao a tem)."""
+    coluna = _COL_MALHA_POR_TIPO[tipo]
+    if coluna not in df.columns:
+        return pd.Series(float("nan"), index=df.index, dtype="float64")
+    return pd.to_numeric(df[coluna], errors="coerce")
 
 
 def renda_domiciliar_por_hex(
@@ -216,6 +338,7 @@ def renda_domiciliar_por_hex(
     if df is None or df.empty or "hex_id" not in df.columns or not cod_municipio:
         return {}
     fator_dom = fator_hex(uf, cod_municipio, "domiciliar")
+    df = _com_colunas_malha(df, staging_dir)
     k_lido: list[float] = []
 
     def _k() -> float:
@@ -224,8 +347,13 @@ def renda_domiciliar_por_hex(
         return k_lido[0]
 
     valor, origem = serie_renda(df)
+    malha = _serie_malha(df, "domiciliar")
     out: dict[str, float] = {}
-    for hex_id, v, o in zip(df["hex_id"].astype(str), valor, origem, strict=True):
+    for hex_id, v, o, m in zip(df["hex_id"].astype(str), valor, origem, malha, strict=True):
+        dom_malha = renda_2022_da_malha({COL_RENDA_DOM_MALHA: m}, o, "domiciliar")
+        if dom_malha is not None:
+            out[hex_id] = dom_malha * fator(uf, "domiciliar")
+            continue
         base = base_renda_domiciliar(v, o, uf, cod_municipio, _k)
         if base is not None:
             out[hex_id] = base * fator_dom
@@ -253,6 +381,8 @@ def renda_per_capita_por_linha(
     """
     if df is None or df.empty:
         return pd.Series(dtype="float64")
+    if COLS_RENDA_LEITURA[0] in precedencia:  # a malha so refina a leitura SETORIAL
+        df = _com_colunas_malha(df, staging_dir)
     valor, origem = serie_renda(df, precedencia)
     k_lido: list[float] = []
 
@@ -273,11 +403,12 @@ def renda_per_capita_por_linha(
         if "cod_municipio" in df.columns
         else pd.Series([None] * len(df), index=df.index)
     )
+    malha = _serie_malha(df, "per_capita")
     saida: list[float] = []
-    for v, o, uf_l, cod_l in zip(valor, origem, ufs, cods, strict=True):
+    for v, o, uf_l, cod_l, m in zip(valor, origem, ufs, cods, malha, strict=True):
         uf_x = _txt(uf_l) or uf
         cod_x = _txt(cod_l) or cod_municipio
         base = base_renda_domiciliar(v, o, uf_x, cod_x, _k)
-        pc = renda_per_capita_hex(base, uf_x, cod_x)
+        pc = renda_per_capita_hex(base, uf_x, cod_x, linha={COL_RENDA_PC_MALHA: m}, origem=o)
         saida.append(float("nan") if pc is None else float(pc))
     return pd.Series(saida, index=df.index, dtype="float64")
