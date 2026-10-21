@@ -16,6 +16,14 @@
  * entre UFs nao colidem aqui, porque nunca se procura um nome fora da UF dele (e dentro de
  * uma UF o nome de municipio e' unico).
  *
+ * A COORDENADA VEM ANTES DE TUDO (defeito relatado pelo Vinicius em 21/10/2026: "leva para
+ * 'Todos os municipios' na primeira tentativa"). A carteira pode trazer `cidade` vazia, e o
+ * hexagono da unidade so' esta' no payload aberto quando o operador ja' esta' na UF inteira:
+ * de dentro de OUTRA cidade, as tres regras abaixo falhavam juntas e o mapa ia para a visao
+ * da UF. Com coordenada, `resolverTerritorioDaUnidade` pergunta primeiro ao servidor
+ * (`/api/municipio-do-ponto`, malha municipal) -- e a UF DA COORDENADA manda, mesmo quando
+ * o cadastro diz outra. Sem coordenada, ou sem resposta util, seguem as regras abaixo.
+ *
  * A ORDEM, do mais ao menos declarado:
  *  1. o nome do cadastro, sem acento/caixa/pontuacao, contra a lista da UF (com e sem um
  *     sufixo de UF, "Goiania - GO");
@@ -27,6 +35,8 @@
  *     Ficar na cidade anterior seria repetir o defeito: o cabecalho afirmando um municipio
  *     que nao e' o da unidade.
  */
+
+import type { ViagemUnidade } from './viagem-unidade'
 
 /** UF + municipio do cabecalho do mapa. `municipio` vazio = visao da UF inteira. */
 export interface Territorio {
@@ -110,6 +120,102 @@ export function territorioDaUnidade(
     uf: ufDaUnidade(unidade, ufAtual),
     municipio: municipioDaUnidade(unidade, municipiosDaUf, munDoHexagono) ?? '',
   }
+}
+
+/** De onde a resolucao assincrona le: injetado, para ser testado sem rede nem React. */
+export interface FontesDoTerritorio {
+  /** Coordenada -> UF e municipio (servidor). Pode rejeitar: a falha cai nos fallbacks. */
+  municipioDoPonto: (
+    lat: number,
+    lng: number,
+  ) => Promise<{ uf: string; municipio: string | null; no_seletor?: boolean }>
+  /** A lista de municipios da UF (a ja' aberta, ou pedida). Vazia = sem lista. */
+  municipiosDaUf: (uf: string) => Promise<readonly { nome: string }[]>
+  /** O municipio do hexagono da unidade no payload aberto, se ele for desta UF. */
+  munDoHexagono: (uf: string) => string | null
+}
+
+/**
+ * O territorio da unidade, com a COORDENADA primeiro (ver o topo do arquivo):
+ *  1. o municipio da malha, casado com a lista da UF DA COORDENADA pelo nome normalizado
+ *     (sem lista, aceito quando o servidor diz que e' o nome do seletor);
+ *  2. sem coordenada, ou o servidor sem resposta/sem casar: `municipioDaUnidade` (cadastro,
+ *     UF de municipio unico, hexagono), na UF da coordenada quando ela veio;
+ *  3. nada -- a UF inteira.
+ * Nunca rejeita: cada fonte que falha so' passa a vez para a seguinte.
+ */
+export async function resolverTerritorioDaUnidade(
+  unidade: UnidadeComTerritorio,
+  coordenada: { lat: number; lng: number } | null,
+  ufAtual: string,
+  fontes: FontesDoTerritorio,
+): Promise<Territorio> {
+  let uf = ufDaUnidade(unidade, ufAtual)
+  let doPonto: string | null = null
+  let doPontoNoSeletor = false
+  if (coordenada) {
+    try {
+      const r = await fontes.municipioDoPonto(coordenada.lat, coordenada.lng)
+      const ufPonto = (r?.uf ?? '').trim().toUpperCase()
+      if (ufPonto) {
+        uf = ufPonto
+        doPonto = (r.municipio ?? '').trim() || null
+        doPontoNoSeletor = r.no_seletor === true
+      }
+    } catch {
+      /* rota fora do ar / 404 da malha: seguem os fallbacks, na UF do cadastro */
+    }
+  }
+  let lista: readonly { nome: string }[] = []
+  try {
+    lista = await fontes.municipiosDaUf(uf)
+  } catch {
+    lista = []
+  }
+  if (doPonto) {
+    const chave = normalizarNomeMunicipio(doPonto)
+    const achado = lista.find((m) => m.nome && normalizarNomeMunicipio(m.nome) === chave)
+    if (achado) return { uf, municipio: achado.nome }
+    if (lista.length === 0 && doPontoNoSeletor) return { uf, municipio: doPonto }
+  }
+  return {
+    uf,
+    municipio: municipioDaUnidade({ ...unidade, uf }, lista, fontes.munDoHexagono(uf)) ?? '',
+  }
+}
+
+/** Tudo que a viagem precisa para levar o mapa ao territorio da unidade escolhida. */
+export interface PedidoDeTerritorio<T> {
+  viagem: ViagemUnidade<T>
+  seq: number
+  carga: T
+  unidade: UnidadeComTerritorio
+  coordenada: { lat: number; lng: number } | null
+  /** O territorio ABERTO, lido na hora (a resposta chega depois do gesto). */
+  atual: () => Territorio
+  fontes: FontesDoTerritorio
+  /** A chave de contexto do mapa (`chaveContexto`), para a viagem reconhecer a chegada. */
+  chave: (uf: string, municipio: string) => string
+  /** Pede a troca ao App (os `onUf`/`onMunicipio` do cabecalho). */
+  trocar: (plano: { uf: string | null; municipio: string | null }) => void
+}
+
+/**
+ * Resolve (assincrono) e, SE a escolha ainda vale, pede a troca. A resposta que chega
+ * depois de um gesto do operador (`viagem.cancelar()`, ou outra unidade) nao troca nada --
+ * nem antes de embarcar, nem pela lista pedida no meio. `true` = a troca foi pedida.
+ */
+export async function viajarAoTerritorioDaUnidade<T>(p: PedidoDeTerritorio<T>): Promise<boolean> {
+  const alvo = await resolverTerritorioDaUnidade(p.unidade, p.coordenada, p.atual().uf, p.fontes)
+  if (!p.viagem.vale(p.seq)) return false
+  const a = p.atual()
+  const plano = planoDeTroca(a, alvo)
+  if (plano.uf === null && plano.municipio === null) return false
+  const ufFinal = plano.uf ?? a.uf
+  const munFinal = plano.municipio ?? (plano.uf !== null ? '' : a.municipio)
+  if (!p.viagem.embarcar(p.seq, p.chave(ufFinal, munFinal), p.carga)) return false
+  p.trocar(plano)
+  return true
 }
 
 /**

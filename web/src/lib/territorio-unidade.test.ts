@@ -10,13 +10,17 @@ import { describe, expect, it } from 'vitest'
 
 import { unidadesDaBusca } from './ficha-unidade'
 import {
+  type FontesDoTerritorio,
   municipioDaUnidade,
   normalizarNomeMunicipio,
   planoDeTroca,
+  resolverTerritorioDaUnidade,
   territorioDaUnidade,
   ufDaUnidade,
+  viajarAoTerritorioDaUnidade,
 } from './territorio-unidade'
 import type { RedeUnidade } from './types'
+import { criarViagemUnidade } from './viagem-unidade'
 
 const lista = (...nomes: string[]) => nomes.map((nome) => ({ nome }))
 const SP = lista('São Paulo', 'São Bernardo do Campo', 'Santa Bárbara d’Oeste', 'Mogi das Cruzes')
@@ -133,22 +137,22 @@ describe('a fiação no MapScreen', () => {
     expect(corpo).toContain('levarAoTerritorioDaUnidade(u, seq, unidade, pinU)')
   })
 
-  it('a troca usa os MESMOS onUf/onMunicipio do cabeçalho, e só quando o plano pede', () => {
+  it('a troca usa os MESMOS onUf/onMunicipio do cabeçalho, com a coordenada da unidade primeiro', () => {
     const inicio = mapa.indexOf('const levarAoTerritorioDaUnidade = useCallback(')
     const corpo = mapa.slice(inicio, mapa.indexOf('const abrirUnidade = useCallback(', inicio))
-    expect(corpo).toContain('if (!viagem.vale(seq)) return')
-    expect(corpo).toContain('if (plano.uf === null && plano.municipio === null) return')
+    // a ordem e o descarte moram na lib (testados por comportamento abaixo)
+    expect(corpo).toContain('void viajarAoTerritorioDaUnidade({')
+    expect(corpo).toContain('carga: { unidade, pin: pinU }')
+    expect(corpo).toContain('coordenada: pinU ? { lat: pinU.lat, lng: pinU.lng } : null')
+    expect(corpo).toContain('municipioDoPonto: (lat, lng) => api.municipioDoPonto(lat, lng)')
+    expect(corpo).toContain('chave: chaveContexto')
     expect(corpo).toContain('if (plano.uf !== null) a.onUf(plano.uf)')
     expect(corpo).toContain('if (plano.municipio !== null) a.onMunicipio(plano.municipio)')
-    // a lista é a da UF da unidade, ou é pedida
+    // a lista é a da UF pedida (a da coordenada, quando veio), ou é pedida ao servidor
     expect(corpo).toContain('a.municipiosUf.toUpperCase() === ufAlvo')
     expect(corpo).toContain('.municipios(ufAlvo)')
-    // o hexágono só vale se o payload aberto for da UF da unidade
+    // o hexágono só vale se o payload aberto for da UF pedida
     expect(corpo).toContain('a.dados.uf.toUpperCase() === ufAlvo')
-    // a viagem é marcada ANTES de pedir a troca, e só se a escolha ainda vale
-    const embarque = 'if (!viagem.embarcar(seq, chaveContexto(ufFinal, munFinal), { unidade, pin: pinU })) return'
-    expect(corpo).toContain(embarque)
-    expect(corpo.indexOf(embarque)).toBeLessThan(corpo.indexOf('a.onUf(plano.uf)'))
   })
 
   it('a troca de território causada pela unidade NÃO fecha a ficha dela', () => {
@@ -204,5 +208,200 @@ describe('a fiação no MapScreen', () => {
   it('o App diz de que UF é a lista de municípios', () => {
     expect(app).toContain('setMunicipiosUf(r.uf ?? uf)')
     expect(app).toContain('municipiosUf={municipiosUf}')
+  })
+})
+
+// --------------------------------------------------------------------------------------
+// Defeito de 21/10/2026 (Vinicius): "leva para 'Todos os municípios' na primeira tentativa".
+// A carteira vem com `cidade` vazia, e de DENTRO de outro município o hexágono da unidade
+// não está no payload aberto -- as três regras antigas falhavam juntas.
+// --------------------------------------------------------------------------------------
+
+const MUNS: Record<string, readonly { nome: string }[]> = {
+  SP,
+  GO: lista('Goiânia', 'Águas Lindas de Goiás'),
+  DF: lista('Brasília'),
+}
+
+/** Fontes falsas: o servidor responde `ponto` (ou rejeita), a lista vem de MUNS. */
+function fontes(
+  ponto: { uf: string; municipio: string | null; no_seletor?: boolean } | Error | Promise<never>,
+  extra: Partial<FontesDoTerritorio> = {},
+): FontesDoTerritorio & { chamadas: string[] } {
+  const chamadas: string[] = []
+  return {
+    chamadas,
+    municipioDoPonto: (lat, lng) => {
+      chamadas.push(`ponto:${lat},${lng}`)
+      if (ponto instanceof Error) return Promise.reject(ponto)
+      if (ponto instanceof Promise) return ponto
+      return Promise.resolve(ponto)
+    },
+    municipiosDaUf: (uf) => {
+      chamadas.push(`lista:${uf}`)
+      return Promise.resolve(MUNS[uf] ?? [])
+    },
+    munDoHexagono: () => null,
+    ...extra,
+  }
+}
+
+const COORD = { lat: -23.52, lng: -46.19 }
+const SEM_CIDADE = { uf: 'SP', cidade: null }
+
+describe('a coordenada vem primeiro (resolverTerritorioDaUnidade)', () => {
+  it('unidade SEM cidade, operador dentro de OUTRO município: vai ao município da coordenada', async () => {
+    const f = fontes({ uf: 'SP', municipio: 'Mogi das Cruzes', no_seletor: true })
+    const alvo = await resolverTerritorioDaUnidade(SEM_CIDADE, COORD, 'SP', f)
+    expect(alvo).toEqual({ uf: 'SP', municipio: 'Mogi das Cruzes' })
+    // o servidor é perguntado ANTES da lista
+    expect(f.chamadas).toEqual(['ponto:-23.52,-46.19', 'lista:SP'])
+  })
+
+  it('o nome do servidor casa com a lista pelo nome normalizado e sai na grafia DA LISTA', async () => {
+    const f = fontes({ uf: 'sp', municipio: 'SAO BERNARDO DO CAMPO', no_seletor: false })
+    expect(await resolverTerritorioDaUnidade(SEM_CIDADE, COORD, 'SP', f)).toEqual({
+      uf: 'SP',
+      municipio: 'São Bernardo do Campo',
+    })
+  })
+
+  it('a coordenada vence o cadastro (a cidade do cadastro pode estar errada)', async () => {
+    const f = fontes({ uf: 'SP', municipio: 'Mogi das Cruzes', no_seletor: true })
+    const alvo = await resolverTerritorioDaUnidade({ uf: 'SP', cidade: 'São Paulo' }, COORD, 'SP', f)
+    expect(alvo.municipio).toBe('Mogi das Cruzes')
+  })
+
+  it('a rota falha: cai na cidade do cadastro', async () => {
+    const f = fontes(new Error('503'))
+    const alvo = await resolverTerritorioDaUnidade({ uf: 'SP', cidade: 'Mogi das Cruzes' }, COORD, 'SP', f)
+    expect(alvo).toEqual({ uf: 'SP', municipio: 'Mogi das Cruzes' })
+  })
+
+  it('a rota falha e não há cidade: cai no hexágono, e só então na UF inteira', async () => {
+    const comHex = fontes(new Error('404'), { munDoHexagono: (uf) => (uf === 'SP' ? 'MOGI DAS CRUZES' : null) })
+    expect(await resolverTerritorioDaUnidade(SEM_CIDADE, COORD, 'SP', comHex)).toEqual({
+      uf: 'SP',
+      municipio: 'Mogi das Cruzes',
+    })
+    expect(await resolverTerritorioDaUnidade(SEM_CIDADE, COORD, 'SP', fontes(new Error('404')))).toEqual({
+      uf: 'SP',
+      municipio: '',
+    })
+  })
+
+  it('UF de município único sem resposta do servidor: o DF segue indo a Brasília', async () => {
+    const f = fontes(new Error('fora do ar'))
+    expect(await resolverTerritorioDaUnidade({ uf: 'DF', cidade: 'Taguatinga' }, COORD, 'SP', f)).toEqual({
+      uf: 'DF',
+      municipio: 'Brasília',
+    })
+  })
+
+  it('nome do servidor fora da lista: não chuta, segue os fallbacks', async () => {
+    const f = fontes({ uf: 'SP', municipio: 'Embu', no_seletor: false })
+    const alvo = await resolverTerritorioDaUnidade({ uf: 'SP', cidade: 'Mogi das Cruzes' }, COORD, 'SP', f)
+    expect(alvo.municipio).toBe('Mogi das Cruzes')
+  })
+
+  it('sem lista (a busca falhou): aceita o nome só quando o servidor diz que é o do seletor', async () => {
+    const semLista = { municipiosDaUf: () => Promise.reject(new Error('timeout')) }
+    const doSeletor = fontes({ uf: 'SP', municipio: 'Mogi das Cruzes', no_seletor: true }, semLista)
+    expect((await resolverTerritorioDaUnidade(SEM_CIDADE, COORD, 'SP', doSeletor)).municipio).toBe('Mogi das Cruzes')
+    const doCenso = fontes({ uf: 'SP', municipio: 'Mogi das Cruzes', no_seletor: false }, semLista)
+    expect((await resolverTerritorioDaUnidade(SEM_CIDADE, COORD, 'SP', doCenso)).municipio).toBe('')
+  })
+
+  it('ponto em OUTRA UF que a do cadastro: a coordenada manda, e a lista pedida é a dela', async () => {
+    const f = fontes({ uf: 'GO', municipio: 'Águas Lindas de Goiás', no_seletor: true })
+    const alvo = await resolverTerritorioDaUnidade({ uf: 'DF', cidade: 'Ceilândia' }, COORD, 'DF', f)
+    expect(alvo).toEqual({ uf: 'GO', municipio: 'Águas Lindas de Goiás' })
+    expect(f.chamadas).toContain('lista:GO')
+    expect(f.chamadas).not.toContain('lista:DF')
+  })
+
+  it('unidade sem coordenada: o servidor nem é chamado', async () => {
+    const f = fontes({ uf: 'SP', municipio: 'Mogi das Cruzes' })
+    expect(await resolverTerritorioDaUnidade({ uf: 'SP', cidade: 'São Paulo' }, null, 'SP', f)).toEqual({
+      uf: 'SP',
+      municipio: 'São Paulo',
+    })
+    expect(f.chamadas).toEqual(['lista:SP'])
+  })
+})
+
+describe('viajarAoTerritorioDaUnidade: a troca e o descarte da resposta atrasada', () => {
+  type Carga = { unidade: string }
+  const chave = (uf: string, m: string) => `${uf}|${m}`
+
+  function montar(f: FontesDoTerritorio, atual = { uf: 'SP', municipio: 'São Paulo' }) {
+    const viagem = criarViagemUnidade<Carga>()
+    const trocas: { uf: string | null; municipio: string | null }[] = []
+    const pedido = (seq: number) => ({
+      viagem,
+      seq,
+      carga: { unidade: 'U' },
+      unidade: SEM_CIDADE,
+      coordenada: COORD,
+      atual: () => atual,
+      fontes: f,
+      chave,
+      trocar: (plano: { uf: string | null; municipio: string | null }) => trocas.push(plano),
+    })
+    return { viagem, trocas, pedido }
+  }
+
+  it('o defeito relatado: de dentro de São Paulo, a unidade de Mogi leva a Mogi (e não a "Todos")', async () => {
+    const { viagem, trocas, pedido } = montar(fontes({ uf: 'SP', municipio: 'Mogi das Cruzes', no_seletor: true }))
+    const seq = viagem.iniciar()
+    expect(await viajarAoTerritorioDaUnidade(pedido(seq))).toBe(true)
+    expect(trocas).toEqual([{ uf: null, municipio: 'Mogi das Cruzes' }])
+    // a ficha atravessa a troca: a chegada é reconhecida pela chave do município CERTO
+    expect(viagem.chegar('SP|Mogi das Cruzes')).toEqual({ unidade: 'U' })
+  })
+
+  it('resposta do servidor depois de um gesto (cancelar): descartada, nada troca', async () => {
+    let responder: (v: { uf: string; municipio: string; no_seletor: boolean }) => void = () => {}
+    const atrasada = new Promise<{ uf: string; municipio: string; no_seletor: boolean }>((r) => {
+      responder = r
+    })
+    const f = fontes({ uf: 'SP', municipio: null }, { municipioDoPonto: () => atrasada })
+    const { viagem, trocas, pedido } = montar(f)
+    const seq = viagem.iniciar()
+    const voo = viajarAoTerritorioDaUnidade(pedido(seq))
+    viagem.cancelar() // o operador clicou num hexágono com a resposta em voo
+    responder({ uf: 'SP', municipio: 'Mogi das Cruzes', no_seletor: true })
+    expect(await voo).toBe(false)
+    expect(trocas).toEqual([])
+  })
+
+  it('outra unidade escolhida com a primeira em voo: só a segunda troca o território', async () => {
+    let responder: (v: { uf: string; municipio: string; no_seletor: boolean }) => void = () => {}
+    const lenta = new Promise<{ uf: string; municipio: string; no_seletor: boolean }>((r) => {
+      responder = r
+    })
+    const respostas = [lenta, Promise.resolve({ uf: 'SP', municipio: 'São Bernardo do Campo', no_seletor: true })]
+    const f = fontes({ uf: 'SP', municipio: null }, { municipioDoPonto: () => respostas.shift()! })
+    const { viagem, trocas, pedido } = montar(f)
+    const primeira = viajarAoTerritorioDaUnidade(pedido(viagem.iniciar()))
+    const segunda = viajarAoTerritorioDaUnidade(pedido(viagem.iniciar()))
+    expect(await segunda).toBe(true)
+    responder({ uf: 'SP', municipio: 'Mogi das Cruzes', no_seletor: true })
+    expect(await primeira).toBe(false)
+    expect(trocas).toEqual([{ uf: null, municipio: 'São Bernardo do Campo' }])
+  })
+
+  it('a unidade já está no território aberto: nada troca e nada embarca', async () => {
+    const { viagem, trocas, pedido } = montar(fontes({ uf: 'SP', municipio: 'São Paulo', no_seletor: true }))
+    expect(await viajarAoTerritorioDaUnidade(pedido(viagem.iniciar()))).toBe(false)
+    expect(trocas).toEqual([])
+  })
+
+  it('outra UF: pede a UF e o município juntos', async () => {
+    const f = fontes({ uf: 'GO', municipio: 'Águas Lindas de Goiás', no_seletor: true })
+    const { viagem, trocas, pedido } = montar(f, { uf: 'DF', municipio: 'Brasília' })
+    expect(await viajarAoTerritorioDaUnidade(pedido(viagem.iniciar()))).toBe(true)
+    expect(trocas).toEqual([{ uf: 'GO', municipio: 'Águas Lindas de Goiás' }])
+    expect(viagem.chegar('GO|Águas Lindas de Goiás')).toEqual({ unidade: 'U' })
   })
 })

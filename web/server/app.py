@@ -7579,6 +7579,122 @@ def municipios(uf: str) -> dict[str, Any]:
     }
 
 
+@functools.lru_cache(maxsize=32)
+def _nomes_m1_da_uf(uf: str) -> tuple[dict[str, str], dict[str, str]]:
+    """(cod_municipio -> nome, nome normalizado -> nome) do artefato que o seletor lista.
+
+    E' o MESMO dado de `/api/municipios/{uf}` (`nome_municipio` da particao enriquecida),
+    lido so' nas duas colunas -- sem a particao inteira de `carregar_uf`, que numa UF fria
+    custa dezenas de segundos. Por arquivo, e nao `pd.read_parquet(part)`: o dicionario do
+    `nome_municipio` pode variar de tipo entre as partes, e o dataset recusa o merge.
+    UF sem particao -> dois dicionarios vazios (o nome sai do censo, abaixo).
+    """
+    import pyarrow.parquet as pq
+
+    part = ENRICHED_DIR / f"uf={uf.upper()}"
+    por_cod: dict[str, str] = {}
+    por_nome: dict[str, str] = {}
+    for arq in sorted(part.glob("*.parquet")) if part.is_dir() else []:
+        arquivo = pq.ParquetFile(arq)
+        nomes = set(arquivo.schema_arrow.names)
+        if "nome_municipio" not in nomes:
+            continue
+        cols = ["nome_municipio", *(["cod_municipio"] if "cod_municipio" in nomes else [])]
+        df = arquivo.read(columns=cols).to_pandas()
+        df["nome_municipio"] = df["nome_municipio"].astype("string")
+        # Vetorizado, e so' sobre os pares/nomes UNICOS: a particao tem um hexagono por
+        # linha, e normalizar nome a nome custava ~0,6 s no 1o clique de cada UF (revisao
+        # de 21/10/2026). `drop_duplicates`/`unique` preservam a 1a ocorrencia, entao o
+        # `setdefault` abaixo escolhe o mesmo nome que o laco linha a linha escolhia.
+        if "cod_municipio" in df.columns:
+            pares = pd.DataFrame(
+                {
+                    "cod": df["cod_municipio"]
+                    .astype("string")
+                    .str.strip()
+                    .str.replace(r"\.0$", "", regex=True),
+                    "nome": df["nome_municipio"],
+                }
+            ).dropna()
+            pares = pares[pares["cod"] != ""].drop_duplicates()
+            for cod, nome in zip(pares["cod"], pares["nome"], strict=True):
+                por_cod.setdefault(str(cod), str(nome))
+        unicos = pd.Series(df["nome_municipio"].dropna().unique(), dtype="string")
+        for chave, nome in zip(_norm_nome(unicos), unicos, strict=True):
+            por_nome.setdefault(str(chave), str(nome))
+    return por_cod, por_nome
+
+
+def _nome_municipio_do_censo(uf: str, cod_municipio: str) -> str | None:
+    """`nome_municipio` da particao censitaria do municipio -- UMA coluna de UM arquivo."""
+    import pyarrow.parquet as pq
+
+    pasta = CENSO_GEO_DIR / f"uf={uf.upper()}" / f"cod_municipio={cod_municipio}"
+    for arq in sorted(pasta.glob("*.parquet")) if pasta.is_dir() else []:
+        try:
+            arquivo = pq.ParquetFile(arq)
+            if "nome_municipio" not in arquivo.schema_arrow.names:
+                return None
+            valores = arquivo.read(columns=["nome_municipio"]).column(0).drop_null()
+        except Exception:  # noqa: BLE001  (particao ilegivel = sem nome, nunca 500)
+            return None
+        if len(valores):
+            return str(valores[0])
+    return None
+
+
+@app.get("/api/municipio-do-ponto")
+def municipio_do_ponto(lat: float, lng: float) -> dict[str, Any]:
+    """Coordenada -> (UF, municipio) pela MALHA MUNICIPAL, no nome que o seletor usa.
+
+    Por que existe (relato do Vinicius, 21/10/2026): escolher uma unidade Ultra leva o
+    cabecalho ao municipio dela, e o municipio saia da CIDADE do cadastro (texto livre, que
+    na carteira pode vir vazio) ou do hexagono da unidade no payload JA' CARREGADO -- que,
+    com o operador dentro de OUTRA cidade, so' tem os hexagonos daquela. Resultado: na
+    primeira tentativa o mapa ia para "Todos os municipios". A coordenada da unidade e' a
+    resposta que nao depende de nada disso.
+
+    A malha e' a MESMA do `/api/ponto` (`_carregar_malha`, cacheada por processo), com o
+    mesmo encoste de 2 km na orla. O NOME e' o do artefato que `/api/municipios/{uf}`
+    lista: primeiro pelo codigo; sem codigo no artefato, o nome do censo casado pelo nome
+    normalizado; sem nada disso, o nome do censo cru (`no_seletor` falso) -- o front casa
+    contra a lista e, sem casar, segue os fallbacks dele.
+
+    400 = coordenada invalida ou fora do bounding box do pais; 404 = dentro do bounding box
+    mas fora da malha (mar aberto, pais vizinho). READ-ONLY: nao le score nem artefato M1
+    alem dos nomes.
+    """
+    from motor_expansao.api.coord import CoordenadaInvalidaError, validar_brasil
+    from motor_expansao.api.errors import APIError
+    from motor_expansao.api.service import _carregar_malha
+
+    try:
+        validar_brasil(lat, lng)
+    except CoordenadaInvalidaError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    try:
+        resolvido = _carregar_malha(str(IBGE_DIR)).resolver(lat, lng)
+    except APIError as exc:
+        raise HTTPException(exc.status_code, exc.detail) from exc
+    if resolvido is None:
+        raise HTTPException(
+            404, "Nenhum município encontrado nessa coordenada (mar aberto ou fora do país)."
+        )
+    uf, cod = resolvido
+    uf = uf.upper()
+    cod = str(cod).strip()
+    por_cod, por_nome = _nomes_m1_da_uf(uf)
+    nome = por_cod.get(cod) or por_cod.get(cod[:6])
+    if nome is None:
+        do_censo = _nome_municipio_do_censo(uf, cod)
+        if do_censo:
+            chave = _norm_nome(pd.Series([do_censo])).iloc[0]
+            nome = por_nome.get(str(chave))
+            if nome is None:
+                return {"uf": uf, "municipio": do_censo, "cod_municipio": cod, "no_seletor": False}
+    return {"uf": uf, "municipio": nome, "cod_municipio": cod, "no_seletor": nome is not None}
+
+
 @app.get("/api/uf/{uf}")
 def uf_view(uf: str, limite: int = 15000) -> dict[str, Any]:
     """Visão de UF inteira: funil narrativo por UF + ranking de MUNICÍPIOS.

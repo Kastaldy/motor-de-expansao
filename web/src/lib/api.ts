@@ -24,6 +24,7 @@ import type {
   MunicipioPayload,
   PontoPayload,
   PontoResolvido,
+  MunicipioDoPonto,
   RedeCarteira,
   RedeFicha,
   RedeFiltros,
@@ -770,6 +771,13 @@ export const api = {
   municipios: (uf: string) =>
     pedir<{ uf: string; municipios: MunicipioItem[] }>(
       `/api/municipios/${encodeURIComponent(uf)}`,
+    ),
+
+  /** Coordenada -> UF e município pela malha municipal do servidor (a unidade escolhida
+   *  leva o cabeçalho à cidade dela). Leve: a malha fica em cache no processo. */
+  municipioDoPonto: (lat: number, lng: number) =>
+    pedir<MunicipioDoPonto>(
+      `/api/municipio-do-ponto?lat=${encodeURIComponent(lat)}&lng=${encodeURIComponent(lng)}`,
     ),
 
   municipio: (uf: string, municipio: string) =>

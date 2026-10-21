@@ -57,6 +57,7 @@ AGRUPAMENTO_ABAS: tuple[tuple[str, str], ...] = (
     ("/api/uf/", "mapa"),
     ("/api/municipio/", "mapa"),
     ("/api/municipios/", "mapa"),
+    ("/api/municipio-do-ponto", "mapa"),
     ("/api/estados", "oportunidades"),
     # Ranking nacional por hexagono (DEC-044): a outra leitura do MESMO Modo 3,
     # entao conta na mesma aba que o ranking de estados.

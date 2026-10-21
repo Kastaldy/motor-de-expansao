@@ -52,12 +52,7 @@ import {
   unidadesDaBusca,
   type UnidadeNoMapa,
 } from '../lib/ficha-unidade'
-import {
-  planoDeTroca,
-  territorioDaUnidade,
-  ufDaUnidade,
-  type UnidadeComTerritorio,
-} from '../lib/territorio-unidade'
+import { type UnidadeComTerritorio, viajarAoTerritorioDaUnidade } from '../lib/territorio-unidade'
 import { MAX_COMPARADOS, ranquear } from '../lib/ranking-comparacao'
 import { rodapeDaBase, tituloEscolhaUnidade } from '../lib/rodape-base'
 import { type AlvoCaptura, alvoDoHex, pinsDoAlvo } from '../lib/captura-mapa'
@@ -732,7 +727,8 @@ export default function MapScreen({
        troca foi causada pela propria unidade, entao ela viaja em `viagem` e o
        efeito a reabre -- com o pin -- se o contexto novo for exatamente o que ela pediu.
        Nao re-dispara selecao: reabrir so' poe de volta o estado, nao chama `abrirUnidade`.
-     - A lista de municipios tem de ser a da UF DA UNIDADE (`municipiosUf`); se nao for (UF
+     - A lista de municipios tem de ser a da UF DA UNIDADE -- a da COORDENADA, quando o
+       servidor a resolve (`municipiosUf`); se nao for (UF
        trocada ha' pouco, ou unidade de OUTRA UF -- o pin da divisa), ela e' pedida ao
        servidor. A resposta so' vale se, desde a escolha, o operador nao fez mais nada
        (`lib/viagem-unidade`): fechar a ficha, escolher outra unidade, clicar num hexagono,
@@ -744,35 +740,45 @@ export default function MapScreen({
   // `viagem` e' declarada antes de `abrirImovel`, que tambem a cancela.
   const atualRef = useRef({ uf, municipio, municipios, municipiosUf, dados, onUf, onMunicipio })
   atualRef.current = { uf, municipio, municipios, municipiosUf, dados, onUf, onMunicipio }
+  /* A COORDENADA PRIMEIRO (defeito de 21/10/2026: a primeira escolha levava a "Todos os
+     municipios"). A unidade com pin pergunta ao servidor em que municipio a coordenada cai
+     (`/api/municipio-do-ponto`); so' sem resposta util valem cadastro, UF de municipio unico e
+     hexagono -- este ultimo so' existe no payload aberto quando ele e' a UF inteira. A ordem e
+     o descarte da resposta atrasada sao `lib/territorio-unidade` (`viajarAoTerritorioDaUnidade`). */
   const levarAoTerritorioDaUnidade = useCallback(
     (u: UnidadeComTerritorio, seq: number, unidade: UnidadeNoMapa, pinU: SearchPin | null) => {
-      const ufAlvo = ufDaUnidade(u, atualRef.current.uf)
-      const aplicar = (lista: readonly { nome: string }[]) => {
-        if (!viagem.vale(seq)) return
-        const a = atualRef.current
-        /* O municipio do HEXAGONO da unidade, se o payload aberto for da UF dela e o tiver. */
-        const doHex =
-          pinU && a.dados && a.dados.uf.toUpperCase() === ufAlvo
-            ? (a.dados.hexes.find((h) => h.id === pinU.hexId)?.mun ?? null)
-            : null
-        const alvo = territorioDaUnidade(u, a.uf, lista, doHex)
-        const plano = planoDeTroca({ uf: a.uf, municipio: a.municipio }, alvo)
-        if (plano.uf === null && plano.municipio === null) return
-        const ufFinal = plano.uf ?? a.uf
-        const munFinal = plano.municipio ?? (plano.uf !== null ? '' : a.municipio)
-        if (!viagem.embarcar(seq, chaveContexto(ufFinal, munFinal), { unidade, pin: pinU })) return
-        if (plano.uf !== null) a.onUf(plano.uf)
-        if (plano.municipio !== null) a.onMunicipio(plano.municipio)
-      }
-      const a = atualRef.current
-      if (a.municipiosUf && a.municipiosUf.toUpperCase() === ufAlvo) {
-        aplicar(a.municipios)
-        return
-      }
-      api
-        .municipios(ufAlvo)
-        .then((r) => aplicar((r.uf ?? '').toUpperCase() === ufAlvo ? r.municipios : []))
-        .catch(() => aplicar([]))
+      void viajarAoTerritorioDaUnidade({
+        viagem,
+        seq,
+        carga: { unidade, pin: pinU },
+        unidade: u,
+        coordenada: pinU ? { lat: pinU.lat, lng: pinU.lng } : null,
+        atual: () => ({ uf: atualRef.current.uf, municipio: atualRef.current.municipio }),
+        fontes: {
+          municipioDoPonto: (lat, lng) => api.municipioDoPonto(lat, lng),
+          municipiosDaUf: (ufAlvo) => {
+            const a = atualRef.current
+            if (a.municipiosUf && a.municipiosUf.toUpperCase() === ufAlvo) return Promise.resolve(a.municipios)
+            return api
+              .municipios(ufAlvo)
+              .then((r) => ((r.uf ?? '').toUpperCase() === ufAlvo ? r.municipios : []))
+              .catch(() => [])
+          },
+          /* O municipio do HEXAGONO da unidade, se o payload aberto for da UF dela e o tiver. */
+          munDoHexagono: (ufAlvo) => {
+            const a = atualRef.current
+            return pinU && a.dados && a.dados.uf.toUpperCase() === ufAlvo
+              ? (a.dados.hexes.find((h) => h.id === pinU.hexId)?.mun ?? null)
+              : null
+          },
+        },
+        chave: chaveContexto,
+        trocar: (plano) => {
+          const a = atualRef.current
+          if (plano.uf !== null) a.onUf(plano.uf)
+          if (plano.municipio !== null) a.onMunicipio(plano.municipio)
+        },
+      })
     },
     [viagem],
   )

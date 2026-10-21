@@ -97,6 +97,8 @@ FEATURES_ROTULOS: tuple[tuple[str | None, str, str], ...] = (
     (None, "/api/uf/", "Navegou pelo mapa"),
     (None, "/api/municipio/", "Explorou município"),
     (None, "/api/municipios/", "Explorou município"),
+    # Disparada pela escolha de uma unidade Ultra no mapa (leva o cabeçalho à cidade dela).
+    (None, "/api/municipio-do-ponto", "Abriu unidade no mapa"),
     (None, "/api/estados", "Ranking de estados"),
     # DEC-044. Rotulo PROPRIO e nao "Ranking de estados": sao a mesma pergunta do
     # Modo 3 respondida em GRAOS diferentes (estado x hexagono), e juntar as duas na
