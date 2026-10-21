@@ -2,8 +2,9 @@
 
 > Para quem vai trocar o fator que leva a renda do Censo 2022 (julho/2022) até o ano corrente.
 > Nada disto roda sozinho: o script só **grava uma versão nova**; virar a versão em uso é PR humano.
-> Decisão: a DEC do método entra na E2 da correção de renda (prevista DEC-075 — **conferir o número
-> contra a `origin/main` no dia**, ver Passo 5). Código: `src/motor_expansao/renda/`. Deploy:
+> Decisão: [DEC-075](decisions/DEC-075.md) (método PNAD na mesma visita, regra de exceção por UF e a
+> versão `2026-10_pnad2025_v1`, vigente desde a E2). Atualização anual = **emenda** da DEC-075 (DEC
+> nova só se mudar a regra ou o método; conferir o número contra a `origin/main` no dia, ver Passo 5). Código: `src/motor_expansao/renda/`. Deploy:
 > `docs/deploy_piloto_web.md` e `docs/deploy_api_bot.md`.
 
 ## O que isto atualiza
@@ -24,7 +25,8 @@ do bot) sai de um ponto único, `motor_expansao.renda`:
 ```
 src/motor_expansao/renda/fatores/
 ├── BR/
-│   ├── 2026-08_caged_v0.json      # v0: o 1,1641 do CAGED que produção aplicava antes da E0
+│   ├── 2026-08_caged_v0.json      # v0: o 1,1641 do CAGED que produção aplicava antes da E0 (rollback)
+│   ├── 2026-10_pnad2025_v1.json   # PNAD Contínua 2025, exceções PE e MS (DEC-075) — vigente desde a E2
 │   └── VIGENTE                    # uma linha: o nome da versão em uso (sem .json)
 └── AR/
     ├── 2026-08_sem_atualizacao_v0.json   # fatores 1,0 (renda já em pesos de maio/2026)
@@ -101,7 +103,7 @@ No checkout do repositório (o script grava a versão nova em `src/motor_expansa
 
 ```bash
 python -m motor_expansao.renda.atualizar_fatores --pais BR --ano-base 2022 --ano-alvo 2025 \
-    --aprovar-uf PE            # repetir as UFs aprovadas na versão vigente (ver o JSON dela)
+    --aprovar-uf PE --aprovar-uf MS   # repetir as UFs aprovadas na versão vigente (ver o JSON dela)
 ```
 
 O que ele faz, em ordem:
@@ -143,11 +145,23 @@ Decidir, UF a UF, quais candidatas entram. Rodar de novo com o `--aprovar-uf` fi
 vira lixo de ensaio: apagar o `.json`/`.md` que não vão para o PR). Registrar quem aprovou no arquivo
 de versão (`aprovado_por`) e a DEC em `dec`.
 
+Esses três campos (`dec`, `aprovado_por`, `relatorio`) são os **únicos** preenchidos à mão, e só
+antes da primeira publicação. O relatório vai para `docs/renda/<versao>.md` **byte a byte** como o
+script o gerou (LF), e `relatorio` vira `{"caminho": "docs/renda/<versao>.md", "sha256": <sha do
+arquivo>}` — o hash não muda, porque o conteúdo é o mesmo. Na E2 foi assim:
+`2026-10_pnad2025_v1` (PE e MS aprovados por Felipe em 20/10/2026, DEC-075).
+
 ## Passo 5 — PR
 
-- [ ] o novo `<versao>.json` + `<versao>.md` (relatório; o hash dele está em `relatorio.sha256`);
+- [ ] o novo `<versao>.json` em `fatores/<PAIS>/` + o relatório em `docs/renda/<versao>.md` (o hash
+      dele está em `relatorio.sha256`; travado por `tests/unit/test_renda_versao_pnad2025.py`);
+- [ ] **reprodução** (teste 8 do plano): com os microdados em cache, rodar
+      `MOTOR_PNAD_CACHE_DIR=<cache> MOTOR_PNAD_SIDRA_7531_JSON=<t7531.json> pytest
+      tests/unit/test_renda_atualizar_fatores.py -k reproduz` — refaz a versão VIGENTE a partir do
+      cache (o teste liga os microdados num diretório próprio por hardlink e não escreve no seu cache)
+      e exige o JSON e o relatório idênticos aos publicados. No CI ele é pulado (sem cache);
 - [ ] `VIGENTE` com o nome da versão nova;
-- [ ] **emenda da DEC do método** (prevista DEC-075) — ou **DEC nova**, se mudar a regra ou o método;
+- [ ] **emenda da DEC do método** ([DEC-075](decisions/DEC-075.md)) — ou **DEC nova**, se mudar a regra ou o método;
 - [ ] **conferir o número da DEC contra a `origin/main`** antes de registrar (numerar pelo diretório
       local colide entre branches):
       ```bash
@@ -182,6 +196,7 @@ repositório) e deploy por digest. Nenhum arquivo de versão é apagado nem edit
 
 ```bash
 # 1) no .env da VPS (lido pelo compose para interpolar ${MOTOR_FATORES_RENDA_VERSAO:-})
+#    exemplo: voltar da 2026-10_pnad2025_v1 (DEC-075) para a v0 do CAGED
 MOTOR_FATORES_RENDA_VERSAO=2026-08_caged_v0
 # 2) RECRIAR o container (restart NÃO relê o environment do compose)
 docker compose -f docker-compose.prod.yml up -d web api

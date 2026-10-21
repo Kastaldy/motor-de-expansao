@@ -242,7 +242,24 @@ def test_consistencia_implica_moradores_do_ano_alvo(sinteticos):
 # --------------------------------------------------------------------------------
 
 
-def test_v0_br_reproduz_o_fator_e_o_rotulo_de_producao():
+#: A v0 brasileira (CAGED). Desde a E2 (DEC-075) o VIGENTE e a versao da PNAD: os testes da
+#: v0 a FIXAM por env, o mesmo caminho do rollback de producao.
+VERSAO_V0_BR = "2026-08_caged_v0"
+#: O que o `VIGENTE` empacotado aponta (lido do arquivo: os testes de subida nao cravam versao).
+VIGENTE_BR = (carregador.DIR_FATORES / "BR" / carregador.ARQUIVO_VIGENTE).read_text(
+    encoding="utf-8"
+).strip()
+
+
+@pytest.fixture
+def v0_br(monkeypatch):
+    monkeypatch.setenv(ENV_VERSAO, VERSAO_V0_BR)
+    carregar_fatores.cache_clear()
+    yield
+    carregar_fatores.cache_clear()
+
+
+def test_v0_br_reproduz_o_fator_e_o_rotulo_de_producao(v0_br):
     f = carregar_fatores("BR")
     assert f.versao == "2026-08_caged_v0"
     assert f.nacional.per_capita == 1.1641
@@ -256,7 +273,7 @@ def test_v0_br_reproduz_o_fator_e_o_rotulo_de_producao():
         f"{fim[4:]}/{fim[:4]} (CAGED; Censo jul/2022 x {float(f.fonte['fator_temporal_renda'])})"
     )
     assert f.artefato_k_obrigatorio is True
-    assert f.fixada_por_env is False
+    assert f.fixada_por_env is True
 
 
 def test_v0_ar_e_sem_atualizacao():
@@ -275,7 +292,7 @@ def test_todo_pais_empacotado_carrega():
         assert carregar_fatores(pais).pais == pais
 
 
-def test_v0_bit_a_bit_com_a_formula_de_antes(monkeypatch):
+def test_v0_bit_a_bit_com_a_formula_de_antes(monkeypatch, v0_br):
     monkeypatch.setattr(carregador, "_pais_padrao", lambda: "BR")
     rng = np.random.default_rng(3)
     v = rng.uniform(300, 20_000, 300)
@@ -287,7 +304,7 @@ def test_v0_bit_a_bit_com_a_formula_de_antes(monkeypatch):
     assert round(fator_composto_domiciliar(1.43119, "SP"), 4) == round(1.43119 * 1.1641, 4)
 
 
-def test_v0_hex_bit_a_bit_com_o_app_de_antes(monkeypatch, tmp_path):
+def test_v0_hex_bit_a_bit_com_o_app_de_antes(monkeypatch, tmp_path, v0_br):
     monkeypatch.setattr(carregador, "_pais_padrao", lambda: "BR")
     staging = tmp_path / "staging"
     _gravar_uplift_municipio(staging)
@@ -589,7 +606,7 @@ def test_subida_em_dev_sem_artefatos_so_avisa(tmp_path, monkeypatch, caplog):
     monkeypatch.delenv("MOTOR_DATA_DIR", raising=False)
     with caplog.at_level(logging.WARNING):
         f = validar_na_subida(tmp_path)
-    assert f.versao == "2026-08_caged_v0"
+    assert f.versao == VIGENTE_BR
     assert any("ausente" in r.getMessage() for r in caplog.records)
 
 
@@ -624,7 +641,7 @@ def test_subida_em_producao_completa_passa(tmp_path, monkeypatch):
     _gravar_uplift_municipio(tmp_path)
     _gravar_uplift_setor(tmp_path)
     _gravar_carimbo_k(tmp_path, "multiplicativo_global_k=1.2335")
-    assert validar_na_subida(tmp_path).versao == "2026-08_caged_v0"
+    assert validar_na_subida(tmp_path).versao == VIGENTE_BR
 
 
 @pytest.mark.parametrize("defeito", ["sem_coluna", "corrompido"])
@@ -651,7 +668,7 @@ def test_subida_em_dev_com_artefato_ilegivel_so_avisa(tmp_path, monkeypatch, cap
     _gravar_uplift_municipio(tmp_path)
     (tmp_path / insumos.UPLIFT_SETOR_ARQUIVO).write_bytes(b"lixo")
     with caplog.at_level(logging.WARNING):
-        assert validar_na_subida(tmp_path).versao == "2026-08_caged_v0"
+        assert validar_na_subida(tmp_path).versao == VIGENTE_BR
     assert any("ilegivel" in r.getMessage() for r in caplog.records)
 
 

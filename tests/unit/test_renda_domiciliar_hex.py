@@ -30,7 +30,7 @@ import pytest
 from pytest import approx
 
 from motor_expansao.dashboard import constants as _const
-from motor_expansao.renda import InsumoRendaInvalido, fator, fator_hex
+from motor_expansao.renda import InsumoRendaInvalido, carregar_fatores, fator, fator_hex
 from tests.unit.renda_fixtures import apontar_staging_renda, fixar_fatores
 
 _REPO = Path(__file__).resolve().parents[2]  # tests/unit/ -> raiz do worktree
@@ -326,7 +326,8 @@ def test_sem_artefatos_em_dev_cai_no_nacional_com_o_fator_da_versao_vigente(
     parquets. Ate a E0 o fator caia em 1,0 em silencio (o JSON do staging faltava); agora ele
     vem da imagem, entao dev e producao exibem a mesma escala."""
     f_dom = fator(None, "domiciliar")
-    assert f_dom == pytest.approx(1.1641)  # a v0 brasileira empacotada
+    # O F_dom nacional da versao VIGENTE empacotada (lido do modulo, nunca cravado aqui).
+    assert f_dom == carregar_fatores().nacional.domiciliar
     esperado = (_const.MORADORES_DOMICILIO_NACIONAL * _const.UPLIFT_COMPOSICAO_NACIONAL) * f_dom
     assert fator_hex("SP", "3550308", "domiciliar") == esperado
     # A subida em dev nao derruba nada: so avisa.
