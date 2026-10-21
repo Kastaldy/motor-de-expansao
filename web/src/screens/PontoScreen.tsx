@@ -52,10 +52,13 @@ import {
 import { erroFlutuanteVisivel, janelaNaMontagem } from '../lib/pontos-estado'
 import { TOPO_BOTAO_PADRAO, topoDoBotaoVerFicha } from '../lib/botao-ver-ficha'
 import { LARGURA_FICHA_PONTO } from '../lib/janela'
+import { Z_FLUTUANTE_PONTO } from '../lib/camadas-mapa'
 import {
   AVISO_RELENDO_ALCANCE,
   ESTILO_ROTULO_ALCANCE,
   ESTILO_TRILHO_ALCANCE,
+  ESTILO_TIPO_ALCANCE,
+  ROTULO_CURTO_ALCANCE,
   ROTULO_SELETOR_ALCANCE,
   estiloDaOpcaoAlcance,
 } from '../lib/seletor-alcance'
@@ -513,10 +516,16 @@ export default function PontoScreen({
        as peças; cada peça reativa pede `auto` de volta. Sem isso, uma folha invisível
        cobriria a tela inteira e o mapa do fundo não receberia nem arraste nem clique.
 
-       `zIndex` acima do chrome do Explorar (cabeçalho 10, stepper 24, legenda 25) para a
-       caixa de colar e a janela ficarem por cima dele — mas o clique nos seletores e no
-       stepper continua chegando, porque o contêiner não intercepta. */
-    <div style={{ position: 'absolute', inset: 0, zIndex: 40, pointerEvents: 'none' }}>
+       SEM `zIndex` NESTE CONTÊINER, de propósito (21/10/2026). Com o `zIndex: 40` de antes
+       ele criava um contexto de empilhamento próprio, e a janela do ponto pintava por cima
+       de TODAS as janelas do mapa, qualquer que fosse a pilha da `JanelaFicha`: a comparação
+       de hexágonos nascia em degrau e ficava quase inteira coberta, o clique nela não a
+       trazia para frente e o Esc fechava a escondida (print do Vinicius). Sem z, a janela
+       do ponto disputa o mesmo contexto das do mapa (26/27) e vale a regra de qualquer
+       gerenciador de janelas: a aberta ou clicada por último fica por cima. As peças soltas
+       (caixa de colar, espera, erro, botão "Ver a ficha") levam `Z_FLUTUANTE_PONTO` cada
+       uma, para não caírem sob o corpo do mapa (z 10). */
+    <div style={{ position: 'absolute', inset: 0, pointerEvents: 'none' }}>
       {/* ---------------- Caixa de colar ----------------
           Abaixo do cabeçalho do Explorar, que continua sendo o de lá. NÃO há cabeçalho
           próprio: era justamente ele — "Análise de ponto" com botão de início repetido —
@@ -527,6 +536,7 @@ export default function PontoScreen({
           top: 88,
           left: 16,
           right: 16,
+          zIndex: Z_FLUTUANTE_PONTO,
           display: 'flex',
           flexDirection: 'column',
           alignItems: 'center',
@@ -646,7 +656,13 @@ export default function PontoScreen({
       {ficha && !janela && (
         <div
           ref={setBotaoFichaEl}
-          style={{ position: 'absolute', left: 16, top: topoBotaoFicha, pointerEvents: 'auto' }}
+          style={{
+            position: 'absolute',
+            left: 16,
+            top: topoBotaoFicha,
+            zIndex: Z_FLUTUANTE_PONTO,
+            pointerEvents: 'auto',
+          }}
         >
           <Botao onClick={() => setJanela(true)}>
             Ver a ficha {fichas.length > 1 ? `(${fichas.length} pontos)` : ''} ›
@@ -680,6 +696,10 @@ export default function PontoScreen({
             : undefined
         }
         onFechar={() => setJanela(false)}
+        /* Ponto pedido (ou pedido de novo) SOBE, mesmo com outra janela por cima — a
+           comparação ou a ficha do hexágono. Sem isso, com a janela já aberta, o
+           `setJanela(true)` do `revelar` não muda nada e o ponto novo ficaria escondido. */
+        pedidoDeFrente={revelar}
         /* Mais estreita que as outras janelas do mapa (pedido do Vinicius, 20/10/2026: "no
            meu dispositivo, 480px se mostraram menor sem perder muito conteúdo"). Só a
            NASCENÇA: redimensionar continua livre, até o mínimo de sempre. */
@@ -1197,9 +1217,13 @@ function SeletorAlcance({
               aria-checked={marcado}
               onClick={() => onTrocar(a)}
               title={ROTULO_ALCANCE[a]}
+              /* O nome acessível é o rótulo INTEIRO ("5 min de carro"): o visível vem em
+                 duas linhas curtas, e "5 min" sozinho não diria de quê. */
+              aria-label={ROTULO_ALCANCE[a]}
               style={estiloDaOpcaoAlcance(marcado)}
             >
-              {ROTULO_ALCANCE[a]}
+              <span>{ROTULO_CURTO_ALCANCE[a].valor}</span>
+              <span style={ESTILO_TIPO_ALCANCE}>{ROTULO_CURTO_ALCANCE[a].tipo}</span>
             </button>
           )
         })}

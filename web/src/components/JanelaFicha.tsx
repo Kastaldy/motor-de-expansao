@@ -12,6 +12,7 @@ import {
   type Geometria,
 } from '../lib/janela'
 import { registrarJanela, removerJanela } from '../lib/ocupacao-janelas'
+import { Z_JANELA_FICHA, Z_JANELA_FICHA_TOPO } from '../lib/camadas-mapa'
 
 /** Onde a janela nasce no eixo Y: abaixo do cabeçalho flutuante do mapa. */
 const TOPO_PADRAO = 88
@@ -38,6 +39,14 @@ const pilhaAbertas: symbol[] = []
  * esquerda nao pode ocultar o que esta' por baixo). Agora a aberta por ultimo — ou a
  * ultima em que o operador clicou — sobe, como em qualquer gerenciador de janelas. O Esc
  * segue a mesma pilha, entao fecha justamente a que esta' a' vista por cima.
+ *
+ * SO' VALE ENTRE JANELAS SEM CONTEXTO DE EMPILHAMENTO NO MEIO. O `zIndex` de cada janela
+ * so' disputa com irmaos do mesmo contexto: ate' 21/10/2026 o conteiner da ficha de ponto
+ * tinha `zIndex: 40`, e com isso a janela do ponto pintava por cima de TODAS as do mapa
+ * qualquer que fosse a pilha -- a comparacao de hexagonos nascia em degrau e ficava 87,7%
+ * coberta, o clique nela nao a trazia para frente e o Esc fechava a janela escondida
+ * (print do Vinicius, 21/10). Quem envolver uma janela num ancestral com `zIndex`,
+ * `transform`, `filter` ou `opacity < 1` recria o defeito em silencio.
  */
 const ouvintesDaPilha = new Set<() => void>()
 /**
@@ -50,9 +59,13 @@ const escTratados = new WeakSet<KeyboardEvent>()
 function avisarPilha(): void {
   for (const f of ouvintesDaPilha) f()
 }
-/** Abaixo das camadas de 30+ (menus e modais): a janela nunca cobre um menu aberto. */
-const Z_JANELA = 26
-const Z_JANELA_TOPO = 27
+/**
+ * Abaixo das camadas de 30+ (Metodologia, tooltips do mapa, modais). Ressalva: a lista
+ * aberta dos seletores do CABECALHO do mapa fica presa no contexto dele (z 11), e a parte
+ * que desce abaixo do cabecalho passa SOB as janelas -- registrado, nao tratado aqui.
+ */
+const Z_JANELA = Z_JANELA_FICHA
+const Z_JANELA_TOPO = Z_JANELA_FICHA_TOPO
 
 /**
  * A JANELA que traz a ficha por cima do mapa, no modo de ponto.
@@ -92,6 +105,7 @@ export default function JanelaFicha({
   degrau = 0,
   larguraInicial = LARGURA_PADRAO,
   rodape,
+  pedidoDeFrente,
   children,
 }: {
   aberta: boolean
@@ -128,6 +142,13 @@ export default function JanelaFicha({
    * não passam a prop.
    */
   rodape?: ReactNode
+  /**
+   * Contador: cada valor NOVO traz a janela para o topo da pilha, como o clique nela. O da
+   * MONTAGEM nao conta. Existe para a ficha de ponto: com a janela ja' aberta e outra por
+   * cima (a comparacao, a ficha do hexagono), um ponto novo pedido pelo operador ficaria
+   * escondido ate' um clique. Ausente, nada muda.
+   */
+  pedidoDeFrente?: number
   children: ReactNode
 }) {
   const ref = useRef<HTMLElement | null>(null)
@@ -251,6 +272,20 @@ export default function JanelaFicha({
     pilhaAbertas.push(id)
     avisarPilha()
   }
+  /* Ver `pedidoDeFrente`. Declarado DEPOIS do efeito que empilha: no render em que a
+     janela abre e o pedido muda juntos, ela ja' entra no topo e isto vira no-op. */
+  const ultimoPedido = useRef(pedidoDeFrente)
+  useEffect(() => {
+    if (pedidoDeFrente === ultimoPedido.current) return
+    ultimoPedido.current = pedidoDeFrente
+    if (!aberta) return
+    const id = idJanela.current
+    const i = pilhaAbertas.indexOf(id)
+    if (i < 0 || i === pilhaAbertas.length - 1) return
+    pilhaAbertas.splice(i, 1)
+    pilhaAbertas.push(id)
+    avisarPilha()
+  }, [pedidoDeFrente, aberta])
 
   /* Avisa ao trilho do mapa onde esta janela esta' (`lib/ocupacao-janelas`), para ele sair
      de baixo dela. Em pixels da TELA: o contêiner + a geometria — e nao o

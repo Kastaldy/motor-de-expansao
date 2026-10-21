@@ -2307,6 +2307,9 @@ export default function MapScreen({
       <JanelaFicha
         aberta={unidadeAberta != null}
         ancora="direita"
+        /* As duas da DIREITA nasciam no MESMO retângulo: com o imóvel aberto, a da
+           unidade o cobria inteiro, título incluído. Em degrau, a barra dele fica à vista. */
+        degrau={imovelAberto != null ? 1 : 0}
         titulo={unidadeAberta?.nome ?? 'Unidade'}
         subtitulo={unidadeAberta?.semRede ? `Unidade Ultra · ${ROTULO_SEM_REDE}` : 'Unidade Ultra'}
         onFechar={() => setUnidadeAberta(null)}
