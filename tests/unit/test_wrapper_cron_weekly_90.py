@@ -141,6 +141,27 @@ def test_guarda_de_desenhabilidade_antes_de_promover_pin() -> None:
     assert '_novo.parquet' in executaveis, "a promoção deixou de passar por arquivo *_novo"
 
 
+def test_segundo_regen_quando_as_redes_do_agregador_mudam() -> None:
+    """O regen gera `concorrentes_mapeados` e LÊ `vulnerabilidade_ma_redes`; o passo 4.5 lê o
+    primeiro e GERA o segundo. Com um regen só, o domingo publicava sempre as redes da semana
+    ANTERIOR (medido em 2026-10-18: redes regravadas 1 min depois do regen).
+
+    Travado: o md5 é tirado ANTES da promoção, o 2º regen vem DEPOIS dela, só roda se o arquivo
+    mudou, e a falha avisa sem derrubar o lote.
+    """
+    executaveis = "\n".join(_linhas_executaveis(WRAPPER))
+    i_antes = executaveis.index("REDES_ANTES=$(md5sum")
+    i_promove = executaveis.index('mv -f "$SD/vulnerabilidade_ma_redes_novo.parquet"')
+    i_compara = executaveis.index('!= "${REDES_ANTES:-}"')
+    assert i_antes < i_promove < i_compara, "o md5 tem de ser tirado antes da promoção e comparado depois"
+    trecho = executaveis[i_compara:]
+    assert trecho.index("run_regen_mercado.sh") < trecho.index("fi"), (
+        "o 2º regen tem de estar DENTRO do if que compara as redes"
+    )
+    assert executaveis.count("/opt/motor-expansao-infra/run_regen_mercado.sh") == 2
+    assert "|| _avisar_ops" in trecho[: trecho.index("fi")], "a falha do 2º regen tem de avisar sem abortar"
+
+
 def test_snapshot_e_UMA_chamada_com_as_duas_fontes() -> None:
     """`delete_matching` é por semana ISO: duas chamadas na mesma semana apagam uma à outra."""
     executaveis = "\n".join(_linhas_executaveis(WRAPPER))
