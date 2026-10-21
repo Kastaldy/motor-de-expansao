@@ -727,12 +727,8 @@ def test_leituras_nao_mutam_artefatos(synth_data: Path) -> None:
     assert m["hexes"]
     assert m["passos"][0]["itens"]  # funil acendeu com o dado sintetico
 
-    # E0 da renda: `renda`/`renda_dom` dos hexes passam pelo modulo, e o payload diz de que
-    # versao de fatores (a proveniencia SEM o rotulo do PDF).
-    from motor_expansao.renda import renda_meta
-
-    assert uf["renda_meta"] == m["renda_meta"] == renda_meta()
-    assert "rotulo_pdf" not in m["renda_meta"]
+    # A versao de fatores da renda e dado INTERNO (so no /api/health): nunca no payload.
+    assert "renda_meta" not in uf and "renda_meta" not in m
 
     # Todos os payloads sao JSON-safe de ponta a ponta.
     for payload in (munis, uf, m):

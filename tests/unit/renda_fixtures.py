@@ -64,7 +64,6 @@ def versao_sintetica(
         "aprovado_por": None,
         "relatorio": None,
         "rotulo_referencia": rotulo_referencia,
-        "rotulo_pdf": "Renda: teste - fatores sinteticos",
         "artefatos_obrigatorios": [],
         "artefato_k_obrigatorio": False,
     }

@@ -44,7 +44,6 @@ from motor_expansao.renda import (
     carregar_fatores,
     insumos,
     renda_domiciliar_por_hex,
-    renda_meta,
 )
 from motor_expansao.renda.hex import serie_renda
 from tests.unit.renda_fixtures import apontar_staging_renda
@@ -112,9 +111,6 @@ _RENDA_ANTIGA = SimpleNamespace(
         "fator_temporal_renda": F_ANTIGO,
         "data_referencia_renda": ROTULO_ANTIGO,
     },
-    # Proveniencia nao e formula: e a MESMA nas duas rodadas (a rota a chama nos dois
-    # desfechos). Sem ela o patch derrubava `_rede_setores_entorno` com AttributeError.
-    renda_meta=renda_meta,
 )
 
 # --------------------------------------------------------------------------------
@@ -560,6 +556,5 @@ def test_setores_da_ficha_da_rede_iguais_aos_de_antes(
 
     novo, velho = _rodar(False), _rodar(True)
     assert novo == velho
-    assert novo["renda_meta"] == renda_meta()  # a proveniencia viaja nos dois lados
     rendas = [s["renda_domiciliar"] for s in novo["setores"]]
     assert novo["disponivel"] and sum(r is not None for r in rendas) >= 4

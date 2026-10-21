@@ -36,7 +36,6 @@
   "aprovado_por": null,
   "relatorio": null,
   "rotulo_referencia": "06/2026 (CAGED; Censo jul/2022 x 1.1641)",
-  "rotulo_pdf": "Renda: Censo 2022 (jul/2022) atualizada para 06/2026 pelo salario de admissao do Novo CAGED (x1,1641) - fatores 2026-08_caged_v0",
   "artefatos_obrigatorios": [
     "uplift_renda_domiciliar_municipio.parquet",
     "uplift_composicao_setor.parquet"

@@ -130,8 +130,8 @@ def test_valores_ancorados_na_formula(renda_entregue: dict) -> None:
 
 
 @pytest.mark.parametrize("tem_densidade", [False, True])
-def test_nota_do_calor_da_cidade_com_a_proveniencia_cabe_na_pagina(monkeypatch, tem_densidade):
-    """Sem o mapa de densidade, o mapa largo empurrava a nota (com o rotulo E0) para y = 550.
+def test_nota_do_calor_da_cidade_cabe_na_pagina(monkeypatch, tem_densidade):
+    """Sem o mapa de densidade, o mapa largo empurrava a nota para y = 550.
 
     `auto_page_break` e OFF: a nota saia FORA da pagina de 540 pt em silencio.
     """
@@ -160,6 +160,5 @@ def test_nota_do_calor_da_cidade_com_a_proveniencia_cabe_na_pagina(monkeypatch, 
         pdf, {"versao_contrato": "v-teste"}, praca, {},
         primary=(0, 0, 0), secondary=(0, 0, 0),
     )
-    ((y, altura, texto),) = notas
-    assert relmun._rotulo_renda_pdf() in texto  # a proveniencia esta NESTA nota
+    ((y, altura, _texto),) = notas
     assert y + altura <= relmun._PAGE_H - 22.0, (y, altura)

@@ -275,7 +275,6 @@ _CHAVES_DO_GET = {
     "vizinhos",
     "reguas",
     "criterios",
-    "renda_meta",
 }
 
 
@@ -304,9 +303,6 @@ def test_get_api_ponto_nao_ganha_chave_nem_kwarg(ambiente, monkeypatch) -> None:
     body = pilot.ponto(lat=LAT, lng=LNG)
     assert set(body) == _CHAVES_DO_GET
     assert body["raio_km"] == 1.0
-    from motor_expansao.renda import renda_meta
-
-    assert body["renda_meta"] == renda_meta()  # E0: proveniencia da renda do `censo`
     assert ambiente == [{}]
     assert set(kw_motor[0]) == {"raio_km", "competitors_df", "ultra_df"}
     assert kw_motor[0]["raio_km"] == 1.0

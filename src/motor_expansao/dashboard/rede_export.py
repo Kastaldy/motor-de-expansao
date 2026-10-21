@@ -920,31 +920,6 @@ def _subtitulo_da_marca(pdf: UltraPDF, y: float, texto: str, *, x: float = 36.0)
     pdf.cell(PAGINA_LARGURA - _MARGEM - x, 14, ascii_seguro(texto.upper()))
 
 
-#: Corpos da nota de proveniencia da renda, do preferido ao piso. O piso fica em 6,5 e nao em 6:
-#: o corpo 6 e' o do numero dos marcadores que o Juan tirou do PDF (05/10), e o teste do PDF usa
-#: a ausencia dele como prova disso.
-_CORPOS_NOTA_RENDA: tuple[float, ...] = (7.5, 7.0, 6.5)
-
-
-def _nota_da_renda(pdf: UltraPDF, x: float, y: float, largura: float) -> None:
-    """Uma linha com a proveniencia da renda (`rotulo_pdf` da versao de fatores vigente, E0).
-
-    Encolhe ate caber; no piso, quebra em duas linhas de 7,5 pt (cabem no vao de 22 pt).
-    """
-    from motor_expansao.renda import proveniencia
-
-    texto = ascii_seguro(str(proveniencia()["rotulo_pdf"]))
-    pdf.set_text_color(120, 120, 120)
-    for corpo in _CORPOS_NOTA_RENDA:
-        pdf.set_font("Helvetica", "", corpo)
-        if pdf.get_string_width(texto) <= largura:
-            pdf.set_xy(x, y)
-            pdf.cell(largura, 9, texto)
-            return
-    pdf.set_xy(x, y)
-    pdf.multi_cell(largura, 7.5, texto, max_line_height=7.5)
-
-
 def _cartao_da_marca(pdf: UltraPDF, x: float, y: float, largura: float, rotulo: str, valor: str) -> None:
     """KPI com UMA cor de destaque (teal) sobre fundo neutro."""
     pdf.set_fill_color(*_FUNDO_DE_CARTAO)
@@ -1480,9 +1455,6 @@ def concorrencia_pdf(
                 ("População", _br(censo.get("populacao")) or "-"),
             ],
         )
-        # Proveniencia das duas rendas acima (E0): no vao entre os cartoes (terminam em 376)
-        # e a legenda (398). So aqui -- sem censo nao ha renda exibida, e a lista nao exibe.
-        _nota_da_renda(pdf, x_coluna, 380.0, largura_coluna)
     else:
         pdf.set_text_color(120, 120, 120)
         pdf.set_font("Helvetica", "", 9.5)

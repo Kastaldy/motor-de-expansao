@@ -36,9 +36,9 @@ from motor_expansao.renda import (
     fator,
     fator_composto_domiciliar,
     fator_hex,
+    fatores_do_health,
     insumos,
     k_calibracao_renda,
-    proveniencia,
     renda_domiciliar,
     renda_domiciliar_hex,
     renda_domiciliar_por_hex,
@@ -86,7 +86,6 @@ def _versao(versao: str = "2026-10_teste_v1", pais: str = "BR", **trocas) -> dic
         "aprovado_por": "teste",
         "relatorio": None,
         "rotulo_referencia": "2025 (PNAD Continua; Censo jul/2022)",
-        "rotulo_pdf": "Renda: Censo 2022 (jul/2022) atualizada para 2025 - fatores teste",
         "artefatos_obrigatorios": [],
         "artefato_k_obrigatorio": False,
     }
@@ -256,10 +255,6 @@ def test_v0_br_reproduz_o_fator_e_o_rotulo_de_producao():
     assert f.rotulo_referencia == (
         f"{fim[4:]}/{fim[:4]} (CAGED; Censo jul/2022 x {float(f.fonte['fator_temporal_renda'])})"
     )
-    assert f.rotulo_pdf == (
-        "Renda: Censo 2022 (jul/2022) atualizada para 06/2026 pelo salario de admissao do "
-        "Novo CAGED (x1,1641) - fatores 2026-08_caged_v0"
-    )
     assert f.artefato_k_obrigatorio is True
     assert f.fixada_por_env is False
 
@@ -308,20 +303,8 @@ def test_v0_hex_bit_a_bit_com_o_app_de_antes(monkeypatch, tmp_path):
     assert out == {"a": (1500.0 / 1.5) * fator_antigo}
 
 
-def test_proveniencia(sinteticos):
-    meta = proveniencia()
-    assert meta == {
-        "versao_fator": "2026-10_teste_v1",
-        "pais": "BR",
-        "ano_base": 2022,
-        "data_referencia_base": "2022-07",
-        "ano_alvo": 2025,
-        "fonte": "PNAD Continua (sintetica)",
-        "rotulo": "2025 (PNAD Continua; Censo jul/2022)",
-        "rotulo_pdf": "Renda: Censo 2022 (jul/2022) atualizada para 2025 - fatores teste",
-        "fixada_por_env": False,
-        "excecoes_uf": ["PE"],
-    }
+def test_fatores_do_health(sinteticos):
+    assert fatores_do_health() == {"versao": "2026-10_teste_v1", "fixada_por_env": False}
 
 
 # --------------------------------------------------------------------------------
@@ -502,12 +485,6 @@ def test_loader_excecao_fora_das_candidatas(tmp_path):
         _carregar(tmp_path)
 
 
-def test_loader_rotulo_pdf_nao_ascii(tmp_path):
-    _gravar(tmp_path, _versao(rotulo_pdf="Renda: Censo 2022 — PNAD"))
-    with pytest.raises(FatoresRendaInvalidos, match="ASCII"):
-        _carregar(tmp_path)
-
-
 def test_loader_relatorio_sem_hash(tmp_path):
     _gravar(tmp_path, _versao(relatorio={"caminho": "docs/x.md"}))
     with pytest.raises(FatoresRendaInvalidos, match="relatorio.sha256"):
@@ -539,14 +516,11 @@ def test_rollback_por_env_versao_existente_e_usada(tmp_path, monkeypatch, caplog
     assert any("ROLLBACK" in r.getMessage() and r.levelno == logging.WARNING for r in caplog.records)
 
 
-def test_rollback_por_env_chega_a_proveniencia(sinteticos, monkeypatch):
+def test_rollback_por_env_chega_ao_health(sinteticos, monkeypatch):
     _gravar(sinteticos, _versao("2026-08_anterior", excecoes_aprovadas={}), vigente=False)
     monkeypatch.setenv(ENV_VERSAO, "2026-08_anterior")
     carregar_fatores.cache_clear()
-    meta = proveniencia()
-    assert meta["versao_fator"] == "2026-08_anterior"
-    assert meta["fixada_por_env"] is True
-    assert meta["excecoes_uf"] == []
+    assert fatores_do_health() == {"versao": "2026-08_anterior", "fixada_por_env": True}
 
 
 @pytest.mark.parametrize("versao", ["../AR/2026-08_sem_atualizacao_v0", ".oculta", "a/b"])

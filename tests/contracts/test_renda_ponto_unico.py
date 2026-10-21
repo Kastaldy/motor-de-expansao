@@ -361,7 +361,7 @@ def test_renda_exibida_tem_um_ponto_unico_de_aplicacao() -> None:
         "A renda exibida so recebe fator temporal, uplift e moradores DENTRO de\n"
         "`motor_expansao.renda` (E0). Fora dele, chame `renda_domiciliar`, `renda_per_capita`,\n"
         "`fator_composto_domiciliar` ou as funcoes de `renda.hex`, passando o uplift como\n"
-        "argumento; o fator vem de `fator(uf, tipo)` / `proveniencia()`.\n\nAchado em:\n  "
+        "argumento; o fator vem de `fator(uf, tipo)`.\n\nAchado em:\n  "
         + "\n  ".join(ocorrencias)
     )
 

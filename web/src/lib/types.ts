@@ -30,11 +30,6 @@ export interface MePayload {
    *  só com o serviço de rotas configurado, `carro_10min`. Ausente em backend anterior.
    *  Quem valida e estreita é `definirAlcances` em `lib/alcance.ts`. */
   alcances?: unknown
-  /** Proveniência da renda exibida (E0 da renda): versão de fatores, base e alvo. TOP-LEVEL,
-   *  e não dentro de `perfil` — é da versão de fatores vigente, não do perfil do país.
-   *  Ausente em backend anterior. Quem valida e estreita é `definirRendaMeta` em
-   *  `lib/renda-meta.ts`. */
-  renda_meta?: unknown
 }
 
 /** Tom do chip do ranking. Fronteira TS<->Python sem contrato gerado: o produtor
@@ -514,25 +509,6 @@ export interface Independentes {
   truncado: boolean
 }
 
-/**
- * Proveniência da renda (E0 da renda; `motor_expansao.renda.renda_meta()` no servidor):
- * de que versão de fatores e de quando é a renda do payload. Vai nos payloads cuja renda
- * passa pelo módulo da renda (ponto, UF/município, rede) e, top-level, no `/api/me`.
- * Opcional em todo payload: backend anterior à E0 não manda.
- */
-export interface RendaMetaPayload {
-  /** Identificador cru da versão (ex.: `2026-08_caged_v0`). NÃO acentuar. */
-  versao_fator: string
-  pais: string
-  ano_base: number
-  data_referencia_base: string
-  ano_alvo: number
-  fonte: string
-  rotulo: string
-  fixada_por_env: boolean
-  excecoes_uf: string[]
-}
-
 export interface MunicipioPayload {
   /** "uf" = visão de estado inteiro (recomenda municípios); "municipio" = drill-down. */
   nivel: 'uf' | 'municipio'
@@ -554,8 +530,6 @@ export interface MunicipioPayload {
   pins: Pins
   /** Academias independentes com score (BLK-MA-15). Ausente em payload antigo. */
   independentes?: Independentes
-  /** Proveniência de `renda`/`renda_dom` dos hexes (E0). Ausente em payload antigo. */
-  renda_meta?: RendaMetaPayload
 }
 
 export interface MunicipioItem {
@@ -1656,8 +1630,6 @@ export interface RedeInteligencia {
   mudancas: RedeMudanca[]
   fontes_oferta: string[]
   notas: string[]
-  /** Proveniência da `renda_domiciliar` do território (E0). Ausente em payload antigo. */
-  renda_meta?: RendaMetaPayload
 }
 
 /** Movimentação da concorrência (pacote garimpado da VPS, 15/09). `cautela` = foto não validada. */
@@ -1812,8 +1784,6 @@ export interface RedeSetoresEntorno {
   disponivel: boolean
   setores: { anel: number[][][]; renda_domiciliar: number | null; densidade: number | null }[]
   faixas: Record<RedeCamadaSetor, RedeFaixaCamada[]>
-  /** Proveniência da `renda_domiciliar` dos setores (E0). Ausente em payload antigo. */
-  renda_meta?: RendaMetaPayload
 }
 
 /**
@@ -1876,8 +1846,6 @@ export interface RedeUnidadeInteligencia {
     itens: RedeConcorrenteNovo[]
   }
   notas: string[]
-  /** Proveniência de `territorio.renda_domiciliar` (E0). Ausente em payload antigo. */
-  renda_meta?: RendaMetaPayload
 }
 
 /** Query da carteira. Tudo opcional: sem filtro nenhum, vem a rede do Brasil inteiro. */
@@ -2057,8 +2025,6 @@ export type ContornoGeoJson =
   | { type: 'MultiPolygon'; coordinates: [number, number][][][] }
 
 export interface PontoPayload {
-  /** Proveniência da renda do `censo` (E0). Ausente em payload antigo. */
-  renda_meta?: RendaMetaPayload
   /** No item de ÁREA DESENHADA (DEC-071) é o `representative_point` do polígono; no
    *  ALCANCE (DEC-074) é a ORIGEM clicada, que está sempre dentro do recorte. */
   lat: number

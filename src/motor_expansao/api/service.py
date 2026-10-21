@@ -1012,16 +1012,7 @@ def analisar_ponto(lat: float, lng: float, consumidor: str | None, settings: Set
         "versao_score": _VERSAO_SCORE,
         "gerado_em": datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ"),
         "consumidor": consumidor,
-        # E0 da renda: de que versao de fatores e de quando sao as rendas acima.
-        "renda_meta": _renda_meta(),
     }
-
-
-def _renda_meta() -> dict[str, Any]:
-    """`renda_meta` do JSON: import tardio, como o resto do motor neste modulo."""
-    from motor_expansao.renda import renda_meta
-
-    return renda_meta()
 
 
 def _reuse_contextily_session() -> None:

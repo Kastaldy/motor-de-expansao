@@ -4,7 +4,6 @@ import { createRoot } from 'react-dom/client'
 import { definirAlcances } from './lib/alcance'
 import { api } from './lib/api'
 import { definirPerfil } from './lib/perfil'
-import { definirRendaMeta } from './lib/renda-meta'
 import { definirAvisoDeViabilidade } from './lib/viabilidade-demanda'
 import { definirMoedaDeViabilidade } from './lib/viabilidade-moeda'
 import './styles/global.css'
@@ -39,8 +38,6 @@ async function iniciar(): Promise<void> {
     /* Os alcances do ponto que a instância oferece (DEC-074): "10 min de carro" só com o
        serviço de rotas configurado. Sem a chave, só o raio de 1 km. */
     definirAlcances(me.alcances)
-    /* Proveniência da renda (E0): o ícone ⓘ ao lado de cada renda lê daqui. */
-    definirRendaMeta(me.renda_meta)
   } catch {
     /* sem /api/me -> segue no default; o backend continua barrando o que deve */
   }

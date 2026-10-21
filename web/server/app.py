@@ -4364,11 +4364,6 @@ def me(
         "usuario": usuario,
         "abas": sorted(abas),
         "perfil": _perfil_do_cliente(),
-        # Proveniencia da renda exibida (E0): o front le `renda_meta.rotulo` para o icone de
-        # informacao ao lado de cada renda. TOP-LEVEL, e nao dentro de `perfil`: nao e campo do
-        # perfil do pais (o espelho perfil.json <-> perfil-br.ts nao a conhece), e da versao
-        # de fatores vigente.
-        "renda_meta": _renda.renda_meta(),
     }
     # AUSENTE em vez de nula, pelo mesmo motivo da `senha` abaixo: no Brasil (perfil sem
     # aviso) a resposta nao muda um byte, e a SPA trata a chave como opcional.
@@ -7471,9 +7466,6 @@ def _payload_ponto(
         }
     elif alcance is not None:
         payload["recorte"] = _recorte_do_alcance(alcance, res, fator_regua)
-    # Proveniencia da renda (E0): versao de fatores, base e alvo. Vale para o GET, o alcance e
-    # a geometria -- os tres saem daqui.
-    payload["renda_meta"] = _renda.renda_meta()
     return payload
 
 
@@ -7594,8 +7586,6 @@ def uf_view(uf: str, limite: int = 15000) -> dict[str, Any]:
         "cres_mun": _bloco_municipal(vis),
         "ctx_mun": _bloco_camadas_leitura(vis),
         "pins": _pins_ultra_bbox(df),
-        # `renda`/`renda_dom` dos hexes passam pelo modulo da renda (E0).
-        "renda_meta": _renda.renda_meta(),
     }
 
 
@@ -7650,8 +7640,6 @@ def municipio(uf: str, municipio: str, limite: int = 4000) -> dict[str, Any]:
         # Lista PROPRIA, nunca misturada a `pins.concorrentes`: cadeia e independente sao universos
         # de semantica oposta (quem disputa x quem se compra), e a intersecao entre eles e' vazia.
         "independentes": _pins_independentes(sel),
-        # `renda`/`renda_dom` dos hexes passam pelo modulo da renda (E0).
-        "renda_meta": _renda.renda_meta(),
     }
 
 
@@ -10218,10 +10206,7 @@ def _rede_setores_entorno(unidade_id: str) -> str:
         "renda_domiciliar": _faixas_camada(_constants.RENDA_MEDIA_DOMICILIAR_BANDS),
         "densidade": _faixas_camada(_constants.DENSIDADE_POP_BANDS),
     }
-    # `renda_meta` nos DOIS desfechos: o contrato da rota nao muda com a praca ter setor ou nao.
-    vazio = json.dumps(
-        {"disponivel": False, "setores": [], "faixas": faixas, "renda_meta": _renda.renda_meta()}
-    )
+    vazio = json.dumps({"disponivel": False, "setores": [], "faixas": faixas})
     pontos = _rede_pontos()
     linha = pontos[pontos["unidade_id"] == unidade_id]
     mercado = STAGING_DIR / "hexagonos_mercado_mapeado.parquet"
@@ -10300,14 +10285,7 @@ def _rede_setores_entorno(unidade_id: str) -> str:
                         "densidade": _num(_numf(r.get("densidade_pop_setor_hab_km2")), 0),
                     }
                 )
-    return json.dumps(
-        {
-            "disponivel": bool(feats),
-            "setores": feats,
-            "faixas": faixas,
-            "renda_meta": _renda.renda_meta(),
-        }
-    )
+    return json.dumps({"disponivel": bool(feats), "setores": feats, "faixas": faixas})
 
 
 @app.get("/api/rede/unidade/{unidade_id}/setores")
@@ -10812,8 +10790,6 @@ def rede_inteligencia_recorte(
             "unidades_afetadas": sum(1 for uid in ids if concorrencia["por_unidade"].get(uid)),
         },
         "movimentacao": _rede_movimentacao_redes(),
-        # `renda_domiciliar` do territorio (quadrante) passa pelo modulo da renda (E0).
-        "renda_meta": _renda.renda_meta(),
         "canibalizacao": [
             {
                 "id": uid,
@@ -10947,8 +10923,6 @@ def rede_unidade_inteligencia(unidade_id: str, mes: str | None = None) -> dict[s
         "planos_wellhub": _rede_planos_unidade(unidade_id, "wellhub"),
         "movimentacao": _rede_movimentacao_unidade(unidade_id),
         "notas": [_NOTA_NAO_E_PREVISAO],
-        # `territorio.renda_domiciliar` passa pelo modulo da renda (E0).
-        "renda_meta": _renda.renda_meta(),
     }
 
 

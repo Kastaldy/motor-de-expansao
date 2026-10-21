@@ -365,18 +365,6 @@ def _ascii(text: str) -> str:
     return str(text).encode("latin-1", errors="replace").decode("latin-1")
 
 
-def _rotulo_renda_pdf() -> str:
-    """Proveniencia da renda (E0) para as notas de fonte: versao de fatores, base e alvo.
-
-    Da versao VIGENTE (`motor_expansao.renda.proveniencia`), nunca texto fixo aqui. So nas
-    notas das paginas cuja renda passa pelo modulo da renda (a domiciliar do hexagono); a renda
-    per capita do M1 e a calibrada crua NAO levam esta linha -- nao sao atualizadas no tempo.
-    """
-    from motor_expansao.renda import proveniencia
-
-    return _ascii(str(proveniencia()["rotulo_pdf"]))
-
-
 def _slug(text: str) -> str:
     norm = unicodedata.normalize("NFKD", str(text or "")).encode("ascii", "ignore").decode("ascii")
     out = "".join(ch.lower() if ch.isalnum() else "_" for ch in norm)
@@ -3696,7 +3684,7 @@ def _tabela_hexes_page(pdf: _UltraPDF, result: dict[str, Any], assets: dict[str,
         nota_renda = (
             "Renda domiciliar = renda do hexágono (Censo 2022, setores repartidos por área) x "
             "moradores e uplift de composição do município x atualização monetária - o MESMO "
-            f"número do card do hexágono no mapa. {_rotulo_renda_pdf()}."
+            "número do card do hexágono no mapa."
         )
     elif fonte == "censo":
         nota_renda = (
@@ -3942,12 +3930,9 @@ def _praca_calor_page(pdf: _UltraPDF, result: dict[str, Any], praca: Any,
         legenda += " Nesta base a renda é a do município inteiro, então o mapa de renda sai de uma cor só."
     if praca.populacao_municipal:
         legenda += " " + TEXTO_POP_MUNICIPAL
-    # A renda domiciliar do mapa passa pelo modulo da renda (E0): de que versao e de quando.
-    legenda += f" {_rotulo_renda_pdf()}."
     texto_nota = _praca_texto(legenda)
     largura_nota = _PAGE_W - 72.0
-    # A nota (com a proveniencia da renda) tem de caber ACIMA do rodape: `auto_page_break` e
-    # OFF, e sem o mapa de densidade o mapa largo (602 x 430) empurrava a nota para y = 550,
+    # A nota tem de caber ACIMA do rodape: `auto_page_break` e OFF, e sem o mapa de densidade o mapa largo (602 x 430) empurrava a nota para y = 550,
     # fora da pagina de 540. O mapa encolhe na altura (o fit-contain preserva a proporcao).
     limite_nota = _PAGE_H - 22.0 - 4.0 - _altura_note(pdf, largura_nota, texto_nota)
     altura = min(altura, limite_nota - 24.0 - y)
@@ -4135,9 +4120,7 @@ def _praca_onde_crescer_page(pdf: _UltraPDF, result: dict[str, Any], praca: Any,
         f"{regua}{valor}. Entre eles, a ordem é o índice de praça (70% "
         "socioeconômico, 30% demanda), o mesmo da fila do funil. O residual sozinho puxaria para as "
         "áreas mais populosas, que nem sempre têm renda."
-        + (f" {cobertura}" if cobertura else "")
-        # A renda domiciliar da tabela passa pelo modulo da renda (E0).
-        + f" {_rotulo_renda_pdf()}.",
+        + (f" {cobertura}" if cobertura else ""),
     )
     if sel.aviso:
         pdf.set_text_color(*secondary)

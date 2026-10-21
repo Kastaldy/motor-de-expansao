@@ -64,7 +64,6 @@ _CHAVES_OBRIGATORIAS = (
     "aprovado_por",
     "relatorio",
     "rotulo_referencia",
-    "rotulo_pdf",
     "artefatos_obrigatorios",
     "artefato_k_obrigatorio",
 )
@@ -109,7 +108,6 @@ class FatoresRenda:
     aprovado_por: str | None
     relatorio: dict[str, Any] | None
     rotulo_referencia: str
-    rotulo_pdf: str
     artefatos_obrigatorios: tuple[str, ...]
     artefato_k_obrigatorio: bool
     fixada_por_env: bool
@@ -238,13 +236,6 @@ def validar_versao(dados: Any, caminho: Path, *, pais: str, versao: str) -> dict
         for chave in ("caminho", "sha256"):
             _texto(relatorio.get(chave), caminho, f"relatorio.{chave}")
 
-    rotulo_pdf = _texto(dados["rotulo_pdf"], caminho, "rotulo_pdf")
-    assert rotulo_pdf is not None
-    # O PDF (fpdf2, fonte core) troca por "?" em silencio tudo que nao e latin-1; o
-    # rotulo e ASCII puro para nao depender de quem o desenha.
-    if not rotulo_pdf.isascii():
-        raise _erro(caminho, "`rotulo_pdf` deveria ser ASCII puro (render do PDF)")
-
     artefatos = dados["artefatos_obrigatorios"]
     if not isinstance(artefatos, list) or not all(
         isinstance(a, str) and a and "/" not in a and "\\" not in a for a in artefatos
@@ -275,7 +266,6 @@ def validar_versao(dados: Any, caminho: Path, *, pais: str, versao: str) -> dict
         "aprovado_por": _texto(dados["aprovado_por"], caminho, "aprovado_por", nulo=True),
         "relatorio": None if relatorio is None else dict(relatorio),
         "rotulo_referencia": _texto(dados["rotulo_referencia"], caminho, "rotulo_referencia"),
-        "rotulo_pdf": rotulo_pdf,
         "artefatos_obrigatorios": tuple(artefatos),
         "artefato_k_obrigatorio": exige_k,
     }

@@ -371,7 +371,7 @@ def test_arquivo_de_versao_tem_o_schema_e_passa_no_loader(tmp_path: Path, origem
         "uplift_composicao_setor.parquet",
     ]
     assert dados["artefato_k_obrigatorio"] is True
-    assert dados["rotulo_pdf"].isascii() and "2026-10_pnad2025_v1" in dados["rotulo_pdf"]
+    assert "rotulo_pdf" not in dados  # proveniencia e dado interno: sem texto de PDF
     assert {a["papel"] for a in dados["fonte"]["arquivos"]} == {"microdados", "layout"}
     assert all(len(a["sha256"]) == 64 for a in dados["fonte"]["arquivos"])
     assert dados["fonte"]["tabela_sidra_conferencia"]["erros"]["2025"]["visita"] == 1
@@ -494,7 +494,6 @@ def test_aprovar_uf_candidata_grava_excecao(tmp_path: Path, origem: Path) -> Non
     assert exc["PE"]["domiciliar"] == pytest.approx(ref["domiciliar"], rel=1e-12)
     assert exc["PE"]["moradores"] == pytest.approx(ref["moradores"], rel=1e-12)
     assert "aprovada via --aprovar-uf" in exc["PE"]["evidencia"]
-    assert "fator proprio: MS, PE" in res["dados"]["rotulo_pdf"]
 
 
 # ---------------------------------------------------------------------------

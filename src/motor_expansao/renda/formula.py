@@ -89,7 +89,7 @@ def campos_referencia_ponto(uf: object = None) -> dict[str, Any]:
       - `fator_temporal_renda` = o fator DOMICILIAR da UF (o nacional quando ela nao tem
         excecao aprovada) -- e o mesmo que entra em `fator_uplift_renda_domiciliar`. Na
         versao 0 F_dom == F_pc, entao o numero e o mesmo de antes; quando divergirem, o
-        per capita esta em `fator(uf, "per_capita")` e a versao inteira em `proveniencia()`.
+        per capita esta em `fator(uf, "per_capita")`.
       - `data_referencia_renda` = `rotulo_referencia` da versao vigente (byte a byte o texto
         que `constants.DATA_REFERENCIA_RENDA` montava antes).
 
@@ -100,35 +100,6 @@ def campos_referencia_ponto(uf: object = None) -> dict[str, Any]:
         "fator_temporal_renda": fator(uf, "domiciliar"),
         "data_referencia_renda": carregar_fatores().rotulo_referencia,
     }
-
-
-def proveniencia() -> dict[str, Any]:
-    """`renda_meta`: de onde e de quando vem a renda exibida (payloads, health, PDFs)."""
-    f = carregar_fatores()
-    return {
-        "versao_fator": f.versao,
-        "pais": f.pais,
-        "ano_base": f.ano_base_renda,
-        "data_referencia_base": f.data_referencia_base,
-        "ano_alvo": f.ano_alvo,
-        "fonte": str(f.fonte["pesquisa"]),
-        "rotulo": f.rotulo_referencia,
-        "rotulo_pdf": f.rotulo_pdf,
-        "fixada_por_env": f.fixada_por_env,
-        "excecoes_uf": sorted(f.excecoes_aprovadas),
-    }
-
-
-def renda_meta() -> dict[str, Any]:
-    """`renda_meta` dos payloads JSON: a `proveniencia()` SEM `rotulo_pdf`.
-
-    O `rotulo_pdf` e o texto ASCII da nota de fontes dos PDFs; na tela quem vale e o `rotulo`
-    (com acento). Mandar os dois ao front seria convidar a tela a exibir o texto sem acento.
-    Devolve um dict NOVO a cada chamada: quem o recebe pode mexer sem contaminar o seguinte.
-    """
-    meta = proveniencia()
-    del meta["rotulo_pdf"]
-    return meta
 
 
 def fatores_do_health() -> dict[str, Any]:

@@ -10,7 +10,6 @@ import type {
   RedePlanosEntorno,
   RedeUnidadeInteligencia,
 } from '../../lib/types'
-import { InfoRenda } from '../InfoRenda'
 import { Glass, Spinner } from '../primitives'
 import {
   BarraLtv,
@@ -254,11 +253,7 @@ export default function FichaInteligencia({
           {t && (
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(110px, 1fr))', gap: 12, marginBottom: 14 }}>
               <Numero rotulo="Score da praça" valor={num(t.score_praca, 1)} nota="0–100, régua absoluta" />
-              <Numero
-                rotulo={<>Renda domiciliar<InfoRenda /></>}
-                valor={brl(t.renda_domiciliar)}
-                nota="média por domicílio no raio de 1 km"
-              />
+              <Numero rotulo="Renda domiciliar" valor={brl(t.renda_domiciliar)} nota="média por domicílio no raio de 1 km" />
               <Numero rotulo="População a 1 km" valor={num(t.populacao_entorno)} nota="pela área dos hexágonos no círculo" />
             </div>
           )}
@@ -790,7 +785,7 @@ function UnidadesPares({ pares, mediana }: { pares: RedeParDePraca[]; mediana: n
   )
 }
 
-function Numero({ rotulo, valor, nota, cor }: { rotulo: ReactNode; valor: ReactNode; nota?: ReactNode; cor?: string }) {
+function Numero({ rotulo, valor, nota, cor }: { rotulo: string; valor: ReactNode; nota?: ReactNode; cor?: string }) {
   return (
     <div style={{ minWidth: 0 }}>
       <div style={{ font: '500 10px/1.2 var(--f-ui)', color: 'var(--tx-label)' }}>{rotulo}</div>

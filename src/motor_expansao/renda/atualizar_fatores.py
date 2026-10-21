@@ -98,25 +98,12 @@ def _fmt(x: float, casas: int = 4) -> str:
     return f"{x:.{casas}f}".replace(".", ",")
 
 
-def _rotulos(
-    versao: str, ano_alvo: int, nac: Mapping[str, float], excecoes: Sequence[str]
-) -> tuple[str, str]:
-    ref = (
+def _rotulo_referencia(ano_alvo: int, nac: Mapping[str, float]) -> str:
+    """`rotulo_referencia` da versao (vira o `data_referencia_renda` do resultado do ponto)."""
+    return (
         f"{ano_alvo} (PNAD Contínua; Censo jul/2022 x {_fmt(nac['per_capita'])} per capita, "
         f"x {_fmt(nac['domiciliar'])} domiciliar)"
     )
-    pdf = (
-        f"Renda: Censo 2022 (jul/2022) atualizada para {ano_alvo} pela PNAD Continua anual "
-        f"(visitas 1 e 5; x{_fmt(nac['per_capita'])} per capita, x{_fmt(nac['domiciliar'])} domiciliar"
-    )
-    if excecoes:
-        pdf += f"; fator proprio: {', '.join(excecoes)}"
-    pdf += f") - fatores {versao}"
-    try:
-        pdf.encode("ascii")
-    except UnicodeEncodeError as exc:  # pragma: no cover - guarda de regressao
-        raise AtualizacaoAbortada(f"rotulo_pdf nao e' ASCII: {pdf!r}") from exc
-    return ref, pdf
 
 
 def _arquivos_fonte(insumos: pnad.Insumos) -> list[dict[str, Any]]:
@@ -172,7 +159,7 @@ def montar_versao(
             ),
         }
     nac = calc.nacional
-    rotulo_ref, rotulo_pdf = _rotulos(versao, calc.ano_alvo, nac, sorted(excecoes))
+    rotulo_ref = _rotulo_referencia(calc.ano_alvo, nac)
     campos_candidata = (
         "uf",
         "desvio_pc_v1",
@@ -252,7 +239,6 @@ def montar_versao(
         "aprovado_por": None,
         "relatorio": None,
         "rotulo_referencia": rotulo_ref,
-        "rotulo_pdf": rotulo_pdf,
         "artefatos_obrigatorios": list(vigente["artefatos_obrigatorios"]),
         "artefato_k_obrigatorio": bool(vigente["artefato_k_obrigatorio"]),
         "visita_sidra": {str(a): int(v) for a, v in sorted(visita_sidra.items())},

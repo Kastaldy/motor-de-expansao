@@ -468,8 +468,6 @@ def test_semana_menos_atravessa_o_ano():
 def test_rota_do_recorte_degrada_dizendo_o_que_falta(rede):  # noqa: F811
     payload = pilot.rede_inteligencia_recorte()
     assert set(payload) >= {"quadrante", "rampa", "sinais", "retencao", "concorrencia_nova", "mudancas", "notas"}
-    # E0 da renda: a `renda_domiciliar` do territorio passa pelo modulo da renda.
-    assert payload["renda_meta"] == _renda_meta()
     assert payload["concorrencia_nova"]["disponivel"] is False
     assert any("snapshots" in n for n in payload["notas"])
     assert payload["retencao"]["data_artefato"] is None
@@ -495,7 +493,6 @@ def test_rota_da_unidade_404_e_contrato(rede):  # noqa: F811
     assert payload["planos"] == {"disponivel": False}  # artefato não ingerido: dito, não vazio
     assert set(payload["rampa"]) == {"faturamento", "ativos", "pagantes", "agregadores", "posicao"}
     assert payload["concorrencia_nova"]["itens"] == []
-    assert payload["renda_meta"] == _renda_meta()
 
 
 def test_mudanca_carrega_os_campos_que_a_tela_agrupa():
@@ -512,8 +509,6 @@ def test_mudanca_carrega_os_campos_que_a_tela_agrupa():
 def test_camadas_de_setor_sem_coordenada_dizem_indisponivel_e_trazem_as_faixas(rede):  # noqa: F811
     corpo = json.loads(pilot.rede_unidade_setores("botafogo-rj").body)
     assert corpo["disponivel"] is False and corpo["setores"] == []
-    # E0: a proveniencia vai nos DOIS desfechos -- o contrato nao muda com haver setor.
-    assert corpo["renda_meta"] == _renda_meta()
     # a régua vem do núcleo, não é repetida na tela
     assert corpo["faixas"]["renda_domiciliar"] and corpo["faixas"]["densidade"]
     assert corpo["faixas"]["densidade"][-1]["ate"] is None  # a última faixa é aberta
@@ -573,10 +568,3 @@ def test_mapa_da_unidade_carrega_o_que_a_concorrente_oferece_por_canal(rede, mon
     assert agregador["fonte"] == "totalpass" and agregador["lista"] == ["Chuveiro", "Armários"]
     assert agregador["itens"]["chuveiro"] is True and agregador["itens"]["luta"] is None
     json.dumps(conc)  # o bloco tem de ser serializável como o resto do payload
-
-
-def _renda_meta() -> dict:
-    """A proveniencia da renda (E0) que os payloads da rede carregam."""
-    from motor_expansao.renda import renda_meta
-
-    return renda_meta()

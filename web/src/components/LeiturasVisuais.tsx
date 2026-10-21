@@ -39,7 +39,7 @@ function Titulo({ children }: { children: ReactNode }) {
  * barra que responde "isso é muito?". O número continua inteiro e auditável — só deixa
  * de ser a manchete.
  */
-export function NumeroApoio({ rotulo, valor }: { rotulo: ReactNode; valor: string }) {
+export function NumeroApoio({ rotulo, valor }: { rotulo: string; valor: string }) {
   return (
     <span style={{ display: 'inline-flex', alignItems: 'baseline', gap: 6, minWidth: 0 }}>
       <span style={{ font: '400 10.5px/1.3 var(--f-ui)', color: 'var(--tx-sub)' }}>{rotulo}</span>
