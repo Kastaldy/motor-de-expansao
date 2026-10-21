@@ -7,6 +7,7 @@ import {
   mover,
   reajustar,
   redimensionar,
+  topoMinimoSobCabecalho,
   type Ancora,
   type Area,
   type Geometria,
@@ -14,7 +15,8 @@ import {
 import { registrarJanela, removerJanela } from '../lib/ocupacao-janelas'
 import { Z_JANELA_FICHA, Z_JANELA_FICHA_TOPO } from '../lib/camadas-mapa'
 
-/** Onde a janela nasce no eixo Y: abaixo do cabeçalho flutuante do mapa. */
+/** Onde a janela nasce no eixo Y: abaixo do cabeçalho flutuante do mapa. Com o cabeçalho
+ *  quebrado em duas linhas, nasce abaixo dele (`topoMinimo`), nunca embaixo. */
 const TOPO_PADRAO = 88
 
 /**
@@ -60,9 +62,11 @@ function avisarPilha(): void {
   for (const f of ouvintesDaPilha) f()
 }
 /**
- * Abaixo das camadas de 30+ (Metodologia, tooltips do mapa, modais). Ressalva: a lista
- * aberta dos seletores do CABECALHO do mapa fica presa no contexto dele (z 11), e a parte
- * que desce abaixo do cabecalho passa SOB as janelas -- registrado, nao tratado aqui.
+ * Abaixo do CABECALHO do mapa (z 29) e das camadas de 30+ (Metodologia, tooltips do mapa,
+ * modais). O cabecalho subiu acima das janelas em 21/10/2026 (pedido do Vinicius): a lista
+ * aberta dos seletores dele fica presa no contexto do cabecalho, e com o cabecalho no z 11
+ * ela descia SOB as janelas -- trocar de estado ou municipio com uma ficha aberta exigia
+ * fecha-la. Por isso a janela tambem nao sobe alem dele (`topoMinimo`).
  */
 const Z_JANELA = Z_JANELA_FICHA
 const Z_JANELA_TOPO = Z_JANELA_FICHA_TOPO
@@ -171,14 +175,49 @@ export default function JanelaFicha({
     return () => obs.disconnect()
   }, [])
 
+  /* O TOPO MINIMO: a borda de baixo do cabeçalho do mapa (`topoMinimoSobCabecalho`). O
+     cabeçalho fica ACIMA das janelas (`Z_CABECALHO_MAPA`), então a barra de título que
+     subisse por baixo dele ficaria sem alça. Ele é de outro componente (o `MapScreen`; para
+     a ficha de ponto, o irmão na árvore), então é achado pelo DOM — o primeiro ancestral
+     que contém a `barra-ultra`, como o botão "Ver a ficha" já faz — e medido de novo quando
+     muda de altura (é `flex-wrap`: quebra em duas linhas em tela estreita). Sem cabeçalho,
+     0: a trava de sempre, só o topo da área. */
+  const [topoMinimo, setTopoMinimo] = useState(0)
+  useLayoutEffect(() => {
+    const pai = ref.current?.parentElement
+    if (!pai) return
+    let achado: HTMLElement | null = null
+    for (let anc: HTMLElement | null = pai; anc && !achado; anc = anc.parentElement) {
+      achado = anc.querySelector<HTMLElement>('header.barra-ultra')
+    }
+    if (!achado) return
+    const cabecalho = achado
+    const medir = () => {
+      const caixa = pai.getBoundingClientRect()
+      /* A escala do `#root` (transform), lida do próprio contêiner: tela / layout. */
+      const escala = pai.offsetHeight ? caixa.height / pai.offsetHeight : 1
+      setTopoMinimo(topoMinimoSobCabecalho(cabecalho.getBoundingClientRect().bottom, caixa.top, escala))
+    }
+    medir()
+    const obs = typeof ResizeObserver === 'undefined' ? null : new ResizeObserver(medir)
+    obs?.observe(cabecalho)
+    window.addEventListener('resize', medir)
+    return () => {
+      obs?.disconnect()
+      window.removeEventListener('resize', medir)
+    }
+  }, [])
+
   useEffect(() => {
     if (!area.largura || !area.altura) return
-    setGeo((g) => (g ? reajustar(g, area) : g))
-  }, [area])
+    setGeo((g) => (g ? reajustar(g, area, topoMinimo) : g))
+  }, [area, topoMinimo])
 
   const atual =
     geo ??
-    (area.largura ? geometriaPadrao(area, TOPO_PADRAO, recuoInferior, ancora, degrau, larguraInicial) : null)
+    (area.largura
+      ? geometriaPadrao(area, Math.max(TOPO_PADRAO, topoMinimo), recuoInferior, ancora, degrau, larguraInicial)
+      : null)
 
   /** Identidade estável desta instância na pilha de janelas abertas. */
   const idJanela = useRef(Symbol('janela'))
@@ -363,7 +402,8 @@ export default function JanelaFicha({
       }}
     >
       <header
-        onPointerDown={gesto(mover)}
+        /* O arrasto respeita o cabeçalho do mapa (`topoMinimo`): a barra nunca passa por baixo dele. */
+        onPointerDown={gesto((g, dx, dy, a) => mover(g, dx, dy, a, topoMinimo))}
         style={{
           flexShrink: 0,
           display: 'flex',

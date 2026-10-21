@@ -14,8 +14,10 @@ import {
   mover,
   reajustar,
   redimensionar,
+  topoMinimoSobCabecalho,
   type Geometria,
 } from './janela'
+import { FOLGA_ABAIXO_DO_CABECALHO } from './botao-ver-ficha'
 
 const AREA = { largura: 1200, altura: 800 }
 const TOPO = 88
@@ -176,13 +178,60 @@ describe('a ficha de ponto nasce mais estreita (pedido de 20/10/2026)', () => {
     expect(redimensionar(g, -1000, 0, AREA).largura).toBe(LARGURA_MINIMA)
   })
 
+  it('a janela respeita o cabeçalho do mapa (topo mínimo medido)', async () => {
+    const { readFileSync } = await import('node:fs')
+    const { fileURLToPath } = await import('node:url')
+    const fonte = readFileSync(fileURLToPath(new URL('../components/JanelaFicha.tsx', import.meta.url)), 'utf-8')
+    expect(fonte).toContain("anc.querySelector<HTMLElement>('header.barra-ultra')")
+    expect(fonte).toContain('onPointerDown={gesto((g, dx, dy, a) => mover(g, dx, dy, a, topoMinimo))}')
+    expect(fonte).toContain('setGeo((g) => (g ? reajustar(g, area, topoMinimo) : g))')
+  })
+
   it('a ficha de ponto passa a largura dela à janela', async () => {
     const { readFileSync } = await import('node:fs')
     const { fileURLToPath } = await import('node:url')
     const ler = (r: string) => readFileSync(fileURLToPath(new URL(r, import.meta.url)), 'utf-8')
     expect(ler('../screens/PontoScreen.tsx')).toContain('larguraInicial={LARGURA_FICHA_PONTO}')
     expect(ler('../components/JanelaFicha.tsx')).toContain(
-      'geometriaPadrao(area, TOPO_PADRAO, recuoInferior, ancora, degrau, larguraInicial)',
+      'geometriaPadrao(area, Math.max(TOPO_PADRAO, topoMinimo), recuoInferior, ancora, degrau, larguraInicial)',
     )
+  })
+})
+
+/* O cabeçalho do mapa passou a ficar ACIMA das janelas (21/10/2026). Uma barra de título
+   arrastada para baixo dele ficaria sem alça -- e a barra é a única. */
+describe('topo mínimo sob o cabeçalho do mapa', () => {
+  it('é a borda de baixo do cabeçalho, relativa ao contêiner, em px de layout, mais a folga', () => {
+    expect(topoMinimoSobCabecalho(70, 0)).toBe(70 + FOLGA_ABAIXO_DO_CABECALHO)
+    expect(topoMinimoSobCabecalho(170, 100)).toBe(70 + FOLGA_ABAIXO_DO_CABECALHO)
+    // #root encolhido a 85%: 59,5 px de tela são 70 de layout.
+    expect(topoMinimoSobCabecalho(59.5, 0, 0.85)).toBe(70 + FOLGA_ABAIXO_DO_CABECALHO)
+  })
+
+  it('sem cabeçalho medido, 0 -- a trava de sempre', () => {
+    expect(topoMinimoSobCabecalho(null, 0)).toBe(0)
+    expect(topoMinimoSobCabecalho(70, null)).toBe(0)
+    expect(topoMinimoSobCabecalho(Number.NaN, 0)).toBe(0)
+    expect(topoMinimoSobCabecalho(70, 0, 0)).toBe(70 + FOLGA_ABAIXO_DO_CABECALHO)
+  })
+
+  it('o arrasto não sobe a barra de título para baixo do cabeçalho', () => {
+    const g: Geometria = { x: 100, y: 200, largura: 400, altura: 300 }
+    expect(mover(g, 0, -1000, AREA, 120).y).toBe(120)
+    // descer continua livre
+    expect(mover(g, 0, 50, AREA, 120).y).toBe(250)
+    // sem topo mínimo, o de sempre: até 0
+    expect(mover(g, 0, -1000, AREA).y).toBe(0)
+  })
+
+  it('o cabeçalho que quebra em duas linhas empurra a janela já aberta para baixo dele', () => {
+    const g: Geometria = { x: 100, y: 88, largura: 400, altura: 300 }
+    expect(reajustar(g, AREA, 126).y).toBe(126)
+    expect(reajustar(g, AREA, 60).y).toBe(88)
+  })
+
+  it('área menor que o topo mínimo não inverte a trava', () => {
+    const g: Geometria = { x: 0, y: 10, largura: 400, altura: 300 }
+    expect(mover(g, 0, 500, { largura: 1200, altura: 100 }, 120).y).toBe(120)
   })
 })

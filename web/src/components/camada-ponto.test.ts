@@ -29,10 +29,15 @@ function blocoDeEstilo(texto: string, inicio: number): string {
 
 describe('a camada do ponto não cria contexto de empilhamento', () => {
   it('o contêiner de tela inteira (inset 0, sem mouse) NÃO tem zIndex', () => {
-    const conteineres = [...ponto.matchAll(/<div style=\{\{ position: 'absolute', inset: 0[^}]*\}\}>/g)].map((m) => m[0])
+    const conteineres = [...ponto.matchAll(/<div style=\{\{ position: 'absolute', inset: 0[^}]*\}\}[^>]*>/g)].map((m) => m[0])
     const camada = conteineres.filter((c) => c.includes("pointerEvents: 'none'"))
     expect(camada, 'o contêiner da camada do ponto sumiu ou mudou de forma').toHaveLength(1)
     expect(camada[0], 'com zIndex, a pilha da JanelaFicha deixa de valer entre ponto e mapa').not.toMatch(/zIndex/)
+  })
+
+  it('a medida do cabeçalho sai da CAMADA, então vale também sem o botão "Ver a ficha"', () => {
+    expect(ponto).toContain("<div style={{ position: 'absolute', inset: 0, pointerEvents: 'none' }} ref={setCamadaEl}>")
+    expect(ponto).toContain('}, [camadaEl])')
   })
 
   it('o hero da tela vazia continua cobrindo a tela de propósito', () => {
@@ -41,9 +46,10 @@ describe('a camada do ponto não cria contexto de empilhamento', () => {
 
   it('as peças soltas sobem por conta própria (senão cairiam sob o corpo do mapa, z 10)', () => {
     const coluna = blocoDeEstilo(ponto, ponto.indexOf('Caixa de colar'))
-    expect(coluna).toContain('top: 88')
+    // Abaixo do cabeçalho MEDIDO, nunca por baixo dele (o cabeçalho é z 29, acima destas).
+    expect(coluna).toContain('top: Math.max(TOPO_BOTAO_PADRAO, topoBotaoFicha)')
     expect(coluna).toContain('zIndex: Z_FLUTUANTE_PONTO')
-    const botao = blocoDeEstilo(ponto, ponto.indexOf('ref={setBotaoFichaEl}'))
+    const botao = blocoDeEstilo(ponto, ponto.indexOf('A ÚNICA opção que puxa a janela'))
     expect(botao).toContain('top: topoBotaoFicha')
     expect(botao).toContain('zIndex: Z_FLUTUANTE_PONTO')
   })

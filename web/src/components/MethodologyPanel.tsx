@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 
 import { api } from '../lib/api'
+import { Z_GAVETA_METODOLOGIA } from '../lib/camadas-mapa'
 import type { CamadaMetodologia, MetodologiaPayload, MetricaMetodologia } from '../lib/types'
 import { Chip, Eyebrow, Spinner } from './primitives'
 
@@ -353,7 +354,8 @@ export default function MethodologyPanel({
         right: 0,
         bottom: 0,
         width: 'min(430px, 100vw)',
-        zIndex: 30,
+        /* Acima do cabeçalho do mapa (29): a gaveta cobre o chrome pela direita. */
+        zIndex: Z_GAVETA_METODOLOGIA,
         display: 'flex',
         flexDirection: 'column',
         background: 'var(--surf-chrome)',

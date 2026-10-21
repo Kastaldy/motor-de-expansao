@@ -187,6 +187,10 @@ export default function App() {
   // Começa SEM estado: o app abre na porta de entrada (escolha de UF).
   const [uf, setUf] = useState('')
   const [municipios, setMunicipios] = useState<MunicipioItem[]>([])
+  /* De que UF é a lista acima. Logo depois de uma troca de estado ela ainda é a do estado
+     ANTERIOR até a nova chegar; o mapa precisa saber disso para achar o município de uma
+     unidade escolhida (`lib/territorio-unidade`) na lista certa. */
+  const [municipiosUf, setMunicipiosUf] = useState('')
   // Vazio = visão da UF inteira; preenchido = drill-down no município.
   const [municipio, setMunicipio] = useState('')
 
@@ -446,13 +450,17 @@ export default function App() {
   useEffect(() => {
     if (!uf) {
       setMunicipios([])
+      setMunicipiosUf('')
       return
     }
     let vivo = true
     api
       .municipios(uf)
       .then((r) => {
-        if (vivo) setMunicipios(r.municipios)
+        if (vivo) {
+          setMunicipios(r.municipios)
+          setMunicipiosUf(r.uf ?? uf)
+        }
       })
       .catch(() => {
         /* o seletor de município degrada gracioso */
@@ -690,6 +698,7 @@ export default function App() {
               uf={uf}
               onUf={aoTrocarUf}
               municipios={municipios}
+              municipiosUf={municipiosUf}
               municipio={municipio}
               /* Trocar de municipio A MAO (ou clicar em "Todos os municipios") descarta o
                  hexagono que a lista tinha escolhido E tira do ponto ativo o comando da

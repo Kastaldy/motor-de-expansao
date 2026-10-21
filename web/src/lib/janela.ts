@@ -8,6 +8,8 @@
  * só casa `src/**\/*.test.ts`, então regra em `.tsx` é regra sem teste.
  */
 
+import { FOLGA_ABAIXO_DO_CABECALHO } from './botao-ver-ficha'
+
 export interface Geometria {
   x: number
   y: number
@@ -98,6 +100,32 @@ export function geometriaPadrao(
   return { x, y, largura, altura }
 }
 
+/**
+ * O TOPO MINIMO da janela: a borda de baixo do cabecalho do mapa, mais a folga de sempre.
+ *
+ * Existe desde que o cabecalho passou a ficar ACIMA das janelas (`Z_CABECALHO_MAPA`, pedido
+ * do Vinicius, 21/10/2026: as janelas cobriam os seletores de UF e municipio). Por cima, o
+ * cabecalho esconderia a barra de titulo de uma janela arrastada ate' o topo -- e a barra e'
+ * a UNICA alca, entao a janela ficaria sem volta. O cabecalho e' `flex-wrap` e ocupa a
+ * largura inteira: nao ha' por onde pegar a barra por baixo dele. Por isso a janela nunca
+ * sobe alem desta linha, nem ao nascer, nem ao arrastar, nem quando o cabecalho quebra em
+ * duas linhas com ela ja' aberta.
+ *
+ * Mesma regua do botao "Ver a ficha" (`lib/botao-ver-ficha`): os retangulos medidos estao
+ * em px de TELA e o `top` em px de LAYOUT -- o `#root` e' encolhido por `--escala-app`.
+ * Sem cabecalho medido (ou medida invalida) devolve 0: a trava antiga, so' o topo da area.
+ */
+export function topoMinimoSobCabecalho(
+  fundoCabecalho: number | null,
+  topoContainer: number | null,
+  escala = 1,
+): number {
+  if (fundoCabecalho == null || topoContainer == null) return 0
+  if (!Number.isFinite(fundoCabecalho) || !Number.isFinite(topoContainer)) return 0
+  const e = Number.isFinite(escala) && escala > 0 ? escala : 1
+  return Math.max(0, Math.round((fundoCabecalho - topoContainer) / e + FOLGA_ABAIXO_DO_CABECALHO))
+}
+
 /** Prende um valor entre dois limites. `max < min` devolve `min` — área minúscula não inverte a trava. */
 function preso(valor: number, min: number, max: number): number {
   return Math.max(min, Math.min(valor, Math.max(min, max)))
@@ -110,11 +138,19 @@ function preso(valor: number, min: number, max: number): number {
  * legítimo (libera o mapa) desde que sobre alça para trazê-la de volta. Já o Y nunca é
  * negativo — barra de título acima do topo é barra de título perdida.
  */
-export function mover(geo: Geometria, dx: number, dy: number, area: Area): Geometria {
+export function mover(
+  geo: Geometria,
+  dx: number,
+  dy: number,
+  area: Area,
+  /** a borda de baixo do cabecalho do mapa (`topoMinimoSobCabecalho`); 0 = sem cabecalho */
+  topoMinimo = 0,
+): Geometria {
+  const piso = Math.max(0, topoMinimo)
   return {
     ...geo,
     x: preso(geo.x + dx, VISIVEL_MINIMO - geo.largura, area.largura - VISIVEL_MINIMO),
-    y: preso(geo.y + dy, 0, Math.max(0, area.altura - ALTURA_CABECALHO)),
+    y: preso(geo.y + dy, piso, Math.max(piso, area.altura - ALTURA_CABECALHO)),
   }
 }
 
@@ -141,8 +177,8 @@ export function redimensionar(geo: Geometria, dx: number, dy: number, area: Area
  * Sem isto, encolher a janela do navegador deixa a ficha inteira fora da tela e sem volta
  * — o estado dela é absoluto, não relativo.
  */
-export function reajustar(geo: Geometria, area: Area): Geometria {
+export function reajustar(geo: Geometria, area: Area, topoMinimo = 0): Geometria {
   const largura = preso(geo.largura, LARGURA_MINIMA, Math.max(LARGURA_MINIMA, area.largura))
   const altura = preso(geo.altura, ALTURA_MINIMA, Math.max(ALTURA_MINIMA, area.altura))
-  return mover({ ...geo, largura, altura }, 0, 0, area)
+  return mover({ ...geo, largura, altura }, 0, 0, area, topoMinimo)
 }

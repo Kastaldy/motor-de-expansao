@@ -249,15 +249,20 @@ export default function PontoScreen({
   /* Topo do botão "Ver a ficha": logo abaixo do cabeçalho do mapa, MEDIDO — o cabeçalho
      é `flex-wrap` e quebra em duas linhas em tela estreita (regra em `lib/botao-ver-ficha`).
      O cabeçalho é do `MapScreen` (irmão desta tela na árvore), então ele é achado pelo DOM:
-     sobe-se pelos ancestrais do botão até o primeiro que contém a `barra-ultra`. */
-  const [botaoFichaEl, setBotaoFichaEl] = useState<HTMLDivElement | null>(null)
+     sobe-se pelos ancestrais da camada até o primeiro que contém a `barra-ultra`.
+
+     Medido a partir da CAMADA (o contêiner de tela inteira), e não do botão, desde
+     21/10/2026: a caixa de colar usa a mesma medida, e ela existe sem o botão. Com o
+     cabeçalho ACIMA das peças soltas (`Z_CABECALHO_MAPA` 29 > `Z_FLUTUANTE_PONTO` 28), a
+     caixa no `top: 88` fixo ficava com o topo escondido sob o cabeçalho de duas linhas. O
+     contêiner é o mesmo `offsetParent` do botão, então a régua não muda. */
+  const [camadaEl, setCamadaEl] = useState<HTMLDivElement | null>(null)
   const [topoBotaoFicha, setTopoBotaoFicha] = useState(TOPO_BOTAO_PADRAO)
   useLayoutEffect(() => {
-    const el = botaoFichaEl
-    if (!el) return
-    const pai = el.offsetParent as HTMLElement | null
+    const pai = camadaEl
+    if (!pai) return
     let cabecalho: HTMLElement | null = null
-    for (let anc = el.parentElement; anc && !cabecalho; anc = anc.parentElement) {
+    for (let anc = pai.parentElement; anc && !cabecalho; anc = anc.parentElement) {
       cabecalho = anc.querySelector<HTMLElement>('header.barra-ultra')
     }
     const medir = () => {
@@ -280,7 +285,7 @@ export default function PontoScreen({
       obs?.disconnect()
       window.removeEventListener('resize', medir)
     }
-  }, [botaoFichaEl])
+  }, [camadaEl])
 
   const ficha = fichas[aberto] ?? null
   /* Os mesmos rótulos que o painel de abas usa — desambiguados entre si ("Centro #1",
@@ -525,7 +530,7 @@ export default function PontoScreen({
        gerenciador de janelas: a aberta ou clicada por último fica por cima. As peças soltas
        (caixa de colar, espera, erro, botão "Ver a ficha") levam `Z_FLUTUANTE_PONTO` cada
        uma, para não caírem sob o corpo do mapa (z 10). */
-    <div style={{ position: 'absolute', inset: 0, pointerEvents: 'none' }}>
+    <div style={{ position: 'absolute', inset: 0, pointerEvents: 'none' }} ref={setCamadaEl}>
       {/* ---------------- Caixa de colar ----------------
           Abaixo do cabeçalho do Explorar, que continua sendo o de lá. NÃO há cabeçalho
           próprio: era justamente ele — "Análise de ponto" com botão de início repetido —
@@ -533,7 +538,9 @@ export default function PontoScreen({
       <div
         style={{
           position: 'absolute',
-          top: 88,
+          /* Abaixo do cabeçalho, MEDIDO (ver `camadaEl`): 88 com ele numa linha, mais
+             quando ele quebra em duas — nunca por baixo dele. */
+          top: Math.max(TOPO_BOTAO_PADRAO, topoBotaoFicha),
           left: 16,
           right: 16,
           zIndex: Z_FLUTUANTE_PONTO,
@@ -655,7 +662,6 @@ export default function PontoScreen({
           da direita; e no pé da esquerda cobriria o trilho. O topo é medido do cabeçalho. */}
       {ficha && !janela && (
         <div
-          ref={setBotaoFichaEl}
           style={{
             position: 'absolute',
             left: 16,
