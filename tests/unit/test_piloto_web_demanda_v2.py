@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import io
 import json
+import re
 import sys
 import warnings
 from io import BytesIO
@@ -234,8 +235,14 @@ def test_planilha_v2_mostra_faturamento_fixo_e_r_aluno_como_formulas(coef, tmp_p
     assert rot["FIXO: faturamento com 0 alunos"][1].startswith("=Premissas!")
     assert rot["R_ALUNO: faturamento de cada aluno a mais"][1].startswith("=Premissas!")
     assert str(rot["Alunos que o faturamento p50 sustenta"][1]).startswith("=MAX(")
-    assert "Sugerida pela Viabilidade v2" in str(wb["Premissas"].cell(
+    assert "Sugerida pelo modelo de praça" in str(wb["Premissas"].cell(
         row=rot["Demanda total (alunos na maturidade)"][0], column=4).value)
+    # Produto unico (emenda da DEC-077, 21/10/2026): nenhuma celula de TEXTO da planilha
+    # fala em versao nem em faixa provisoria. Identificadores (nomes definidos `v2_*`) e
+    # formulas nao sao texto de usuario.
+    textos = [c.value for aba in wb.worksheets for linha in aba.iter_rows() for c in linha
+              if isinstance(c.value, str) and not c.value.startswith("=")]
+    assert [t for t in textos if re.search(r"\bv2\b|provis[óo]ri", t, re.I)] == []
     # Recalculo REAL (pacote `formulas`): as formulas da planilha batem com a conversao do motor.
     formulas = pytest.importorskip("formulas")
     caminho = tmp_path / "v2.xlsx"
@@ -278,8 +285,11 @@ def _texto_pdf(payload) -> str:
 def test_pdf_v2_carimba_a_origem_da_demanda(coef, tmp_path):
     payload = montar_payload_para_pdf(_corpo_v2(_sugestao(coef)), staging_dir=tmp_path)
     texto = _texto_pdf(payload)
-    assert "Demanda: sugerida pela v2 (faixa provisória)." in texto
+    assert "Demanda: sugerida pelo modelo de praça." in " ".join(texto.split())
     assert "PREMISSA do operador" not in texto
+    # produto unico (emenda de 21/10/2026): sem "v2" e sem aviso de faixa provisoria
+    assert not re.search(r"\bv2\b", texto, re.I)
+    assert "provisória" not in texto.lower()
 
 
 def test_pdf_densidade_mantem_a_frase_de_sempre(tmp_path):
@@ -298,8 +308,15 @@ def test_linha_do_pdf_e_latin1_sem_pontuacao_tipografica():
     }
     linha = _viab_linha_demanda_v2(dados)
     assert linha is not None
-    assert "editada pelo operador (a v2 sugeriu 2.100 alunos" in linha
-    assert "extrapolação" in linha and "Rampa reta forçada" in linha
+    assert "editada pelo operador (o modelo de praça sugeriu 2.100 alunos)" in linha
+    assert "extrapolação" in linha
+    # a reta nao e' mais forcada sem agregador; e nada de versao nem de "provisória"
+    assert "reta" not in linha.lower()
+    assert not re.search(r"\bv2\b|provis", linha, re.I)
+    for aviso in ("nao_reconhecida", "indisponivel"):
+        texto = _viab_linha_demanda_v2({"demanda_v2_aviso": aviso})
+        assert texto is not None and not re.search(r"\bv2\b", texto, re.I)
+        texto.encode("latin-1")
     linha.encode("latin-1")
     assert not any(c in linha for c in "—–•→…−“”")
 

@@ -1,106 +1,102 @@
 /* ---------------------------------------------------------------------------
-   Viabilidade: a FORMA da rampa de alunos (DEC-077).
+   Viabilidade: a rampa de alunos (DEC-077, emenda de 21/10/2026).
 
-   Duas formas, calculadas SÓ no motor (`dimensionamento/simulador.py`):
-   - `reta`: a rampa histórica da planilha, dos alunos iniciais até a demanda em N meses
-     (o controle de meses só vale aqui);
-   - `curva_uni03`: a curva OBSERVADA na rede pelo BLK-UNI-03 — o mês t tem uma fração da
-     demanda madura (68% no mês 1, 100% a partir do mês 10).
+   A tela tem UMA forma de rampa: a curva OBSERVADA nas unidades da rede (BLK-UNI-03) —
+   o mês t tem uma fração da demanda madura, até 100% no PICO DE MATURAÇÃO. O operador
+   escolhe o pico (o mês em que a unidade chega à demanda madura); o MOTOR reescala a
+   mesma forma observada no tempo (`dimensionamento/simulador.py::curva_rampa_com_pico`).
+   A tela não calcula a curva: lê o que o payload devolveu.
 
-   QUAL é o padrão NÃO mora aqui: é do servidor (`SIM_FORMA_RAMPA_PADRAO`, hoje a reta,
-   porque a curva só é padrão com a demanda da Viabilidade v2 — decisão do dono de
-   2026-10-20). Esta tela só manda `forma_rampa` quando o operador escolhe; sem escolha,
-   mostra a forma que o payload devolveu. Assim uma constante do servidor reverte tudo.
+   QUAL é o padrão NÃO mora aqui: a forma (`SIM_FORMA_RAMPA_PADRAO`) e o pico observado
+   (`SIM_MES_PICO_RAMPA_PADRAO`) são do servidor. Esta tela só manda `mes_pico_rampa`
+   quando o operador escolhe; sem escolha, o seletor mostra o pico que o payload devolveu.
+   As OPÇÕES do seletor espelham `SIM_MESES_PICO_RAMPA` (o servidor recusa outras com 422).
 
    Os identificadores são os do contrato (sem acento); os rótulos são texto de usuário.
    --------------------------------------------------------------------------- */
 
-export const FORMAS_RAMPA = ['curva_uni03', 'reta'] as const
-export type FormaRampa = (typeof FORMAS_RAMPA)[number]
-
-export const ROTULO_FORMA_RAMPA: Record<FormaRampa, string> = {
-  curva_uni03: 'Curva observada',
-  reta: 'Reta',
-}
+/** Opções do pico de maturação, em meses (espelho de `SIM_MESES_PICO_RAMPA`). */
+export const MESES_PICO_RAMPA = [6, 8, 10, 12, 15, 18, 24] as const
+export type MesPicoRampa = (typeof MESES_PICO_RAMPA)[number]
 
 /** Campos do payload que esta lib lê (subconjunto de `PremissasViabilidade`). */
 export interface PremissasRampa {
   maturacao_meses: number
   forma_rampa?: string | null
   mes_maturidade_rampa?: number | null
+  mes_pico_rampa?: number | null
 }
 
-/** Forma servida pelo payload; ausente (backend anterior à DEC-077) = reta. */
-export function formaDoPayload(p: PremissasRampa | null | undefined): FormaRampa {
+/** Forma servida pelo payload; ausente (backend anterior à DEC-077) = a rampa linear. */
+export function formaDoPayload(p: PremissasRampa | null | undefined): 'curva_uni03' | 'reta' {
   return p?.forma_rampa === 'curva_uni03' ? 'curva_uni03' : 'reta'
 }
 
+/** Rótulo de uma opção do seletor. */
+export function rotuloPico(meses: number): string {
+  return `${meses} meses`
+}
+
 /**
- * Forma que o seletor mostra: a ESCOLHIDA pelo operador ou, sem escolha, a que o
- * servidor usou no último cálculo. Antes de qualquer cálculo, `null` (nenhuma marcada):
- * a tela não adivinha o padrão do servidor.
+ * Pico que o seletor marca: o ESCOLHIDO pelo operador ou, sem escolha, o que o servidor
+ * usou no último cálculo. Antes de qualquer cálculo (ou com o servidor na rampa linear),
+ * `null`: a tela não adivinha o padrão do servidor.
  */
-export function formaExibida(
-  escolhida: FormaRampa | null,
+export function picoExibido(
+  escolhido: MesPicoRampa | null,
   p: PremissasRampa | null | undefined,
-): FormaRampa | null {
-  if (escolhida) return escolhida
-  return p ? formaDoPayload(p) : null
+): number | null {
+  if (escolhido != null) return escolhido
+  if (!p || formaDoPayload(p) !== 'curva_uni03') return null
+  const m = p.mes_pico_rampa ?? p.mes_maturidade_rampa
+  return m != null && Number.isFinite(m) && m > 0 ? Math.round(m) : null
 }
 
 /**
  * O que vai no corpo do pedido: SÓ a escolha explícita. Sem escolha a chave some do JSON
- * e o servidor aplica o padrão dele — é isso que torna a constante do servidor a única.
+ * e o servidor aplica o pico observado — é isso que deixa o padrão com uma fonte só.
  */
-export function formaParaEnviar(escolhida: FormaRampa | null): FormaRampa | undefined {
-  return escolhida ?? undefined
-}
-
-/**
- * O controle de meses só faz sentido na reta (na curva o motor o ignora). Sem forma
- * conhecida (antes do 1º cálculo) ele aparece: é o controle que vale no padrão de hoje.
- */
-export function usaMesesDeRampa(forma: FormaRampa | null): boolean {
-  return forma !== 'curva_uni03'
+export function picoParaEnviar(escolhido: MesPicoRampa | null): MesPicoRampa | undefined {
+  return escolhido ?? undefined
 }
 
 const RECALCULE = 'Recalcule para atualizar o payback.'
 
 /**
- * Texto de ajuda sob o controle, conforme a forma mostrada. Trocar a forma NÃO recalcula
- * sozinho (como os meses da rampa e os outros campos da barra lateral): o texto diz isso.
- * Os percentuais da curva saem de `curva_rampa` do payload (quando já houve cálculo) — a
- * tela não crava número do motor.
+ * Texto de ajuda sob o seletor. Escolher o pico NÃO recalcula sozinho (como os outros
+ * campos da barra lateral): o texto diz isso. Os percentuais saem de `curva_rampa` do
+ * payload (quando já houve cálculo) — a tela não crava número do motor.
  */
-export function ajudaDaRampa(forma: FormaRampa | null, curva?: readonly number[] | null): string {
-  if (forma === null) {
+export function ajudaDaRampa(
+  p: (PremissasRampa & { curva_rampa?: readonly number[] | null }) | null | undefined,
+): string {
+  const base =
+    'Curva observada nas unidades da rede. O pico de maturação é o mês em que a unidade ' +
+    'chega à demanda madura: o padrão é o pico observado; outro pico estica ou encurta a ' +
+    'mesma curva.'
+  if (p && formaDoPayload(p) !== 'curva_uni03') {
     return (
-      'Curva observada nas unidades da rede ou reta dos alunos iniciais até a demanda. ' +
-      RECALCULE
+      `O servidor está usando a rampa linear de ${p.maturacao_meses} meses, e o pico de ` +
+      `maturação só vale na curva observada. ${RECALCULE}`
     )
   }
-  if (forma === 'reta') {
-    return (
-      'Reta dos alunos iniciais até a demanda no número de meses escolhido ' +
-      '(Simulador E13, padrão 8). Alonga a curva de maturação e o fluxo de caixa; ' +
-      'recalcule para atualizar o payback.'
-    )
+  const curva = p?.curva_rampa
+  let numeros = ''
+  if (curva && curva.length > 0) {
+    const fim = curva.findIndex((f) => f >= 1)
+    numeros =
+      ` No último cálculo: ${Math.round(curva[0] * 100)}% da demanda no mês 1` +
+      (fim >= 0 ? ` e 100% a partir do mês ${fim + 1}.` : '.')
   }
-  const fim = curva ? curva.findIndex((f) => f >= 1) : -1
-  const numeros =
-    curva && curva.length > 0
-      ? ` ${Math.round(curva[0] * 100)}% da demanda no mês 1` +
-        (fim >= 0 ? ` e 100% a partir do mês ${fim + 1}.` : '.')
-      : ''
   return (
-    `Curva medida nas unidades da rede (BLK-UNI-03).${numeros} Foi medida em unidades ` +
-    `que abriram com agregador: sem agregador, tende a ser otimista. ${RECALCULE}`
+    `${base}${numeros} Foi medida em unidades que abriram com agregador: sem agregador, ` +
+    `tende a ser otimista. ${RECALCULE}`
   )
 }
 
 /**
  * Mês em que a rampa de fato termina. Lê `mes_maturidade_rampa` (servido pelo motor);
- * backend anterior à DEC-077 não o manda, e lá a rampa era sempre a reta de
+ * backend anterior à DEC-077 não o manda, e lá a rampa era sempre a linear de
  * `maturacao_meses` — o fallback reproduz exatamente aquilo.
  */
 export function mesFimDaRampa(p: PremissasRampa | null | undefined): number | null {
@@ -114,11 +110,11 @@ export function notaDaRampa(p: PremissasRampa): string {
   const fim = mesFimDaRampa(p)
   if (formaDoPayload(p) === 'curva_uni03') {
     return (
-      `Curva observada na rede (BLK-UNI-03, DEC-077): cada mês tem uma fração da ` +
-      `demanda madura, até a demanda cheia no mês ${fim ?? '?'}. O faturamento segue ` +
-      'alunos × ticket: o ticket menor dos primeiros meses (promoções) não é modelado, ' +
-      'e por isso o caixa do 1º ano tende a sair otimista. Afeta o caixa e o payback, ' +
-      'não a margem de steady-state.'
+      'Curva observada nas unidades da rede: cada mês tem uma fração da demanda madura, ' +
+      `até a demanda cheia no pico de maturação, mês ${fim ?? '?'}. Outro pico reescala a ` +
+      'mesma curva no tempo. O faturamento segue alunos × ticket: o ticket menor dos ' +
+      'primeiros meses (promoções) não é modelado, e por isso o caixa do 1º ano tende a ' +
+      'sair otimista. Afeta o caixa e o payback, não a margem de steady-state.'
     )
   }
   return (
@@ -128,18 +124,18 @@ export function notaDaRampa(p: PremissasRampa): string {
 }
 
 /**
- * Como a nota da FOLHA descreve o mês 1. Na reta o mês 1 parte dos alunos iniciais (a
- * "casa vazia" de sempre); na curva observada ele já abre com 68% da demanda, e dizer
- * "casa vazia" seria falso.
+ * Como a nota da FOLHA descreve o mês 1. Na rampa linear o mês 1 parte dos alunos
+ * iniciais (a "casa vazia" de sempre); na curva observada ele já abre com boa parte da
+ * demanda, e dizer "casa vazia" seria falso.
  */
 export function casaNoMes1(p: PremissasRampa): string {
   return formaDoPayload(p) === 'curva_uni03' ? 'com a casa ainda enchendo' : 'com a casa vazia'
 }
 
 /**
- * Como a nota do EBITDA descreve os primeiros meses. Na reta o EBITDA deles é bem
- * negativo (texto de antes da DEC-077, intacto); na curva o mês 1 pode já ser positivo
- * (+R$ 37 mil no caso de referência), então a frase não afirma o sinal.
+ * Como a nota do EBITDA descreve os primeiros meses. Na rampa linear o EBITDA deles é bem
+ * negativo; na curva o mês 1 pode já ser positivo (+R$ 37 mil no caso de referência),
+ * então a frase não afirma o sinal.
  */
 export function ebitdaDosPrimeirosMeses(p: PremissasRampa): string {
   return formaDoPayload(p) === 'curva_uni03'

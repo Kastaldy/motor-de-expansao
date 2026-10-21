@@ -7880,6 +7880,11 @@ def demanda_v2_estado() -> dict[str, Any]:
     return _viab_v2.estado_v2(rotas_configuradas())
 
 
+# Texto de usuario das 503 da sugestao (emenda da DEC-077, 21/10/2026): a Viabilidade e'
+# UM produto, sem rotulo de versao — fala-se do "modelo de praça" que sugere a demanda.
+_MOTIVO_SUGESTAO_INDISPONIVEL = "A sugestão de demanda pelo modelo de praça está indisponível: "
+
+
 def _entradas_c10_do_ponto(lat: float, lng: float) -> tuple[Any, dict[str, Any]]:
     """Isócrona de 10 min de carro + setores alcançados -> entradas c10. 503/400 em português.
 
@@ -7908,11 +7913,11 @@ def _entradas_c10_do_ponto(lat: float, lng: float) -> tuple[Any, dict[str, Any]]
         iso = isocrona_carro(lat, lng, V2_MINUTOS_ISOCRONA)
     except RotasIndisponiveis as exc:
         _LOG_ALCANCE.warning("v2: rotas indisponiveis: %s", exc.detalhe, exc_info=True)
-        raise HTTPException(503, "A Viabilidade v2 está indisponível: " + str(exc)) from exc
+        raise HTTPException(503, _MOTIVO_SUGESTAO_INDISPONIVEL + str(exc)) from exc
     except AlcanceInvalido as exc:
         raise HTTPException(
             400,
-            "A Viabilidade v2 não pôde montar a área de 10 min de carro deste ponto. "
+            "O modelo de praça não pôde montar a área de 10 min de carro deste ponto. "
             "Informe a demanda.",
         ) from exc
     cfg = Settings(
@@ -7927,10 +7932,10 @@ def _entradas_c10_do_ponto(lat: float, lng: float) -> tuple[Any, dict[str, Any]]
         entradas = agregar_entradas_c10(setores, iso.geometria, lat, lng)
     except APIError as exc:
         raise HTTPException(
-            503, "A Viabilidade v2 está indisponível: malha de setores ausente para este ponto."
+            503, _MOTIVO_SUGESTAO_INDISPONIVEL + "malha de setores ausente para este ponto."
         ) from exc
     except EntradasC10Indisponiveis as exc:
-        raise HTTPException(503, f"A Viabilidade v2 está indisponível: {exc}") from exc
+        raise HTTPException(503, f"{_MOTIVO_SUGESTAO_INDISPONIVEL}{exc}") from exc
     recorte = {
         "minutos": int(V2_MINUTOS_ISOCRONA),
         "area_km2": _num(iso.area_km2, 2),
@@ -12300,9 +12305,7 @@ def _gerar_simulador_xlsx_response(
     bloco_v2: dict[str, Any] | None = None
     if _viab.modo_v2(body):
         try:
-            bloco_v2 = _viab_v2.conferir_demanda_v2(
-                body, premissas, rampa_reta_forcada=_viab.forma_rampa_do_body(body)[1]
-            ).bloco
+            bloco_v2 = _viab_v2.conferir_demanda_v2(body, premissas).bloco
         except _viab_v2.V2Indisponivel as exc:
             raise HTTPException(503, str(exc)) from exc
         except _viab_v2.TokenV2Invalido as exc:

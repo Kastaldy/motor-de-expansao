@@ -41,21 +41,23 @@ from motor_expansao.dimensionamento.demanda_v2 import (
     validar_coeficientes,
 )
 
-# Motivos (texto de usuario: acentuado).
-MOTIVO_DESLIGADA = "A Viabilidade v2 está desligada neste servidor."
+# Motivos (texto de usuario: acentuado). A Viabilidade e' UM produto (emenda da DEC-077,
+# 21/10/2026): o texto fala do "modelo de praça" que sugere a demanda, nunca de versao.
+MOTIVO_DESLIGADA = "A sugestão de demanda pelo modelo de praça está desligada neste servidor."
 MOTIVO_SEM_COEFICIENTES = (
-    "A Viabilidade v2 ainda não tem coeficientes instalados neste servidor "
-    "(aguardando a exportação da ficha técnica)."
+    "A sugestão de demanda pelo modelo de praça ainda não tem coeficientes instalados "
+    "neste servidor (aguardando a exportação da ficha técnica)."
 )
-MOTIVO_COEFICIENTES_INVALIDOS = "Os coeficientes da Viabilidade v2 são inválidos: {erro}"
+MOTIVO_COEFICIENTES_INVALIDOS = "Os coeficientes do modelo de praça são inválidos: {erro}"
 MOTIVO_SEM_ROTAS = (
-    "A Viabilidade v2 precisa do cálculo de 10 min de carro, que não está configurado "
-    "neste servidor."
+    "A sugestão de demanda pelo modelo de praça precisa do cálculo de 10 min de carro, "
+    "que não está configurado neste servidor."
 )
 MSG_TOKEN_NAO_CONFERE = (
-    "A sugestão da Viabilidade v2 não confere com o ponto, a metragem, os estúdios ou os "
+    "A sugestão do modelo de praça não confere com o ponto, a metragem, os estúdios ou os "
     "coeficientes atuais. Peça uma nova sugestão antes de calcular."
 )
+MOTIVO_NAO_SE_APLICA = "O modelo de praça não se aplica a este ponto: {erro}"
 
 _DESLIGADA = frozenset({"0", "false", "nao", "não", "off", "no"})
 
@@ -279,7 +281,7 @@ def montar_sugestao_v2(
             entradas, coef, _premissas_da_sugestao(body), lat=body.lat, lng=body.lng
         )
     except EntradasInvalidas as exc:
-        raise V2Indisponivel(f"A Viabilidade v2 não se aplica a este ponto: {exc}") from exc
+        raise V2Indisponivel(MOTIVO_NAO_SE_APLICA.format(erro=exc)) from exc
     return {**bloco, **(extras or {})}
 
 
@@ -299,7 +301,7 @@ def conferir_demanda_v2(
     body: Any,
     premissas: Any,
     *,
-    rampa_reta_forcada: bool,
+    rampa_reta_forcada: bool = False,
     carregar: Callable[[], CoeficientesV2] = carregar_coeficientes,
 ) -> DemandaV2Conferida:
     """Bloco `demanda_v2` da Viabilidade em modo v2. SEM chamada externa.

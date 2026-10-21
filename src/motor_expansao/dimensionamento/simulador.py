@@ -111,6 +111,54 @@ IR_MODO_EFETIVO = "efetivo_legado"   # aliquotas efetivas sobre a receita liquid
 
 
 # ---------------------------------------------------------------------------
+# Curva da rampa com PICO de maturacao (emenda da DEC-077, 21/10/2026)
+# ---------------------------------------------------------------------------
+
+
+def _primeiro_mes_cheio(curva: tuple[float, ...]) -> int:
+    """Primeiro mes (1-based) com fracao >= 1; o seguinte ao ultimo se nenhum."""
+    return next((i for i, f in enumerate(curva, start=1) if f >= 1.0), len(curva) + 1)
+
+
+def curva_rampa_com_pico(
+    mes_pico: int, curva: tuple[float, ...] = SIM_CURVA_RAMPA_UNI03
+) -> tuple[float, ...]:
+    """A MESMA forma observada, reescalada no tempo para fechar em `mes_pico`.
+
+    `p` = mes de pico da curva base (primeiro com 100%; 10 na UNI-03). Para o mes de
+    operacao `t`, `s = t x p / mes_pico` e a fracao e' a curva base em `s`, interpolada
+    linearmente entre os meses observados; `s <= 1` -> a fracao do mes 1, `s >= p` -> 1,0.
+    A saida tem `mes_pico + (len(curva) - p)` meses (os mesmos meses cheios de cauda da
+    base), arredondada a 6 casas — monotonica porque a base e o arredondamento o sao, e o
+    primeiro mes com 100% e' `mes_pico` (o fim da rampa do motor).
+
+    `mes_pico == p` devolve a curva base INTACTA (o mesmo objeto): pico 10 e' a curva de
+    antes, byte a byte.
+    """
+    mes_pico = int(mes_pico)
+    if mes_pico < 1:
+        raise ValueError(f"mes_pico tem de ser >= 1 (veio {mes_pico})")
+    base = tuple(float(f) for f in curva)
+    p = _primeiro_mes_cheio(base)
+    if p > len(base):
+        raise ValueError("curva base sem mes com 100%: nao ha pico para reescalar")
+    if mes_pico == p:
+        return curva
+    saida: list[float] = []
+    for t in range(1, mes_pico + (len(base) - p) + 1):
+        s = t * p / mes_pico
+        if s <= 1.0:
+            f = base[0]
+        elif s >= p:
+            f = 1.0
+        else:
+            k = int(s)  # mes observado logo abaixo (1..p-1); base[k-1] e' o mes k
+            f = base[k - 1] + (base[k] - base[k - 1]) * (s - k)
+        saida.append(round(f, 6))
+    return tuple(saida)
+
+
+# ---------------------------------------------------------------------------
 # Premissas
 # ---------------------------------------------------------------------------
 
@@ -210,10 +258,12 @@ class Premissas:
     rampa_apenas_balcao: bool = False
 
     # FORMA da rampa (DEC-077). "reta" (default DO NUCLEO, que preserva o motor antigo byte
-    # a byte): `alunos_inicial` no mes 1 ate a demanda em `maturacao_meses`. "curva_uni03":
-    # alunos(t) = demanda x `curva_rampa[t-1]` nos meses 1..len(curva) e a demanda cheia
-    # depois — `alunos_inicial` e `maturacao_meses` NAO entram. O default do PRODUTO (tela,
-    # PDF, API) sai do payload (`forma_rampa_padrao()`): reta com a demanda do operador.
+    # a byte para os adaptadores historicos e o golden do FIN-VIAB-01): `alunos_inicial` no
+    # mes 1 ate a demanda em `maturacao_meses`. "curva_uni03": alunos(t) = demanda x
+    # `curva_rampa[t-1]` nos meses 1..len(curva) e a demanda cheia depois —
+    # `alunos_inicial` e `maturacao_meses` NAO entram. O default do PRODUTO (tela, PDF, API,
+    # planilha da rota) sai do payload (`forma_rampa_padrao()`): a CURVA desde a emenda de
+    # 21/10/2026, com o pico escolhido pelo operador (`curva_rampa_com_pico`).
     forma_rampa: str = SIM_FORMA_RAMPA_RETA
     curva_rampa: tuple[float, ...] = SIM_CURVA_RAMPA_UNI03
 
@@ -1299,6 +1349,7 @@ def m2_otimo(
 
 __all__ = [
     "Premissas", "ViabilidadeResult", "simular", "gerar_serie_mensal_completa",
+    "curva_rampa_com_pico",
     "break_even_alunos", "alunos_para_margem", "aluguel_teto_clusters", "pmt_price", "tir_mensal", "vpl",
     "IR_MODO_FAIXA", "IR_MODO_EFETIVO",
     "viabilidade", "gerar_serie_mensal", "aluguel_teto", "alunos_minimos_viaveis", "m2_otimo",

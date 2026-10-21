@@ -45,14 +45,13 @@ import {
   v2Disponivel,
 } from '../lib/viabilidade-demanda-v2'
 import {
-  FORMAS_RAMPA,
-  ROTULO_FORMA_RAMPA,
+  MESES_PICO_RAMPA,
   ajudaDaRampa,
-  formaExibida,
-  formaParaEnviar,
   mesFimDaRampa,
-  usaMesesDeRampa,
-  type FormaRampa,
+  picoExibido,
+  picoParaEnviar,
+  rotuloPico,
+  type MesPicoRampa,
 } from '../lib/viabilidade-rampa'
 import {
   type ChaveComLimite,
@@ -289,13 +288,11 @@ export default function ViabilityScreen({
   const [estadoV2, setEstadoV2] = useState<EstadoDemandaV2 | null>(null)
   const [sugestaoV2, setSugestaoV2] = useState<DemandaV2Out | null>(null)
   const [erroV2, setErroV2] = useState<string | null>(null)
-  // Rampa de maturação (Simulador E13; padrão 8). Controlável na sidebar: alonga
-  // a curva de alunos e o fluxo de caixa (afeta payback), não a margem steady.
-  const [rampaMeses, setRampaMeses] = useState(8)
-  // Forma da rampa (DEC-077) ESCOLHIDA pelo operador; `null` = sem escolha, e então o
-  // pedido vai sem `forma_rampa` e vale o padrão do SERVIDOR (a reta, com a demanda do
-  // operador). Os meses acima ficam guardados mesmo na curva, para voltarem intactos.
-  const [formaRampa, setFormaRampa] = useState<FormaRampa | null>(null)
+  // Rampa de maturação (DEC-077, emenda de 21/10/2026): só a curva observada, com o PICO
+  // DE MATURAÇÃO escolhido pelo operador; `null` = sem escolha, e então o pedido vai sem
+  // `mes_pico_rampa` e vale o pico observado (padrão do SERVIDOR). A forma não é mais
+  // escolha da tela: o pedido não manda `forma_rampa`.
+  const [picoRampa, setPicoRampa] = useState<MesPicoRampa | null>(null)
   // Studios (0..3): cada um atende uma fatia da demanda com ticket PRÓPRIO e soma um
   // custo fixo mensal (valores do motor). O estado dos tickets guarda SEMPRE as três
   // posições: baixar de 3 para 1 e voltar devolve o que o operador já digitou.
@@ -376,7 +373,7 @@ export default function ViabilityScreen({
       return s
     } catch (e) {
       setSugestaoV2(null)
-      setErroV2(e instanceof ApiError ? e.message : 'A Viabilidade v2 não respondeu.')
+      setErroV2(e instanceof ApiError ? e.message : 'O modelo de praça não respondeu.')
       return null
     }
   }
@@ -414,8 +411,7 @@ export default function ViabilityScreen({
       // sumir do JSON — dividir `undefined` por 100 daria NaN e viraria `null`.
       juros_equipamentos_am: jurosEquip !== undefined ? jurosEquip / 100 : undefined,
       carencia_aluguel_meses: carencia,
-      rampa_meses: rampaMeses,
-      forma_rampa: formaParaEnviar(formaRampa),
+      mes_pico_rampa: picoParaEnviar(picoRampa),
       taxa_franquia: paraReais(taxaFranquia, reaisPorUn),
       parcelas_franquia: parcelasFranquia,
       // % a.a. digitado -> FRAÇÃO, mesma conversão de unidade.
@@ -741,8 +737,8 @@ export default function ViabilityScreen({
   // TUDO abaixo é LEITURA do viabilidade_payload_v1. A tela não deriva número
   // financeiro nenhum: o motor (dimensionamento/simulador.py) já entregou pronto.
   const premissas = res?.premissas ?? null
-  // O seletor mostra a escolha do operador ou, sem ela, a forma que o servidor usou.
-  const formaMostrada = formaExibida(formaRampa, premissas)
+  // O seletor mostra o pico escolhido pelo operador ou, sem escolha, o que o servidor usou.
+  const picoMostrado = picoExibido(picoRampa, premissas)
   // Studios lidos do PAYLOAD (o que o motor aplicou), não do estado da tela: o rótulo
   // descreve o último cálculo, e não o que está digitado e ainda não foi calculado.
   const temStudios = (premissas?.n_studios ?? 0) > 0
@@ -1189,7 +1185,7 @@ export default function ViabilityScreen({
                 {demandaTocada
                   ? 'ajuste manual'
                   : v2Vigente
-                    ? 'sugestão · v2'
+                    ? 'sugestão do modelo'
                     : semComparaveis
                       ? 'premissa do operador'
                       : 'padrão · p50'}
@@ -1313,8 +1309,8 @@ export default function ViabilityScreen({
             >
               {v2Vigente ? (
                 <>
-                  Sugestão da Viabilidade v2 (praça em 10 min de carro, metragem e estúdios),
-                  editável. Faixa provisória: {alunos(v2Vigente.alunos.p10)}–
+                  Sugestão do modelo de praça (10 min de carro, metragem e estúdios),
+                  editável. Faixa: {alunos(v2Vigente.alunos.p10)}–
                   {alunos(v2Vigente.alunos.p90)} alunos (p10–p90).
                   {avisosV2(v2Vigente).map((a) => (
                     <span key={a} style={{ display: 'block', color: 'var(--warn-text)' }}>
@@ -1338,7 +1334,7 @@ export default function ViabilityScreen({
                           textDecoration: 'underline',
                         }}
                       >
-                        voltar à sugestão da v2
+                        voltar à sugestão do modelo
                       </button>
                     </>
                   )}
@@ -1399,7 +1395,7 @@ export default function ViabilityScreen({
             </div>
           </div>
 
-          {/* ---- Rampa de maturação: forma (curva observada x reta) e, na reta, meses ---- */}
+          {/* ---- Rampa de maturação: curva observada, com o PICO escolhido ---- */}
           <div
             style={{
               marginTop: 14,
@@ -1409,93 +1405,56 @@ export default function ViabilityScreen({
               borderRadius: 'var(--r-lg)',
             }}
           >
-            <span
+            <div
               style={{
-                display: 'block',
-                font: '500 11px/1 var(--f-ui)',
-                color: 'var(--tx-label)',
+                display: 'flex',
+                justifyContent: 'space-between',
+                alignItems: 'baseline',
                 marginBottom: 8,
               }}
             >
-              Rampa de maturação
-            </span>
+              <span style={{ font: '500 11px/1 var(--f-ui)', color: 'var(--tx-label)' }}>
+                Pico de maturação da rampa
+              </span>
+              <span
+                className="num"
+                style={{ font: '700 14px/1 var(--f-num)', color: 'var(--tx-max)' }}
+              >
+                {picoMostrado != null ? rotuloPico(picoMostrado) : ''}
+              </span>
+            </div>
             <div
               role="radiogroup"
-              aria-label="Forma da rampa de maturação"
-              style={{ display: 'flex', gap: 6 }}
+              aria-label="Pico de maturação, em meses"
+              style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}
             >
-              {FORMAS_RAMPA.map((id) => {
-                const ativo = formaMostrada === id
+              {MESES_PICO_RAMPA.map((m) => {
+                const ativo = picoMostrado === m
                 return (
                   <button
-                    key={id}
+                    key={m}
                     type="button"
                     role="radio"
                     aria-checked={ativo}
-                    onClick={() => setFormaRampa(id)}
+                    aria-label={`Pico de maturação no mês ${m}`}
+                    onClick={() => setPicoRampa(m)}
                     style={{
-                      flex: 1,
-                      padding: '8px 10px',
+                      flex: '1 0 34px',
+                      padding: '7px 0',
                       borderRadius: 'var(--r-md)',
                       border: `1px solid ${ativo ? 'var(--ac)' : 'var(--line-soft)'}`,
                       background: ativo ? 'var(--surf-raised)' : 'transparent',
                       color: ativo ? 'var(--tx-max)' : 'var(--tx-sub)',
-                      font: `${ativo ? 600 : 500} 12px/1 var(--f-ui)`,
+                      font: `${ativo ? 600 : 500} 12px/1 var(--f-num)`,
                     }}
                   >
-                    {ROTULO_FORMA_RAMPA[id]}
+                    {m}
                   </button>
                 )
               })}
             </div>
-            {usaMesesDeRampa(formaMostrada) && (
-              <div
-                style={{
-                  display: 'flex',
-                  justifyContent: 'space-between',
-                  alignItems: 'center',
-                  marginTop: 10,
-                }}
-              >
-                <span style={{ font: '500 11px/1 var(--f-ui)', color: 'var(--tx-label)' }}>
-                  Meses até o platô
-                </span>
-                <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                  <button
-                    type="button"
-                    aria-label="Diminuir meses de rampa"
-                    onClick={() => setRampaMeses((m) => Math.max(1, m - 1))}
-                    style={stepper}
-                  >
-                    −
-                  </button>
-                  <span
-                    className="num"
-                    style={{
-                      font: '700 14px/1 var(--f-num)',
-                      color: 'var(--tx-max)',
-                      minWidth: 58,
-                      textAlign: 'center',
-                    }}
-                  >
-                    {rampaMeses} {rampaMeses === 1 ? 'mês' : 'meses'}
-                  </span>
-                  <button
-                    type="button"
-                    aria-label="Aumentar meses de rampa"
-                    onClick={() => setRampaMeses((m) => Math.min(36, m + 1))}
-                    style={stepper}
-                  >
-                    +
-                  </button>
-                </div>
-              </div>
-            )}
             <div style={{ font: '400 10.5px/1.4 var(--f-ui)', color: 'var(--tx-sub)', marginTop: 8 }}>
-              {ajudaDaRampa(
-                formaMostrada,
-                premissas?.forma_rampa === 'curva_uni03' ? premissas.curva_rampa : null,
-              )}
+              {ajudaDaRampa(premissas)}
             </div>
           </div>
 

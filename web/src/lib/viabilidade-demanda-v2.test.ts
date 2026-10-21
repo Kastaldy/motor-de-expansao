@@ -50,8 +50,14 @@ describe('disponibilidade decidida pelo SERVIDOR', () => {
   })
 
   it('o motivo do servidor vence; sem estado, o erro da sugestão', () => {
-    const fora = { disponivel: false, motivo: 'A Viabilidade v2 está desligada.', versao: null, sha256: null }
-    expect(motivoV2(fora, null)).toBe('A Viabilidade v2 está desligada.')
+    const fora = { disponivel: false, motivo: 'O modelo está desligado.', versao: null, sha256: null }
+    expect(motivoV2(fora, null)).toBe('O modelo está desligado.')
+    // sem motivo do servidor, o texto padrão fala do modelo de praça, nunca de versão
+    const semMotivo = { disponivel: false, motivo: null, versao: null, sha256: null }
+    expect(motivoV2(semMotivo, null)).toBe(
+      'A sugestão de demanda pelo modelo de praça está indisponível.',
+    )
+    expect(motivoV2(semMotivo, null)).not.toMatch(/\bv2\b/i)
     expect(motivoV2(null, 'Falhou')).toBe('Falhou')
     expect(motivoV2({ disponivel: true, motivo: null, versao: 'x', sha256: 'y' }, null)).toBeNull()
   })
@@ -115,19 +121,18 @@ describe('corpo da sugestão', () => {
   })
 })
 
-describe('avisos', () => {
-  it('a faixa provisória aparece sempre que o servidor a marca', () => {
-    expect(avisosV2(sug())).toEqual([
-      'Faixa provisória: no teste fora da amostra ela cobriu 72% das unidades.',
-    ])
+describe('avisos (emenda de 21/10/2026: sem aviso de faixa provisória)', () => {
+  it('a faixa marcada provisória pelo servidor NÃO vira aviso na tela', () => {
+    expect(avisosV2(sug())).toEqual([])
   })
-  it('extrapolação e reta forçada sem agregador', () => {
+  it('só a extrapolação vira aviso; "reta forçada" não existe mais', () => {
     const a = avisosV2(
-      sug({ faixa_provisoria: false, flag_extrapolacao: true, rampa_reta_forcada_sem_agregador: true }),
+      sug({ faixa_provisoria: true, flag_extrapolacao: true, rampa_reta_forcada_sem_agregador: true }),
     )
-    expect(a).toHaveLength(2)
-    expect(a[0]).toContain('extrapolação')
-    expect(a[1]).toBe('Sem agregador: a rampa usada é a reta.')
+    expect(a).toEqual([
+      'Este ponto está fora do intervalo das unidades usadas no ajuste (extrapolação).',
+    ])
+    expect(a.join(' ')).not.toMatch(/provis|reta|\bv2\b/i)
   })
 })
 

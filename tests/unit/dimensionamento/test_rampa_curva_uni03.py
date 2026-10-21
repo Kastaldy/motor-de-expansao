@@ -11,9 +11,11 @@ O QUE ESTE ARQUIVO TRAVA
    mudanca — nunca contra o proprio codigo novo, que tornaria o teste circular.
 4. Os NUMEROS da DEC-077 (caso golden Boulevard Londrina, reta x curva) — medidos
    rodando o motor; a DEC cita estes valores e nao outros.
-5. O contrato do payload (`forma_rampa`): default RETA (a curva so' e' padrao com a
-   demanda da v2 — decisao do dono de 2026-10-20), curva escolhivel, 422 em portugues,
-   eco no payload, e UMA constante do config reverte o padrao.
+5. O contrato do payload (`forma_rampa`): default CURVA desde a emenda de 21/10/2026
+   (Vinicius: "A rampa de maturacao fica exclusivamente como curva observada"; antes era
+   a reta, com a curva so' como padrao da demanda da v2), reta ainda ACEITA (API publica),
+   422 em portugues, eco no payload, e UMA constante do config reverte o padrao. O pico
+   de maturacao escolhivel mora em `test_rampa_pico_maturacao.py`.
 6. A planilha .xlsx com a curva: recalculada, bate com o motor nos 64 meses; e trocar a
    celula "Forma da rampa" para "reta" reproduz o motor na reta. A planilha da RETA nao
    tem nada da curva (e' a de antes da DEC).
@@ -42,7 +44,6 @@ from motor_expansao.dimensionamento.config import (
     SIM_CURVA_UNI03_ALUNOS_P1,
     SIM_FORMA_RAMPA_CURVA_UNI03,
     SIM_FORMA_RAMPA_PADRAO,
-    SIM_FORMA_RAMPA_PADRAO_DEMANDA_V2,
     SIM_FORMA_RAMPA_RETA,
 )
 from motor_expansao.dimensionamento.payload_viabilidade import (
@@ -220,14 +221,18 @@ def test_reta_reproduz_o_motor_anterior_byte_a_byte() -> None:
     )
 
 
-def test_padrao_e_a_reta_e_a_curva_so_com_a_demanda_v2() -> None:
-    """Decisao do dono (2026-10-20): "A Viabilidade v2 entra junto com o ramp-up". Com a
-    demanda do OPERADOR (o produto de hoje) o padrao e' a reta; a curva fica amarrada a v2."""
+def test_padrao_do_produto_e_a_curva_e_o_do_nucleo_segue_a_reta() -> None:
+    """MUDANCA DA EMENDA de 21/10/2026 (Vinicius: "A rampa de maturacao fica exclusivamente
+    como curva observada"). ANTES: padrao do produto = reta e a curva so' com a demanda da
+    v2 (`SIM_FORMA_RAMPA_PADRAO_DEMANDA_V2`, constante que deixou de existir). AGORA: o
+    produto inteiro (qualquer origem da demanda) nasce na curva. O default do NUCLEO
+    (`Premissas`) segue a reta: adaptadores historicos, backtest e o golden do FIN-VIAB-01."""
     assert Premissas(ticket_cheio=147.0).forma_rampa == SIM_FORMA_RAMPA_RETA
-    assert SIM_FORMA_RAMPA_PADRAO == SIM_FORMA_RAMPA_RETA
-    assert SIM_FORMA_RAMPA_PADRAO_DEMANDA_V2 == SIM_FORMA_RAMPA_CURVA_UNI03
-    assert forma_rampa_padrao() == SIM_FORMA_RAMPA_RETA
-    assert forma_rampa_padrao(demanda_v2=True) == SIM_FORMA_RAMPA_CURVA_UNI03
+    assert SIM_FORMA_RAMPA_PADRAO == SIM_FORMA_RAMPA_CURVA_UNI03
+    assert forma_rampa_padrao() == SIM_FORMA_RAMPA_CURVA_UNI03
+    from motor_expansao.dimensionamento import config
+
+    assert not hasattr(config, "SIM_FORMA_RAMPA_PADRAO_DEMANDA_V2")
     assert _rodar(SIM_FORMA_RAMPA_RETA).serie_mensal == simular(
         DEMANDA, _premissas(), **INVEST  # type: ignore[arg-type]
     ).serie_mensal
@@ -323,8 +328,10 @@ _BODY: dict[str, object] = {
 }
 
 
-def test_payload_default_e_a_reta_e_aceita_a_curva() -> None:
-    assert premissas_do_body(ViabilidadeIn(**_BODY)).forma_rampa == SIM_FORMA_RAMPA_RETA
+def test_payload_default_e_a_curva_e_ainda_aceita_a_reta() -> None:
+    """MUDANCA DA EMENDA de 21/10/2026: sem `forma_rampa` sai a CURVA (antes, a reta). A
+    reta segue ACEITA por compatibilidade da API publica (a tela nao a oferece)."""
+    assert premissas_do_body(ViabilidadeIn(**_BODY)).forma_rampa == SIM_FORMA_RAMPA_CURVA_UNI03
     curva = premissas_do_body(ViabilidadeIn(**_BODY, forma_rampa="curva_uni03"))
     assert curva.forma_rampa == SIM_FORMA_RAMPA_CURVA_UNI03
     reta = premissas_do_body(ViabilidadeIn(**_BODY, forma_rampa="reta", rampa_meses=10))
@@ -332,31 +339,35 @@ def test_payload_default_e_a_reta_e_aceita_a_curva() -> None:
     assert reta.maturacao_meses == 10
 
 
-def test_payload_sem_forma_monta_as_mesmas_premissas_de_antes() -> None:
-    """Sem `forma_rampa` (o corpo de antes da DEC-077) e com a reta explicita, o corpo vira
-    EXATAMENTE as Premissas que o codigo anterior montava (sem forma nenhuma, caindo no
-    default do nucleo, a reta)."""
+def test_payload_sem_forma_e_a_curva_de_hoje_e_a_reta_explicita_e_a_de_antes() -> None:
+    """Sem `forma_rampa` o corpo vira EXATAMENTE as Premissas da curva escolhida (pico
+    observado, a curva UNI-03 intacta). Com a reta explicita, as Premissas que o codigo
+    anterior a DEC-077 montava (o default do nucleo)."""
     antes = Premissas(ticket_cheio=177.0, aluguel_mes=30_000.0, tickets_studios=())
-    assert premissas_do_body(ViabilidadeIn(**_BODY)) == antes
     assert premissas_do_body(ViabilidadeIn(**_BODY, forma_rampa="reta")) == antes
-    # e a curva so' difere na forma
     curva = premissas_do_body(ViabilidadeIn(**_BODY, forma_rampa="curva_uni03"))
+    assert premissas_do_body(ViabilidadeIn(**_BODY)) == curva
+    assert curva.curva_rampa == SIM_CURVA_RAMPA_UNI03
+    # e a curva so' difere na forma
     assert replace(curva, forma_rampa=SIM_FORMA_RAMPA_RETA) == antes
 
 
 def test_uma_constante_do_config_reverte_o_padrao(monkeypatch, pilot_app) -> None:
     """Achado 1 do revisor: o padrao tem UMA fonte, lida em tempo de chamada. Trocar
-    `SIM_FORMA_RAMPA_PADRAO` muda o corpo sem forma (tela sem escolha, API, PDF, planilha)
-    e o eco do payload, que e' o que a tela mostra. A escolha explicita segue vencendo."""
+    `SIM_FORMA_RAMPA_PADRAO` (hoje a curva) de volta para a reta muda o corpo sem forma
+    (tela sem escolha, API, PDF, planilha) e o eco do payload, que e' o que a tela mostra
+    — inclusive no modo da demanda sugerida, que nao tem mais padrao proprio. A escolha
+    explicita segue vencendo."""
     from motor_expansao.dimensionamento import config
 
-    monkeypatch.setattr(config, "SIM_FORMA_RAMPA_PADRAO", SIM_FORMA_RAMPA_CURVA_UNI03)
-    assert premissas_do_body(ViabilidadeIn(**_BODY)).forma_rampa == SIM_FORMA_RAMPA_CURVA_UNI03
+    monkeypatch.setattr(config, "SIM_FORMA_RAMPA_PADRAO", SIM_FORMA_RAMPA_RETA)
+    assert premissas_do_body(ViabilidadeIn(**_BODY)).forma_rampa == SIM_FORMA_RAMPA_RETA
     eco = pilot_app.viabilidade(pilot_app.ViabilidadeIn(**_BODY))["premissas"]
-    assert eco["forma_rampa"] == SIM_FORMA_RAMPA_CURVA_UNI03
-    assert eco["mes_maturidade_rampa"] == 10
-    reta = premissas_do_body(ViabilidadeIn(**_BODY, forma_rampa="reta"))
-    assert reta.forma_rampa == SIM_FORMA_RAMPA_RETA
+    assert eco["forma_rampa"] == SIM_FORMA_RAMPA_RETA
+    assert eco["mes_maturidade_rampa"] == 8
+    assert eco["mes_pico_rampa"] is None
+    curva = premissas_do_body(ViabilidadeIn(**_BODY, forma_rampa="curva_uni03"))
+    assert curva.forma_rampa == SIM_FORMA_RAMPA_CURVA_UNI03
 
 
 def test_caminhos_legados_seguem_a_mesma_constante(monkeypatch) -> None:
@@ -367,13 +378,19 @@ def test_caminhos_legados_seguem_a_mesma_constante(monkeypatch) -> None:
     from motor_expansao.dimensionamento import config
     from motor_expansao.dimensionamento.viabilidade_ponto import _premissas_do_ponto
 
+    # Desde a emenda de 21/10/2026 o padrao e' a curva tambem nestes caminhos.
     hoje = _premissas_do_ponto(147.0, 30000.0, 0.6, None, {})
-    assert hoje.forma_rampa == SIM_FORMA_RAMPA_RETA
+    assert hoje.forma_rampa == SIM_FORMA_RAMPA_CURVA_UNI03
+    # com o padrao na curva, o modo legado "apenas balcao" (so' a reta e' suportada) nao quebra
+    balcao = _premissas_do_ponto(147.0, 30000.0, 0.6, None, {"rampa_apenas_balcao": True})
+    assert balcao.forma_rampa == SIM_FORMA_RAMPA_RETA
 
-    monkeypatch.setattr(config, "SIM_FORMA_RAMPA_PADRAO", SIM_FORMA_RAMPA_CURVA_UNI03)
-    assert _premissas_do_ponto(147.0, 30000.0, 0.6, None, {}).forma_rampa == SIM_FORMA_RAMPA_CURVA_UNI03
-    escolhida = _premissas_do_ponto(147.0, 30000.0, 0.6, None, {"forma_rampa": "reta"})
-    assert escolhida.forma_rampa == SIM_FORMA_RAMPA_RETA
+    monkeypatch.setattr(config, "SIM_FORMA_RAMPA_PADRAO", SIM_FORMA_RAMPA_RETA)
+    assert _premissas_do_ponto(147.0, 30000.0, 0.6, None, {}).forma_rampa == SIM_FORMA_RAMPA_RETA
+    escolhida = _premissas_do_ponto(
+        147.0, 30000.0, 0.6, None, {"forma_rampa": "curva_uni03"}
+    )
+    assert escolhida.forma_rampa == SIM_FORMA_RAMPA_CURVA_UNI03
     so_balcao = _premissas_do_ponto(147.0, 30000.0, 0.6, None, {"rampa_apenas_balcao": True})
     assert so_balcao.forma_rampa == SIM_FORMA_RAMPA_RETA
 
@@ -400,16 +417,15 @@ def pilot_app():
 
 def test_payload_ecoa_a_forma_e_o_fim_da_rampa(pilot_app) -> None:
     padrao = pilot_app.viabilidade(pilot_app.ViabilidadeIn(**_BODY))["premissas"]
-    assert padrao["forma_rampa"] == "reta"
-    assert padrao["mes_maturidade_rampa"] == 8
-    assert padrao["curva_rampa"] is None
+    assert padrao["forma_rampa"] == "curva_uni03"  # a curva desde a emenda de 21/10/2026
+    assert padrao["mes_maturidade_rampa"] == 10
+    assert padrao["mes_pico_rampa"] == 10
+    assert padrao["curva_rampa"] == list(SIM_CURVA_RAMPA_UNI03)
 
     curva = pilot_app.viabilidade(
         pilot_app.ViabilidadeIn(**_BODY, forma_rampa="curva_uni03")
     )["premissas"]
-    assert curva["forma_rampa"] == "curva_uni03"
-    assert curva["mes_maturidade_rampa"] == 10
-    assert curva["curva_rampa"] == list(SIM_CURVA_RAMPA_UNI03)
+    assert curva == padrao
     assert curva["maturacao_meses"] == 8  # parametro da reta, ecoado mas sem efeito
 
     reta = pilot_app.viabilidade(
@@ -418,6 +434,7 @@ def test_payload_ecoa_a_forma_e_o_fim_da_rampa(pilot_app) -> None:
     assert reta["forma_rampa"] == "reta"
     assert reta["mes_maturidade_rampa"] == 6
     assert reta["curva_rampa"] is None
+    assert reta["mes_pico_rampa"] is None
 
 
 # ---------------------------------------------------------------------------

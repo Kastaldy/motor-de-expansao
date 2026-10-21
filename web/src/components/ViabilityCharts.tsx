@@ -610,7 +610,8 @@ function LinhaReceita({
  * contrapartida no simulador: a operação começa com `alunos_inicial` no mês 1 e
  * o mix balcão/agregadores escala junto até o platô.
  *
- * Desde a DEC-077 a série pode vir da CURVA observada (escolha do operador) ou da reta (padrão); o desenho
+ * Desde a DEC-077 a série vem da CURVA observada (padrão do produto desde a emenda de 21/10/2026,
+ * com o pico escolhido) ou, pela API pública, da rampa linear; o desenho
  * é o mesmo (é a série do motor), e `maturacaoMeses` é o fim da rampa SERVIDO
  * (`mes_maturidade_rampa`), não o parâmetro da reta.
  */
@@ -679,7 +680,7 @@ export function RampaAlunos({
         titulo="Rampa de alunos"
         sub={
           mat != null
-            ? `${formaRampa === 'curva_uni03' ? 'curva observada' : 'reta'} · platô no mês ${mat}`
+            ? `${formaRampa === 'curva_uni03' ? 'curva observada' : 'rampa linear'} · platô no mês ${mat}`
             : 'alunos totais (motor)'
         }
         valor={alunos(plateau)}

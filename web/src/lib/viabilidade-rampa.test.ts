@@ -1,99 +1,119 @@
+import { readFileSync } from 'node:fs'
+import { fileURLToPath } from 'node:url'
+
 import { describe, expect, it } from 'vitest'
 
 import * as rampa from './viabilidade-rampa'
 import {
-  FORMAS_RAMPA,
-  ROTULO_FORMA_RAMPA,
+  MESES_PICO_RAMPA,
   ajudaDaRampa,
   casaNoMes1,
   ebitdaDosPrimeirosMeses,
   formaDoPayload,
-  formaExibida,
-  formaParaEnviar,
   mesFimDaRampa,
   notaDaRampa,
-  usaMesesDeRampa,
+  picoExibido,
+  picoParaEnviar,
+  rotuloPico,
 } from './viabilidade-rampa'
 
-const CURVA = { maturacao_meses: 8, forma_rampa: 'curva_uni03', mes_maturidade_rampa: 10 }
-const RETA = { maturacao_meses: 8, forma_rampa: 'reta', mes_maturidade_rampa: 8 }
+const CURVA_OBS = [0.68, 0.77, 0.84, 0.88, 0.9, 0.92, 0.97, 0.97, 0.99, 1, 1, 1]
+const CURVA = {
+  maturacao_meses: 8,
+  forma_rampa: 'curva_uni03',
+  mes_maturidade_rampa: 10,
+  mes_pico_rampa: 10,
+  curva_rampa: CURVA_OBS,
+}
+const CURVA_PICO_6 = {
+  maturacao_meses: 8,
+  forma_rampa: 'curva_uni03',
+  mes_maturidade_rampa: 6,
+  mes_pico_rampa: 6,
+  curva_rampa: [0.74, 0.853333, 0.9, 0.953333, 0.976667, 1, 1, 1],
+}
+// Rampa linear: só chega da API pública ou com a constante do servidor revertida.
+const LINEAR = { maturacao_meses: 8, forma_rampa: 'reta', mes_maturidade_rampa: 8, mes_pico_rampa: null }
 
-describe('forma da rampa (DEC-077)', () => {
-  it('os identificadores são os do motor e os rótulos são de usuário', () => {
-    expect([...FORMAS_RAMPA]).toEqual(['curva_uni03', 'reta'])
-    expect(ROTULO_FORMA_RAMPA.curva_uni03).toBe('Curva observada')
-    expect(ROTULO_FORMA_RAMPA.reta).toBe('Reta')
+describe('pico de maturação (emenda de 21/10/2026 da DEC-077)', () => {
+  it('as opções espelham SIM_MESES_PICO_RAMPA do servidor', () => {
+    expect([...MESES_PICO_RAMPA]).toEqual([6, 8, 10, 12, 15, 18, 24])
+    expect(rotuloPico(12)).toBe('12 meses')
   })
 
-  it('a tela não crava o padrão: ele é do servidor (uma constante só reverte tudo)', () => {
+  it('a tela não crava padrão nem oferece a forma: ambos são do servidor', () => {
     expect('FORMA_RAMPA_PADRAO' in rampa).toBe(false)
-  })
-})
-
-describe('seletor Curva / Reta (lógica pura)', () => {
-  it('sem escolha, o pedido vai SEM forma_rampa e vale o padrão do servidor', () => {
-    expect(formaParaEnviar(null)).toBeUndefined()
-    // a chave some do JSON: o corpo é o mesmo de antes da DEC-077
-    expect(JSON.stringify({ forma_rampa: formaParaEnviar(null) })).toBe('{}')
+    expect('FORMAS_RAMPA' in rampa).toBe(false)
+    expect('ROTULO_FORMA_RAMPA' in rampa).toBe(false)
+    expect('PICO_PADRAO' in rampa).toBe(false)
   })
 
-  it('a escolha explícita vai no pedido, nas duas formas', () => {
-    expect(formaParaEnviar('curva_uni03')).toBe('curva_uni03')
-    expect(formaParaEnviar('reta')).toBe('reta')
+  it('sem escolha, o pedido vai SEM mes_pico_rampa e vale o pico observado do servidor', () => {
+    expect(picoParaEnviar(null)).toBeUndefined()
+    expect(JSON.stringify({ mes_pico_rampa: picoParaEnviar(null) })).toBe('{}')
   })
 
-  it('sem escolha, o seletor mostra a forma que o servidor usou', () => {
-    expect(formaExibida(null, RETA)).toBe('reta')
-    expect(formaExibida(null, CURVA)).toBe('curva_uni03')
+  it('o pico escolhido vai no pedido como mes_pico_rampa', () => {
+    for (const m of MESES_PICO_RAMPA) {
+      expect(JSON.parse(JSON.stringify({ mes_pico_rampa: picoParaEnviar(m) }))).toEqual({
+        mes_pico_rampa: m,
+      })
+    }
   })
 
-  it('antes do primeiro cálculo nenhuma forma é marcada (não adivinha o servidor)', () => {
-    expect(formaExibida(null, null)).toBeNull()
+  it('sem escolha, o seletor marca o pico que o servidor usou', () => {
+    expect(picoExibido(null, CURVA)).toBe(10)
+    expect(picoExibido(null, CURVA_PICO_6)).toBe(6)
+    // backend sem o eco do pico: cai no fim da rampa servido
+    expect(picoExibido(null, { ...CURVA, mes_pico_rampa: undefined })).toBe(10)
   })
 
-  it('a escolha do operador vence a forma servida', () => {
-    expect(formaExibida('reta', CURVA)).toBe('reta')
-    expect(formaExibida('curva_uni03', RETA)).toBe('curva_uni03')
+  it('antes do primeiro cálculo, ou na rampa linear, nenhum pico é marcado', () => {
+    expect(picoExibido(null, null)).toBeNull()
+    expect(picoExibido(null, LINEAR)).toBeNull()
   })
 
-  it('os meses da rampa somem na curva e aparecem na reta e antes do cálculo', () => {
-    expect(usaMesesDeRampa('reta')).toBe(true)
-    expect(usaMesesDeRampa('curva_uni03')).toBe(false)
-    expect(usaMesesDeRampa(null)).toBe(true)
-    // composição com o que a tela mostra: payload da curva sem escolha esconde os meses
-    expect(usaMesesDeRampa(formaExibida(null, CURVA))).toBe(false)
-    expect(usaMesesDeRampa(formaExibida(null, RETA))).toBe(true)
+  it('a escolha do operador vence o pico servido', () => {
+    expect(picoExibido(18, CURVA)).toBe(18)
   })
 })
 
 describe('ajuda do controle', () => {
-  it('a ajuda da curva declara a amarra do agregador', () => {
-    expect(ajudaDaRampa('curva_uni03')).toContain('agregador')
-    expect(ajudaDaRampa('reta')).toContain('meses')
-  })
-
-  it('trocar a forma não recalcula sozinho, e a ajuda diz isso nas três situações', () => {
-    for (const forma of ['curva_uni03', 'reta', null] as const) {
-      expect(ajudaDaRampa(forma).toLowerCase()).toContain('recalcule para atualizar o payback')
+  it('declara a amarra do agregador e que é preciso recalcular', () => {
+    for (const p of [null, CURVA, CURVA_PICO_6, LINEAR]) {
+      expect(ajudaDaRampa(p).toLowerCase()).toContain('recalcule para atualizar o payback')
     }
+    expect(ajudaDaRampa(CURVA)).toContain('agregador')
   })
 
-  it('os percentuais da ajuda saem da curva servida, não de número cravado', () => {
-    const curva = [0.68, 0.77, 0.84, 0.88, 0.9, 0.92, 0.97, 0.97, 0.99, 1, 1, 1]
-    const t = ajudaDaRampa('curva_uni03', curva)
-    expect(t).toContain('68% da demanda no mês 1')
-    expect(t).toContain('100% a partir do mês 10')
+  it('os percentuais saem da curva servida, não de número cravado', () => {
+    expect(ajudaDaRampa(CURVA)).toContain('68% da demanda no mês 1')
+    expect(ajudaDaRampa(CURVA)).toContain('100% a partir do mês 10')
+    expect(ajudaDaRampa(CURVA_PICO_6)).toContain('74% da demanda no mês 1')
+    expect(ajudaDaRampa(CURVA_PICO_6)).toContain('100% a partir do mês 6')
     // antes do primeiro cálculo não há curva: a ajuda não inventa percentual
-    expect(ajudaDaRampa('curva_uni03', null)).not.toMatch(/\d+%/)
+    expect(ajudaDaRampa(null)).not.toMatch(/\d+%/)
+  })
+
+  it('nenhum texto da rampa fala em "reta"', () => {
+    for (const p of [null, CURVA, CURVA_PICO_6, LINEAR]) {
+      expect(ajudaDaRampa(p)).not.toMatch(/\breta\b/i)
+    }
+    for (const p of [CURVA, CURVA_PICO_6, LINEAR]) {
+      expect(notaDaRampa(p)).not.toMatch(/\breta\b/i)
+      expect(casaNoMes1(p)).not.toMatch(/\breta\b/i)
+      expect(ebitdaDosPrimeirosMeses(p)).not.toMatch(/\breta\b/i)
+    }
   })
 })
 
 describe('fim da rampa lido do payload', () => {
-  it('lê o mês servido pelo motor (curva fecha no 10, não no parâmetro da reta)', () => {
+  it('lê o mês servido pelo motor (o pico), não o parâmetro da rampa linear', () => {
     expect(mesFimDaRampa(CURVA)).toBe(10)
+    expect(mesFimDaRampa(CURVA_PICO_6)).toBe(6)
   })
 
-  it('backend anterior à DEC-077 (sem o campo) cai na reta de maturacao_meses', () => {
+  it('backend anterior à DEC-077 (sem o campo) cai na rampa de maturacao_meses', () => {
     expect(mesFimDaRampa({ maturacao_meses: 8 })).toBe(8)
     expect(formaDoPayload({ maturacao_meses: 8 })).toBe('reta')
   })
@@ -102,35 +122,94 @@ describe('fim da rampa lido do payload', () => {
     expect(mesFimDaRampa(null)).toBeNull()
   })
 
-  it('forma desconhecida vinda do payload é lida como reta, nunca como curva', () => {
+  it('forma desconhecida vinda do payload nunca é lida como curva', () => {
     expect(formaDoPayload({ maturacao_meses: 8, forma_rampa: 'outra' })).toBe('reta')
   })
 })
 
 describe('nota metodológica', () => {
-  it('na curva, diz o mês de fechamento e o que NÃO é modelado', () => {
-    const t = notaDaRampa(CURVA)
-    expect(t).toContain('mês 10')
-    expect(t).toContain('não é modelado')
+  it('na curva, diz o mês do pico e o que NÃO é modelado', () => {
+    expect(notaDaRampa(CURVA)).toContain('mês 10')
+    expect(notaDaRampa(CURVA_PICO_6)).toContain('pico de maturação, mês 6')
+    expect(notaDaRampa(CURVA)).toContain('não é modelado')
   })
 
-  it('na reta, mantém o texto de antes', () => {
-    expect(notaDaRampa(RETA)).toBe(
-      '8 meses para a demanda sair do piso inicial e chegar ao valor assumido. Afeta o ' +
-        'caixa e o payback, não a margem de steady-state.',
-    )
-  })
-
-  it('"casa vazia" no mês 1 só na reta: na curva o mês 1 já tem 68% da demanda', () => {
-    expect(casaNoMes1(RETA)).toBe('com a casa vazia')
+  it('"casa vazia" no mês 1 só na rampa linear: na curva o mês 1 já tem boa parte da demanda', () => {
+    expect(casaNoMes1(LINEAR)).toBe('com a casa vazia')
     expect(casaNoMes1(CURVA)).not.toContain('vazia')
   })
 
-  it('o EBITDA dos primeiros meses só é afirmado NEGATIVO na reta', () => {
-    expect(ebitdaDosPrimeirosMeses(RETA)).toBe(
+  it('o EBITDA dos primeiros meses só é afirmado NEGATIVO na rampa linear', () => {
+    expect(ebitdaDosPrimeirosMeses(LINEAR)).toBe(
       'então o EBITDA dos primeiros meses é bem NEGATIVO enquanto a casa não enche.',
     )
     expect(ebitdaDosPrimeirosMeses(CURVA)).not.toMatch(/NEGATIVO/i)
     expect(ebitdaDosPrimeirosMeses(CURVA)).toContain('positivo')
+  })
+})
+
+/* ---------------------------------------------------------------------------
+   A TELA (fonte): produto único. Sem o React Testing Library neste repo, a trava lê a
+   FONTE da tela e de suas libs de texto e extrai o que vira texto de usuário (literais
+   de string e texto JSX), sem comentários e sem as linhas de import. Identificadores
+   (`sugestaoV2`, `modelo_demanda: 'v2'`, `forma_rampa`) não são texto e ficam de fora.
+   --------------------------------------------------------------------------- */
+
+const ler = (rel: string) => readFileSync(fileURLToPath(new URL(rel, import.meta.url)), 'utf-8')
+
+function textosDeUsuario(fonte: string): string[] {
+  const semComentarios = fonte
+    .replace(/\/\*[\s\S]*?\*\//g, '')
+    .split('\n')
+    .filter((l) => !/^\s*import\b/.test(l) && !/^\s*\}\s*from\s/.test(l))
+    .map((l) => l.replace(/(^|[^:'"`])\/\/.*$/, '$1'))
+    .join('\n')
+  const literais = [...semComentarios.matchAll(/'([^'\n]*)'|"([^"\n]*)"|`([^`]*)`/g)].map(
+    (m) => m[1] ?? m[2] ?? m[3] ?? '',
+  )
+  const jsx = [...semComentarios.matchAll(/>([^<>{}]+)</g)].map((m) => m[1].trim())
+  return [...literais, ...jsx].filter((t) => /[A-Za-zÀ-ÿ]{2}/.test(t))
+}
+
+const TELA = ler('../screens/ViabilityScreen.tsx')
+const FONTES_DE_TEXTO = {
+  tela: TELA,
+  rampa: ler('./viabilidade-rampa.ts'),
+  demanda: ler('./viabilidade-demanda-v2.ts'),
+  notas: ler('../components/ViabilityNotes.tsx'),
+  graficos: ler('../components/ViabilityCharts.tsx'),
+}
+
+describe('a tela trata a Viabilidade como produto único', () => {
+  it('nenhum texto de usuário menciona versão ("v2", "segunda versão", "versão 2")', () => {
+    for (const [nome, fonte] of Object.entries(FONTES_DE_TEXTO)) {
+      const achados = textosDeUsuario(fonte).filter((t) =>
+        /\bv2\b|segunda vers[ãa]o|vers[ãa]o 2\b/i.test(t),
+      )
+      expect(achados, nome).toEqual([])
+    }
+  })
+
+  it('nenhum texto de usuário traz aviso de faixa provisória', () => {
+    for (const [nome, fonte] of Object.entries(FONTES_DE_TEXTO)) {
+      const achados = textosDeUsuario(fonte).filter((t) => /faixa provis[óo]ria/i.test(t))
+      expect(achados, nome).toEqual([])
+    }
+    expect(TELA).not.toMatch(/Faixa provis[óo]ria/)
+  })
+
+  it('a rampa não oferece mais a reta: nem rótulo, nem seletor de meses', () => {
+    const textos = textosDeUsuario(TELA)
+    expect(textos.filter((t) => /\breta\b/i.test(t))).toEqual([])
+    expect(TELA).not.toContain('Meses até o platô')
+    expect(TELA).not.toContain('setRampaMeses')
+    expect(TELA).not.toContain('forma_rampa:')
+  })
+
+  it('o seletor de pico percorre as opções e manda mes_pico_rampa no pedido', () => {
+    expect(TELA).toContain('MESES_PICO_RAMPA.map(')
+    expect(TELA).toContain('onClick={() => setPicoRampa(m)}')
+    expect(TELA).toContain('mes_pico_rampa: picoParaEnviar(picoRampa)')
+    expect(TELA).toContain('aria-label="Pico de maturação, em meses"')
   })
 })

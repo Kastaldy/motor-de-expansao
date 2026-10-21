@@ -1,7 +1,9 @@
 /* ---------------------------------------------------------------------------
-   Viabilidade v2 na tela (DEC-077 ampliada): quando o SERVIDOR diz que a v2 está
-   disponível, a demanda é semeada pelo p50 dela (editável), a faixa p10–p90 aparece
-   marcada como provisória e o pedido leva o token de procedência.
+   Sugestão de demanda pelo modelo de praça (DEC-077 ampliada; os identificadores ainda
+   dizem "v2", o TEXTO de usuário não — emenda de 21/10/2026: a Viabilidade é um produto
+   único). Quando o SERVIDOR diz que o modelo está disponível, a demanda é semeada pelo
+   p50 dele (editável), a faixa p10–p90 aparece SEM aviso de provisória e o pedido leva o
+   token de procedência.
 
    A tela não decide nada sozinha (crítica C4): quem liga e desliga é o servidor
    (`/api/demanda-v2/estado`, chave `MOTOR_VIABILIDADE_V2`). Indisponível -> o modo
@@ -21,7 +23,9 @@ export function motivoV2(
   estado: EstadoDemandaV2 | null | undefined,
   erroSugestao: string | null,
 ): string | null {
-  if (estado && !estado.disponivel) return estado.motivo ?? 'A Viabilidade v2 está indisponível.'
+  if (estado && !estado.disponivel) {
+    return estado.motivo ?? 'A sugestão de demanda pelo modelo de praça está indisponível.'
+  }
   return erroSugestao
 }
 
@@ -105,19 +109,17 @@ export function camposDeV2(
   }
 }
 
-/** Avisos da sugestão, em português, para a tela (a faixa provisória vem sempre). */
+/**
+ * Avisos da sugestão, em português, para a tela. Sem o aviso de faixa provisória e sem
+ * "rampa reta forçada" (emenda de 21/10/2026): `faixa_provisoria` segue no payload como
+ * identificador, mas não vira texto, e a reta não é mais forçada sem agregador.
+ */
 export function avisosV2(sug: DemandaV2Out): string[] {
   const avisos: string[] = []
-  if (sug.faixa_provisoria) {
-    avisos.push('Faixa provisória: no teste fora da amostra ela cobriu 72% das unidades.')
-  }
   if (sug.flag_extrapolacao) {
     avisos.push(
       'Este ponto está fora do intervalo das unidades usadas no ajuste (extrapolação).',
     )
-  }
-  if (sug.rampa_reta_forcada_sem_agregador) {
-    avisos.push('Sem agregador: a rampa usada é a reta.')
   }
   return avisos
 }

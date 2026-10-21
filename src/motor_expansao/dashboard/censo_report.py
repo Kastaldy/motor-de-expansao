@@ -1590,6 +1590,9 @@ def _viab_normalizado(viabilidade: Mapping[str, Any]) -> dict[str, Any]:
         "demanda_v2": viabilidade.get("demanda_v2"),
         "demanda_fonte": viabilidade.get("demanda_fonte"),
         "demanda_v2_aviso": viabilidade.get("demanda_v2_aviso"),
+        # Pico de maturacao da curva (emenda da DEC-077, 21/10/2026): so' existe na curva
+        # (na reta o payload o manda null). LEITURA do payload, como o resto do slide.
+        "mes_pico_rampa": _viab_campo(viabilidade, "mes_pico_rampa", "premissas", "mes_pico_rampa"),
         # Reguas do veredito, servidas pelo proprio payload (`premissas.*`). A pagina de
         # Conclusao precisa saber se `flag_viavel=False` falhou em UM criterio ou nos DOIS,
         # e le os limites daqui em vez de importar `dimensionamento.config` -- e' a mesma
@@ -1610,41 +1613,54 @@ def _viab_normalizado(viabilidade: Mapping[str, Any]) -> dict[str, Any]:
 
 
 def _viab_linha_demanda_v2(dados: Mapping[str, Any]) -> str | None:
-    """Linha da origem da demanda no modo v2 (DEC-077 ampliada); `None` no modo densidade.
+    """Linha da origem da demanda quando ela vem do modelo de praça; `None` sem ele.
 
-    Pontuacao ASCII de proposito (fonte core do fpdf2, latin-1): sem travessao, seta,
-    reticencias nem sinal de menos tipografico. Acento portugues e' latin-1 e sai normal.
+    Produto UNICO (emenda da DEC-077, 21/10/2026): o texto fala do "modelo de praça",
+    nunca de versao, e nao carimba a faixa como provisoria (o registro metodologico fica
+    na DEC). Pontuacao ASCII de proposito (fonte core do fpdf2, latin-1): sem travessao,
+    seta, reticencias nem sinal de menos tipografico. Acento portugues e' latin-1.
     """
     aviso = dados.get("demanda_v2_aviso")
     if aviso == "nao_reconhecida":
         return (
-            "Demanda: a sugestão da v2 não foi reconhecida (de outro ponto, metragem ou "
-            "estúdios); os números usam a demanda informada pelo operador, sem a v2."
+            "Demanda: a sugestão do modelo de praça não foi reconhecida (de outro ponto, "
+            "metragem ou estúdios); os números usam a demanda informada pelo operador."
         )
     if aviso == "indisponivel":
         return (
-            "Demanda: a v2 está indisponível neste servidor; os números usam a demanda "
-            "informada pelo operador, sem a v2."
+            "Demanda: o modelo de praça está indisponível neste servidor; os números usam "
+            "a demanda informada pelo operador."
         )
     v2 = dados.get("demanda_v2")
     if not isinstance(v2, Mapping):
         return None
     fat = v2.get("faturamento") or {}
     if dados.get("demanda_fonte") == "modelo_v2":
-        texto = "Demanda: sugerida pela v2 (faixa provisória)."
+        texto = "Demanda: sugerida pelo modelo de praça."
     else:
         sugerida = v2.get("demanda_sugerida")
         quanto = f"{_format_number(sugerida, 0)} alunos" if sugerida is not None else "outro valor"
-        texto = f"Demanda: editada pelo operador (a v2 sugeriu {quanto}; faixa provisória)."
+        texto = f"Demanda: editada pelo operador (o modelo de praça sugeriu {quanto})."
     texto += (
-        f" Faturamento maduro previsto pela v2: p10 {_viab_brl(fat.get('p10'))}, "
+        f" Faturamento maduro previsto pelo modelo: p10 {_viab_brl(fat.get('p10'))}, "
         f"p50 {_viab_brl(fat.get('p50'))}, p90 {_viab_brl(fat.get('p90'))}."
     )
     if v2.get("flag_extrapolacao"):
-        texto += " Fora do envelope do treino da v2 (extrapolação)."
-    if v2.get("rampa_reta_forcada_sem_agregador"):
-        texto += " Rampa reta forçada: abertura sem agregador."
+        texto += " Fora do envelope do treino do modelo (extrapolação)."
     return texto
+
+
+def _viab_linha_rampa(dados: Mapping[str, Any]) -> str | None:
+    """Rampa de maturacao no rodape: so' na curva (o payload manda o pico so' nela)."""
+    pico = dados.get("mes_pico_rampa")
+    try:
+        mes = int(pico)
+    except (TypeError, ValueError):
+        return None
+    if mes < 1:
+        return None
+    # Curta de proposito: o rodape divide a altura com zona morta + origem da demanda.
+    return f"Rampa: curva observada, pico de maturação no mês {mes}."
 
 
 def _viab_unidade_breakeven(viabilidade: dict[str, Any]) -> str:
@@ -1971,6 +1987,9 @@ def _viabilidade_page(
         rodape += " " + linha_v2
     else:
         rodape += " A demanda é uma PREMISSA do operador (não prevista pela geografia)."
+    linha_rampa = _viab_linha_rampa(dados)
+    if linha_rampa:
+        rodape += " " + linha_rampa
 
     pdf.set_text_color(*_CINZA_TEXTO)
     pdf.set_font("Helvetica", "", 9)

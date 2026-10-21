@@ -142,6 +142,7 @@ from motor_expansao.dimensionamento.config import (
     SIM_ALUGUEL_TETO_EXCECAO,
     SIM_ALUGUEL_TETO_IDEAL,
     SIM_ALUGUEL_TETO_TETO,
+    SIM_CURVA_RAMPA_UNI03,
     SIM_MARGEM_VIAVEL_MIN,
     SIM_PARCELAS_FRANQUIA_DEFAULT,
     SIM_PARCELAS_OBRA_DEFAULT,
@@ -170,6 +171,7 @@ from motor_expansao.dimensionamento.simulador import (
     IR_MODO_FAIXA,
     Premissas,
     ViabilidadeResult,
+    curva_rampa_com_pico,
     simular,
 )
 
@@ -556,14 +558,18 @@ def _e(
 
 
 def _fonte_da_demanda(demanda_v2: Mapping[str, Any] | None) -> str:
-    """Rotulo da fonte da demanda. Sem v2: o de sempre, byte a byte."""
+    """Rotulo da fonte da demanda. Sem a sugestao do modelo: o de sempre, byte a byte.
+
+    Texto de produto UNICO (emenda da DEC-077, 21/10/2026): "modelo de praça", sem
+    rotulo de versao e sem aviso de faixa provisoria.
+    """
     if not demanda_v2:
         return "Entrada do operador (DEC-009: nunca de lat/lng)"
     if demanda_v2.get("demanda_fonte") == "modelo_v2":
-        return "Sugerida pela Viabilidade v2 (faixa provisória; DEC-077)"
+        return "Sugerida pelo modelo de praça (DEC-077)"
     sugerida = demanda_v2.get("demanda_sugerida")
     extra = (
-        f"; a v2 sugeriu {_num_br(float(sugerida), 0)}"
+        f"; o modelo sugeriu {_num_br(float(sugerida), 0)}"
         if sugerida is not None and _finito(sugerida)
         else ""
     )
@@ -581,18 +587,16 @@ def _bloco_origem_v2(v2: Mapping[str, Any]) -> list[dict[str, Any]]:
     fat = v2.get("faturamento") or {}
     ent = v2.get("entradas") or {}
     coef = v2.get("coeficientes") or {}
+    # Sem "faixa provisória" e sem "rampa reta forçada" (emenda da DEC-077, 21/10/2026):
+    # a faixa segue exibida sem aviso e a reta nao e' mais forcada sem agregador.
     flags = []
-    if v2.get("faixa_provisoria"):
-        flags.append("faixa provisória")
     if v2.get("flag_extrapolacao"):
         flags.append("fora do envelope do treino (" + ", ".join(v2.get("fora_do_envelope") or []) + ")")
-    if v2.get("rampa_reta_forcada_sem_agregador"):
-        flags.append("rampa reta forçada (sem agregador)")
-    quem = "Ninguem (modelo v2)"
+    quem = "Ninguem (modelo de praça)"
     linhas = [
         _e(f"v2_fat_{k}", f"Faturamento maduro previsto ({k})", valor=float(fat.get(k) or 0.0),
            unidade="R$/mês",
-           fonte=f"Viabilidade v2 {coef.get('versao', '')} (sha {str(coef.get('sha256', ''))[:12]})",
+           fonte=f"Modelo de praça (coeficientes sha {str(coef.get('sha256', ''))[:12]})",
            quem=quem, kind=_DERIV, fmt=_FMT_CONTABIL)
         for k in ("p10", "p50", "p90")
     ]
@@ -619,10 +623,9 @@ def _bloco_origem_v2(v2: Mapping[str, Any]) -> list[dict[str, Any]]:
            valor=float(ent.get("renda_dom_c10") or 0.0), unidade="R$/domicílio/mês",
            fonte="Per capita calibrada x pessoas / domicílios (sem uplift)",
            quem=quem, kind=_DERIV, fmt=_FMT_CONTABIL),
-        _e("v2_flags", "Avisos da v2", valor="; ".join(flags) or "nenhum", unidade="texto",
-           fonte="Viabilidade v2", quem=quem, kind=_DERIV,
-           nota="A demanda acima é a sugestão do modelo (editável). A faixa p10-p90 é "
-                "provisória: cobriu 72% no teste fora da amostra, medida com renda per capita."),
+        _e("v2_flags", "Avisos do modelo", valor="; ".join(flags) or "nenhum", unidade="texto",
+           fonte="Modelo de praça", quem=quem, kind=_DERIV,
+           nota="A demanda acima é a sugestão do modelo (editável); a faixa vai do p10 ao p90."),
     ]
     return linhas
 
@@ -718,12 +721,29 @@ def _primeiro_mes_cheio(n: int) -> str:
     return expr
 
 
+def _pico_reescalado(p: Premissas) -> int | None:
+    """Mes de pico quando a curva e' a observada REESCALADA (emenda da DEC-077); `None`
+    com a curva observada intacta (pico 10) ou com uma curva propria — ai' a planilha e'
+    a de antes da emenda, byte a byte."""
+    if not p.usa_curva or tuple(p.curva_rampa) == tuple(SIM_CURVA_RAMPA_UNI03):
+        return None
+    pico = int(p.mes_maturidade_rampa)
+    return pico if tuple(p.curva_rampa) == curva_rampa_com_pico(pico) else None
+
+
 def _bloco_curva_rampa(p: Premissas) -> list[dict[str, Any]]:
-    """Fracoes da curva observada (DEC-077), uma linha por mes, e o mes em que ela fecha."""
+    """Fracoes da curva observada (DEC-077), uma linha por mes, e o mes em que ela fecha.
+
+    Com o pico escolhido (emenda de 21/10/2026) a tabela ja' vem REESCALADA pelo motor
+    (`curva_rampa_com_pico`) e o mes de fim da rampa (primeiro com 100%) e' o pico."""
     n = len(p.curva_rampa)
+    pico = _pico_reescalado(p)
+    fonte = "BLK-UNI-03, tabela P1 (alunos, mediana), DEC-077" + (
+        f"; forma observada reescalada para o pico no mês {pico}" if pico else ""
+    )
     linhas = [
         _e(f"curva_m{i}", f"Curva observada — mês {i}", valor=float(f), unidade="% da demanda",
-           fonte="BLK-UNI-03, tabela P1 (alunos, mediana), DEC-077", fmt=_FMT_PCT2)
+           fonte=fonte, fmt=_FMT_PCT2)
         for i, f in enumerate(p.curva_rampa, start=1)
     ]
     linhas.append(
@@ -740,6 +760,14 @@ def _bloco_curva_rampa(p: Premissas) -> list[dict[str, Any]]:
                 "sem nenhum, o mês seguinte ao último. O motor recusa curva que decresce."),
     )
     return linhas
+
+
+def _titulo_curva(p: Premissas) -> str:
+    """Titulo do bloco da curva; com o pico reescalado, diz o mes do pico."""
+    pico = _pico_reescalado(p)
+    if pico is None:
+        return "Curva observada da rampa (% da demanda madura)"
+    return f"Curva observada da rampa (% da demanda madura; pico no mês {pico})"
 
 
 def _bloco_studios(p: Premissas) -> list[dict[str, Any]]:
@@ -1236,12 +1264,12 @@ def _blocos_premissas(
     """
     modo_rampa = _MODOS_RAMPA[1] if p.rampa_apenas_balcao else _MODOS_RAMPA[0]
     curva: list[tuple[str, list[dict[str, Any]]]] = (
-        [("Curva observada da rampa (% da demanda madura)", _bloco_curva_rampa(p))]
+        [(_titulo_curva(p), _bloco_curva_rampa(p))]
         if p.usa_curva
         else []
     )
     origem_v2: list[tuple[str, list[dict[str, Any]]]] = (
-        [("Origem da demanda (Viabilidade v2, faixa provisória)", _bloco_origem_v2(demanda_v2))]
+        [("Origem da demanda (modelo de praça)", _bloco_origem_v2(demanda_v2))]
         if demanda_v2
         else []
     )

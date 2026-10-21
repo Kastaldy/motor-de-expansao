@@ -120,11 +120,15 @@ class ViabilidadeInputs(BaseModel):
     rampa_meses: int | None = Field(default=None, ge=1, le=36)
     # FORMA da rampa (DEC-077): "curva_uni03" (curva observada na rede, BLK-UNI-03) ou
     # "reta" (a rampa historica, com `rampa_meses` e os alunos iniciais do config). None =
-    # `forma_rampa_padrao()`: a reta, porque a demanda deste corpo e' a do OPERADOR (a curva
-    # so' e' padrao com a demanda da v2). Na curva, `rampa_meses` e' aceito e IGNORADO pelo
-    # motor (a tela guarda o numero para quando o operador voltar a reta) — o payload
+    # `forma_rampa_padrao()`: a CURVA desde a emenda de 21/10/2026, com qualquer origem da
+    # demanda. A tela nao oferece mais a reta; a API publica segue ACEITANDO "reta" por
+    # compatibilidade. Na curva, `rampa_meses` e' aceito e IGNORADO pelo motor — o payload
     # devolve `mes_maturidade_rampa`, que e' o fim da rampa que de fato valeu.
     forma_rampa: str | None = None
+    # PICO de maturacao (emenda da DEC-077): o mes em que a curva chega a 100% da demanda.
+    # None = o observado (`SIM_MES_PICO_RAMPA_PADRAO`, mes 10). So' as opcoes de
+    # `SIM_MESES_PICO_RAMPA` (fora delas -> 422). Na reta e' aceito e IGNORADO.
+    mes_pico_rampa: int | None = None
 
     # --- Premissas explicitas (FIN-VIAB-01) ---------------------------------
     # Todas OPCIONAIS: None = default do config.py (fonte unica). Estavam escondidas
@@ -164,6 +168,19 @@ class ViabilidadeInputs(BaseModel):
             raise ValueError(
                 f"forma_rampa desconhecida: {v!r}. Use 'curva_uni03' (curva observada) "
                 f"ou 'reta'"
+            )
+        return v
+
+    @field_validator("mes_pico_rampa")
+    @classmethod
+    def _pico_nas_opcoes(cls, v: int | None) -> int | None:
+        from motor_expansao.dimensionamento.config import SIM_MESES_PICO_RAMPA
+
+        if v is not None and v not in SIM_MESES_PICO_RAMPA:
+            opcoes = ", ".join(str(m) for m in SIM_MESES_PICO_RAMPA[:-1])
+            raise ValueError(
+                f"mes_pico_rampa fora das opções: {v!r}. Use {opcoes} ou "
+                f"{SIM_MESES_PICO_RAMPA[-1]} meses"
             )
         return v
 
@@ -221,24 +238,24 @@ def modo_v2(body: Any) -> bool:
     return getattr(body, "modelo_demanda", None) == "v2"
 
 
-def forma_rampa_do_body(body: Any) -> tuple[str, bool]:
-    """(forma da rampa, reta FORCADA por "sem agregador").
+def forma_rampa_do_body(body: Any) -> str:
+    """Forma da rampa do corpo: a escolha explicita, senao `forma_rampa_padrao()`.
 
-    Densidade: a escolha do operador, senao o padrao da demanda do operador (a reta) — o
-    de antes. V2: a escolha, senao a curva (`forma_rampa_padrao(demanda_v2=True)`); e, se
-    o share de balcao efetivo e' de "sem agregador" (UNI-14: a curva foi medida em
-    unidades COM agregador), a RETA, mesmo com a curva escolhida, com flag.
+    Igual com qualquer origem da demanda. Ate' a emenda de 21/10/2026 o modo v2 FORCAVA a
+    reta sem agregador (UNI-14: a curva foi medida em unidades COM agregador); com o
+    produto so' na curva isso caiu — a curva vale sem agregador tambem, e a ressalva fica
+    declarada na ajuda da tela. A flag `rampa_reta_forcada_sem_agregador` do bloco v2
+    continua no payload (identificador), sempre falsa.
     """
-    from motor_expansao.dimensionamento.config import SIM_FORMA_RAMPA_RETA, SIM_SHARE_BALCAO
-    from motor_expansao.dimensionamento.demanda_v2 import sem_agregador
+    return body.forma_rampa or forma_rampa_padrao()
 
-    v2 = modo_v2(body)
-    forma = body.forma_rampa or forma_rampa_padrao(demanda_v2=v2)
-    if v2 and forma != SIM_FORMA_RAMPA_RETA:
-        share = SIM_SHARE_BALCAO if body.share_balcao is None else float(body.share_balcao)
-        if sem_agregador(share):
-            return SIM_FORMA_RAMPA_RETA, True
-    return forma, False
+
+def mes_pico_do_body(body: Any) -> int:
+    """Pico de maturacao do corpo: a escolha, senao o observado (mes 10)."""
+    from motor_expansao.dimensionamento.config import SIM_MES_PICO_RAMPA_PADRAO
+
+    pico = getattr(body, "mes_pico_rampa", None)
+    return int(SIM_MES_PICO_RAMPA_PADRAO if pico is None else pico)
 
 
 def investimento_do_body(body: ViabilidadeIn) -> dict[str, Any]:
@@ -295,18 +312,15 @@ def investimento_do_body(body: ViabilidadeIn) -> dict[str, Any]:
     }
 
 
-def forma_rampa_padrao(*, demanda_v2: bool = False) -> str:
-    """Forma da rampa de quem nao escolhe (DEC-077, decisao do dono de 2026-10-20).
+def forma_rampa_padrao() -> str:
+    """Forma da rampa de quem nao escolhe (DEC-077; emenda de 21/10/2026: a CURVA).
 
-    A curva observada so' e' o padrao quando a demanda vem da Viabilidade v2; com a
-    demanda do operador (o unico modo do produto hoje) e' `SIM_FORMA_RAMPA_PADRAO`, a reta.
-    Lido em tempo de chamada: trocar a constante no config muda a API, o PDF, a planilha e
-    a tela (que le a forma servida) de uma vez.
+    `SIM_FORMA_RAMPA_PADRAO`, a mesma com qualquer origem da demanda. Lido em tempo de
+    chamada: trocar a constante no config muda a API, o PDF, a planilha, os caminhos
+    legados e a tela (que le a forma servida) de uma vez.
     """
     from motor_expansao.dimensionamento import config
 
-    if demanda_v2:
-        return str(config.SIM_FORMA_RAMPA_PADRAO_DEMANDA_V2)
     return str(config.SIM_FORMA_RAMPA_PADRAO)
 
 
@@ -321,9 +335,20 @@ def premissas_do_body(body: ViabilidadeIn):  # -> simulador.Premissas
     `Premissas.custo_studio_mes` (e nao mais somado em `outros_fixos_mes` aqui): assim a
     planilha .xlsx mostra a linha "Studios" em vez de ratear o valor pelas contas fixas.
     """
-    from motor_expansao.dimensionamento.config import SIM_MENSALIDADE_BALCAO
-    from motor_expansao.dimensionamento.simulador import Premissas
+    from motor_expansao.dimensionamento.config import (
+        SIM_FORMA_RAMPA_CURVA_UNI03,
+        SIM_MENSALIDADE_BALCAO,
+    )
+    from motor_expansao.dimensionamento.simulador import Premissas, curva_rampa_com_pico
 
+    forma = forma_rampa_do_body(body)
+    # Na curva, a forma observada reescalada para o PICO escolhido (pico 10 = a curva
+    # observada intacta, e as Premissas sao as de antes da emenda). Na reta nada entra.
+    curva: dict[str, Any] = (
+        {"curva_rampa": curva_rampa_com_pico(mes_pico_do_body(body))}
+        if forma == SIM_FORMA_RAMPA_CURVA_UNI03
+        else {}
+    )
     opcionais: dict[str, Any] = {
         "devolucoes_pct": body.deducoes_pct,
         "share_balcao": body.share_balcao,
@@ -350,10 +375,9 @@ def premissas_do_body(body: ViabilidadeIn):  # -> simulador.Premissas
         aluguel_mes=float(body.aluguel),
         tickets_studios=tickets_studios_do_body(body),
         # O default do PRODUTO sai de `forma_rampa_padrao()` (DEC-077), nunca do default do
-        # dataclass: e' ele que a constante do config controla. A demanda deste corpo e' a
-        # do operador, entao o padrao e' o da demanda do operador.
-        # Na v2 a curva e' o padrao (e a reta e' forcada sem agregador): ver a funcao.
-        forma_rampa=forma_rampa_do_body(body)[0],
+        # dataclass: e' ele que a constante do config controla.
+        forma_rampa=forma,
+        **curva,
         **{k: v for k, v in opcionais.items() if v is not None},
     )
 
@@ -471,9 +495,7 @@ def montar_payload_viabilidade(
     if modo_v2(body):
         from motor_expansao.dimensionamento.viabilidade_v2 import conferir_demanda_v2
 
-        conferida = conferir_demanda_v2(
-            body, premissas, rampa_reta_forcada=forma_rampa_do_body(body)[1]
-        )
+        conferida = conferir_demanda_v2(body, premissas)
     base, fonte_base = base_calibracao(staging_dir)
 
     res = analisar_viabilidade_ponto(
@@ -578,6 +600,9 @@ def montar_payload_viabilidade(
             # (depois, 1,0). Na reta `curva_rampa` vai null: a forma e' a do parametro acima.
             "forma_rampa": str(premissas.forma_rampa),
             "mes_maturidade_rampa": int(premissas.mes_maturidade_rampa),
+            # Pico de maturacao pedido (emenda da DEC-077): o observado (10) sem escolha.
+            # Na reta vai null — o fim da rampa la' e' `maturacao_meses`.
+            "mes_pico_rampa": mes_pico_do_body(body) if premissas.usa_curva else None,
             "curva_rampa": (
                 [num_json_safe(f, 4) for f in premissas.curva_rampa]
                 if premissas.usa_curva

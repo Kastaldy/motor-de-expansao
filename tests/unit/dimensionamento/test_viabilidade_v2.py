@@ -7,6 +7,7 @@ teste de ACEITACAO com o JSON real fica no fim, marcado `skip` enquanto ele nao 
 
 from __future__ import annotations
 
+import copy
 import hashlib
 import json
 import math
@@ -376,10 +377,11 @@ def _payload(body):
 
 
 # Digests do payload do golden com staging VAZIO (deterministico), MEDIDOS no commit
-# anterior a esta mudanca (bf250f46) e iguais depois: o modo densidade sai byte a byte.
-DIGEST_DENSIDADE = {
-    "golden": "c3b87e104db972a9cbf4f627ea8d5c56e42e160a9142eceffcf7dec3549d67d2",
-    "studios": "d6006dcc5503855d550f13c006b485976acc8ab39a60291e74231da38ae80e5b",
+# anterior a v2 (bf250f46) e iguais ate' a emenda de 21/10/2026. Na epoca "golden" e
+# "studios" eram o corpo SEM forma, que caia na reta; "curva" era a curva escolhida.
+DIGEST_ANTES_DA_EMENDA = {
+    "reta": "c3b87e104db972a9cbf4f627ea8d5c56e42e160a9142eceffcf7dec3549d67d2",
+    "studios_reta": "d6006dcc5503855d550f13c006b485976acc8ab39a60291e74231da38ae80e5b",
     "curva": "16c84f0715c73486bdb9108d2ebe84948106cfffc27241c633e737229b7c3785",
 }
 
@@ -388,14 +390,32 @@ def _digest(p) -> str:
     return hashlib.sha256(json.dumps(p, sort_keys=True, ensure_ascii=False).encode()).hexdigest()
 
 
+def _sem_chave_nova(p):
+    """O payload sem `premissas.mes_pico_rampa`, a UNICA chave que a emenda acrescentou."""
+    q = copy.deepcopy(p)
+    q["premissas"].pop("mes_pico_rampa")
+    return q
+
+
 @pytest.mark.parametrize("modelo", [None, "densidade"])
 def test_modo_densidade_e_byte_a_byte_o_de_antes(modelo):
+    """MUDANCA DA EMENDA de 21/10/2026: o corpo SEM forma deixou de ser a reta e passou a
+    ser a curva com o pico observado. O que continua byte a byte (fora a chave nova
+    `mes_pico_rampa`): a reta EXPLICITA e' o payload do antigo padrao, e o corpo sem forma
+    e' o payload da curva escolhida de antes."""
     extra = {} if modelo is None else {"modelo_demanda": modelo}
-    assert _digest(_payload(ViabilidadeIn(**GOLDEN, **extra))) == DIGEST_DENSIDADE["golden"]
-    studios = {"n_studios": 2, "tickets_studios": [210, 190]}
-    assert _digest(_payload(ViabilidadeIn(**GOLDEN, **studios, **extra))) == DIGEST_DENSIDADE["studios"]
-    curva = {"forma_rampa": "curva_uni03"}
-    assert _digest(_payload(ViabilidadeIn(**GOLDEN, **curva, **extra))) == DIGEST_DENSIDADE["curva"]
+    reta = _payload(ViabilidadeIn(**GOLDEN, forma_rampa="reta", **extra))
+    assert reta["premissas"]["mes_pico_rampa"] is None
+    assert _digest(_sem_chave_nova(reta)) == DIGEST_ANTES_DA_EMENDA["reta"]
+    studios = {"n_studios": 2, "tickets_studios": [210, 190], "forma_rampa": "reta"}
+    assert _digest(_sem_chave_nova(_payload(ViabilidadeIn(**GOLDEN, **studios, **extra)))) == (
+        DIGEST_ANTES_DA_EMENDA["studios_reta"]
+    )
+    padrao = _payload(ViabilidadeIn(**GOLDEN, **extra))
+    assert padrao["premissas"]["mes_pico_rampa"] == 10
+    assert _digest(_sem_chave_nova(padrao)) == DIGEST_ANTES_DA_EMENDA["curva"]
+    assert padrao == _payload(ViabilidadeIn(**GOLDEN, forma_rampa="curva_uni03", **extra))
+    assert padrao == _payload(ViabilidadeIn(**GOLDEN, mes_pico_rampa=10, **extra))
 
 
 def test_modo_v2_carimba_a_demanda_sugerida_e_usa_a_curva(coef):
@@ -495,22 +515,27 @@ def test_modo_v2_sem_coeficientes_e_indisponivel(tmp_path, monkeypatch, coef):
 
 
 @pytest.mark.parametrize(
-    "share, reta",
+    "share, sem",
     [(1.0, True), (0.999, True), (0.9989, False), (0.69, False)],
 )
-def test_sem_agregador_forca_a_reta_com_flag_na_borda(coef, share, reta):
-    assert sem_agregador(share) is reta
+def test_sem_agregador_nao_forca_mais_a_reta(coef, share, sem):
+    """MUDANCA DA EMENDA de 21/10/2026 (produto so' na curva): ANTES, share de balcao >=
+    0,999 no modo da sugestao FORCAVA a reta, com flag. AGORA a curva vale tambem sem
+    agregador (a ressalva do UNI-14 fica na ajuda da tela) e a flag, que segue no payload
+    como identificador, e' sempre falsa. O predicado continua com a mesma borda."""
+    assert sem_agregador(share) is sem
     sug = _sugestao(coef, share_balcao=share)
     p = _payload(_corpo_v2(sug, share_balcao=share))
-    esperado = SIM_FORMA_RAMPA_RETA if reta else SIM_FORMA_RAMPA_CURVA_UNI03
-    assert p["premissas"]["forma_rampa"] == esperado
-    assert p["demanda_v2"]["rampa_reta_forcada_sem_agregador"] is reta
+    assert p["premissas"]["forma_rampa"] == SIM_FORMA_RAMPA_CURVA_UNI03
+    assert p["demanda_v2"]["rampa_reta_forcada_sem_agregador"] is False
 
 
-def test_sem_agregador_forca_a_reta_ate_com_a_curva_escolhida(coef):
+def test_sem_agregador_usa_o_pico_escolhido(coef):
     sug = _sugestao(coef, share_balcao=1.0)
-    p = _payload(_corpo_v2(sug, share_balcao=1.0, forma_rampa="curva_uni03"))
-    assert p["premissas"]["forma_rampa"] == SIM_FORMA_RAMPA_RETA
+    p = _payload(_corpo_v2(sug, share_balcao=1.0, mes_pico_rampa=15))
+    assert p["premissas"]["forma_rampa"] == SIM_FORMA_RAMPA_CURVA_UNI03
+    assert p["premissas"]["mes_pico_rampa"] == 15
+    assert p["premissas"]["mes_maturidade_rampa"] == 15
 
 
 def test_densidade_sem_agregador_nao_e_forcada():

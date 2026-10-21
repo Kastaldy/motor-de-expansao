@@ -101,18 +101,14 @@ SIM_MATURACAO_MESES = 8                  # E13
 SIM_FORMA_RAMPA_RETA = "reta"
 SIM_FORMA_RAMPA_CURVA_UNI03 = "curva_uni03"
 SIM_FORMAS_RAMPA = (SIM_FORMA_RAMPA_CURVA_UNI03, SIM_FORMA_RAMPA_RETA)
-# Default do PRODUTO (payload da tela, PDF, planilha da rota e API publica) — a UNICA
-# constante que decide a forma de quem nao escolhe: a tela le a forma servida pelo payload
-# e so' manda `forma_rampa` quando o operador escolhe. Decisao do dono (Vinicius,
-# 2026-10-20): "A Viabilidade v2 entra junto com o ramp-up". A curva so' e' o padrao
-# quando a demanda vem da v2 (BLK-UNI-05, ainda fora do produto); com a demanda do
-# OPERADOR (o modo de hoje: digitada ou semeada pela faixa de densidade) o padrao e' a
-# RETA, e o resultado e' byte a byte o de antes da DEC-077. A curva fica disponivel por
-# escolha explicita (`forma_rampa = "curva_uni03"`).
-SIM_FORMA_RAMPA_PADRAO = SIM_FORMA_RAMPA_RETA
-# Padrao quando a demanda vier da Viabilidade v2. Nenhum chamador do produto o usa hoje:
-# fica declarado para a v2 nascer com a forma que a decisao amarrou a ela.
-SIM_FORMA_RAMPA_PADRAO_DEMANDA_V2 = SIM_FORMA_RAMPA_CURVA_UNI03
+# Default do PRODUTO (tela, PDF, planilha da rota, API publica/bot e os caminhos legados
+# de `viabilidade_ponto`) — a UNICA constante que decide a forma de quem nao escolhe, com
+# QUALQUER origem da demanda. Emenda da DEC-077 (Vinicius, 21/10/2026: "A rampa de
+# maturacao fica exclusivamente como curva observada"): o padrao passa a ser a CURVA. A
+# tela nao oferece mais a reta; a API publica continua ACEITANDO `forma_rampa = "reta"`
+# por compatibilidade de contrato. Trocar esta constante de volta para a reta reverte o
+# produto inteiro (a tela le a forma servida).
+SIM_FORMA_RAMPA_PADRAO = SIM_FORMA_RAMPA_CURVA_UNI03
 
 # Viabilidade v2 (DEC-077, ampliada em 2026-10-20): demanda madura SUGERIDA por um modelo de
 # praca + estudios, SEM masters (decisao de Felipe, 20/10). Fonte dos dois modos de demanda:
@@ -135,8 +131,10 @@ V2_COEFICIENTES_ARQUIVO = "v2_coeficientes.json"
 # A isocrona do modelo: 10 min de carro sem transito (DEC-074). Nunca o raio.
 V2_MINUTOS_ISOCRONA = 10
 # Predicado de "abre SEM agregador" (achado UNI-14, critica A3): a curva da rampa foi medida
-# em unidades que abriram COM agregador, entao no modo v2 com share de balcao >= este valor
-# a rampa e' FORCADA para a reta, com flag. Fracao, nunca percentual.
+# em unidades que abriram COM agregador. Ate' a emenda de 21/10/2026 o modo v2 com share de
+# balcao >= este valor FORCAVA a reta; com o produto so' na curva isso deixou de valer (a
+# curva vale sem agregador tambem, com a ressalva declarada na ajuda da tela). O predicado
+# fica (diagnostico/teste). Fracao, nunca percentual.
 V2_SHARE_BALCAO_SEM_AGREGADOR = 0.999
 # Transcricao LITERAL da tabela P1 de data/analysis/uni/uni03/resultado_uni03.md, coluna
 # "alunos (mediana)", meses de vida 0..12, como fracao do nivel maduro (media dos meses de
@@ -155,6 +153,21 @@ SIM_CURVA_UNI03_ALUNOS_P1 = (
 SIM_CURVA_RAMPA_UNI03 = (
     0.68, 0.77, 0.84, 0.88, 0.90, 0.92, 0.97, 0.97, 0.99, 1.00, 1.00, 1.00,
 )
+# PICO DE MATURACAO (emenda da DEC-077, 21/10/2026): o MES em que a rampa atinge 100% da
+# demanda madura. O observado e' o primeiro mes da curva acima com 100% (mes 10). O
+# operador escolhe outro pico entre as opcoes abaixo e a MESMA forma observada e'
+# reescalada no tempo (`simulador.curva_rampa_com_pico`):
+#   fracao(t) = curva_obs(t x 10 / pico), interpolando linearmente entre meses observados;
+#   t x 10 / pico <= 1 -> a fracao do mes 1; >= 10 -> 100%.
+# Pico 10 devolve a curva acima INTACTA (byte a byte). Opcoes: 6 e 8 (abertura mais
+# rapida que a rede; 8 e' a maturacao historica da planilha), 10 (o observado), 12 (um
+# ano), 15, 18 e 24 (praca que demora; 24 = dois anos). Conjunto pequeno de proposito:
+# o pico e' premissa de cenario, nao parametro fino. Fora dele -> 422.
+SIM_MES_PICO_RAMPA_OBSERVADO = next(
+    i for i, f in enumerate(SIM_CURVA_RAMPA_UNI03, start=1) if f >= 1.0
+)
+SIM_MESES_PICO_RAMPA = (6, 8, 10, 12, 15, 18, 24)
+SIM_MES_PICO_RAMPA_PADRAO = SIM_MES_PICO_RAMPA_OBSERVADO
 
 # Drivers financeiros (Simulador — celulas J9, N9, N11, R9)
 SIM_MENSALIDADE_BALCAO = 137             # J9 cenario 0 (=IF(N12=0,137,...))
