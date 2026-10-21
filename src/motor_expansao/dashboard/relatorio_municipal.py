@@ -3062,6 +3062,7 @@ def _altura_note(pdf: _UltraPDF, w: float, text: str) -> float:
     """Altura (pt) que `_draw_note` ocuparia, medida pelo `dry_run` do fpdf2 na MESMA fonte."""
     pdf.set_font("Helvetica", "", 8)
     linhas = pdf.multi_cell(w, _NOTA_LINHA_H, _ascii(text), dry_run=True, output="LINES")
+    assert isinstance(linhas, list)  # output="LINES" devolve a lista de linhas
     return len(linhas) * _NOTA_LINHA_H
 
 
