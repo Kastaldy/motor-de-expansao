@@ -315,7 +315,7 @@ def test_mapas_municipio_offline_sem_rede():
         df, res, competitors_df=_sample_competitors(), ultra_df=_sample_ultra(), basemap=False
     )
     # `bairros_urbano` so existe quando ha bairro; este fixture nao tem `bairros_geo`.
-    assert set(mapas) == {"resumo", "score", "residual", "dominio", "cobertura", "bairros"}
+    assert set(mapas) == {"resumo", "score", "residual", "dominio", "cobertura", "bairros", "espaco"}
     for png in mapas.values():
         assert png.startswith(b"\x89PNG")
         assert len(png) > 1000
@@ -482,19 +482,19 @@ def test_pdf_municipal_12_paginas_e_secoes():
     pdf_bytes = gerar_pdf_relatorio_municipal(res, mapas, ultra_dir="data/ultra")
 
     assert pdf_bytes.startswith(b"%PDF-1.4")
-    assert b"/Count 12" in pdf_bytes
+    assert b"/Count 11" in pdf_bytes
     assert len(pdf_bytes) > 15_000
     for header in PDF_SECTION_HEADERS:
         assert header.encode("latin-1") in pdf_bytes
-    # Carimbo de versao (D8) no rodape.
-    # Carimbo de versao no rodape (DEC-005 decisao 6). Casa com a constante, nao com um
-    # literal: travar "BLK-RELMUN-01" fazia o teste reprovar um BUMP legitimo de contrato --
-    # e o bump e' justamente o que mantem dois PDFs de estruturas diferentes distinguiveis.
+    # Carimbo de versao (DEC-005 decisao 6) no `/Info` desde 2026-10-20 (o rodape saiu das
+    # paginas). Casa com a constante, nao com um literal: travar "BLK-RELMUN-01" fazia o teste
+    # reprovar um BUMP legitimo de contrato -- e o bump e' justamente o que mantem dois PDFs de
+    # estruturas diferentes distinguiveis.
     assert VERSAO_CONTRATO_MUNICIPAL.encode("latin-1") in pdf_bytes
     assert b"contrato v2" in pdf_bytes
-    # Atribuicao de tiles (DEC-011) no rodape.
-    assert b"OpenStreetMap" in pdf_bytes
-    assert b"CARTO" in pdf_bytes
+    # A atribuicao de tiles (DEC-011) mora na nota do proprio mapa, e so' quando ha basemap;
+    # aqui o fundo e' offline, entao nenhum credito de tiles e' impresso.
+    assert b"Relat\xf3rio gerado pelo Motor" not in pdf_bytes
     # BLK-RELMUN-03: legenda do criterio de inclusao do hexagono, com o limiar REAL do
     # _hex_destacado_mask (SO Residual Fitness >= 2.000; termo de SAM removido).
     assert b"SAM Fitness" not in pdf_bytes
@@ -502,10 +502,11 @@ def test_pdf_municipal_12_paginas_e_secoes():
     # BLK-RELMUN-05: wording neutro - PDF nao deve mais mencionar "amarelo(s)" como texto exibido.
     assert b"amarelo" not in pdf_bytes.lower()
     assert "hexágonos destacados".encode("latin-1") in pdf_bytes
-    # FU1 (slide novo, pos-capa): "Visao Geral do Municipio" com bloco de regioes consideradas.
+    # FU1 (slide novo, pos-capa): "Visao Geral do Municipio". Com bairros na base, a coluna da
+    # direita e' a tabela de bairros aprovados (2026-10-20), nao mais o bloco de contagem.
     assert "Visão Geral do Município".encode("latin-1") in pdf_bytes
-    assert "REGIÕES CONSIDERADAS".encode("latin-1") in pdf_bytes
-    assert "regiões consideradas nas páginas seguintes".encode("latin-1") in pdf_bytes
+    assert b"BAIRROS APROVADOS" in pdf_bytes
+    assert "REGIÕES CONSIDERADAS".encode("latin-1") not in pdf_bytes
 
 
 def test_agregar_municipio_cobertura_aprovados_reprovados():
@@ -536,7 +537,7 @@ def test_pdf_municipal_offline_safe_sem_assets(tmp_path):
     pdf_bytes = gerar_pdf_relatorio_municipal(res, mapas, ultra_dir=tmp_path)
 
     assert pdf_bytes.startswith(b"%PDF")
-    assert b"/Count 12" in pdf_bytes
+    assert b"/Count 11" in pdf_bytes
     for header in PDF_SECTION_HEADERS:
         assert header.encode("latin-1") in pdf_bytes
 
@@ -713,8 +714,9 @@ def test_pdf_municipal_sintese_texto_zonas_3_zonas():
     # Regressao: cards 1 e 2 e o VALOR do card 3 seguem intocados.
     # Notas: os textos completos dos cards 1/2 tambem quebram em linha (mesma razao do
     # helper acima); usa-se um trecho contido em UMA linha so (nao cruza o wrap).
-    assert "fitness atual baixa".encode("latin-1") in pdf_bytes
-    assert "academia regular".encode("latin-1") in pdf_bytes
+    # Desde 2026-10-20 os cards 1 e 2 leem o numero da cidade contra a regua das cidades
+    # grandes, em vez do texto fixo "penetracao baixa" / "residual significativo".
+    assert b"de penetra" in pdf_bytes and "fitness atual baixa".encode("latin-1") not in pdf_bytes
     assert f"{res['n_zonas_geo']} zonas de atuação".encode("latin-1") in pdf_bytes
 
 
@@ -738,8 +740,9 @@ def test_pdf_municipal_sintese_texto_zonas_2_zonas():
     )
     # Notas: os textos completos dos cards 1/2 tambem quebram em linha (mesma razao do
     # helper acima); usa-se um trecho contido em UMA linha so (nao cruza o wrap).
-    assert "fitness atual baixa".encode("latin-1") in pdf_bytes
-    assert "academia regular".encode("latin-1") in pdf_bytes
+    # Desde 2026-10-20 os cards 1 e 2 leem o numero da cidade contra a regua das cidades
+    # grandes, em vez do texto fixo "penetracao baixa" / "residual significativo".
+    assert b"de penetra" in pdf_bytes and "fitness atual baixa".encode("latin-1") not in pdf_bytes
     assert f"{res['n_zonas_geo']} zonas de atuação".encode("latin-1") in pdf_bytes
 
 
@@ -764,8 +767,9 @@ def test_pdf_municipal_sintese_texto_zonas_1_zona():
     )
     # Notas: os textos completos dos cards 1/2 tambem quebram em linha (mesma razao do
     # helper acima); usa-se um trecho contido em UMA linha so (nao cruza o wrap).
-    assert "fitness atual baixa".encode("latin-1") in pdf_bytes
-    assert "academia regular".encode("latin-1") in pdf_bytes
+    # Desde 2026-10-20 os cards 1 e 2 leem o numero da cidade contra a regua das cidades
+    # grandes, em vez do texto fixo "penetracao baixa" / "residual significativo".
+    assert b"de penetra" in pdf_bytes and "fitness atual baixa".encode("latin-1") not in pdf_bytes
     assert f"{res['n_zonas_geo']} zonas de atuação".encode("latin-1") in pdf_bytes
 
 
@@ -787,8 +791,9 @@ def test_pdf_municipal_sintese_texto_zonas_0_zonas():
     )
     # Notas: os textos completos dos cards 1/2 tambem quebram em linha (mesma razao do
     # helper acima); usa-se um trecho contido em UMA linha so (nao cruza o wrap).
-    assert "fitness atual baixa".encode("latin-1") in pdf_bytes
-    assert "academia regular".encode("latin-1") in pdf_bytes
+    # Desde 2026-10-20 os cards 1 e 2 leem o numero da cidade contra a regua das cidades
+    # grandes, em vez do texto fixo "penetracao baixa" / "residual significativo".
+    assert b"de penetra" in pdf_bytes and "fitness atual baixa".encode("latin-1") not in pdf_bytes
     assert f"{res['n_zonas_geo']} zonas de atuação".encode("latin-1") in pdf_bytes
 
 
@@ -896,8 +901,9 @@ def _pixels_de_tinta_do_rotulo(png: bytes) -> int:
     return int(perto.sum())
 
 
-def test_mapas_rotulam_hexagono_com_bairro_dominante():
-    """Com bairros resolvidos, os hexes destacados ganham o nome; sem eles, o mapa fica igual."""
+def test_mapas_nao_rotulam_hexagono_com_bairro_dominante():
+    """Desde 2026-10-20 (Juan) nenhum mapa escreve nome de bairro sobre o hexagono: os slides de
+    bairro do inicio ja' situam o leitor. Com ou sem bairros resolvidos, o mapa sai IGUAL."""
     df = _sample_df()
     bairros = _bairros_por_hex_sample(df)
 
@@ -909,8 +915,8 @@ def test_mapas_rotulam_hexagono_com_bairro_dominante():
     com = render_mapas_municipio(df, res_com, basemap=False)["residual"]
     sem = render_mapas_municipio(df, res_sem, basemap=False)["residual"]
 
-    assert com != sem, "o mapa com bairros tem de sair diferente do mapa sem"
-    assert _pixels_de_tinta_do_rotulo(com) > _pixels_de_tinta_do_rotulo(sem)
+    assert com == sem, "o nome do bairro voltou a ser escrito sobre o hexagono"
+    assert _pixels_de_tinta_do_rotulo(com) == _pixels_de_tinta_do_rotulo(sem)
 
 
 def test_mapa_declara_quantos_bairros_couberam():
@@ -1005,7 +1011,8 @@ def test_tabela_hexes_vazia_sem_hexes():
 
 
 def test_pdf_municipal_pagina_tabela_regioes():
-    """A pagina entra no PDF com cabecalho de colunas, hex_id rastreavel e o corte declarado."""
+    """A pagina "Comparacao das Regioes" saiu em 2026-10-20 (Juan): as duas tabelas de "Onde
+    crescer" a substituem. O dado (`tabela_hexes`) segue no resultado."""
     df = _sample_df()
     res = agregar_municipio(
         df, nome_municipio="SAO PAULO", uf="SP", dominio_df=_sample_dominio(),
@@ -1014,19 +1021,15 @@ def test_pdf_municipal_pagina_tabela_regioes():
     pdf_bytes = gerar_pdf_relatorio_municipal(res, render_mapas_municipio(df, res, basemap=False))
 
     assert b"/Count 11" in pdf_bytes
-    assert "Comparação das Regiões".encode("latin-1") in pdf_bytes
-    for coluna in ("Hexágono", "Bairro dominante", "População", "Residual"):
-        assert coluna.encode("latin-1") in pdf_bytes
-    # hex_id impresso: e' o que torna a linha rastreavel de volta ao dashboard.
-    assert str(res["tabela_hexes"]["linhas"][0]["hex_id"]).encode("latin-1") in pdf_bytes
-    # O total do municipio aparece junto do recorte.
-    assert "regiões do município".encode("latin-1") in pdf_bytes
+    assert "Comparação das Regiões".encode("latin-1") not in pdf_bytes
+    assert res["tabela_hexes"]["linhas"][0]["hex_id"]
     for needle in _PII_FORBIDDEN:
         assert needle not in pdf_bytes
 
 
 def test_pdf_municipal_tabela_avisa_renda_constante():
-    """Renda igual em todas as linhas precisa ser DITA -- senao parece erro de calculo."""
+    """O aviso de renda constante morava na tabela de Comparacao, que saiu (2026-10-20). O DADO
+    continua dizendo -- quem voltar a imprimir a tabela tem como avisar."""
     df = _sample_df()
     df["renda_per_capita"] = 2138.0
     if "renda_per_capita_setor_2022_calibrada" in df.columns:
@@ -1034,7 +1037,8 @@ def test_pdf_municipal_tabela_avisa_renda_constante():
     res = agregar_municipio(df, nome_municipio="SAO PAULO", uf="SP")
     pdf_bytes = gerar_pdf_relatorio_municipal(res, render_mapas_municipio(df, res, basemap=False))
 
-    assert "é a MESMA em todas as regiões".encode("latin-1") in pdf_bytes
+    assert res["tabela_hexes"]["renda_constante"]
+    assert "é a MESMA em todas as regiões".encode("latin-1") not in pdf_bytes
 
 
 # ---------------------------------------------------------------------------
@@ -1238,10 +1242,16 @@ def test_pdf_municipal_pagina_bairros_oficiais():
     mapas = render_mapas_municipio(df, res, basemap=False)
     pdf_bytes = gerar_pdf_relatorio_municipal(res, mapas)
 
-    assert b"/Count 12" in pdf_bytes
+    assert b"/Count 11" in pdf_bytes
     assert "Bairros Oficiais".encode("latin-1") in pdf_bytes
-    assert b"BAIRROS IDENTIFICADOS" in pdf_bytes
-    assert b"MAIS POPULOSOS" in pdf_bytes
+    # Desde 2026-10-20 a coluna da direita e' o INDICE dos bairros numerados no mapa (os paineis
+    # "Bairros identificados" e "Mais populosos" sairam): 2 bairros cabem numa pagina so'.
+    import pymupdf
+
+    with pymupdf.open(stream=pdf_bytes, filetype="pdf") as doc:
+        texto = " ".join(p.get_text() for p in doc)
+    assert "BAIRROS (2)" in texto
+    assert "BAIRROS IDENTIFICADOS" not in texto
     assert b"Bela Vista" in pdf_bytes
     # Cobertura cheia -> nota normal, SEM o aviso de malha incompleta.
     assert "dissolvidos por bairro".encode("latin-1") in pdf_bytes
@@ -1832,22 +1842,20 @@ def test_recorte_urbano_sem_bairro_devolve_none():
     assert bounds_nucleo_urbano(_bairros_geo_so_sobra()) is None, "so a sobra nao define urbano"
 
 
-def test_pagina_nucleo_urbano_no_pdf():
-    """A pagina entra e as DUAS vistas coexistem: municipio inteiro e zoom urbano."""
+def test_pagina_nucleo_urbano_saiu_do_pdf():
+    """A pagina "Bairros - Nucleo Urbano" saiu em 2026-10-20 (Juan): repetia o mapa de score da
+    pagina seguinte. O recorte urbano continua enquadrando os tematicos por bairro."""
     df = _sample_df()
     res = agregar_municipio(df, nome_municipio="SAO PAULO", uf="SP",
                             bairros_geo=_bairros_geo_sample())
     mapas = render_mapas_municipio(df, res, basemap=False)
-    assert "bairros_urbano" in mapas and mapas["bairros_urbano"].startswith(b"\x89PNG")
-    # As duas vistas sao mapas DIFERENTES (enquadramentos distintos).
-    assert mapas["bairros"] != mapas["bairros_urbano"]
+    assert "bairros_urbano" not in mapas
 
     pdf_bytes = gerar_pdf_relatorio_municipal(res, mapas)
-    assert b"/Count 12" in pdf_bytes
+    assert b"/Count 11" in pdf_bytes
     assert "Bairros Oficiais".encode("latin-1") in pdf_bytes
-    assert "Núcleo Urbano".encode("latin-1") in pdf_bytes
-    assert b"RECORTE URBANO" in pdf_bytes
-    assert "MAIS DENSOS".encode("latin-1") in pdf_bytes
+    assert "Núcleo Urbano".encode("latin-1") not in pdf_bytes
+    assert b"RECORTE URBANO" not in pdf_bytes
 
 
 def test_tabela_usa_renda_domiciliar_quando_disponivel():
@@ -1897,7 +1905,7 @@ def test_modo_hexagono_traz_bairros_oficiais_e_segue_por_hexagono():
     res = agregar_municipio(df, nome_municipio="SAO PAULO", uf="SP", dominio_df=_sample_dominio(),
                             bairros_geo=_bairros_geo_sample())
     mapas = render_mapas_municipio(df, res, basemap=False, unidade=UNIDADE_HEXAGONO)
-    assert set(mapas) == {"cobertura", "bairros", "resumo", "score", "residual", "dominio"}
+    assert set(mapas) == {"cobertura", "bairros", "resumo", "score", "residual", "dominio", "espaco"}
     por_hex = render_mapas_municipio(df, {k: v for k, v in res.items() if k != "bairros_geo"},
                                      basemap=False, unidade=UNIDADE_HEXAGONO)
     assert mapas["score"] == por_hex["score"], "no modo hexagono o score nao vira choropleth de bairro"

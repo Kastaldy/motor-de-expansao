@@ -1649,6 +1649,12 @@ def _praca_da_cidade(
 
     hexes = rp.preparar_hexes_da_cidade(df_muni, renda_dom)
     sel = rp.selecionar_onde_crescer(hexes)
+    # "Onde crescer" em duas listas (2026-10-20): maior residual e maior score socioeconomico.
+    top_residual = rp.top_por_coluna(hexes, rp.COL_RESIDUAL)
+    # Empate no teto (score 100): desempata a mesma mistura renda+populacao, sem o teto.
+    top_socio = rp.top_por_coluna(
+        rp.com_socio_sem_teto(hexes), rp.COL_SCORE_SOCIO, desempate=rp.COL_SOCIO_SEM_TETO,
+    )
 
     hexes_muni = _hexes_do_municipio(df_muni)
     conc = filtrar_pins_do_municipio(comp_df, hexes_muni=hexes_muni, poligono=poligono)
@@ -1656,7 +1662,10 @@ def _praca_da_cidade(
 
     cres_df = _carregar_parquet_full(str(settings.staging_dir / "crescimento_municipal.parquet"))
     linha = rp.linha_crescimento_municipal(cres_df, uf=uf, cod_municipio=cod, nome_municipio=nome_municipio)
-    crescimento = rp.resumir_crescimento(linha, uf=uf, rotulo_tendencia=_ROTULO_TENDENCIA)
+    crescimento = rp.resumir_crescimento(
+        linha, uf=uf, rotulo_tendencia=_ROTULO_TENDENCIA,
+        referencias=rp.referencias_da_uf(cres_df, uf),
+    )
 
     # Simbolo do perfil (R$ no BR, USD na AR), como a tabela do proprio relatorio (`_renda`).
     simbolo = resolver_perfil().moeda.simbolo_renda()
@@ -1681,7 +1690,9 @@ def _praca_da_cidade(
     desenhos = [
         ("calor_cidade_renda_domiciliar", _calor("renda_domiciliar", "Renda media domiciliar", f"{simbolo} por domicilio", _moeda, rpm.PALETA_RENDA)),
         ("pressao_cidade", lambda fundo: rpm.render_pressao_cidade(hexes, conc, ult, basemap=fundo)),
-        ("onde_crescer", lambda fundo: rpm.render_onde_crescer(hexes, sel.hexagonos, basemap=fundo)),
+        ("onde_crescer", lambda fundo: rpm.render_onde_crescer_duas_listas(
+            hexes, top_residual, top_socio, basemap=fundo,
+        )),
     ]
     if not pop_municipal:
         # Com a populacao do municipio repetida em cada hexagono (Manaus: 2.063.689 nos 2.139), a
@@ -1722,6 +1733,8 @@ def _praca_da_cidade(
         crescimento=crescimento,
         mapas=mapas,
         n_hexagonos_cidade=int(len(hexes)),
+        top_residual=top_residual,
+        top_socio=top_socio,
         renda_municipal=rp.renda_e_municipal(hexes),
         populacao_municipal=pop_municipal,
     )

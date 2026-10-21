@@ -12,15 +12,24 @@ não o substitui. Unidade de análise = **município inteiro** (selecionado no d
 gerável e baixável após a seleção do município. Estética = a mesma família visual do
 template GeoFusion/Ultra (turquesa + magenta + laranja; capa escura com hexágonos).
 
-## Estrutura (12 páginas/slides)
+## Estrutura (11 páginas/slides)
 
-> **11 páginas** em município sem bairro na base: a Página 4 (Núcleo Urbano) é condicional
-> — ver a própria página abaixo. `PDF_SECTION_HEADERS` lista as 12 do relatório completo.
+> `PDF_SECTION_HEADERS` lista as 11 do relatório. A página "Comparação das Regiões" **saiu em 2026-10-20**: as duas tabelas de "Onde crescer" (maior residual e maior socioeconômico) a substituem. A página "Bairros — Núcleo Urbano"
+> (BLK-RELMUN-11) **saiu em 2026-10-20** (Juan): repetia o mapa de score da página seguinte. O
+> recorte urbano (`bounds_nucleo_urbano`) continua enquadrando os mapas temáticos por bairro.
+> Município grande ganha **uma página a mais por parte** dos Bairros Oficiais (Página 3):
+> São Paulo sai com 6 partes.
 
 > Fonte de verdade da contagem/ordem: `PDF_SECTION_HEADERS` em
 > `src/motor_expansao/dashboard/relatorio_municipal.py` (10 entradas), travada por
-> `tests/unit/test_relatorio_municipal.py` (asserts em `/Count 12`). Ao mudar a estrutura,
+> `tests/unit/test_relatorio_municipal.py` (asserts em `/Count 11`). Ao mudar a estrutura,
 > atualizar ESTE doc no mesmo PR — a página 2 abaixo ficou 1 mês fora dele (BLK-RELMUN-01-FU1).
+
+> **Ordem desde 2026-10-20 (Juan):** apresentação do município (Bairros Oficiais) → mapas do território (Score, Residual e, com a praça, Mapas de calor, Pressão
+> concorrencial e Como a cidade está indo) → oportunidade (Visão Geral com os bairros aprovados,
+> Resumo e a conta do espaço) → estratégia (Expansão de Domínio, Bairros por Zona e, com a praça,
+> Onde crescer) → Síntese → Espaço e academias. As cores seguem o ordinal
+> de `_tema_bicolor` de cada página, não a posição.
 
 ### Página 1 — Capa
 - Eyebrow: "ANÁLISE DE EXPANSÃO".
@@ -29,29 +38,31 @@ template GeoFusion/Ultra (turquesa + magenta + laranja; capa escura com hexágon
 - Rótulo do município: **"Cidade - UF"** (preenchido com o município selecionado).
 - Arte: capa escura (roxo/navy) com hexágonos de contorno (magenta/turquesa/laranja) e barras de acento.
 
-### Página 2 — Visão Geral do Município
-- Inserida pelo **BLK-RELMUN-01-FU1** (2026-06-23), logo após a capa — é o slide que faltava
-  neste doc até 2026-07-27.
-- Título da banda: **"Visão Geral do Município - Cidade - UF"**.
-- **Mapa** do município INTEIRO (não o recorte das páginas seguintes), distinguindo hexágonos
-  **aprovados**, **reprovados** e **fora do município**.
-- Bloco **"REGIÕES CONSIDERADAS"**: quantas regiões entram nas páginas seguintes e quantas
-  ficaram de fora (`n_aprovados` / `n_hex_municipio` / `n_reprovados`).
-- READ-ONLY sobre o M1. Implementação: `_visao_geral_page` em `relatorio_municipal.py`.
-
-### Página 3 — Bairros Oficiais
+### Página 2 — Bairros Oficiais
 - Inserida pelo **BLK-RELMUN-06**, logo após a Visão Geral: ancora o território em nomes que o
   time reconhece ANTES de a leitura virar hexágono — mesma posição que o slide ocupa no material
   de referência do time de Expansão (estudo GeoFusion).
 - Título da banda: **"Bairros Oficiais - Cidade - UF"**.
 - **Mapa** do município INTEIRO com o **limite territorial de cada bairro** (contorno vermelho),
-  a divisa do município (contorno preto) e o nome do bairro em placa branca. A área **cinza** é
-  a que não tem bairro na base — nunca sai como se fosse divisa oficial.
-- Fonte da geometria: setores censitários do **IBGE Censo 2022** (`geometry_wkb`) **dissolvidos**
-  por localidade, na mesma cascata `nome_bairro` → `nome_subdistrito` → `nome_distrito` da Página
-  9 (`carregar_bairros_geo`). Não depende de dado externo nem de rede.
-- Bloco **"BAIRROS IDENTIFICADOS"** (contagem) + painel **"MAIS POPULOSOS (hab.)"** com os 5
-  maiores por população do Censo 2022.
+  a divisa do município (contorno preto) e um **número** dentro de cada bairro; o nome vai no
+  índice ao lado (desde 2026-10-20: o mapa único de São Paulo cabia 29 de 96 nomes e a placa
+  cruzava a divisa). A área **cinza** é a que não tem bairro na base — nunca sai como se fosse
+  divisa oficial.
+- **Em partes** (`dividir_bairros_em_partes`): quando os números não cabem num quadro, a página
+  vira uma visão geral com as partes coloridas e numeradas + **uma página por parte** ("Parte k
+  de K"), com zoom só nela, os vizinhos em cinza, mini-mapa de localização e o índice dos seus
+  bairros. Corte pela mediana do eixo mais longo até ≤ 25 bairros e números a ≥ 36 px; um vazio
+  grande (zona rural longe da cidade) vira corte; parte de até 3 bairros é numerada no mapa geral.
+- **Só os 40 mais populosos são numerados** (`_BAIRROS_NUMERADOS_MAX`, Juan, 2026-10-21): com o
+  CNEFE o município tem centenas de bairros (São José dos Campos: 331 contra as 35 regiões do
+  IBGE) e numerar todos dava 40 partes. Os demais ficam no mapa em cinza, sem número; o título
+  diz "40 de N bairros" e a nota repete o recorte. Em SJC: 5 partes.
+- Fonte: o **bairro do CNEFE 2022** (DEC-076), o mais frequente em cada setor, com a malha do
+  IBGE como reserva (`nome_bairro` → `nome_subdistrito` → `nome_distrito`). O limite é o dos
+  setores censitários do **IBGE Censo 2022** (`geometry_wkb`) **dissolvidos** por esse bairro
+  (`carregar_bairros_geo`). Sem o artefato do CNEFE no `staging/`, volta à malha do IBGE.
+- Coluna da direita: índice **"BAIRROS (N)"** (município numa parte só) ou **"PARTES DO
+  MUNICÍPIO"** (faixa de números e três bairros de exemplo por parte).
 - **Cobertura medida (2026-08-18, varredura dos 5.571 municípios com a cascata REAL do
   código — `nome_bairro` → `nome_subdistrito` → `nome_distrito`):** desenham bairro
   **196 dos 319 municípios de 100 mil+ habitantes (61,4%)**, que somam **79,0% da população**
@@ -66,63 +77,7 @@ template GeoFusion/Ultra (turquesa + magenta + laranja; capa escura com hexágon
   o número nunca sai sozinho dando a entender que o município inteiro está mapeado.
 - READ-ONLY sobre o M1. Implementação: `_bairros_mapa_page` + `_render_mapa_bairros`.
 
-### Página 4 — Bairros — Núcleo Urbano
-- Inserida pelo **BLK-RELMUN-11** (pedido de Juan, 2026-08-19), logo após a vista do município
-  inteiro: **situar → aproximar**, na ordem em que o leitor pensa.
-- Motivo: em município de fronteira agrícola a cidade ocupa ~2% do território. Em **Sinop/MT**
-  os 21 bairros viram um ponto no mapa do município inteiro e só **3 dos 21 nomes** cabem;
-  Tangará da Serra/MT tem o mesmo padrão (4 de 31). A página anterior continua necessária para
-  situar — esta mostra onde a decisão acontece.
-- **Recorte** (`bounds_nucleo_urbano`): bbox dos bairros mais **densos** que somam
-  `_URBANO_POP_ALVO` (85%) da população. Densidade é o discriminante certo — por população
-  bruta um distrito rural extenso entraria e o recorte voltaria a ser o município inteiro, que
-  é justamente o que esta página evita. A **sobra** fica fora do cálculo (puxaria o recorte de
-  volta ao território todo), mas continua sendo **desenhada** dentro dele.
-- Extensão mínima de 4 km e padding de 10%, para núcleo minúsculo não gerar zoom ilegível.
-- Leva os **pins** de Ultra e concorrentes: só neste zoom eles ficam distinguíveis.
-- Painel lateral: os 5 bairros mais **densos** (mesmo critério que define o recorte — ordenar
-  por população aqui contradiria o mapa ao lado).
-- **PÁGINA CONDICIONAL:** só é emitida quando há bairro real na base (`tem_bairro_real`).
-  Sem bairro (São Luís/MA, Sorocaba/SP) ela saía com "Mapa indisponível", "0 bairros" e "Sem
-  densidade calculada" — uma página inteira dizendo nada, logo depois da página 3, que já
-  explicou a situação com o aviso certo. Nesses municípios o relatório sai com **11 páginas**.
-- READ-ONLY sobre o M1. Implementação: `_bairros_urbano_page` + `bounds_nucleo_urbano`.
-
-### Página 5 — Comparação das Regiões
-- Inserida pelo **BLK-RELMUN-07**: é a tabela de abertura do material de referência do time de
-  Expansão, trocando bairro por **hexágono** — a unidade em que este relatório decide.
-- Título da banda: **"Comparação das Regiões - Cidade - UF"**.
-- Tabela ranqueada por **Residual Fitness** (a MESMA métrica que destaca o hexágono no mapa —
-  ranquear por outra faria a tabela contradizer o mapa ao lado), com as colunas:
-  `# | Hexágono | Bairro dominante | População | Renda p/c | Densidade | Score | Residual`.
-- Teto de **15 linhas** (mesmo do material de referência); a linha de resumo declara sempre
-  quantas regiões existem no total, para o corte nunca passar por "é tudo que há".
-- **Bairro dominante** vem de `_carregar_bairros_por_hex` e serve de ponte: amarra o `hex_id` a
-  um nome que o time reconhece.
-- **Renda p/c = renda censitária calibrada do setor**, NÃO `renda_per_capita` (insumo do M1, que
-  em boa parte dos municípios vem replicada do valor municipal — em Novo Hamburgo/RS tem 1 valor
-  único para os 48 hexágonos, contra 47 da censitária). Numa tabela cuja função é COMPARAR, uma
-  coluna constante sugeriria que os bairros têm a mesma renda. Quando ainda assim ela não variar,
-  a nota diz isso explicitamente.
-- Residual em **verde** = região aprovada (mesma semântica de cor do mapa).
-- READ-ONLY sobre o M1. Implementação: `_tabela_hexes_page` + `_tabela_hexes`.
-
-### Página 6 — Resumo da Região (01)
-- Título "Cidade - UF" / subtítulo "Potencial de entrada de novas unidades".
-- **Mapa** de hexágonos (estilo dashboard) com pins de Ultra e concorrentes; alguns hexágonos
-  exibem o número de **vagas/consumo** (ex.: 4.451, 5.061, 4.259, 3.863, 4.371, 4.561, 5.876, 4.651).
-  Hexágonos amarelos = espaço disponível.
-- Painel lateral **"RESUMO DA REGIÃO"** — tabela `Indicador | Qtd.`:
-  - **Unidades Ultra** = XX
-  - **Unidades Concorrentes** = XX
-  - **Espaço para academias** = XX
-- Box **"Como calculamos o espaço"**:
-  - "Soma dos hexágonos amarelos ÷ 2.500"
-  - `XXXX + XXXX + XXXX + XXXX + XXXX = XXXX`
-  - `÷ 2.500 → XX`
-- Legenda: "● Ultra".
-
-### Página 7 — Score Censitário (02)
+### Página 3 — Score Censitário (02)
 - **BLK-RELMUN-09: o mapa desta página é por BAIRRO, não por hexágono.** É a única camada
   temática em que trocar a unidade não custa precisão: o score sai do **setor**, e o bairro é
   agregação exata de setores (~21 por bairro em Novo Hamburgo). Já o hexágono res-7 tem 5,16 km²
@@ -146,10 +101,13 @@ template GeoFusion/Ultra (turquesa + magenta + laranja; capa escura com hexágon
 - Subtítulo: "Potencial socioeconômico por célula hexagonal H3".
 - **Mapa choropleth** H3 (verde→amarelo→laranja→vermelho) com pins Ultra/concorrentes.
 - Legenda (4 faixas): **Alto potencial** (verde), **Médio-alto** (amarelo/âmbar),
-  **Médio** (laranja), **Baixo potencial** (vermelho).
+  **Médio** (laranja), **Baixo potencial** (vermelho). Desde 2026-10-20 cada faixa mostra a
+  **renda per capita observada** (Censo 2022) dos bairros da cidade naquela faixa, do 1º ao 3º
+  quartil (`renda_por_faixa_de_score`), com o score e o número de bairros embaixo. Não é regra:
+  o score mistura renda (60%) e população (40%) — DEC-040.
 - Rodapé: "Fonte: IBGE Censo 2022 · Agregação H3 resolução 7".
 
-### Página 8 — Residual Fitness (03)
+### Página 4 — Residual Fitness (03)
 - Subtítulo: "Estimativa de mercado ainda não capturado pela concorrência".
 - **Mapa** residual (verde/amarelo/vermelho) com pins.
 - Painel **"MERCADO DISPONÍVEL"**:
@@ -159,7 +117,49 @@ template GeoFusion/Ultra (turquesa + magenta + laranja; capa escura com hexágon
   - **Penetração fitness** ~XX,X%
   - Nota de método: "Pop. elegível − alunos com academia cadastrada".
 
-### Página 9 — Expansão de Domínio (04) — mapa + estratégia
+### Página 5 — Visão Geral do Município
+- Inserida pelo **BLK-RELMUN-01-FU1** (2026-06-23), logo após a capa — é o slide que faltava
+  neste doc até 2026-07-27.
+- Título da banda: **"Visão Geral do Município - Cidade - UF"**.
+- **Mapa** com zoom nos **aprovados** (bbox dos hexágonos verdes ou dos bairros aprovados, margem
+  de 2% — Juan, 2026-10-20), **sem legenda e sem nomes**. Verde = aprovado com dado próprio;
+  o aprovado por fallback municipal sai no **cinza** do reprovado.
+- À direita, tabela **"BAIRROS APROVADOS (N)"** em ordem alfabética (bairro aprovado = maioria da
+  população em hexágono aprovado). Acima de 60, entram **os 60 mais populosos** (ainda em ordem
+  alfabética, em duas colunas) e "+ N outros"; o título segue com o total (São José dos Campos
+  com o CNEFE: 168). Sem bairro na base, o bloco **"REGIÕES CONSIDERADAS"** de antes
+  (`n_aprovados` / `n_hex_municipio` / `n_reprovados`).
+- READ-ONLY sobre o M1. Implementação: `_visao_geral_page` em `relatorio_municipal.py`.
+
+### Página 6 — Resumo da Região (01)
+- Título "Cidade - UF" / subtítulo "Potencial de entrada de novas unidades".
+- **Mapa** de hexágonos (estilo dashboard) com pins de Ultra e concorrentes; alguns hexágonos
+  exibem o número de **vagas/consumo** (ex.: 4.451, 5.061, 4.259, 3.863, 4.371, 4.561, 5.876, 4.651).
+  Hexágonos verdes = aprovados (espaço disponível), cinza = o resto. **Sem legenda** desde
+  2026-10-21 (Juan): o aprovado por fallback municipal deixou de sair em amarelo e sai no mesmo
+  verde, porque também conta no espaço.
+- Painel lateral **"RESUMO DA REGIÃO"** — tabela `Indicador | Qtd.`, nesta ordem desde 2026-10-20:
+  - **Espaço para academias** = XX
+  - **Unidades Concorrentes** = XX
+  - **Unidades Ultra** = XX
+- Box **"Como calculamos o espaço"**:
+  - "Soma dos hexágonos amarelos ÷ 2.500"
+  - `XXXX + XXXX + XXXX + XXXX + XXXX = XXXX`
+  - `÷ 2.500 → XX`
+- Legenda: "● Ultra".
+
+### Página 7 — Como chegamos ao Espaço para academias
+- Inserida em 2026-10-20 (Juan), logo após o Resumo: no mapa do Resumo cada verde parecia UM
+  espaço, e dentro de um verde cabem várias academias.
+- **Mapa por hexágono** (camada `espaco`, nos dois modos): aprovados em verde, cada um com o número
+  de academias de 2.500 alunos que cabem nele (`academias_por_hex`: residual ÷ 2.500 pelos maiores
+  restos, para os números somarem exatamente o espaço do Resumo). Por hexágono de propósito: é o
+  grão em que o espaço é calculado; repartir por bairro perdia academias nos hexágonos de borda.
+- Ao lado: o total ("ESPAÇO PARA ACADEMIAS") e "ONDE CABEM MAIS" (hexágonos com mais academias, pelo
+  bairro dominante). Mesma fórmula da DEC-011 parte 2; só display. Implementação:
+  `_espaco_explicado_page`.
+
+### Página 8 — Expansão de Domínio (04) — mapa + estratégia
 - Subtítulo: "Sugestão de posicionamento para cercar e dominar a região".
 - **Mapa** com hexágonos numerados por **zona** (1, 2, 3) e pins.
 - Painel **"ESTRATÉGIA"** (3 movimentos; rótulos do template — atenção: no template os textos
@@ -170,7 +170,7 @@ template GeoFusion/Ultra (turquesa + magenta + laranja; capa escura com hexágon
   - **3 Ancora central** — hexágonos centrais / posicionamento.
 - Rodapé: "Motor de Expansão Ultra · IBGE + OSM".
 
-### Página 10 — Expansão de Domínio (04) — bairros por zona
+### Página 9 — Expansão de Domínio (04) — bairros por zona
 - Cabeçalho do painel: "Bairros com os melhores números".
 - Listas de **bairros agrupadas por zona** (1/2/3/4), ex. (Bauru-SP no template):
   - Zona 1: Parque Roosevelt, Parque Primavera, Jardim Petrópolis, Núcleo 9 de Julho,
@@ -180,7 +180,8 @@ template GeoFusion/Ultra (turquesa + magenta + laranja; capa escura com hexágon
   - Zona 4: Núcleo Hab. Mary Dota, Núcleo Hab. Beija-Flor, Núcleo Hab. Isaura Pitta Garms, Jardim Silvestre II.
 - Rodapé: "Motor de Expansão Ultra · IBGE + OSM".
 
-### Página 11 — Síntese — Diagnóstico & Recomendação Estratégica
+### Página 10 — Síntese — Diagnóstico & Recomendação Estratégica
+- **Desde 2026-10-20 os cards 1 e 2 leem o número da cidade** (`_texto_penetracao_sintese`, `_texto_residual_sintese`) contra a régua das cidades com 100 mil+ hab. (terços medidos na base: penetração 10,5% / 15,8% / 22,8%; residual por mil hab. 138 / 151 / 169). Antes diziam sempre "penetração baixa" e "residual significativo" — São Paulo (41,8%) saía como mercado com penetração baixa. Leitura de comparação, não previsão.
 - 3 cards (acento magenta / turquesa / laranja):
   - **~XX,X% de penetração** → "Mercado com Oportunidade": penetração fitness atual baixa,
     grande espaço para crescimento.
@@ -190,7 +191,7 @@ template GeoFusion/Ultra (turquesa + magenta + laranja; capa escura com hexágon
     núcleo pelos flancos antes da concorrência; áreas centrais saturadas).
 - Rodapé: "Estratégia e Growth · Ultra Academia · Motor de Expansão · 2026".
 
-### Página 12 — Síntese — Espaço e academias
+### Página 11 — Síntese — Espaço e academias
 - Eyebrow "SÍNTESE" / título "Espaço e academias".
 - 3 big numbers:
   - **XX** Unidades Ultra mapeadas.
@@ -202,7 +203,9 @@ template GeoFusion/Ultra (turquesa + magenta + laranja; capa escura com hexágon
 
 ## Páginas da praça (pedido do Felipe, 2026-09-10)
 
-`service.montar_pdf_municipio` — o preparo único do motor e do bot (#373) — monta `praca=PracaDaCidade` (`service._praca_da_cidade`) e o PDF ganha **quatro páginas** (12 -> 16 no modo bairro). Sem `praca` o PDF sai o de antes; as páginas são condicionais e ficam fora de `PDF_SECTION_HEADERS`. Cores pelos ordinais 12..15 de `_tema_bicolor`, então nenhuma página existente troca de cor. Falha no preparo deixa o PDF sair sem as quatro; falha de um mapa vira "Mapa indisponível". Lógica pura em `dashboard/relatorio_praca.py`, PNGs em `dashboard/relatorio_praca_mapas.py`, testes em `tests/unit/test_relatorio_municipal_praca.py`.
+> Posição desde 2026-10-20: Mapas de calor, Pressão concorrencial e Como a cidade está indo logo depois do Residual Fitness; Onde crescer logo depois de Bairros por Zona, com duas tabelas: top 5 por residual e top 5 por score socioeconômico (valor absoluto; empate pelo maior residual).
+
+`service.montar_pdf_municipio` — o preparo único do motor e do bot (#373) — monta `praca=PracaDaCidade` (`service._praca_da_cidade`) e o PDF ganha **quatro páginas** (11 -> 15 no modo bairro). Sem `praca` o PDF sai o de antes; as páginas são condicionais e ficam fora de `PDF_SECTION_HEADERS`. Cores pelos ordinais 12..15 de `_tema_bicolor`, então nenhuma página existente troca de cor. Falha no preparo deixa o PDF sair sem as quatro; falha de um mapa vira "Mapa indisponível". Lógica pura em `dashboard/relatorio_praca.py`, PNGs em `dashboard/relatorio_praca_mapas.py`, testes em `tests/unit/test_relatorio_municipal_praca.py`.
 
 - **Mapas de calor da cidade** (depois de Score Censitário): renda média domiciliar e densidade por hexágono, lado a lado. Renda pelo mesmo mapa da tabela de regiões (`carregar_renda_domiciliar_por_hex`); sem ele a coluna fica nula, nunca cai na per capita. Densidade = população de leitura (`COLS_POPULACAO`, a precedência do piloto) sobre a área da célula, e não `densidade_pop_setor_hab_km2`, que é do setor. Cores do slide "Mapas de calor" do pontual; cortes pelos quintis da própria cidade (`quebras_por_quantil`), porque a pergunta é "quais bairros desta praça".
 - **Pressão concorrencial** (depois de Residual Fitness): um disco de `RAIO_INFLUENCIA_M` (1 km, DEC-051) por academia do município — o recorte do slide Concorrentes (`filtrar_pins_do_municipio`) — sobre a cidade inteira. Com mais de `LOGOS_MAX_CIDADE` (120) academias as logos viram pontos, senão escondem os discos. Painel: concorrentes, independentes, Ultra, % dos hexágonos com o centro sob algum raio, % com 3+ raios (`N_DISCOS_DISPUTA`), máximo num hexágono e as 5 redes com mais unidades (`pressao_na_cidade`).

@@ -449,6 +449,8 @@ class CrescimentoCidade:
     disponivel: bool
     linhas: list[tuple[str, str]]
     frase: str
+    #: rotulo -> subtitulo miudo embaixo dele (hoje so' o saldo: "abertas - fechadas").
+    subtitulos: dict[str, str] = field(default_factory=dict)
 
 
 def _fmt_pct(v: Any) -> str | None:
@@ -461,12 +463,44 @@ def _fmt_int(v: Any) -> str | None:
     return None if pd.isna(x) else f"{int(round(float(x))):,}".replace(",", ".")
 
 
-_ROTULO_CONFIABILIDADE = {
-    "alta": "Alta",
-    "media": "Média",
-    "baixa": "Baixa",
-    "muito_baixa": "Muito baixa",
+# Confiabilidade da leitura de emprego: quantos vinculos formais sustentam a tendencia e a
+# variacao do CAGED (cortes da base: alta >= 20 mil, media >= 5 mil, baixa >= 1 mil). Desde
+# 2026-10-21 (Juan: "nao entendi por que manter") so' vira linha quando NAO e' alta -- como aviso
+# de que poucas contratacoes mexem muito na variacao. Alta nao muda a leitura, entao nao aparece.
+_LEITURA_FRAGIL = {
+    "media": "leitura pouco firme",
+    "baixa": "leitura frágil",
+    "muito_baixa": "leitura muito frágil",
 }
+ROTULO_POUCOS_EMPREGOS = "Atenção: poucos empregos formais"
+
+
+def referencias_da_uf(crescimento: pd.DataFrame | None, uf: str | None) -> dict[str, float]:
+    """Medianas dos municipios da UF para comparar o salario de contratacao e a sua variacao.
+
+    A variacao do emprego ja' chega com a mediana da UF (`cres_uf_mediana`); o salario saia solto
+    e o leitor nao tinha como saber se era bom (Juan, 2026-10-20). O saldo de empresas por mil
+    habitantes saiu da pagina em 2026-10-21. Vazio sem base ou sem UF.
+    """
+    if crescimento is None or crescimento.empty or not uf or "cres_chave_nome" not in crescimento.columns:
+        return {}
+    da_uf = crescimento.loc[crescimento["cres_chave_nome"].astype(str).str.split("|").str[0] == str(uf).upper()]
+    saida: dict[str, float] = {}
+    for chave, coluna in (("salario", "cres_salario"), ("salario_var", "cres_salario_var")):
+        if coluna in da_uf.columns:
+            v = pd.to_numeric(da_uf[coluna], errors="coerce").dropna()
+            if not v.empty:
+                saida[chave] = float(v.median())
+    return saida
+
+
+def _periodo_da_dimensao(cres_dims: Any, nome: str) -> str | None:
+    """`"...;Empresas:110.0:/mil:99:2020–2025;..."` -> `"2020-2025"` (5o campo da dimensao)."""
+    for parte in str(cres_dims or "").split(";"):
+        campos = parte.split(":")
+        if len(campos) >= 5 and campos[0].strip() == nome:
+            return campos[4].strip().replace("–", "-").replace("→", "-")
+    return None
 
 
 def resumir_crescimento(
@@ -475,6 +509,7 @@ def resumir_crescimento(
     uf: str | None = None,
     frase: str | None = None,
     rotulo_tendencia: Mapping[str, str] | None = None,
+    referencias: Mapping[str, float] | None = None,
 ) -> CrescimentoCidade:
     """Transforma a linha municipal de crescimento nas linhas da pagina.
 
@@ -507,24 +542,58 @@ def resumir_crescimento(
         med = _fmt_pct(_v("cres_uf_mediana"))
         ref = f" (mediana {uf or 'da UF'}: {med})" if med is not None else ""
         linhas.append(("Variação do emprego desde dez/2022", f"{emp}{ref}"))
+    ref = dict(referencias or {})
+    sigla = uf or "da UF"
+    subtitulos: dict[str, str] = {}
     saldo = _fmt_int(_v("cres_saldo_empresas"))
     if saldo is not None:
-        linhas.append(("Saldo de empresas abertas", saldo))
+        # Saldo = aberturas MENOS fechamentos (ha municipio com saldo negativo na base). O periodo
+        # vem da propria dimensao. (O saldo por mil habitantes contra a mediana da UF saiu em
+        # 2026-10-21, a pedido do Juan.)
+        periodo = _periodo_da_dimensao(_v("cres_dims"), "Empresas")
+        rotulo_saldo = f"Saldo de empresas {periodo}" if periodo else "Saldo de empresas"
+        linhas.append((rotulo_saldo, saldo))
+        # As duas parcelas, quando o artefato as traz (desde 2026-10-20): o saldo e' o resultado.
+        abertas = _fmt_int(_v("cres_aberturas_empresas"))
+        fechadas = _fmt_int(_v("cres_fechamentos_empresas"))
+        if abertas is not None and fechadas is not None:
+            subtitulos[texto_pdf(rotulo_saldo)] = texto_pdf(f"{abertas} abertas - {fechadas} fechadas")
+    # Salario: UMA linha, com a variacao de 12 meses do lado (Juan, 2026-10-21) e a regua da UF
+    # embaixo -- a mediana do salario e a da variacao, para o leitor ver se e' muito ou pouco.
+    # Antes "Mediana de admissao SP" era uma linha solta e parecia um segundo salario.
     sal = _fmt_int(_v("cres_salario"))
     if sal is not None:
+        rot = "Salário de contratação"
         var = _fmt_pct(_v("cres_salario_var"))
-        linhas.append(("Salário de admissão", f"R$ {sal}" + (f" ({var} no ano)" if var else "")))
+        linhas.append((rot, f"R$ {sal}" + (f" ({var} em 12 meses)" if var else "")))
+        partes: list[str] = []
+        if "salario" in ref:
+            rel = round(100.0 * (float(_v("cres_salario")) / float(ref["salario"]) - 1.0))
+            lado = "perto dela" if abs(rel) < 5 else f"{abs(rel)}% {'acima' if rel > 0 else 'abaixo'}"
+            partes.append(f"mediana {sigla}: R$ {_fmt_int(ref['salario'])} ({lado})")
+        if var and "salario_var" in ref:
+            partes.append(f"variação na mediana: {_fmt_pct(ref['salario_var'])}")
+        if partes:
+            subtitulos[texto_pdf(rot)] = texto_pdf("; ".join(partes))
     setor = _v("cres_setor")
     if setor:
         linhas.append(("Setor que mais abre empresas", str(setor)))
     conf = _v("cres_confiab")
-    if conf:
-        linhas.append(("Confiabilidade da medição", _ROTULO_CONFIABILIDADE.get(str(conf), str(conf))))
+    if conf and str(conf) in _LEITURA_FRAGIL:
+        vinc = pd.to_numeric(pd.Series([_v("cres_vinculos")]), errors="coerce").iloc[0]
+        if pd.isna(vinc):
+            valor = _LEITURA_FRAGIL[str(conf)]
+        else:
+            v = float(vinc)
+            qtd = (f"{v / 1e6:.1f} mi" if v >= 1e6 else f"{v / 1e3:.0f} mil" if v >= 1e3 else f"{v:.0f}")
+            valor = f"{qtd.replace('.', ',')} vínculos ({_LEITURA_FRAGIL[str(conf)]})"
+        linhas.append((ROTULO_POUCOS_EMPREGOS, valor))
 
     return CrescimentoCidade(
         disponivel=True,
         linhas=[(texto_pdf(r), texto_pdf(v)) for r, v in linhas],
         frase=texto_pdf(frase if frase else (veredito or "")),
+        subtitulos=subtitulos,
     )
 
 
@@ -854,8 +923,62 @@ class PracaDaCidade:
     crescimento: CrescimentoCidade
     mapas: dict[str, bytes] = field(default_factory=dict)
     n_hexagonos_cidade: int = 0
+    #: As duas listas da pagina "Onde crescer" (2026-10-20): maior residual e maior score
+    #: socioeconomico, 5 hexagonos cada (`top_por_coluna`).
+    top_residual: pd.DataFrame = field(default_factory=pd.DataFrame)
+    top_socio: pd.DataFrame = field(default_factory=pd.DataFrame)
     renda_municipal: bool = False
     populacao_municipal: bool = False
+
+
+def top_por_coluna(
+    hexes: pd.DataFrame | None, coluna: str, n: int = 5, *, desempate: str | None = None,
+) -> pd.DataFrame:
+    """Os `n` hexagonos com maior `coluna` (valor ABSOLUTO, sem filtro de renda), com `posicao`.
+
+    Juan (2026-10-20) pediu as duas leituras separadas na pagina "Onde crescer": onde sobra mais
+    gente sem academia (residual) e onde a regiao e' mais forte socioeconomicamente (score). Uma
+    regua so', que misturava as duas, escondia de qual lado vinha cada escolhido.
+
+    `desempate`: coluna que ordena os EMPATADOS (desc). O score satura em 100 em muitos hexagonos
+    de capital (Sao Paulo), e sem desempate o top 5 saia pela ordem do id -- com residual 0.
+    """
+    if hexes is None or hexes.empty or coluna not in hexes.columns:
+        return pd.DataFrame()
+    v = pd.to_numeric(hexes[coluna], errors="coerce")
+    out = hexes.loc[v.notna()].assign(_v=v[v.notna()])
+    d = (pd.to_numeric(out[desempate], errors="coerce").fillna(float("-inf"))
+         if desempate and desempate in out.columns else pd.Series(0.0, index=out.index))
+    out = out.assign(_d=d).sort_values(["_v", "_d", "hex_id"], ascending=[False, False, True])
+    out = out.drop(columns=["_v", "_d"]).head(n).reset_index(drop=True)
+    out["posicao"] = range(1, len(out) + 1)
+    return out
+
+
+COL_SOCIO_SEM_TETO = "_socio_sem_teto"
+
+
+def com_socio_sem_teto(hexes: pd.DataFrame | None) -> pd.DataFrame | None:
+    """`hexes` + a mesma mistura do score (60% renda, 40% populacao, DEC-040) SEM o teto de 100.
+
+    So' para DESEMPATAR a lista "Maior socioeconomico" (Juan, 2026-10-20): em Sao Paulo varios
+    hexagonos batem 100 -- a renda per capita satura na ancora maxima -- e o desempate pelo
+    residual punha Consolacao, a de melhores numeros, em 5o. Mesmas ancoras do perfil do pais,
+    sem `clip`; nao substitui o score (que segue sendo o criterio e o numero publicado).
+    """
+    if hexes is None or hexes.empty:
+        return hexes
+    from motor_expansao.perfil import resolver_perfil
+
+    anc = resolver_perfil().ancoras()
+    renda_col = next((c for c in ("renda_per_capita_setor_2022_calibrada", "renda_per_capita") if c in hexes.columns), None)
+    if renda_col is None or COL_POPULACAO not in hexes.columns:
+        return hexes.assign(**{COL_SOCIO_SEM_TETO: np.nan})
+    renda = pd.to_numeric(hexes[renda_col], errors="coerce")
+    pop = pd.to_numeric(hexes[COL_POPULACAO], errors="coerce").clip(lower=1.0)
+    nota_renda = 100.0 * (renda - anc.renda_min) / (anc.renda_max - anc.renda_min)
+    nota_pop = 100.0 * (np.log(pop) - np.log(anc.pop_min)) / (np.log(anc.pop_max) - np.log(anc.pop_min))
+    return hexes.assign(**{COL_SOCIO_SEM_TETO: 0.60 * nota_renda + 0.40 * nota_pop})
 
 
 def quebras_por_quantil(valores: Any, n_classes: int = 5) -> list[float]:
