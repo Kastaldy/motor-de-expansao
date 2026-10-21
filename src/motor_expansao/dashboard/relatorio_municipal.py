@@ -186,6 +186,10 @@ _ROTULO_INK = (255, 255, 255)
 # Camada de DISPLAY; nao toca M1.
 _HEX_APROVADO_RGBA = (*_COR_APROVADO_PROPRIO, 210)
 _HEX_REPROVADO_RGBA = (*_COR_REPROVADO, 170)
+#: Regiao com espaco no mapa "Como chegamos ao Espaco" na resposta unica (DEC-077, Brasil): laranja
+#: escuro (o tom do "Espaco para academias"), com o mesmo contraste do verde para o numero branco.
+#: O verde de antes era o do aprovado e quase o da Mata Virgem no "Onde crescer".
+_HEX_ESPACO_RGBA = (180, 90, 10, 245)
 
 # Slide "Bairros oficiais" (BLK-RELMUN-06): LIMITE TERRITORIAL real de cada bairro, obtido
 # dissolvendo os setores censitarios (IBGE 2022, `geometry_wkb`) pela MESMA cascata de
@@ -2155,7 +2159,8 @@ def _render_mapa_municipio(
         elif camada == "espaco":
             # Todo aprovado em verde (o fallback municipal tambem conta no espaco), o resto cinza.
             # O numero e' o ponto da pagina: no Resumo cada verde parecia "uma vaga".
-            color = (20, 130, 65, 245) if destaque_mask[pos] else _HEX_REPROVADO_RGBA
+            cor_espaco = _HEX_ESPACO_RGBA if resposta_unica else (20, 130, 65, 245)
+            color = cor_espaco if destaque_mask[pos] else _HEX_REPROVADO_RGBA
             odraw.polygon(pixels, fill=color, outline=(255, 255, 255, 160))
             n_acad = academias.get(hex_id_list[pos] if pos < len(hex_id_list) else "")
             if n_acad:
@@ -3836,6 +3841,17 @@ def _espaco_explicado_page(pdf: _UltraPDF, result: dict[str, Any], mapa: bytes |
         "naquela região."
     ))
 
+    _draw_note(
+        pdf, 34.0, 490.0, 540.0,
+        f"Número = Residual Fitness da região ÷ {_format_number(CAPACIDADE_UNIDADE, 0)}, arredondado "
+        f"para os números somarem {_format_number(espaco, 0)}. Região = hexágono de ~5 km².",
+    )
+    if _resposta_unica(result):
+        # DEC-077 (Brasil): o mapa segue com QUANTAS academias cabem em cada regiao (item 4 do
+        # Felipe), mas sem o painel "ONDE CABEM MAIS" -- regioes NOMEADAS em ordem de residual
+        # seriam uma segunda lista de onde expandir ao lado do Top 10 (em SJC abria com Campo dos
+        # Alemaes, que a regua deixa de fora por renda).
+        return
     # Onde cabem mais: os hexagonos com mais academias, pelo bairro dominante.
     academias = dict(result.get("academias_por_hex") or {})
     bairro_de = dict(result.get("bairros_por_hex") or {})
@@ -3856,11 +3872,6 @@ def _espaco_explicado_page(pdf: _UltraPDF, result: dict[str, Any], mapa: bytes |
         pdf.set_xy(px + pw - 70, yy)
         pdf.cell(56, 14, _ascii(f"{n} academia{'s' if n != 1 else ''}"), align="R")
         yy += 20.0
-    _draw_note(
-        pdf, 34.0, 490.0, 540.0,
-        f"Número = Residual Fitness da região ÷ {_format_number(CAPACIDADE_UNIDADE, 0)}, arredondado "
-        f"para os números somarem {_format_number(espaco, 0)}. Região = hexágono de ~5 km².",
-    )
 
 
 def renda_por_faixa_de_score(
@@ -5133,7 +5144,9 @@ def _sintese_page(pdf: _UltraPDF, result: dict[str, Any], assets: dict[str, byte
                   primary: tuple[int, int, int] = ULTRA_TURQUESA) -> None:
     pdf.add_page()
     _draw_full_page_background(pdf, assets.get("conteudo"), ULTRA_BRANCO_GELO)
-    _draw_title_band(pdf, "Síntese - Diagnóstico & Recomendação", rgb=primary)
+    # DEC-077 (Brasil): a recomendacao e' so' o Top 10 do "Onde crescer"; a Sintese e' diagnostico.
+    _draw_title_band(pdf, "Síntese - Diagnóstico" if _resposta_unica(result)
+                     else "Síntese - Diagnóstico & Recomendação", rgb=primary)
     residual_valor, residual_texto = _texto_residual_sintese(result)
     cards = [
         (

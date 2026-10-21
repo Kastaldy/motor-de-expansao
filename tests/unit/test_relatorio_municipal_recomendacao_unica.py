@@ -200,12 +200,33 @@ def test_resposta_unica_tira_as_outras_listas_de_onde_expandir():
     assert "zonas de atuação" not in texto
     assert "BAIRROS APROVADOS" not in texto
     assert "REGIÕES CONSIDERADAS" not in texto
+    assert "Síntese - Diagnóstico" in titulos and "Recomendação" not in " ".join(titulos)
     assert "aprovad" not in texto.casefold()
     # As paginas neutras continuam (Juan, 2026-10-22).
     assert any(t.startswith("Visão Geral do Município") for t in titulos)
     assert any(t.startswith("Resumo da Região") for t in titulos)
     # Espaco so' como leitura, com o rotulo do Felipe.
     assert "capacidade não atendida nas regiões com residual a partir de 2.000 alunos" in texto
+
+
+def test_espaco_no_brasil_mostra_quantas_cabem_sem_ranking_de_regioes():
+    """Item 4 (ajustado pelo Felipe): o slide por hexagono fica e mostra quantas academias cabem.
+    O painel "ONDE CABEM MAIS" (regioes nomeadas em ordem de residual) sai no Brasil: seria uma
+    segunda lista de onde expandir ao lado do Top 10. Sem a chave (Argentina) ele continua."""
+    df = _sample_df()
+
+    def _espaco(res: dict) -> str:
+        mapas = render_mapas_municipio(df, res, basemap=False, unidade=rm.UNIDADE_HEXAGONO)
+        paginas = _paginas_do_pdf(gerar_pdf_relatorio_municipal(res, mapas, unidade=rm.UNIDADE_HEXAGONO))
+        return _pagina(paginas, "Como chegamos ao Espaço para academias")
+
+    base = agregar_municipio(df, nome_municipio="SAO PAULO", uf="SP")
+    br = {**base, CHAVE_RESPOSTA_UNICA: True}
+    espaco = _espaco(br)
+    assert "Cada número no mapa é quantas cabem" in espaco
+    assert br["espaco_rotulos"]["pontos"], "o mapa tem de mostrar quantas cabem por regiao"
+    assert "ONDE CABEM MAIS" not in espaco
+    assert "ONDE CABEM MAIS" in _espaco(dict(base))
 
 
 def test_sem_regua_o_pdf_segue_como_antes():
@@ -252,6 +273,21 @@ def test_visao_geral_e_resumo_sem_o_verde_de_aprovado(monkeypatch):
                                     unidade=rm.UNIDADE_HEXAGONO)
     assert not any(c in _VERDES_DE_APROVADO for c in cores)
     assert "dominio" not in depois
+
+
+def test_mapa_do_espaco_sem_o_verde_de_aprovado_no_brasil(monkeypatch):
+    """O slide do Espaco fica (item 4), mas a regiao com espaco nao sai no verde do aprovado -- que
+    no Brasil se confundiria com a Mata Virgem do "Onde crescer" (item 2)."""
+    df = _sample_df()
+    res = agregar_municipio(df, nome_municipio="SAO PAULO", uf="SP")
+    verde_espaco = (20, 130, 65, 245)
+    cores = _cores_de_preenchimento(monkeypatch)
+    rm._render_mapa_municipio(df, camada="espaco", municipio_result=dict(res), basemap=False)
+    assert verde_espaco in cores  # sem a chave (Argentina) o verde continua
+    cores.clear()
+    rm._render_mapa_municipio(df, camada="espaco", municipio_result={**res, CHAVE_RESPOSTA_UNICA: True},
+                              basemap=False)
+    assert verde_espaco not in cores and rm._HEX_ESPACO_RGBA in cores
 
 
 def test_visao_geral_por_bairro_sem_verde_e_sem_tabela(monkeypatch):
