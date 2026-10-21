@@ -1,0 +1,20 @@
+{
+  "versao": "2026-10_v1",
+  "pais": "BR",
+  "dec": "DEC-077",
+  "aprovado_por": "Felipe Silva (GATE 1 e GATE 2, 20 e 21/10/2026; residual estimado fora dos dois segmentos em 21/10/2026)",
+  "vagas_por_segmento": 5,
+  "mata_virgem": {
+    "renda_domiciliar_min": 4500.0,
+    "residual_min": 2000.0,
+    "populacao_min": null,
+    "exige_residual_medido": true
+  },
+  "premium": {
+    "score_min": 50.0,
+    "populacao_min": 10000.0,
+    "exige_residual_medido": true
+  },
+  "_unidades": "renda domiciliar em R$/mes por domicilio (conta do card, motor_expansao.renda.hex, com o k da malha); residual em alunos (oferta_efetiva_disponivel); score na escala absoluta 0-100 de score_setor_2022_calibrado (DEC-040); populacao em habitantes do Censo 2022 (pop_total_setor_2022).",
+  "_nota": "Limites inclusivos no valor cheio. Independente do RENDA_MIN de config.py (ficha do ponto/M1), que nao muda. Mudar qualquer numero = versao nova + emenda da DEC-077."
+}
