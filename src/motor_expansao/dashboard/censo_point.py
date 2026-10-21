@@ -43,11 +43,39 @@ GEOMETRIA_TIPO_POLIGONO = "poligono"
 # DEC-074 (alcance do ponto): a ISOCRONA de 10 min de carro tambem entra como geometria, mas
 # com rotulo PROPRIO -- chama-la de `_poligono` diria que o operador a desenhou, e o PDF e a
 # API exibiriam o metodo errado. Mesma razao do `_1km` da DEC-021: o rotulo e' o recorte.
-METODO_RELATORIO_PONTUAL_ISOCRONA = "setor_censitario_intersecao_area_isocrona_carro_10min"
-GEOMETRIA_TIPO_ISOCRONA_CARRO_10MIN = "isocrona_carro_10min"
+# Emenda 1 (20/10/2026): a de 5 min entra pelo MESMO molde -- rotulo e metodo derivam do
+# tempo (`geometria_tipo_isocrona`), um por tempo, para o PDF nunca chamar 5 min de 10.
+_PREFIXO_GEOMETRIA_ISOCRONA = "isocrona_carro_"
+MINUTOS_ISOCRONAS = (5, 10)
+
+
+def geometria_tipo_isocrona(minutos: int) -> str:
+    """Rotulo cru da isocrona de `minutos` de carro: `"isocrona_carro_10min"`."""
+    return f"{_PREFIXO_GEOMETRIA_ISOCRONA}{int(minutos)}min"
+
+
+def minutos_da_geometria(geometria_tipo: str | None) -> int | None:
+    """O tempo de uma isocrona conhecida (`"isocrona_carro_5min"` -> 5); `None` se nao e'."""
+    for minutos in MINUTOS_ISOCRONAS:
+        if geometria_tipo == geometria_tipo_isocrona(minutos):
+            return minutos
+    return None
+
+
+GEOMETRIA_TIPO_ISOCRONA_CARRO_5MIN = geometria_tipo_isocrona(5)
+GEOMETRIA_TIPO_ISOCRONA_CARRO_10MIN = geometria_tipo_isocrona(10)
+METODO_RELATORIO_PONTUAL_ISOCRONA_5MIN = (
+    f"setor_censitario_intersecao_area_{GEOMETRIA_TIPO_ISOCRONA_CARRO_5MIN}"
+)
+METODO_RELATORIO_PONTUAL_ISOCRONA = (
+    f"setor_censitario_intersecao_area_{GEOMETRIA_TIPO_ISOCRONA_CARRO_10MIN}"
+)
 _METODO_DA_GEOMETRIA = {
     GEOMETRIA_TIPO_POLIGONO: METODO_RELATORIO_PONTUAL_POLIGONO,
-    GEOMETRIA_TIPO_ISOCRONA_CARRO_10MIN: METODO_RELATORIO_PONTUAL_ISOCRONA,
+    **{
+        geometria_tipo_isocrona(m): f"setor_censitario_intersecao_area_{geometria_tipo_isocrona(m)}"
+        for m in MINUTOS_ISOCRONAS
+    },
 }
 # BLK-RELPON-07: renda media domiciliar do bairro/distrito ponderada por domicilios
 # (Metodo A, D3.5), com exclusao simetrica de setor com renda ou domicilios nulos/<=0.
@@ -266,8 +294,8 @@ def analisar_ponto_censitario_setores(
     """Analisa um ponto por intersecao real entre setores censitarios e circulo.
 
     DEC-074 (alcance do ponto): `geometria_tipo` rotula a geometria -- `"poligono"` (o
-    default quando ha' geometria: o desenho a mao, como antes) ou `"isocrona_carro_10min"`
-    (metodo `..._isocrona_carro_10min`). Na isocrona, (lat, lng) e' o PONTO CLICADO (a
+    default quando ha' geometria: o desenho a mao, como antes) ou `"isocrona_carro_{n}min"`
+    (n = 5 ou 10; metodo `..._isocrona_carro_{n}min`). Na isocrona, (lat, lng) e' o PONTO CLICADO (a
     origem do calculo de rotas), que o construtor da isocrona garante estar dentro dela.
     Um `raio_km` diferente de 1 ganha metodo proprio (`metodo_do_raio`). Nos dois casos o
     dict ganha `area_km2_exata` (sem arredondar) e `fator_regua` (area / pi; no raio,

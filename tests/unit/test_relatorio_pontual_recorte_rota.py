@@ -483,3 +483,40 @@ def test_pdf_real_do_estudo_do_raio_de_2km_nomeia_o_recorte(
     assert texto.startswith("%PDF")
     assert "Raio 2,0 km" in texto
     assert "x4,0" in texto  # a nota da escala das metas de total
+
+
+# --------------------------------------------------------------------------- #
+# 5 min de carro (DEC-074, Emenda 1)                                           #
+# --------------------------------------------------------------------------- #
+def test_estudo_dos_5_min_de_carro(espioes, valhalla) -> None:
+    from motor_expansao.dashboard.censo_point import GEOMETRIA_TIPO_ISOCRONA_CARRO_5MIN
+
+    _rota(so_estudo=True, alcance="carro_5min")
+    assert [p["contours"] for p in valhalla] == [[{"time": 5}]]
+    assert _kw(espioes, "motor")["geometria_tipo"] == GEOMETRIA_TIPO_ISOCRONA_CARRO_5MIN
+    assert _kw(espioes, "mapas")["geometria_tipo"] == GEOMETRIA_TIPO_ISOCRONA_CARRO_5MIN
+    recorte = _kw(espioes, "gerador")["recorte"]
+    assert recorte["tipo"] == "carro_5min"
+    assert recorte["rotulo_curto"] == "5 min de carro (sem trânsito)"
+    assert recorte["rotulo_longo"].startswith("isócrona de 5 min de carro sem trânsito")
+    assert recorte == censo_report.recorte_pdf(
+        "carro_5min",
+        fator_regua=recorte["fator_regua"],
+        area_km2=recorte["area_km2"],
+        versao_rotas="3.9.0",
+    )
+
+
+def test_comparacao_aceita_o_recorte_de_5_min() -> None:
+    corpo = pilot.ComparacaoIn(
+        itens=[{"rotulo": "A", "recorte": {"tipo": "carro_5min", "area_km2": 3.2}}]
+    )
+    assert corpo.itens[0].recorte is not None
+    assert corpo.itens[0].recorte.tipo == "carro_5min"
+
+
+def test_comparacao_recusa_tempo_de_carro_fora_da_tabela() -> None:
+    from pydantic import ValidationError
+
+    with pytest.raises(ValidationError):
+        pilot.ComparacaoIn(itens=[{"rotulo": "A", "recorte": {"tipo": "carro_7min"}}])

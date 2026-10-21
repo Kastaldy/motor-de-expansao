@@ -25,7 +25,14 @@ import {
 import { UNIDADE_MOEDA } from './format'
 import { sufixoDoModo } from './estudo-ultra'
 import { contornosDoItem, fatorReguaDoItem } from './alcance'
-import { ehAreaDesenhada, rotuloDaAreaDesenhada, rotuloDaIsocrona, rotuloDoRaio, tipoDoRecorte } from './recorte'
+import {
+  ehAreaDesenhada,
+  minutosDoRecorte,
+  rotuloDaAreaDesenhada,
+  rotuloDaIsocrona,
+  rotuloDoRaio,
+  tipoDoRecorte,
+} from './recorte'
 import type { ContornoGeoJson, PontoPayload } from './types'
 
 /**
@@ -225,13 +232,14 @@ export function rotuloDoRecorte(
   const area = p.recorte?.area_km2 ?? p.mercado?.area_km2 ?? null
   const tipo = tipoDoRecorte(p)
   if (tipo === 'poligono') return rotuloDaAreaDesenhada(area)
-  if (tipo === 'carro_10min') return rotuloDaIsocrona(area)
+  const minutos = minutosDoRecorte(tipo)
+  if (minutos != null) return rotuloDaIsocrona(area, minutos)
   return rotuloDoRaio(p.raio_km ?? (tipo === 'raio_2km' ? 2 : null))
 }
 
 /** O recorte de um item como o PDF de comparação o imprime na linha dele (DEC-074). */
 export interface RecorteNoPdf {
-  /** Identificador cru (`raio_1km`, `raio_2km`, `carro_10min`, `poligono`), NÃO acentuar. */
+  /** Identificador cru (`raio_1km`, `raio_2km`, `carro_5min`, `carro_10min`, `poligono`), NÃO acentuar. */
   tipo: string
   rotulo: string
   area_km2: number | null

@@ -31,6 +31,13 @@ export type Ancora = 'direita' | 'esquerda'
 
 /** 520px cabe a grade de KPI em 2 colunas e a comparação A x B em 3, sem espremer. */
 export const LARGURA_PADRAO = 520
+/**
+ * A ficha de PONTO nasce mais estreita (pedido do Vinicius, 20/10/2026: "no meu
+ * dispositivo, 480px se mostraram menor sem perder muito conteúdo horizontal"). Ela é a
+ * janela que divide a tela com o mapa do ponto — o contorno do alcance que se quer ver ao
+ * lado. Só a NASCENÇA: redimensionar continua livre, até `LARGURA_MINIMA`, que fica abaixo.
+ */
+export const LARGURA_FICHA_PONTO = 480
 /** Abaixo disto os KPIs quebram em 1 coluna e a janela deixa de valer a pena. */
 export const LARGURA_MINIMA = 320
 /** Duas seções e o cabeçalho. Menos que isso vira uma fresta que não se lê. */
@@ -74,9 +81,13 @@ export function geometriaPadrao(
   recuoInferior: number,
   ancora: Ancora = 'direita',
   degrau = 0,
+  larguraInicial = LARGURA_PADRAO,
 ): Geometria {
   const d = Math.max(0, Math.floor(degrau))
-  const largura = Math.min(LARGURA_PADRAO, Math.max(LARGURA_MINIMA, area.largura - 2 * MARGEM))
+  /* A largura pedida nunca fica abaixo do mínimo: um valor menor viraria uma janela que o
+     próprio `redimensionar` já não aceitaria. */
+  const pedida = Math.max(LARGURA_MINIMA, larguraInicial)
+  const largura = Math.min(pedida, Math.max(LARGURA_MINIMA, area.largura - 2 * MARGEM))
   const y = topo + d * DEGRAU_Y
   const altura = Math.max(ALTURA_MINIMA, area.altura - y - recuoInferior)
   const dx = d * DEGRAU_X

@@ -611,6 +611,11 @@ describe('alcance na comparação', () => {
   it('o recorte em texto: raio de 2 km; 10 min de carro, sem trânsito, com a área', () => {
     expect(rotuloDoRecorte(dois)).toBe('raio de 2 km')
     expect(rotuloDoRecorte(carro)).toBe('10 min de carro, sem trânsito · 38,2 km²')
+    const cinco = {
+      ...carro,
+      recorte: { ...carro.recorte!, tipo: 'carro_5min', area_km2: 3.17 },
+    } as unknown as PontoPayload
+    expect(rotuloDoRecorte(cinco)).toBe('5 min de carro, sem trânsito · 3,17 km²')
   })
 
   it('o item de alcance casa pela ORIGEM, como ponto (trocar o alcance é no lugar)', () => {

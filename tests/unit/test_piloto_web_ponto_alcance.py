@@ -638,12 +638,17 @@ def test_me_oferece_os_dois_raios_sem_o_servico_de_rotas(monkeypatch) -> None:
 
 def test_me_oferece_os_10_min_de_carro_com_a_env(monkeypatch) -> None:
     monkeypatch.setenv(alcance_ponto.ENV_ROTAS, URL_ROTAS)
-    assert pilot.me(remote_user=None)["alcances"] == ["raio_1km", "raio_2km", "carro_10min"]
+    assert pilot.me(remote_user=None)["alcances"] == [
+        "raio_1km",
+        "raio_2km",
+        "carro_5min",
+        "carro_10min",
+    ]
 
 
 def test_env_vazia_conta_como_ausente(monkeypatch) -> None:
     monkeypatch.setenv(alcance_ponto.ENV_ROTAS, "   ")
-    assert "carro_10min" not in pilot.me(remote_user=None)["alcances"]
+    assert pilot.me(remote_user=None)["alcances"] == ["raio_1km", "raio_2km"]
 
 
 def test_saude_artefatos_diz_o_estado_do_servico_de_rotas(monkeypatch, valhalla) -> None:
@@ -662,3 +667,61 @@ def test_health_publico_nao_consulta_o_servico_de_rotas() -> None:
     import inspect
 
     assert "estado_rotas" not in inspect.getsource(pilot.health)
+
+
+# --------------------------------------------------------------------------- #
+# 5 min de carro (DEC-074, Emenda 1)                                           #
+# --------------------------------------------------------------------------- #
+def test_carro_5min_pede_5_min_e_rotula_5_min(ambiente, valhalla) -> None:
+    from motor_expansao.dashboard.censo_point import METODO_RELATORIO_PONTUAL_ISOCRONA_5MIN
+
+    enviados, _ = valhalla
+    body = _alcance("carro_5min")
+    assert [p["contours"] for p in enviados] == [[{"time": 5}]]
+    recorte = body["recorte"]
+    assert recorte["tipo"] == "carro_5min"
+    assert recorte["metodo"] == METODO_RELATORIO_PONTUAL_ISOCRONA_5MIN
+    assert recorte["parametros"]["minutos"] == 5
+    assert recorte["parametros"]["trafego"] is False
+    # Mesma regua dos 10 min: o fator sai da AREA.
+    area = _ISO_LOCAL.area / 1e6
+    assert recorte["fator_regua"] == pytest.approx(area / math.pi, rel=0.01)
+    crit = {c["chave"]: c for c in body["criterios"]}
+    assert crit["populacao"]["rotulo"] == "População em 5 min de carro"
+    assert crit["populacao"]["regua"] == round(pilot.POP_MIN_ACIONAVEL * recorte["fator_regua"])
+    assert body["mercado"]["gate"]["pop_minima"] == pytest.approx(
+        POP_MIN_SAM_GATE * recorte["fator_regua"]
+    )
+
+
+def test_carro_5min_sem_env_e_503(ambiente) -> None:
+    with pytest.raises(HTTPException) as exc:
+        _alcance("carro_5min")
+    assert exc.value.status_code == 503
+    assert ambiente == []
+
+
+def test_carro_5min_sem_via_diz_5_min(ambiente, valhalla) -> None:
+    _, estado = valhalla
+    estado["post"] = _Resp(400, {"error": "No suitable edges near location"})
+    with pytest.raises(HTTPException) as exc:
+        _alcance("carro_5min")
+    assert exc.value.status_code == 400
+    assert "5 min de carro" in exc.value.detail
+
+
+def test_carro_5min_recusa_o_estudo_da_unidade(ambiente, valhalla) -> None:
+    enviados, _ = valhalla
+    with pytest.raises(HTTPException) as exc:
+        _alcance("carro_5min", excluir_ultra_proxima=True)
+    assert exc.value.status_code == 400
+    assert enviados == []
+
+
+def test_tempo_de_carro_fora_da_tabela_e_400(ambiente, valhalla) -> None:
+    enviados, _ = valhalla
+    with pytest.raises(HTTPException) as exc:
+        _alcance("carro_7min")
+    assert exc.value.status_code == 400
+    assert "carro_5min" in exc.value.detail
+    assert enviados == []

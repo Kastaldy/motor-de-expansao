@@ -1,13 +1,14 @@
 /**
  * O ALCANCE de um ponto (DEC-074): de que recorte em volta dele a ficha fala.
  *
- * Três opções, decididas pelo dono em 19/10/2026: o raio de 1 km (o estudo de sempre), o
- * raio de 2 km e 10 min de carro sem trânsito (a isócrona, calculada no servidor pelo
- * serviço de rotas). Trocar o alcance troca o recorte do PRÓPRIO item, no lugar — o ponto
+ * Quatro opções: o raio de 1 km (o estudo de sempre), o raio de 2 km e 10 min de carro sem
+ * trânsito (a isócrona, calculada no servidor pelo serviço de rotas), decididas pelo dono
+ * em 19/10/2026; e 5 min de carro, também sem trânsito, pedida pelo Vinicius em 20/10/2026
+ * (Emenda 1 da DEC-074 — a análise com trânsito foi considerada e descartada). Trocar o alcance troca o recorte do PRÓPRIO item, no lugar — o ponto
  * continua sendo um só na lista, com o mesmo nome, a mesma cor e a mesma posição.
  *
  * QUEM DECIDE O QUE EXISTE É O SERVIDOR. A lista de alcances vem do `/api/me` (chave
- * `alcances`): "10 min de carro" só aparece quando a instância tem o serviço de rotas
+ * `alcances`): os alcances de carro só aparecem quando a instância tem o serviço de rotas
  * configurado, e SOME sem ele — opção apagada que não pode acender mente (a convenção das
  * chaves do mapa). Backend anterior a esta chave não tem a rota de alcance, então sem ela
  * só o raio de 1 km existe e o seletor nem aparece.
@@ -24,10 +25,10 @@ import { ehAreaDesenhada, tipoDoRecorte } from './recorte'
 import type { ContornoGeoJson, PontoPayload } from './types'
 
 /** Identificadores CRUS do alcance — NÃO acentuar (são os valores da rota e do payload). */
-export type Alcance = 'raio_1km' | 'raio_2km' | 'carro_10min'
+export type Alcance = 'raio_1km' | 'raio_2km' | 'carro_5min' | 'carro_10min'
 
-/** Os alcances na ordem em que o seletor os mostra. */
-export const ALCANCES: readonly Alcance[] = Object.freeze(['raio_1km', 'raio_2km', 'carro_10min'])
+/** Os alcances na ordem em que o seletor os mostra: os raios, depois o carro do menor tempo ao maior. */
+export const ALCANCES: readonly Alcance[] = Object.freeze(['raio_1km', 'raio_2km', 'carro_5min', 'carro_10min'])
 
 /** O alcance de todo ponto que chega sem dizer o seu: o raio de 1 km de sempre (DEC-021). */
 export const ALCANCE_PADRAO: Alcance = 'raio_1km'
@@ -42,6 +43,7 @@ export const RAIO_DO_ALCANCE: Readonly<Record<'raio_1km' | 'raio_2km', number>> 
 export const ROTULO_ALCANCE: Readonly<Record<Alcance, string>> = Object.freeze({
   raio_1km: 'Raio de 1 km',
   raio_2km: 'Raio de 2 km',
+  carro_5min: '5 min de carro',
   carro_10min: '10 min de carro',
 })
 
