@@ -394,7 +394,12 @@ def _bairro_row(
     }
 
 
-def test_agregar_perfil_bairro_agrega_todos_setores_do_bairro_por_cod_bairro():
+def test_agregar_perfil_bairro_agrega_todos_setores_do_bairro_por_cod_bairro(
+    monkeypatch, tmp_path
+):
+    # E1: a renda do perfil e a domiciliar CANONICA (V06004 x uplift do setor x F_dom).
+    fixar_uplift_setor(monkeypatch, 1.5)
+    fixar_fatores(monkeypatch, tmp_path, per_capita=1.2)
     df = pd.DataFrame(
         [
             _bairro_row(
@@ -417,8 +422,9 @@ def test_agregar_perfil_bairro_agrega_todos_setores_do_bairro_por_cod_bairro():
     assert perfil["populacao_total"] == pytest.approx(3000)
     assert perfil["domicilios_total"] == pytest.approx(300)
     assert perfil["densidade_hab_km2"] == pytest.approx(1500.0)
-    assert perfil["renda_media_domiciliar"] == pytest.approx(2666.67, abs=0.01)
-    assert perfil["metodo_renda_perfil_bairro"] == "renda_responsavel_media_ponderada_por_domicilios"
+    # Media da V06004 ponderada por domicilios = 2.666,67; x uplift 1,5 x F_dom 1,2 = 4.800.
+    assert perfil["renda_media_domiciliar"] == pytest.approx(4800.0, abs=0.01)
+    assert perfil["metodo_renda_perfil_bairro"] == "renda_domiciliar_media_ponderada_por_domicilios"
 
 
 def test_agregar_perfil_bairro_fallback_para_distrito_quando_bairro_ausente():
@@ -450,7 +456,11 @@ def test_agregar_perfil_bairro_fallback_para_distrito_quando_bairro_ausente():
     assert perfil["domicilios_total"] == pytest.approx(200)
 
 
-def test_agregar_perfil_bairro_renda_exclui_setor_com_domicilio_zero_ou_renda_nula():
+def test_agregar_perfil_bairro_renda_exclui_setor_com_domicilio_zero_ou_renda_nula(
+    monkeypatch, tmp_path
+):
+    fixar_uplift_setor(monkeypatch, 1.0)
+    fixar_fatores(monkeypatch, tmp_path, per_capita=1.0)
     df = pd.DataFrame(
         [
             _bairro_row(

@@ -180,8 +180,10 @@ KPIs derivados do `result` de `analisar_ponto_censitario_setores` (READ-ONLY):
   "renda_per_capita_media_raio": 5210.0,
   // renda domiciliar (pos-contrato, PRs #124/#126/#129): os dois campos de renda sao
   // R$/mes POR DOMICILIO, NAO soma do raio ("total" = renda do domicilio inteiro,
-  // com uplift de composicao SETORIAL + fator temporal)
-  "renda_media_domiciliar_raio": 15790.0,
+  // com uplift de composicao SETORIAL + fator temporal). Desde a E1 do plano de correcao
+  // da renda (2026-10) `renda_media_domiciliar_raio` e IGUAL a `renda_domiciliar_total_raio`
+  // (antes era a base pre-uplift, V06004 bruta, ~0,53x): o exemplo ja esta na escala nova
+  "renda_media_domiciliar_raio": 25740.0,
   "renda_domiciliar_total_raio": 25740.0,
   "domicilios_total_raio": 6084.0,
   "metodo_renda_domiciliar_raio": "ponderada_domicilios_estimados",

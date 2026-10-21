@@ -70,6 +70,7 @@ from motor_expansao.dashboard.competitors import (
 from motor_expansao.dashboard.constants import TEXTO_SEM_DADO
 from motor_expansao.dashboard.utils import score_band_to_color
 from motor_expansao.perfil import resolver_perfil
+from motor_expansao.renda import hex as _renda_hex
 
 from . import pdf_base
 
@@ -1033,6 +1034,18 @@ def _instituto_censo() -> str:
     return achado.group(1).strip() if achado else nome
 
 
+def _renda_pc_canonica(df_muni: pd.DataFrame, coluna: str) -> pd.Series:
+    """Renda domiciliar per capita canonica de cada hex, lida SO de `coluna` (E1).
+
+    A conta e do modulo da renda (`renda.hex.renda_per_capita_por_linha`, a mesma cadeia do
+    card): a coluna de origem e convertida (k desfeito na calibrada, uplift desfeito na SIDRA)
+    e recebe uplift, moradores e o fator per capita do municipio. Coluna ausente -> tudo NaN.
+    """
+    if df_muni is None or df_muni.empty or coluna not in df_muni.columns:
+        return pd.Series(np.nan, index=getattr(df_muni, "index", None), dtype="float64")
+    return _renda_hex.renda_per_capita_por_linha(df_muni, precedencia=(coluna,))
+
+
 def _tabela_hexes(
     df_muni: pd.DataFrame,
     bairros_por_hex: dict[str, str] | None = None,
@@ -1067,15 +1080,18 @@ def _tabela_hexes(
     # sobre praca -- "domicilio de R$ 4.500" diz algo, "per capita de R$ 1.500" nao diz. Vem de
     # `motor_expansao.renda.hex.renda_domiciliar_por_hex` (desde 2026-10-16 a MESMA formula do card do REP, sobre
     # a coluna do hexagono). Cai para per capita so quando o mapa chega vazio.
+    # Os dois fallbacks (per capita, sem o mapa domiciliar) passam pelo MESMO modulo do card
+    # desde a E1 (`renda_per_capita_por_linha`): antes exibiam a coluna CRUA -- a calibrada na
+    # escala do score (com k, sem uplift nem fator) ou a SIDRA municipal sem fator.
     mapa_dom = dict(renda_domiciliar_por_hex or {})
     if mapa_dom:
         renda = df_muni["hex_id"].astype(str).map(mapa_dom).astype("float64")
         fonte_renda = "domiciliar"
     else:
-        renda = _coluna_numerica(df_muni, "renda_per_capita_setor_2022_calibrada")
+        renda = _renda_pc_canonica(df_muni, "renda_per_capita_setor_2022_calibrada")
         fonte_renda = "censo"
     if renda.dropna().empty:
-        renda = _coluna_numerica(df_muni, "renda_per_capita")
+        renda = _renda_pc_canonica(df_muni, "renda_per_capita")
         fonte_renda = "m1"
 
     pop = _coluna_numerica(df_muni, "populacao_corte_hex")
@@ -1504,7 +1520,11 @@ def agregar_municipio(
         pop_serie = _coluna_numerica(df_muni, "pop_total")
     pop_total_municipio = float(pop_serie.dropna().sum()) if not pop_serie.dropna().empty else float("nan")
 
-    renda = _coluna_numerica(df_muni, "renda_per_capita")
+    # Painel "Renda per capita": a SIDRA municipal (`renda_per_capita`, o insumo do M1, o MESMO
+    # valor em todo hex do municipio) convertida pela cadeia canonica do card (E1) -- uplift e
+    # moradores municipais e o fator per capita. Ate a E1 saia crua, sem fator: ~F abaixo da
+    # per capita do Relatorio Pontual por construcao. A coluna do M1 fica intocada.
+    renda = _renda_pc_canonica(df_muni, "renda_per_capita")
     pesos = _coluna_numerica(df_muni, "pop_total_setor_2022")
     valid = renda.notna() & pesos.notna() & (pesos > 0)
     if valid.any():
@@ -3726,11 +3746,11 @@ def _tabela_hexes_page(pdf: _UltraPDF, result: dict[str, Any], assets: dict[str,
         )
     elif fonte == "censo":
         nota_renda = (
-            "Renda = per capita censitária do setor (a domiciliar exigiria a partição de "
+            "Renda = per capita do hexágono (a domiciliar exigiria a partição de "
             "setores, indisponível para este município)."
         )
     else:
-        nota_renda = "Renda = insumo do M1; sem renda censitária para estes hexágonos."
+        nota_renda = "Renda = per capita municipal; sem renda censitária por hexágono."
     if tabela.get("renda_constante"):
         nota_renda += " Neste município ela é a MESMA em todas as regiões (não diferencia)."
 

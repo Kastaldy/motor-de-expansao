@@ -960,7 +960,18 @@ def test_tabela_hexes_prefere_renda_censitaria_a_municipal():
     tab = _tabela_hexes(df)
     assert tab["fonte_renda"] == "censo"
     assert not tab["renda_constante"]
-    assert {linha["renda"] for linha in tab["linhas"]} <= {900.0, 1100.0, 1300.0, 1500.0}
+    # E1: o fallback per capita passa pela cadeia canonica do card (modulo da renda), nao
+    # exibe mais a calibrada crua (escala do score).
+    from motor_expansao.renda import hex as renda_hex
+
+    esperado = renda_hex.renda_per_capita_por_linha(
+        df, precedencia=("renda_per_capita_setor_2022_calibrada",)
+    )
+    # (o fixture repete `hex_id`, entao compara o multiconjunto, nao por hexagono)
+    assert sorted(linha["renda"] for linha in tab["linhas"]) == pytest.approx(
+        sorted(esperado.tolist())
+    )
+    assert not {linha["renda"] for linha in tab["linhas"]} & {900.0, 1100.0, 1300.0, 1500.0}
 
     # Sem a censitaria, cai no insumo do M1 -- e AVISA que ali a renda nao diferencia nada.
     sem_censo = df.drop(columns=["renda_per_capita_setor_2022_calibrada"])
@@ -1855,7 +1866,9 @@ def test_tabela_usa_renda_domiciliar_quando_disponivel():
     # Sem o mapa, cai na per capita e DIZ que caiu (o rodapé muda junto).
     tab_sem = _tabela_hexes(df)
     assert tab_sem["fonte_renda"] == "censo"
-    assert all(linha["renda"] == 900.0 for linha in tab_sem["linhas"])
+    # E1: a per capita do fallback e a canonica (900 e a calibrada crua, escala do score).
+    assert all(linha["renda"] != 900.0 for linha in tab_sem["linhas"])
+    assert all(linha["renda"] > 900.0 for linha in tab_sem["linhas"])
 
 
 def test_valor_ausente_nao_vira_reais_de_texto():

@@ -94,6 +94,7 @@ def test_paleta_web_bate_cor_a_cor_com_residual_score_bands() -> None:
 
 from motor_expansao.dashboard.constants import (  # noqa: E402
     _DENSIDADE_POP_BANDS_BR,
+    _RENDA_MEDIA_DOMICILIAR_BANDS_BR,
     _RENDA_PER_CAPITA_BANDS_BR,
     DENSIDADE_POP_BANDS,
     RENDA_PER_CAPITA_BANDS,
@@ -101,7 +102,7 @@ from motor_expansao.dashboard.constants import (  # noqa: E402
 
 _FAIXA_ABS_ITEM_RE = re.compile(
     # O rotulo pode ser string simples ('...') ou template literal (`...`, quando
-    # interpola moedaRenda() — ver RENDA_SETOR_BANDS). O teste nao checa o TEXTO do
+    # interpola moedaRenda() — ver RENDA_DOMICILIAR_SETOR_BANDS). O teste nao checa o TEXTO do
     # rotulo, so' precisa transpor-lo para chegar no corte e na cor.
     r"\[\s*(?P<corte>[\d_]+|Infinity)\s*,\s*(?:'[^']*'|`[^`]*`)\s*,\s*"
     r"\[\s*(?P<r>\d+)\s*,\s*(?P<g>\d+)\s*,\s*(?P<b>\d+)\s*,\s*(?P<a>\d+)\s*\]\s*\]"
@@ -133,7 +134,13 @@ def _faixas_absolutas_web(nome_const: str) -> list[tuple[float, tuple[int, int, 
     "nome_web,bands_py,nome_py",
     [
         ("DENSIDADE_BANDS", _DENSIDADE_POP_BANDS_BR, "_DENSIDADE_POP_BANDS_BR"),
-        ("RENDA_SETOR_BANDS", _RENDA_PER_CAPITA_BANDS_BR, "_RENDA_PER_CAPITA_BANDS_BR"),
+        # Desde a E1 o mapa de calor de setor pinta a renda DOMICILIAR (o servidor manda
+        # `renda_domiciliar`), entao a faixa do front e a domiciliar do nucleo.
+        (
+            "RENDA_DOMICILIAR_SETOR_BANDS",
+            _RENDA_MEDIA_DOMICILIAR_BANDS_BR,
+            "_RENDA_MEDIA_DOMICILIAR_BANDS_BR",
+        ),
     ],
 )
 def test_faixas_absolutas_batem_corte_e_cor_com_o_literal_br(

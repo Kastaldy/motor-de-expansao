@@ -16,6 +16,7 @@ from shapely.ops import transform
 # e nao por nome importado, para que um teste que fixe o uplift no modulo valha aqui tambem.
 from motor_expansao import renda as _renda
 from motor_expansao.renda import insumos as _renda_insumos
+from motor_expansao.renda import setor as _renda_setor
 
 CRS_ORIGEM_CENSO = "EPSG:4674"
 # DEC-021 (2026-07-29, AUTORIZADA por Felipe): o raio do Relatorio Pontual Censitario passa de
@@ -79,7 +80,11 @@ _METODO_DA_GEOMETRIA = {
 }
 # BLK-RELPON-07: renda media domiciliar do bairro/distrito ponderada por domicilios
 # (Metodo A, D3.5), com exclusao simetrica de setor com renda ou domicilios nulos/<=0.
-METODO_RENDA_PERFIL_BAIRRO = "renda_responsavel_media_ponderada_por_domicilios"
+# E1 (plano de correcao da renda): ate aqui a media era da V06004 BRUTA (renda do RESPONSAVEL,
+# sem uplift nem fator, ~0,53x o card "Renda media domiciliar" do MESMO PDF); desde a E1 e a
+# renda domiciliar CANONICA de cada setor (`renda.setor`), a mesma escala do card. O rotulo do
+# metodo acompanha o valor -- mante-lo diria que o numero ainda e a renda do responsavel.
+METODO_RENDA_PERFIL_BAIRRO = "renda_domiciliar_media_ponderada_por_domicilios"
 
 # DEC-046: vocabulario da coluna `classe` da oferta. Mora AQUI, no motor, e nao na API, para
 # que o dashboard nao dependa de `motor_expansao.api` — a API produz o dado conforme este
@@ -816,7 +821,8 @@ def agregar_perfil_bairro_distrito(
       NAO o raio de 1.0 km do relatorio (essa e a diferenca fundamental para os outros
       agregados do modulo, que sao sempre "no raio").
     - D3.5 (formula da renda media, fechada pelo Planner): `renda_media_domiciliar` e a media
-      de `renda_responsavel_media_setor_2022` PONDERADA por
+      da renda domiciliar CANONICA de cada setor (`renda.setor`: V06004 x uplift do setor x
+      F_dom; ate a E1 era a V06004 bruta) PONDERADA por
       `domicilios_particulares_ocupados_setor_2022` (Metodo A, leitura GeoFusion "Renda
       Media" -- distinta da renda per capita usada em outras 2 paginas do PDF). Exclusao
       SIMETRICA: um setor so entra no numerador E no denominador se renda E domicilios forem
@@ -892,7 +898,10 @@ def agregar_perfil_bairro_distrito(
     pop = _numeric(subset, "pop_total_setor_2022")
     dom = _numeric(subset, "domicilios_particulares_ocupados_setor_2022")
     area = _numeric(subset, "area_setor_m2")
-    renda = _numeric(subset, "renda_responsavel_media_setor_2022")
+    # Renda media DOMICILIAR canonica do setor ((V06004 x uplift do setor) x F_dom), pelo
+    # modulo da renda -- a MESMA conta do card do raio. UF/municipio da propria linha quando o
+    # frame os traz (ponto de divisa mistura municipios); senao, os do chamador.
+    renda = _renda_setor.renda_domiciliar_setores(subset, uf=uf, cod_municipio=cod_municipio)
 
     populacao_total: float | None = None
     if pop.notna().any():

@@ -756,18 +756,37 @@ def test_setores_heatmap_serve_poligonos_com_densidade_e_renda(synth_data: Path)
             "geometry_wkb": [_quad(0.0), _quad(0.01)],
             "densidade_pop_setor_hab_km2": [12000.0, 3000.0],
             "renda_per_capita_setor_2022_calibrada": [4200.0, 1100.0],
+            # A: V06004 presente. B: sem V06004 -> reconstruida pela per capita BRUTA x moradores.
+            "renda_responsavel_media_setor_2022": [6000.0, None],
+            "renda_per_capita_setor_2022": [2000.0, 800.0],
+            "avg_moradores_domicilio_setor_2022": [3.0, 2.5],
             "pop_total_setor_2022": [500.0, 800.0],
         }
     ).to_parquet(geo_dir / "part-000.parquet")
+    # Uplift SETORIAL so para A; B cai na cascata (municipio -> UF -> nacional do perfil).
+    pilot.STAGING_DIR.mkdir(parents=True, exist_ok=True)
+    pd.DataFrame({"cod_setor": ["A"], "uplift_composicao_setor": [1.5]}).to_parquet(
+        pilot.STAGING_DIR / "uplift_composicao_setor.parquet"
+    )
     pilot.limpar_caches()
 
     payload = pilot.setores_heatmap("SP", "Sao Paulo")
+
+    from motor_expansao import renda
 
     assert payload["disponivel"] is True
     assert len(payload["setores"]) == 2
     setor = next(s for s in payload["setores"] if s["setor"] == "A")
     assert setor["densidade"] == pytest.approx(12000.0)
-    assert setor["renda"] == pytest.approx(4200.0)
+    # E1: a renda servida e a DOMICILIAR canonica do setor -- (V06004 x uplift do setor) x
+    # F_dom(uf) -- e nao mais a calibrada crua (escala do score).
+    assert "renda" not in setor
+    f_dom = renda.fator("SP", "domiciliar")
+    assert setor["renda_domiciliar"] == pytest.approx(round(6000.0 * 1.5 * f_dom), abs=1)
+    assert setor["renda_domiciliar"] != pytest.approx(4200.0, rel=0.05)
+    b = next(s for s in payload["setores"] if s["setor"] == "B")
+    uplift_b = renda.uplift_setor("B", "SP", "3550308")
+    assert b["renda_domiciliar"] == pytest.approx(round(800.0 * 2.5 * uplift_b * f_dom), abs=1)
     assert setor["anel"], "poligono vazio — a simplificacao/serializacao engoliu a geometria"
     # Formato deck.gl (mesmo de PecaCobertura): [anel_externo, buraco1, ...].
     anel_externo = setor["anel"][0]
@@ -1568,6 +1587,22 @@ def test_o_primeiro_do_brasil_nao_vem_da_uf_que_lidera_por_soma(nacional_data: P
     assert itens[0]["uf"] == "TO", "o melhor hexagono do pais nao chegou em primeiro"
     assert itens[0]["municipio"] == "Palmas"
     assert itens[0]["residual"] == 9000
+
+
+def test_renda_do_ranking_nacional_e_a_per_capita_canonica_do_tooltip(
+    nacional_data: Path,
+) -> None:
+    """E1: `renda` do ranking nacional e a MESMA per capita do tooltip do hexagono (modulo da
+    renda), e nao mais a `renda_leitura` crua (a calibrada na escala do score, 2.600 aqui)."""
+    from motor_expansao.renda import hex as renda_hex
+
+    itens = pilot.hexagonos()["itens"]
+    assert itens
+    k = renda_hex.k_calibracao_renda(pilot.STAGING_DIR)
+    for item in itens:
+        esperado = renda_hex.renda_per_capita_hex(2600.0 / k, item["uf"], item["cod_municipio"])
+        assert item["renda"] == pytest.approx(round(esperado), abs=1), item
+        assert item["renda"] != pytest.approx(2600.0, abs=1)
 
 
 def test_ranking_nacional_nao_agrupa_por_uf(nacional_data: Path) -> None:
