@@ -105,7 +105,7 @@
       "fallback": 1.0,
       "rotulo_fallback": "julho/2022 (Censo IBGE)",
       "faixa_plausivel": [1.0, 2.0],
-      "_nota": "RESOLVIDO EM RUNTIME, nao congelado no perfil: _carregar_fator_temporal (src/motor_expansao/dashboard/constants.py:457-473) le o artefato, aceita so valores entre 1,0 e 2,0 e cai em 1,0 com rotulo 'julho/2022 (Censo IBGE)' quando o arquivo falta. Neste checkout o artefato NAO existe, entao o valor efetivo hoje e 1,0. Congelar um numero aqui QUEBRARIA o comportamento atual — por isso `valor` e null e o perfil declara caminho e fallback.",
+      "_nota": "HISTORICO desde a E0 da correcao de renda: o fator temporal NAO mora mais no perfil nem no staging. Ele e uma configuracao versionada DENTRO do pacote, em src/motor_expansao/renda/fatores/BR/ (um <versao>.json imutavel por versao + VIGENTE com a versao em uso; v0 = 2026-08_caged_v0, o 1,1641 do CAGED que producao aplicava), que viaja na imagem e e lido por motor_expansao.renda.carregar_fatores com erro explicito (sem o fallback silencioso de 1,0). O artefato data/staging/fator_temporal_renda.json e o _carregar_fator_temporal de dashboard/constants.py deixaram de ser lidos; os campos deste bloco ficam so como registro do desenho antigo. Atualizacao e rollback: docs/runbook_atualizacao_renda.md.",
       "data_referencia_renda": "2022-07"
     },
     "_documentos": [

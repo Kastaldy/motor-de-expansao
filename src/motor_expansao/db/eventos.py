@@ -72,7 +72,8 @@ EVENTO_LOGOUT = "logout"
 #: O QUE ELE PODE CARREGAR E' PEQUENO, E POR DECISAO ALHEIA A ESTE ARQUIVO:
 #:   * o IP fica FORA -- o P15 (base legal e prazo de retencao) segue aberto, e ha' teste
 #:     de contrato que recusa qualquer `INSERT` em `eventos` mencionando a coluna. Quem
-#:     guarda o IP da tentativa e' a trilha da DEC-027, em arquivo, por 90 dias;
+#:     guarda o IP da tentativa e' a trilha da DEC-027, em arquivo, SEM prazo de delecao
+#:     desde a emenda 2 (20/10/2026; antes eram 90 dias);
 #:   * o LOGIN DIGITADO fica fora -- a §2.7 proibe login e e-mail em `metadados` (PII), e
 #:     e' exatamente o unico identificador quando o usuario digitado nao existe.
 #:

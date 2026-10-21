@@ -85,6 +85,7 @@ import praca_indice  # noqa: E402  (indice conjuntivo da camada 5 — DEC-041)
 import pressao_1km  # noqa: E402  (PROTOTIPO — chave de raio 2 km / 1 km por area)
 import rede_inteligencia  # noqa: E402  (territorio, retencao, rampa e sinais da rede Ultra)
 
+from motor_expansao import renda as _renda  # noqa: E402  (renda exibida: ponto unico, E0)
 from motor_expansao.dashboard import (  # noqa: E402
     acesso_analytics,
     acesso_log,
@@ -97,7 +98,6 @@ from motor_expansao.dashboard import (  # noqa: E402
     rede_faturamento_financeiro,
     rede_metricas,
 )
-from motor_expansao.dashboard import renda_hex as _renda_hex  # noqa: E402
 
 # Contrato financeiro do ponto — REGUA UNICA (FIN-VIAB-01). Estas funcoes moravam aqui
 # dentro; foram para o `src/` para que a API GeoEspacial as use SEM importar esta app.
@@ -110,6 +110,8 @@ from motor_expansao.dimensionamento.payload_viabilidade import (  # noqa: E402
     montar_payload_viabilidade,
 )
 from motor_expansao.dimensionamento.viabilidade_v2 import DemandaV2In  # noqa: E402
+from motor_expansao.renda import hex as _renda_hex  # noqa: E402
+from motor_expansao.renda import setor as _renda_setor  # noqa: E402
 
 # --- Superficie que este modulo continua expondo, por ATRIBUICAO ------------------
 # Os nomes abaixo nao sao usados AQUI DENTRO — sao lidos de fora, por `app.<nome>`
@@ -163,7 +165,7 @@ logging.getLogger("piloto.perfil").info(
 _PDF_CONCORRENCIA_MAX = PERFIL.operacao.pdf_concorrencia_max
 _PDF_SEMAFORO = asyncio.Semaphore(_PDF_CONCORRENCIA_MAX)
 
-# Quantas ANALISES DE AREA (desenho a mao, raio de 2 km, 10 min de carro -- DEC-071/074)
+# Quantas ANALISES DE AREA (desenho a mao, raio de 2 km, 5/10 min de carro -- DEC-071/074)
 # podem rodar ao mesmo tempo. A conta e' o laco setor a setor de `censo_point`, que a
 # DEC-071 mediu em ate' ~40 s para 194 km2 -- e as duas rotas sao `def` no threadpool do
 # UNICO worker, entao sem teto N operadores desenhando ao mesmo tempo disputariam a CPU
@@ -834,8 +836,9 @@ _LOG_D17 = logging.getLogger("piloto.d17")
 # requisicao. Travado por `tests/unit/test_falha_5xx_loga.py` (BLK-SAUDE-01).
 #
 # NAO carrega identidade de proposito: quem fez o que e' a trilha da DEC-027, que tem
-# retencao declarada de 90 dias e poda. O log do container nao tem governanca nenhuma, e
-# jogar login de pessoa nele seria criar um segundo cadastro de acesso sem regra.
+# retencao DECLARADA (sem prazo desde a emenda 2, 20/10/2026, por decisao do dono). O log
+# do container nao tem governanca nenhuma, e jogar login de pessoa nele seria criar um
+# segundo cadastro de acesso sem regra.
 _LOG_FALHA = logging.getLogger("piloto.falha")
 
 
@@ -1009,14 +1012,14 @@ def _registrar_visita_imovel(remote_user: str | None, *, acao: str, imovel: str 
             origem="web",
         )
     except BancoNaoConfigurado:
-        # Sem banco configurado a decisao de visita fica so' na trilha de 90 dias, e isso e' o
+        # Sem banco configurado a decisao de visita fica so' na trilha da DEC-027, e isso e' o
         # esperado deste deploy. A guarda de ALVO AUSENTE, logo acima, segue sendo ERRO: la' o
         # gesto chegou incompleto, que e' defeito, e nao configuracao.
         _LOG_D17.debug("deploy sem banco — gesto %s no imovel %s sem evento", acao, imovel)
     except Exception:  # noqa: BLE001 — a trilha nunca derruba o gesto
         _LOG_D17.exception(
             "gesto %s no imovel %s SEM evento no banco — a decisao de visita ficou so' na "
-            "trilha de 90 dias",
+            "trilha da DEC-027",
             acao,
             imovel,
         )
@@ -1784,57 +1787,25 @@ def _texto(v: Any) -> str | None:
 # ============================================================================
 
 
-def _init_renda_domiciliar_paths() -> float:
-    """Reaponta os artefatos de renda domiciliar para o DATA_DIR absoluto e le o
-    FATOR_TEMPORAL_RENDA real.
-
-    No motor, `UPLIFT_COMPOSICAO_PATH`/`FATOR_TEMPORAL_RENDA_PATH` sao RELATIVOS
-    ao CWD ("data/staging/..."). Como o uvicorn do piloto sobe de web/server, eles
-    nao resolvem e o uplift/moradores/temporal cairiam no fallback NACIONAL
-    (~1.632 / ~2.79 / 1.0) — mesma pegadinha do `_BASEMAP_CACHE_DIR`. Reaponta para
-    o checkout absoluto ANTES da 1a leitura (as caches sao lazy) e devolve o fator.
-    """
-    from motor_expansao.dashboard import constants as _const
-
-    _const.UPLIFT_COMPOSICAO_PATH = STAGING_DIR / "uplift_renda_domiciliar_municipio.parquet"
-    _const.UPLIFT_COMPOSICAO_SETOR_PATH = STAGING_DIR / "uplift_composicao_setor.parquet"
-    _const.FATOR_TEMPORAL_RENDA_PATH = STAGING_DIR / "fator_temporal_renda.json"
-    _const._uplift_cache = None
-    _const._uplift_uf_cache = None
-    _const._moradores_cache = None
-    _const._moradores_uf_cache = None
-    # As caches SETORIAIS tambem: sem estas duas linhas, uma carga que rodasse antes do
-    # re-point (ex.: /api/ponto como 1a requisicao) congelava um mapa VAZIO para sempre —
-    # o uplift por setor degradava para o municipal em todo /ponto, sem log.
-    _const._uplift_setor_cache = None
-    _const._uplift_setor_extrapolado_cache = None
-    fator, ref = _const._carregar_fator_temporal()
-    # O binding de modulo congela no import (CWD=web/server -> path relativo nao resolve ->
-    # fallback 1.0). Reatribuir aqui e' o que faz `constants.FATOR_TEMPORAL_RENDA` valer o
-    # artefato real para quem le via modulo (censo_point/censo_map depois da correcao de
-    # 2026-08-14; antes eles importavam o NOME e ficavam com o 1.0 congelado).
-    _const.FATOR_TEMPORAL_RENDA = fator
-    _const.DATA_REFERENCIA_RENDA = ref
-    return fator
-
-
 @functools.lru_cache(maxsize=1)
-def _fator_temporal_renda() -> float:
-    return _init_renda_domiciliar_paths()
+def _renda_staging_configurado() -> Path:
+    """Aponta os insumos da renda (`motor_expansao.renda.insumos`) para o STAGING_DIR (1x).
 
-
-def _fator_domiciliar(uf: str | None, cod_municipio: str | None) -> float | None:
-    """Fator renda per capita -> renda media domiciliar do municipio (`renda_hex`).
-
-    `_fator_temporal_renda()` tambem reaponta os paths de `constants` para o STAGING_DIR (1x).
+    Em producao o default do modulo (`<raiz do perfil>/staging`) ja e o STAGING_DIR; o
+    apontamento explicito existe para o STAGING_DIR que a suite troca por `monkeypatch`.
+    Substitui o `_init_renda_domiciliar_paths` de antes da E0, que reapontava atributos de
+    `dashboard.constants` e reatribuia o fator temporal no modulo. `limpar_caches()` zera
+    este cache e o proximo leitor reaponta.
     """
-    return _renda_hex.fator_domiciliar(uf, cod_municipio, _fator_temporal_renda())
+    _renda.configurar_staging(STAGING_DIR)
+    return STAGING_DIR
 
 
 _LOG_RENDA = logging.getLogger("piloto.renda")
 
-# A formula mora em `motor_expansao.dashboard.renda_hex` desde 2026-10-16: o Relatorio
-# Municipal usa a mesma, e o card e o PDF mostram o mesmo numero para o mesmo hexagono.
+# A formula mora em `motor_expansao.renda.hex` (era `dashboard/renda_hex.py` de 2026-10-16 ate a
+# E0): o Relatorio Municipal usa a mesma, e o card e o PDF mostram o mesmo numero para o mesmo
+# hexagono.
 _K_CALIBRACAO_FALLBACK = _renda_hex.K_CALIBRACAO_FALLBACK
 _CENSO_HEX_STAGING_PARQUET = _renda_hex.CENSO_HEX_STAGING_PARQUET
 _CENSO_MALHA_PARQUET = _renda_hex.CENSO_MALHA_PARQUET
@@ -1842,7 +1813,7 @@ _CENSO_MALHA_PARQUET = _renda_hex.CENSO_MALHA_PARQUET
 
 @functools.lru_cache(maxsize=1)
 def _k_calibracao_renda() -> float:
-    """O `k` da coluna calibrada do hex, lido do carimbo no STAGING_DIR (`renda_hex`)."""
+    """O `k` da coluna calibrada do hex, lido do carimbo no STAGING_DIR (`renda.hex`)."""
     return _renda_hex.k_calibracao_renda(STAGING_DIR)
 
 
@@ -1854,45 +1825,44 @@ def _base_renda_domiciliar(r: pd.Series, uf: str | None, cod: str | None) -> flo
     )
 
 
-def _renda_domiciliar_hex(r: pd.Series, fator: float | None) -> float | None:
-    """Renda media domiciliar do hex = base (escala V06004 per capita) x fator municipal.
+def _base_renda_hex(r: pd.Series) -> tuple[float | None, str | None, str | None]:
+    """(base, uf, cod) da renda do hex; base None quando falta renda OU cod_municipio.
 
-    NaN (tooltip em branco) quando falta renda OU cod_municipio — fiel ao contrato
-    do Streamlit, que nao exibe estimativa de nivel UF para hex sem municipio.
+    NaN (tooltip em branco) quando falta o municipio -- fiel ao contrato do Streamlit, que nao
+    exibe estimativa de nivel UF para hex sem municipio.
     """
-    if fator is None:
-        return None
     cod = r.get("cod_municipio")
     if cod is None or pd.isna(cod):
-        return None
-    base = _base_renda_domiciliar(r, r.get("uf"), str(cod))
+        return None, None, None
+    _renda_staging_configurado()
+    uf = r.get("uf")
+    return _base_renda_domiciliar(r, uf, str(cod)), uf, str(cod)
+
+
+def _renda_domiciliar_hex(r: pd.Series) -> float | None:
+    """Renda media domiciliar do hex = base x (moradores x uplift municipais) x F_dom.
+
+    A conta e do modulo da renda (`renda.hex.renda_domiciliar_hex`); aqui so o arredondamento
+    do payload.
+    """
+    base, uf, cod = _base_renda_hex(r)
     if base is None:
         return None
-    return _num(base * fator)
+    return _num(_renda_hex.renda_domiciliar_hex(base, uf, cod))
 
 
-def _renda_per_capita_hex(
-    r: pd.Series, fator: float | None, dom: float | None = None
-) -> float | None:
+def _renda_per_capita_hex(r: pd.Series) -> float | None:
     """Renda DOMICILIAR per capita do hex — o mesmo conceito que o Relatorio Pontual exibe.
 
-    = renda do domicilio / moradores. Como `fator` ja e `moradores x uplift x temporal`, basta
-    dividir o domiciliar pelos moradores municipais. Ate 2026-08-13 o tooltip exibia a coluna
-    calibrada crua (V06004/moradores x k), que ficava ~20% abaixo da referencia do IBGE e nao
-    batia com o numero do Relatorio Pontual para a mesma coordenada.
-
-    `dom` pre-calculado evita refazer a cadeia inteira: `_hex_dict` roda por hex em cargas de
-    dezenas de milhares por UF, e as duas chamadas irmas dobravam o custo do endpoint.
+    Desde a E0 com o PROPRIO fator (`renda.hex.renda_per_capita_hex`), nunca a domiciliar
+    dividida pelos moradores: na versao 0 dos fatores (F_pc == F_dom) e o mesmo numero de
+    antes, bit a bit. Ate 2026-08-13 o tooltip exibia a coluna calibrada crua
+    (V06004/moradores x k), ~20% abaixo da referencia do IBGE.
     """
-    if dom is None:
-        dom = _renda_domiciliar_hex(r, fator)
-    if dom is None:
+    base, uf, cod = _base_renda_hex(r)
+    if base is None:
         return None
-    from motor_expansao.dashboard.constants import moradores_por_domicilio
-
-    cod = r.get("cod_municipio")
-    moradores = moradores_por_domicilio(r.get("uf"), None if cod is None or pd.isna(cod) else str(cod))
-    return _num(dom / moradores) if moradores else None
+    return _num(_renda_hex.renda_per_capita_hex(base, uf, cod))
 
 
 @functools.lru_cache(maxsize=1)
@@ -1954,16 +1924,21 @@ COMPETITORS_LOGO_DIR = Path(
 
 @app.on_event("startup")
 def _init_renda_paths_no_boot() -> None:
-    """Reaponta os artefatos de renda para caminhos ABSOLUTOS antes da 1a requisicao.
+    """Aponta os insumos da renda para o STAGING_DIR e VALIDA a renda antes da 1a requisicao.
 
-    Sem isto a classe de bug e' de ordem: se a primeira requisicao do processo fosse
-    /api/ponto (bot, deep-link), o motor censitario carregaria uplift/fator temporal
-    pelos paths RELATIVOS do motor (CWD=web/server -> nao resolvem) e cachearia o
-    resultado vazio. Gracioso por construcao: staging ausente so' ativa os fallbacks."""
-    try:
-        _fator_temporal_renda()
-    except Exception:  # noqa: BLE001 — startup nunca derruba o servico por artefato de renda
-        _LOG_RENDA.warning("re-point dos artefatos de renda falhou no boot", exc_info=True)
+    Desde a E0 SEM `try/except`: fatores invalidos (sempre) ou, em producao (`MOTOR_DATA_DIR`),
+    insumo obrigatorio ausente / carimbo k ilegivel DERRUBAM a subida com erro explicito. A
+    redacao anterior engolia a excecao e o servico subia exibindo a renda com o fallback 1,0
+    sem pista nenhuma. Em dev/teste a ausencia de artefato so loga WARNING."""
+    _renda_staging_configurado()
+    fatores = _renda.validar_na_subida(STAGING_DIR)
+    # WARNING quando a versao foi FIXADA por env (rollback): o deploy esta fora do VIGENTE e
+    # isso tem de aparecer no log de quem olhar o boot, nao so no `/api/health`.
+    _LOG_RENDA.log(
+        logging.WARNING if fatores.fixada_por_env else logging.INFO,
+        "renda: fatores versao=%s pais=%s fixada_por_env=%s staging=%s",
+        fatores.versao, fatores.pais, fatores.fixada_por_env, STAGING_DIR,
+    )
 
 
 @app.on_event("startup")
@@ -2565,6 +2540,11 @@ def bairros_por_hex(uf: str, cod_municipio: str) -> dict[str, str]:
     Sem isso, todo item do ranking repetiria o nome do municipio ("Brasília",
     "Brasília", …) — o que mata a leitura. Reusa o helper do Relatorio Municipal;
     fallback gracioso para {} se a particao geo nao existir.
+
+    DEC-076: o nome vem do CNEFE (artefato em `STAGING_DIR/bairro_cnefe_setor/`). Este
+    `lru_cache` guarda o nome por (uf, municipio): TODA troca do artefato (subida, atualizacao
+    ou remocao) exige restart do `web`, senao os municipios ja consultados seguem com o nome
+    antigo.
     """
     if not CENSO_GEO_DIR.exists():
         return {}
@@ -2573,7 +2553,10 @@ def bairros_por_hex(uf: str, cod_municipio: str) -> dict[str, str]:
             _carregar_bairros_por_hex,
         )
 
-        return _carregar_bairros_por_hex(uf, cod_municipio, CENSO_GEO_DIR) or {}
+        return (
+            _carregar_bairros_por_hex(uf, cod_municipio, CENSO_GEO_DIR, staging_dir=STAGING_DIR)
+            or {}
+        )
     except Exception:  # noqa: BLE001 — enriquecimento opcional
         return {}
 
@@ -3977,13 +3960,11 @@ def montar_funil_uf(df_uf: pd.DataFrame, uf: str) -> list[dict[str, Any]]:
     ]
 
 
-def _hex_dict(
-    r: pd.Series, fator_dom: float | None, bairro: str | None = None
-) -> dict[str, Any]:
+def _hex_dict(r: pd.Series, bairro: str | None = None) -> dict[str, Any]:
     """Serializa um hex para o mapa (compartilhado entre as rotas UF e município)."""
-    # A renda domiciliar sai UMA vez e alimenta as duas chaves (`renda` per capita deriva
-    # dela) — hoisting vindo da main com o k nacional unico.
-    renda_dom = _renda_domiciliar_hex(r, fator_dom)
+    # Desde a E0 a per capita NAO deriva da domiciliar: cada uma com o seu fator, as duas
+    # pelo modulo da renda.
+    renda_dom = _renda_domiciliar_hex(r)
     dados: dict[str, Any] = {
         "id": r["hex_id"],
         "lat": _num(r["lat"], 6),
@@ -4007,7 +3988,7 @@ def _hex_dict(
         # `renda` e a renda DOMICILIAR per capita (conceito do IBGE), a mesma grandeza que o
         # Relatorio Pontual exibe — antes era a coluna calibrada crua, e as duas superficies
         # mostravam numeros diferentes para a mesma coordenada.
-        "renda": _renda_per_capita_hex(r, fator_dom, dom=renda_dom),
+        "renda": _renda_per_capita_hex(r),
         "renda_dom": renda_dom,
         # Fallback municipal (Bloco A/DEC-050): `renda_origem` vem de `_derivar`, que
         # tenta `renda_per_capita_setor_2022_calibrada` (setor, granular) primeiro e so
@@ -4308,8 +4289,13 @@ async def health() -> dict[str, Any]:
     parquet) vazava o layout do FS e a camada de M&A para QUALQUER autenticado, ja' que
     /api/health e' rota livre. O inventario mudou para `/api/acessos/saude-artefatos`,
     gated pela allowlist de admin.
+
+    E0 da renda: ganha `renda_fatores` = {versao, fixada_por_env} -- versao de fator e
+    informacao publica de METODOLOGIA (nao de infra: sem caminho), e e por ela que se confere
+    de fora se o deploy subiu com o VIGENTE ou com um rollback por env. Os fatores ja foram
+    carregados e validados no boot (`_init_renda_paths_no_boot`), entao aqui e cache.
     """
-    return {"status": "ok"}
+    return {"status": "ok", "renda_fatores": _renda.fatores_do_health()}
 
 
 def _inventario_artefatos() -> dict[str, Any]:
@@ -4399,7 +4385,7 @@ def me(
     if viabilidade_moeda is not None:
         resposta["viabilidade_moeda"] = viabilidade_moeda
     # DEC-074: os alcances que ESTE deploy oferece na ficha do ponto. Os dois raios sempre;
-    # "10 min de carro" so' com o servico de rotas configurado -- sem a env a opcao SOME da
+    # "5 min" e "10 min de carro" so' com o servico de rotas configurado -- sem a env SOMEM da
     # tela, em vez de aparecer e responder 503 a cada clique. So' a env, sem consultar o
     # servico: `/api/me` e' chamada uma vez na abertura e nao pode pagar a latencia dele.
     resposta["alcances"] = _alcances_oferecidos()
@@ -4469,8 +4455,12 @@ def _perfil_do_cliente() -> dict[str, Any]:
     Repeti-la aqui era uma quarta copia, que envelhece calada como qualquer outra.
 
     As duas RESOLVIDAS, que nao sao transcricao de campo do perfil:
-      reguas.bandas_renda_setor     -> as faixas do choropleth de renda por setor
-      reguas.bandas_densidade_setor -> idem, densidade populacional
+      reguas.bandas_renda_setor     -> as faixas de renda PER CAPITA (`RENDA_PER_CAPITA_BANDS`)
+      reguas.bandas_densidade_setor -> as faixas do calor de densidade populacional
+
+    Desde a E1 o mapa de calor de RENDA por setor pinta a renda media DOMICILIAR do setor,
+    nas faixas domiciliares do front (`RENDA_DOMICILIAR_SETOR_BANDS`, `web/src/lib/colors.ts`):
+    `bandas_renda_setor` sao per capita e NAO alimentam esse calor.
 
     Elas saem daqui JA RESOLVIDAS pelo Python (`RENDA_PER_CAPITA_BANDS` /
     `DENSIDADE_POP_BANDS`), e nao como o campo cru `reguas.faixas_*` do perfil. E'
@@ -4559,8 +4549,9 @@ def ciencia_confidencialidade() -> dict[str, Any]:
 
 @app.on_event("startup")
 def _consolidar_rollup_de_uso() -> None:
-    # Consolida dias BRT fechados no rollup sem dado pessoal ANTES que a poda de
-    # 90 dias da trilha os alcance; nunca levanta (analytics e' rastro).
+    # Consolida dias BRT fechados no rollup sem dado pessoal ANTES que uma poda da
+    # trilha os alcance (sem prazo por padrao desde a emenda 2 da DEC-027; a poda so'
+    # existe se MOTOR_ACESSO_RETENCAO_DIAS for definida); nunca levanta (analytics e' rastro).
     acesso_analytics.consolidar_rollup_seguro()
 
 
@@ -6506,7 +6497,11 @@ def _ranking_hexagonos(
                 "quadrante": _texto(r.get(COL_QUADRANTE)),
                 "score": _num(r.get("score_setor_2022_calibrado"), 1),
                 "pop": _num(r.get("pop_leitura")),
-                "renda": _num(r.get("renda_leitura")),
+                # Renda domiciliar PER CAPITA canonica, a MESMA do tooltip do hexagono
+                # (`_renda_per_capita_hex`, modulo da renda). Ate a E1 servia `renda_leitura`
+                # crua: a calibrada na escala do score (com k, sem uplift nem fator) ou a SIDRA
+                # municipal sem fator, misturadas por linha.
+                "renda": _renda_per_capita_hex(r),
                 "tag": etiqueta,
                 "tom": tom,
                 "tag_cor": cor,
@@ -6810,14 +6805,18 @@ def ponto(lat: float, lng: float, excluir_ultra_proxima: bool = False) -> dict[s
 
 
 # --------------------------------------------------------------------------- #
-# Alcance do ponto (DEC-074): raio de 1 km, raio de 2 km e 10 min de carro      #
+# Alcance do ponto (DEC-074): raio de 1 km, raio de 2 km, 5 e 10 min de carro  #
 # --------------------------------------------------------------------------- #
 # Rotulo do recorte nos criterios ("População no raio de 2 km"). O raio de 1 km NAO esta
 # aqui de proposito: pela rota de alcance ele devolve o MESMO conteudo do GET `/api/ponto`
 # (fator 1, byte a byte), e la' o rotulo e' "no raio".
-_ONDE_DO_ALCANCE = {"raio_2km": "no raio de 2 km", "carro_10min": "em 10 min de carro"}
+_ONDE_DO_ALCANCE = {
+    "raio_2km": "no raio de 2 km",
+    "carro_5min": "em 5 min de carro",
+    "carro_10min": "em 10 min de carro",
+}
 MSG_ALCANCE_DESCONHECIDO = (
-    "Alcance desconhecido: {alcance!r}. Use raio_1km, raio_2km ou carro_10min."
+    "Alcance desconhecido: {alcance!r}. Use raio_1km, raio_2km, carro_5min ou carro_10min."
 )
 MSG_ULTRA_SO_NO_RAIO_1KM = (
     "O estudo da unidade Ultra é só do raio de 1 km. Volte ao raio de 1 km para usá-lo."
@@ -6841,7 +6840,7 @@ class _AlcanceResolvido:
     lat: float
     lng: float
     raio_km: float | None
-    isocrona: Any = None  # `alcance_ponto.Isocrona` no "carro_10min"
+    isocrona: Any = None  # `alcance_ponto.Isocrona` no "carro_5min"/"carro_10min"
 
     @property
     def geometria(self) -> Any:
@@ -6849,18 +6848,16 @@ class _AlcanceResolvido:
 
 
 def _alcances_oferecidos() -> list[str]:
-    """Os alcances deste deploy: os dois raios sempre; a isocrona so' com a env de rotas."""
+    """Os alcances deste deploy: os dois raios sempre; as isocronas (5 e 10 min de carro,
+    na ordem do seletor) so' com a env de rotas."""
     from motor_expansao.dashboard.alcance_ponto import (
-        ALCANCE_CARRO_10MIN,
-        ALCANCE_RAIO_1KM,
-        ALCANCE_RAIO_2KM,
+        ALCANCES,
+        MINUTOS_DO_ALCANCE,
         rotas_configuradas,
     )
 
-    alcances = [ALCANCE_RAIO_1KM, ALCANCE_RAIO_2KM]
-    if rotas_configuradas():
-        alcances.append(ALCANCE_CARRO_10MIN)
-    return alcances
+    com_carro = rotas_configuradas()
+    return [a for a in ALCANCES if com_carro or a not in MINUTOS_DO_ALCANCE]
 
 
 def _resolver_alcance(lat: float, lng: float, alcance: str) -> _AlcanceResolvido:
@@ -6873,8 +6870,8 @@ def _resolver_alcance(lat: float, lng: float, alcance: str) -> _AlcanceResolvido
     """
     from motor_expansao.api.coord import CoordenadaInvalidaError, validar_brasil
     from motor_expansao.dashboard.alcance_ponto import (
-        ALCANCE_CARRO_10MIN,
         ALCANCES,
+        MINUTOS_DO_ALCANCE,
         RAIO_DO_ALCANCE,
         AlcanceInvalido,
         RotasIndisponiveis,
@@ -6888,10 +6885,10 @@ def _resolver_alcance(lat: float, lng: float, alcance: str) -> _AlcanceResolvido
         validar_brasil(lat, lng)
     except CoordenadaInvalidaError as exc:
         raise HTTPException(400, str(exc)) from exc
-    if alcance != ALCANCE_CARRO_10MIN:
+    if alcance not in MINUTOS_DO_ALCANCE:
         return _AlcanceResolvido(alcance, lat, lng, RAIO_DO_ALCANCE[alcance])
     try:
-        iso = isocrona_carro(lat, lng)
+        iso = isocrona_carro(lat, lng, MINUTOS_DO_ALCANCE[alcance])
     except RotasIndisponiveis as exc:
         # Condicao ESPERADA (servico fora/lento), entao `warning` e nao `exception` -- mas
         # com `exc_info`: o 503 tem de deixar a causa no log (BLK-SAUDE-01).
@@ -6908,10 +6905,10 @@ def ponto_alcance(
 ) -> dict[str, Any]:
     """Ficha do ponto com o ALCANCE escolhido na própria ficha (DEC-074).
 
-    `alcance` é identificador cru: `raio_1km` (o estudo de sempre), `raio_2km` ou
-    `carro_10min` (isócrona de 10 min de carro sem trânsito, calculada no servidor por um
-    Valhalla próprio -- só com `MOTOR_ROTAS_URL`; sem ela, 503 em português e a opção nem
-    aparece na tela, ver `/api/me`).
+    `alcance` é identificador cru: `raio_1km` (o estudo de sempre), `raio_2km`,
+    `carro_5min` ou `carro_10min` (isócrona de 5 ou 10 min de carro sem trânsito, calculada
+    no servidor por um Valhalla próprio -- só com `MOTOR_ROTAS_URL`; sem ela, 503 em
+    português e as opções nem aparecem na tela, ver `/api/me`).
 
     O MESMO corpo do `GET /api/ponto`, mais o bloco `recorte` (tipo, método, área, fator
     da régua, contorno GeoJSON, origem e parâmetros do cálculo). `raio_1km` devolve
@@ -7025,7 +7022,7 @@ def _payload_ponto(
     chave e cada chamada são as de antes da DEC-071 — o GET não muda um byte (travado por
     teste). Com ele, (lat, lng) é o `representative_point` do polígono.
 
-    `alcance` (DEC-074; raio de 2 km ou isócrona de 10 min de carro) troca o raio de 1 km
+    `alcance` (DEC-074; raio de 2 km ou isócrona de 5/10 min de carro) troca o raio de 1 km
     pelo recorte resolvido, com (lat, lng) = a ORIGEM clicada. O raio de 2 km segue pelo
     caminho de RAIO (área e fator exatos, método `_2km`); a isócrona, pelo de geometria
     (método próprio). Nos dois, e no desenho, as réguas de total escalam pelo fator.
@@ -7044,9 +7041,9 @@ def _payload_ponto(
     from motor_expansao.api.settings import Settings
     from motor_expansao.dashboard.censo_point import (
         CLASSE_CADEIA_OFERTA,
-        GEOMETRIA_TIPO_ISOCRONA_CARRO_10MIN,
         RAIO_CENSITARIO_DEFAULT_KM,
         analisar_ponto_censitario_setores,
+        geometria_tipo_isocrona,
     )
 
     # `_resolver_e_carregar` NÃO valida o bounding box — sem isto, uma coordenada
@@ -7116,7 +7113,7 @@ def _payload_ponto(
     # operador a desenhou.
     _recorte_kw: dict[str, Any] = {} if geometria is None else {"geometria_wgs84": geometria}
     if alcance is not None and alcance.isocrona is not None:
-        _recorte_kw["geometria_tipo"] = GEOMETRIA_TIPO_ISOCRONA_CARRO_10MIN
+        _recorte_kw["geometria_tipo"] = geometria_tipo_isocrona(alcance.isocrona.minutos)
     res = analisar_ponto_censitario_setores(
         lat, lng, setores_df,
         raio_km=raio,
@@ -7591,13 +7588,7 @@ def uf_view(uf: str, limite: int = 15000) -> dict[str, Any]:
     else:
         vis = df
 
-    # Fator domiciliar por município (poucos únicos) para a renda do tooltip.
-    fatores: dict[str, float | None] = {}
-    if "cod_municipio" in vis.columns:
-        for cod in vis["cod_municipio"].dropna().astype(str).unique():
-            fatores[cod] = _fator_domiciliar(uf.upper(), cod)
-
-    hexes = [_hex_dict(r, fatores.get(str(r.get("cod_municipio")))) for _, r in vis.iterrows()]
+    hexes = [_hex_dict(r) for _, r in vis.iterrows()]
     for p in passos:
         p["hexes"] = p["hexes"][:400]
 
@@ -7650,13 +7641,7 @@ def municipio(uf: str, municipio: str, limite: int = 4000) -> dict[str, Any]:
     else:
         vis = sel
 
-    # Fator municipal renda per capita -> renda media domiciliar (escalar por
-    # municipio, como no tooltip do Streamlit). Calculado 1x aqui.
-    fator_dom = _fator_domiciliar(uf.upper(), cod)
-
-    hexes = [
-        _hex_dict(r, fator_dom, bairros.get(str(r.get("hex_id")))) for _, r in vis.iterrows()
-    ]
+    hexes = [_hex_dict(r, bairros.get(str(r.get("hex_id")))) for _, r in vis.iterrows()]
 
     for p in passos:
         p["hexes"] = p["hexes"][:400]
@@ -7715,6 +7700,7 @@ def _setores_heatmap_features(uf: str, cod_municipio: str) -> list[dict[str, Any
     if df.empty:
         return []
 
+    _renda_staging_configurado()  # aponta os insumos da renda para o STAGING_DIR (1x)
     feats: list[dict[str, Any]] = []
     for _, r in df.iterrows():
         wkb = r.get("geometry_wkb")
@@ -7737,13 +7723,24 @@ def _setores_heatmap_features(uf: str, cod_municipio: str) -> list[dict[str, Any
         # existe: rio/rodovia cortando o poligono) vira mais de uma "peca" aqui, todas
         # com os MESMOS atributos — o deck.gl PolygonLayer nao desenha corretamente um
         # MultiPolygon dentro de uma unica entrada `getPolygon`.
+        # Renda media DOMICILIAR canonica do setor, pelo modulo da renda (E1): (V06004 x uplift
+        # do setor) x F_dom -- a mesma conta do Relatorio Pontual e da camada de setores da
+        # ficha da rede. Ate a E1 servia a coluna CALIBRADA crua (escala do score, V06004 /
+        # moradores x k, sem uplift nem fator) sob o rotulo "Renda domiciliar": 19% a 35% da
+        # domiciliar do mesmo setor.
+        # A chave MUDA de `renda` para `renda_domiciliar` de proposito (quebra declarada): o
+        # bundle antigo pinta `renda` nas faixas PER CAPITA, entao servir a domiciliar sob a
+        # chave velha jogaria quase todo setor na faixa do topo -- cor errada em silencio. Sem a
+        # chave, a aba ainda nao recarregada cai no cinza "sem leitura" ate o reload (SPA e API
+        # saem na mesma imagem).
+        domiciliar = _renda_setor.renda_domiciliar_da_linha(r, uf, cod_municipio)
         for parte in cobertura_1km._aneis(geom):
             feats.append(
                 {
                     "setor": _texto(r.get("cod_setor")),
                     "anel": parte,
                     "densidade": _num(r.get("densidade_pop_setor_hab_km2")),
-                    "renda": _num(r.get("renda_per_capita_setor_2022_calibrada")),
+                    "renda_domiciliar": _num(domiciliar),
                     "pop": _num(r.get("pop_total_setor_2022")),
                 }
             )
@@ -9331,6 +9328,58 @@ def _rede_kpis(unidades: pd.DataFrame, m1: pd.DataFrame) -> dict[str, Any]:
     return saida
 
 
+#: Colunas da linha "rede inteira" da Carteira: as métricas da tabela mais a contagem
+#: que acompanha o churn.
+_REDE_LINHA_REDE = ("faturamento", "ativos", "churn_pct", "cancelados", "nps")
+
+
+def _rede_linha_rede(contexto: dict[str, Any]) -> dict[str, Any]:
+    """A linha da REDE INTEIRA no topo da Carteira, em duas leituras (pedido do Vinicius,
+    2026-10-20): "como a Ultra está indo como um todo".
+
+    - `media`: a média SIMPLES por unidade, a MESMA régua do "% vs média da rede" de cada
+      célula (`rede_metricas.medias_da_rede`) -- uma unidade com o valor da linha lê 0%
+      ali. Só entra quem operou a janela inteira, como no ranking.
+    - `total`: o que os KPIs do topo calculam (`_rede_kpis`): soma para volume e taxa
+      PONDERADA para churn (por pagantes) e NPS (por ativos) -- somar taxa não significa
+      nada.
+
+    As duas são da rede INTEIRA, nunca do recorte: o filtro muda as linhas da tabela, e a
+    linha da rede é a referência fixa contra a qual o recorte se compara (é por isso que o
+    `vs_media` também ignora o filtro). O delta sai da MESMA cesta nos dois meses, pelo
+    mesmo motivo dos KPIs: inauguração muda a cesta, não o desempenho.
+    """
+    atual: pd.DataFrame = contexto["atual"]
+    m1: pd.DataFrame = contexto["m1"]
+    kpis = _rede_kpis(atual, m1)
+    total = {c: kpis[c] for c in _REDE_LINHA_REDE if c in kpis}
+
+    mascara = rede_metricas.mascara_comparaveis(atual)
+    comparaveis = atual.loc[mascara].set_index("unidade_id")
+    medias = rede_metricas.medias_da_rede(atual, _REDE_LINHA_REDE)
+    cesta = comparaveis.index.intersection(m1.index)
+    media: dict[str, Any] = {}
+    for chave in _REDE_LINHA_REDE:
+        casas = _rede_casas(chave)
+        valor = medias.get(chave)
+        anterior = atual_cesta = None
+        if len(cesta) and chave in m1.columns and chave in comparaveis.columns:
+            anterior = _numf(pd.to_numeric(m1.loc[cesta, chave], errors="coerce").mean())
+            atual_cesta = _numf(pd.to_numeric(comparaveis.loc[cesta, chave], errors="coerce").mean())
+        delta = (
+            100.0 * (atual_cesta - anterior) / anterior
+            if (atual_cesta is not None and anterior)
+            else None
+        )
+        media[chave] = {"atual": _num(valor, casas), "m1": _num(anterior, casas), "delta_pct": _num(delta, 1)}
+    return {
+        "media": media,
+        "total": total,
+        "n_unidades": int(len(atual)),
+        "n_comparaveis": int(mascara.sum()),
+    }
+
+
 #: O que dizer do faturamento do PERÍODO, conforme a janela alcance ou não a planilha.
 #: A planilha é mensal: ela responde por competência coberta INTEIRA e por mais nada.
 _NOTA_DO_PERIODO: dict[str, str] = {
@@ -9682,6 +9731,7 @@ def _rede_carteira_payload(
             "com_coordenada": len(com_coordenada),
         },
         "kpis": kpis,
+        "rede_inteira": _rede_linha_rede(contexto),
         "split": {
             "recorrentes": _num(total_pagantes),
             "agregadores": _num(total_agregadores),
@@ -10248,6 +10298,9 @@ def _rede_territorio() -> dict[str, dict[str, Any]]:
         item["renda_domiciliar"] = (
             _rede_renda_domiciliar(hexes.loc[celulas], pesos.get(uid)) if celulas else None
         )
+        item["renda_per_capita"] = (
+            _rede_renda_per_capita(hexes.loc[celulas], pesos.get(uid)) if celulas else None
+        )
         for rede in item.get("redes_no_entorno", []):
             rede["logo"] = _icone_rede(rede["rede"])
     return fatos
@@ -10260,6 +10313,24 @@ def _rede_renda_domiciliar(bloco: pd.DataFrame, pesos: dict[str, float] | None =
     `_renda_domiciliar_hex`): nada de fórmula nova, senão a ficha e o mapa mostrariam dois
     números para o mesmo lugar. Hexágono sem município ou sem renda fica fora da média.
     """
+    return _rede_renda_do_disco(bloco, pesos, _renda_domiciliar_hex)
+
+
+def _rede_renda_per_capita(bloco: pd.DataFrame, pesos: dict[str, float] | None = None) -> float | None:
+    """Renda domiciliar PER CAPITA do disco da unidade, ponderada por população (E1).
+
+    A cadeia do tooltip (`_renda_per_capita_hex`, com o PRÓPRIO fator), não a domiciliar
+    dividida por moradores. Até a E1 era a média da calibrada crua (escala do score).
+    """
+    return _rede_renda_do_disco(bloco, pesos, _renda_per_capita_hex)
+
+
+def _rede_renda_do_disco(
+    bloco: pd.DataFrame,
+    pesos: dict[str, float] | None,
+    conta: Callable[[pd.Series], float | None],
+) -> float | None:
+    """Média, ponderada pela população dentro do raio, de uma renda do hexágono (`conta`)."""
     if not len(bloco):
         return None
     trabalho = bloco.copy()
@@ -10274,11 +10345,11 @@ def _rede_renda_domiciliar(bloco: pd.DataFrame, pesos: dict[str, float] | None =
             cod_txt = cod_txt[:-2]
         linha = linha.copy()
         linha["cod_municipio"] = cod_txt
-        dom = _renda_domiciliar_hex(linha, _fator_domiciliar(linha.get("uf"), cod_txt))
+        valor = conta(linha)
         # Peso = população DENTRO do raio de 1 km (fração da área do hexágono no círculo).
         pop = (_numf(linha.get("pop_total_setor_2022")) or 0.0) * (pesos or {}).get(linha.name, 1.0)
-        if dom is not None and pop > 0:
-            soma += dom * pop
+        if valor is not None and pop > 0:
+            soma += valor * pop
             peso += pop
     return _num(soma / peso, 0) if peso else None
 
@@ -10346,7 +10417,8 @@ def _rede_setores_entorno(unidade_id: str) -> str:
     """Setores censitários a ~2 km da unidade, com renda DOMICILIAR e densidade (JSON).
 
     Camadas opcionais do mapa da ficha. Renda domiciliar pela fórmula canônica do Relatório
-    Pontual (`censo_map.py`): V06004 BRUTA x uplift SETORIAL x fator temporal — nunca a per
+    Pontual (`censo_map.py`, via `motor_expansao.renda`): V06004 BRUTA x uplift SETORIAL x
+    fator temporal — nunca a per
     capita calibrada x moradores, que reintroduziria o `k` (+23,35%, ver CLAUDE.md §4).
     Lê os municípios de TODOS os hexágonos do entorno: unidade na divisa desenharia meia
     praça se só o município dela entrasse. Devolve string (imutável) para o cache.
@@ -10384,7 +10456,7 @@ def _rede_setores_entorno(unidade_id: str) -> str:
         print(f"[rede] municípios do entorno ilegíveis ({erro})", file=sys.stderr)
         return vazio
 
-    fator_temporal = _fator_temporal_renda()  # também reaponta os caminhos do uplift (1x)
+    _renda_staging_configurado()  # aponta os insumos da renda para o STAGING_DIR (1x)
     circulo = cobertura_1km._disco(lat, lng, rede_inteligencia.RAIO_ENTORNO_M * 1.15)
     minx, miny, maxx, maxy = circulo.bounds
     feats: list[dict[str, Any]] = []
@@ -10414,16 +10486,10 @@ def _rede_setores_entorno(unidade_id: str) -> str:
                 geom = geom.simplify(SETORES_HEATMAP_SIMPLIFY_GRAUS, preserve_topology=True)
             except Exception:  # noqa: BLE001
                 pass
-            renda = _numf(r.get("renda_responsavel_media_setor_2022"))
-            if renda is None:
-                # Fallback pela per capita BRUTA, nunca a calibrada (reintroduziria o k).
-                bruta, moradores = _numf(r.get("renda_per_capita_setor_2022")), _numf(r.get("avg_moradores_domicilio_setor_2022"))
-                renda = bruta * moradores if bruta is not None and moradores is not None else None
-            domiciliar = (
-                renda * float(_constants.uplift_composicao_por_setor(r.get("cod_setor"), uf, cod)) * float(fator_temporal)
-                if renda is not None
-                else None
-            )
+            # (V06004 x uplift do setor) x F_dom(uf), pelo modulo da renda; a V06004 ausente e
+            # reconstruida pela per capita BRUTA, nunca a calibrada (reintroduziria o k). A
+            # MESMA redacao do mapa de calor de setor do Mapa (`renda.setor`, E1).
+            domiciliar = _renda_setor.renda_domiciliar_da_linha(r, uf, cod)
             for parte in cobertura_1km._aneis(geom):
                 feats.append(
                     {
@@ -11635,8 +11701,8 @@ async def relatorio_pontual(
     consumo da unidade Ultra a ate' 150 m do ponto, e o Big Numbers DECLARA isso. Vale com
     e sem `so_estudo`. Sem unidade na tolerancia -> 400.
 
-    `alcance` (`raio_2km`/`carro_10min`) OU `geometria` (o GeoJSON do desenho), campos Form
-    (DEC-074, fase 2 da DEC-071): o Estudo do RECORTE escolhido na ficha. So' com
+    `alcance` (`raio_2km`/`carro_5min`/`carro_10min`) OU `geometria` (o GeoJSON do desenho),
+    campos Form (DEC-074, fase 2 da DEC-071): o Estudo do RECORTE escolhido na ficha. So' com
     `so_estudo` -- o relatorio completo (viabilidade, zona morta) e' do raio de 1 km, e um
     PDF com o selo demografico num recorte e o financeiro em outro seria dois estudos
     colados. O servidor RECALCULA o recorte (a isocrona sai do cache do servico de rotas, o
@@ -11732,8 +11798,8 @@ class _RecorteDoPdf:
     `lat`/`lng`: a coordenada com que o PDF inteiro roda -- a origem clicada (raio, ou a da
     isocrona, garantida dentro dela) ou o ponto interno do desenho. `geometria` (shapely em
     graus) so' na isocrona e no desenho; `raio_km` so' no raio. `geometria_tipo` e' o
-    rotulo do MOTOR ("poligono"/"isocrona_carro_10min"); `tipo` e' o do payload
-    ("raio_2km"/"carro_10min"/"poligono").
+    rotulo do MOTOR ("poligono"/"isocrona_carro_5min"/"isocrona_carro_10min"); `tipo` e' o
+    do payload ("raio_2km"/"carro_5min"/"carro_10min"/"poligono").
     """
 
     tipo: str
@@ -11763,8 +11829,8 @@ def _resolver_recorte_do_pdf(
     """
     from motor_expansao.dashboard.alcance_ponto import ALCANCE_RAIO_1KM
     from motor_expansao.dashboard.censo_point import (
-        GEOMETRIA_TIPO_ISOCRONA_CARRO_10MIN,
         GEOMETRIA_TIPO_POLIGONO,
+        geometria_tipo_isocrona,
     )
 
     if alcance and geometria:
@@ -11802,7 +11868,7 @@ def _resolver_recorte_do_pdf(
         return _RecorteDoPdf(
             resolvido.tipo, resolvido.lat, resolvido.lng,
             geometria=resolvido.geometria,
-            geometria_tipo=GEOMETRIA_TIPO_ISOCRONA_CARRO_10MIN,
+            geometria_tipo=geometria_tipo_isocrona(resolvido.isocrona.minutos),
             versao_rotas=resolvido.isocrona.versao,
         )
     return _RecorteDoPdf(resolvido.tipo, resolvido.lat, resolvido.lng, raio_km=resolvido.raio_km)
@@ -12313,7 +12379,7 @@ class ComparacaoRecorteIn(BaseModel):
     """Recorte de UM item do deck de comparação (DEC-074). O servidor só imprime."""
 
     # Identificador cru (o mesmo `recorte.tipo` da ficha), NÃO acentuar.
-    tipo: Literal["raio_1km", "raio_2km", "carro_10min", "poligono"]
+    tipo: Literal["raio_1km", "raio_2km", "carro_5min", "carro_10min", "poligono"]
     rotulo: str | None = Field(default=None, max_length=120)
     area_km2: float | None = Field(default=None, gt=0, allow_inf_nan=False)
     fator_regua: float | None = Field(default=None, gt=0, allow_inf_nan=False)
@@ -12326,7 +12392,7 @@ class ComparacaoItemIn(BaseModel):
     # vetor sem teto, entao e' o unico limitado aqui.
     model_config = ConfigDict(extra="allow")
     porDimensao: list[dict[str, Any]] = Field(default_factory=list, max_length=12)
-    # DEC-074: o recorte do item (raio de 1/2 km, 10 min de carro, área desenhada), para o
+    # DEC-074: o recorte do item (raio de 1/2 km, 5/10 min de carro, área desenhada), para o
     # deck imprimir na linha do item e explicar os critérios escalados. Tipado (e não só
     # `extra`) porque vira TEXTO no PDF: rótulo com teto e números finitos.
     recorte: ComparacaoRecorteIn | None = None
@@ -12539,6 +12605,71 @@ def _alunos_p50_por_m2(m2_arred: int) -> float | None:
         return None
 
 
+#: Coluna do artefato do coletor -> coluna da base do piloto com o MESMO significado. O
+#: coletor copia a renda do hexagono como esta na base (a calibrada na escala do score, ou a
+#: SIDRA municipal); o mapeamento so serve ao fallback de `_op_renda_pc_por_hex`.
+_OP_RENDA_ORIGEM = {
+    "censo_renda_per_capita_hex": "renda_per_capita_setor_2022_calibrada",
+    "m1_renda_per_capita": "renda_per_capita",
+}
+
+
+def _op_renda_pc_por_hex(df: pd.DataFrame) -> dict[int, float | None]:
+    """Renda domiciliar PER CAPITA canonica de cada imovel (indice de `df` -> valor), E1.
+
+    A MESMA do tooltip do hexagono do imovel: a linha do hexagono e lida da base do piloto
+    (so as colunas da renda, filtrada pelos `hex_id`) e passa por `_renda_per_capita_hex`.
+    Ate a E1 a tela mostrava a coluna do coletor CRUA (a calibrada na escala do score, com k
+    e sem uplift nem fator, ou a SIDRA municipal sem fator).
+
+    Hexagono fora da base: o valor do coletor passa pelo MESMO modulo (`renda.hex`), com a
+    coluna equivalente como origem e a cascata da UF no lugar do municipio que falta. Nunca
+    sai cru.
+    """
+    saida: dict[int, float | None] = {}
+    if df.empty:
+        return saida
+    _renda_staging_configurado()
+    base = pd.DataFrame()
+    ids = sorted({str(h) for h in df.get("hex_id", pd.Series(dtype=object)).dropna()})
+    if ids and ENRICHED_DIR.exists():
+        try:
+            import pyarrow.compute as pc
+            import pyarrow.dataset as ds
+
+            dset = ds.dataset(str(ENRICHED_DIR), partitioning="hive")
+            cols = [
+                c for c in ("hex_id", "uf", "cod_municipio", *_renda_hex.COLS_RENDA_LEITURA)
+                if c in set(dset.schema.names)
+            ]
+            base = (
+                dset.to_table(filter=pc.field("hex_id").isin(ids), columns=cols)
+                .to_pandas()
+                .drop_duplicates("hex_id")
+                .set_index("hex_id")
+            )
+        except Exception as erro:  # noqa: BLE001 -- sem a base, cai no fallback pelo modulo
+            print(f"[oportunidades] base do hexagono ilegivel ({erro})", file=sys.stderr)
+            base = pd.DataFrame()
+    if len(base):
+        base["renda_leitura"], base["renda_origem"] = _serie_renda(base)
+    for idx, linha in df.iterrows():
+        hid = _op_txt(linha.get("hex_id"))
+        if hid and hid in base.index:
+            saida[idx] = _renda_per_capita_hex(base.loc[hid])
+            continue
+        uf = _op_txt(linha.get("uf"))
+        valor = None
+        for coluna, origem in _OP_RENDA_ORIGEM.items():
+            v = _op_num(linha.get(coluna))
+            if v:
+                b = _renda_hex.base_renda_domiciliar(v, origem, uf, None, _k_calibracao_renda)
+                valor = _num(_renda_hex.renda_per_capita_hex(b, uf, None))
+                break
+        saida[idx] = valor
+    return saida
+
+
 def _carregar_oportunidades() -> list[dict[str, Any]]:
     """Le o parquet UMA vez e monta os dicts sem PII, ordenados por residual."""
     global _OPORTUNIDADES_CACHE
@@ -12566,8 +12697,9 @@ def _carregar_oportunidades() -> list[dict[str, Any]]:
             ordenar_por, ascending=False, na_position="last", kind="stable"
         )
     ticket = _ticket_proj_mensal()
+    renda_pc = _op_renda_pc_por_hex(df)
     itens: list[dict[str, Any]] = []
-    for r in df.itertuples(index=False):
+    for idx, r in zip(df.index, df.itertuples(index=False), strict=True):
         d = r._asdict()
         area = _op_num(d.get("area_relevante_m2")) or _op_num(d.get("area_util_m2"))
         aluguel = _op_num(d.get("preco_aluguel")) or _op_num(d.get("preco"))
@@ -12601,8 +12733,7 @@ def _carregar_oportunidades() -> list[dict[str, Any]]:
                 "censo_score": _op_num(d.get("censo_score_setorial_hex"), 1),
                 "faixa": _op_txt(d.get("m1_faixa_oportunidade")),
                 "pop": _op_num(d.get("censo_pop_hex")) or _op_num(d.get("m1_pop_hex")),
-                "renda_pc": _op_num(d.get("censo_renda_per_capita_hex"))
-                or _op_num(d.get("m1_renda_per_capita")),
+                "renda_pc": renda_pc.get(idx),
                 "sam": _op_num(d.get("m1_sam_fitness")),
                 "n_ultra": _op_num(d.get("m1_n_unidades_ultra")),
                 "first_seen": primeiro[:10] if primeiro else None,
@@ -12701,7 +12832,7 @@ ACOES_IMOBILIARIA: frozenset[str] = frozenset(
 )
 
 #: Os DOIS que sobem para `eventos` (contrato §2.4). Os outros cinco sao uso de tela e ficam
-#: so' na trilha de 90 dias -- e `abrir-dossie` nao entra aqui de proposito: quem grava o
+#: so' na trilha da DEC-027 -- e `abrir-dossie` nao entra aqui de proposito: quem grava o
 #: download e' o GET do PDF, senao o mesmo clique contaria duas vezes (correcao de 16/09).
 GESTOS_QUE_VIRAM_EVENTO: frozenset[str] = frozenset({"marcar-visita", "desmarcar-visita"})
 

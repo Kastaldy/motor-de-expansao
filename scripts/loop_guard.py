@@ -103,6 +103,15 @@ _DENY_CRITICO: list[tuple[str, str]] = [
         r"^src/motor_expansao/dashboard/relatorio_municipal\.py$",
         "limiares do 'hexagono destacado' do Relatorio Municipal (DEC-011)",
     ),
+    # Ponto UNICO da renda exibida (E0 da correcao de renda): formula, fatores temporais
+    # versionados (`fatores/<PAIS>/*.json` + `VIGENTE`), insumos de uplift/moradores e o
+    # recalculo pela PNAD. Trocar o VIGENTE ou uma linha da formula muda a renda de TODAS as
+    # telas, PDFs, API e bot de uma vez -- sem esta regra o pacote saia LIMPO e um PR "Media"
+    # auto-mergeavel podia mover esse numero sem gate humano.
+    (
+        r"^src/motor_expansao/renda/",
+        "ponto unico da renda exibida (formula + fatores versionados + VIGENTE)",
+    ),
     (
         r"^src/motor_expansao/dimensionamento/config\.py$",
         "premissas financeiras + lista anti-PII do motor de viabilidade (DEC-009/DEC-012)",

@@ -139,7 +139,9 @@ def test_fator_recusa_entrada_invalida(ruim) -> None:
 def test_vocabulario_e_paridades() -> None:
     from motor_expansao.dashboard import geometria_desenhada as gd
 
-    assert ap.ALCANCES == ("raio_1km", "raio_2km", "carro_10min")
+    # Ordem do seletor (Emenda 1 da DEC-074): os raios, depois o carro do menor ao maior tempo.
+    assert ap.ALCANCES == ("raio_1km", "raio_2km", "carro_5min", "carro_10min")
+    assert ap.MINUTOS_DO_ALCANCE == {"carro_5min": 5, "carro_10min": 10}
     assert ap.RAIO_DO_ALCANCE == {"raio_1km": 1.0, "raio_2km": 2.0}
     assert ap.MINUTOS_ISOCRONA == 10
     # Literais repetidos para o modulo seguir leve: a igualdade e' o tripwire.
@@ -614,3 +616,49 @@ def test_resolver_e_carregar_repassa_o_raio_so_quando_vem(monkeypatch, tmp_path)
     _uf, _cod, com_raio = service._resolver_e_carregar(LAT, LNG, settings, raio_km=2.0)
     assert chamadas[-1] == {"raio_km": 2.0}
     assert list(com_raio["cod_municipio"]) == ["3500002", "3500003"]
+
+
+# --------------------------------------------------------------------------- #
+# 5 min de carro (DEC-074, Emenda 1): a MESMA isocrona com outro tempo        #
+# --------------------------------------------------------------------------- #
+def test_isocrona_de_5_min_pede_5_min_e_carimba_5(rotas) -> None:
+    iso = ap.isocrona_carro(LAT, LNG, ap.MINUTOS_DO_ALCANCE[ap.ALCANCE_CARRO_5MIN])
+    assert rotas.posts[-1]["json"]["contours"] == [{"time": 5}]
+    assert iso.minutos == 5
+    assert iso.parametros["minutos"] == 5 and iso.parametros["trafego"] is False
+
+
+def test_5_e_10_min_do_mesmo_ponto_nao_dividem_o_cache(rotas) -> None:
+    # A chave do cache tem o tempo: sem ele, o 5 min devolveria o contorno dos 10.
+    ap.isocrona_carro(LAT, LNG, 10)
+    ap.isocrona_carro(LAT, LNG, 5)
+    assert [p["json"]["contours"][0]["time"] for p in rotas.posts] == [10, 5]
+    ap.isocrona_carro(LAT, LNG, 5)
+    assert len(rotas.posts) == 2  # a segunda leitura dos 5 min sai do cache
+
+
+def test_recusa_dos_5_min_diz_5_min(rotas) -> None:
+    rotas.isocrona = _Resp(400, {"error": "No suitable edges near location"})
+    with pytest.raises(ap.AlcanceInvalido) as exc:
+        ap.isocrona_carro(LAT, LNG, 5)
+    assert "os 5 min de carro" in str(exc.value)
+    assert "10 min" not in str(exc.value)
+
+
+def test_metodo_e_rotulo_da_isocrona_de_5_min() -> None:
+    from motor_expansao.dashboard import censo_point as cp
+
+    assert cp.GEOMETRIA_TIPO_ISOCRONA_CARRO_5MIN == "isocrona_carro_5min"
+    assert cp.METODO_RELATORIO_PONTUAL_ISOCRONA_5MIN == (
+        "setor_censitario_intersecao_area_isocrona_carro_5min"
+    )
+    # O de 10 min segue byte a byte o de antes.
+    assert cp.GEOMETRIA_TIPO_ISOCRONA_CARRO_10MIN == "isocrona_carro_10min"
+    assert cp.METODO_RELATORIO_PONTUAL_ISOCRONA == (
+        "setor_censitario_intersecao_area_isocrona_carro_10min"
+    )
+    assert cp.minutos_da_geometria("isocrona_carro_5min") == 5
+    assert cp.minutos_da_geometria("poligono") is None
+    assert cp.minutos_da_geometria(None) is None
+    # Paridade com a tabela do modulo leve: cada alcance de carro tem rotulo de motor.
+    assert set(cp.MINUTOS_ISOCRONAS) == set(ap.MINUTOS_DO_ALCANCE.values())

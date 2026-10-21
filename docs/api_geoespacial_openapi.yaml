@@ -180,6 +180,18 @@ components:
         environment:
           type: string
           example: production
+        renda_fatores:
+          type: object
+          description: >
+            ADITIVO (E0 da renda). Versao de fatores de renda vigente e se ela foi fixada por
+            env (rollback via MOTOR_FATORES_RENDA_VERSAO). Metodologia publica, sem caminho.
+          properties:
+            versao:
+              type: string
+              example: 2026-10_pnad2025_v1
+            fixada_por_env:
+              type: boolean
+              example: false
 
     AnalisarRequest:
       type: object
@@ -399,14 +411,14 @@ components:
         renda_media_domiciliar_raio:
           type: [number, "null"]
           description: >
-            Renda domiciliar PRE-uplift (R$/mes por domicilio): a renda do RESPONSAVEL
-            (V06004) BRUTA por setor (fallback: per capita bruta x moradores), agregada ao
-            raio por media ponderada por domicilios estimados. MUDANCA DE ESCALA em
-            2026-08-14: ate entao a base era a coluna CALIBRADA e o valor carregava o k
-            (~23% maior). NAO e a soma da renda do raio, nem renda_per_capita_media_raio x
-            moradores. O valor que o PDF/dashboard exibem para o MESMO ponto e
-            renda_domiciliar_total_raio (com uplift + fator temporal), sensivelmente MAIOR.
-          example: 15790.0
+            Renda media DOMICILIAR do raio (R$/mes por domicilio), ponderada por domicilios
+            estimados: a renda do domicilio inteiro com o uplift de composicao SETORIAL e o
+            fator temporal aplicados -- o MESMO numero do card do PDF e do dashboard, igual a
+            renda_domiciliar_total_raio. NAO e a soma da renda do raio. MUDANCA DE ESCALA na
+            E1 do plano de correcao da renda (2026-10): ate entao era a base PRE-uplift (a
+            renda do RESPONSAVEL, V06004 bruta, ~0,53x deste valor) sob nome de renda
+            domiciliar; para o mesmo ponto o valor SOBE. Nome e tipo do campo inalterados.
+          example: 25740.0
         renda_domiciliar_total_raio:
           type: [number, "null"]
           description: >
@@ -415,8 +427,10 @@ components:
             Tambem NAO e a soma da renda do raio; e a faixa exibida no choropleth
             renda_domiciliar do PDF. MUDANCA DE ESCALA em 2026-08-14 (fim da dupla contagem
             do k na base: para o mesmo ponto o valor cai /1,2335). O example abaixo assume
-            fator temporal 1,0 (fallback sem data/staging/fator_temporal_renda.json); em
-            producao o fator temporal (~1,17) tambem multiplica.
+            fator temporal 1,0; em producao multiplica o fator domiciliar da versao vigente
+            de motor_expansao.renda (BR desde a DEC-075: PNAD Continua 2025, com fator
+            proprio para PE e MS; o fator viaja na imagem, nao mais em
+            data/staging/fator_temporal_renda.json).
           example: 25740.0
         fracao_uplift_extrapolado_raio:
           type: [number, "null"]

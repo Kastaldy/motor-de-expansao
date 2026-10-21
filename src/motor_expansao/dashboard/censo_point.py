@@ -11,17 +11,12 @@ from shapely.geometry import Point
 from shapely.geometry.base import BaseGeometry
 from shapely.ops import transform
 
-# `constants` importado como MODULO de proposito: `FATOR_TEMPORAL_RENDA`/`DATA_REFERENCIA_RENDA`
-# sao recalculados quando o piloto reaponta os paths de staging para caminhos absolutos
-# (`_init_renda_domiciliar_paths` em web/server/app.py). Importar o NOME congelaria aqui o
-# valor do import — no container do piloto (CWD=web/server) isso era o fallback 1.0, e toda
-# renda do /ponto saia em valores nominais de julho/2022, mesmo com o artefato montado.
-from motor_expansao.dashboard import constants as _constants
-from motor_expansao.dashboard.constants import (
-    uplift_composicao_por_setor,
-    uplift_extrapolado,
-    uplift_renda_domiciliar,
-)
+# Renda exibida pelo ponto unico (`motor_expansao.renda`, E0): fator temporal, uplift e as
+# formulas vem de la. Os insumos sao lidos como ATRIBUTO de modulo (`_renda_insumos.uplift_setor`)
+# e nao por nome importado, para que um teste que fixe o uplift no modulo valha aqui tambem.
+from motor_expansao import renda as _renda
+from motor_expansao.renda import insumos as _renda_insumos
+from motor_expansao.renda import setor as _renda_setor
 
 CRS_ORIGEM_CENSO = "EPSG:4674"
 # DEC-021 (2026-07-29, AUTORIZADA por Felipe): o raio do Relatorio Pontual Censitario passa de
@@ -49,15 +44,47 @@ GEOMETRIA_TIPO_POLIGONO = "poligono"
 # DEC-074 (alcance do ponto): a ISOCRONA de 10 min de carro tambem entra como geometria, mas
 # com rotulo PROPRIO -- chama-la de `_poligono` diria que o operador a desenhou, e o PDF e a
 # API exibiriam o metodo errado. Mesma razao do `_1km` da DEC-021: o rotulo e' o recorte.
-METODO_RELATORIO_PONTUAL_ISOCRONA = "setor_censitario_intersecao_area_isocrona_carro_10min"
-GEOMETRIA_TIPO_ISOCRONA_CARRO_10MIN = "isocrona_carro_10min"
+# Emenda 1 (20/10/2026): a de 5 min entra pelo MESMO molde -- rotulo e metodo derivam do
+# tempo (`geometria_tipo_isocrona`), um por tempo, para o PDF nunca chamar 5 min de 10.
+_PREFIXO_GEOMETRIA_ISOCRONA = "isocrona_carro_"
+MINUTOS_ISOCRONAS = (5, 10)
+
+
+def geometria_tipo_isocrona(minutos: int) -> str:
+    """Rotulo cru da isocrona de `minutos` de carro: `"isocrona_carro_10min"`."""
+    return f"{_PREFIXO_GEOMETRIA_ISOCRONA}{int(minutos)}min"
+
+
+def minutos_da_geometria(geometria_tipo: str | None) -> int | None:
+    """O tempo de uma isocrona conhecida (`"isocrona_carro_5min"` -> 5); `None` se nao e'."""
+    for minutos in MINUTOS_ISOCRONAS:
+        if geometria_tipo == geometria_tipo_isocrona(minutos):
+            return minutos
+    return None
+
+
+GEOMETRIA_TIPO_ISOCRONA_CARRO_5MIN = geometria_tipo_isocrona(5)
+GEOMETRIA_TIPO_ISOCRONA_CARRO_10MIN = geometria_tipo_isocrona(10)
+METODO_RELATORIO_PONTUAL_ISOCRONA_5MIN = (
+    f"setor_censitario_intersecao_area_{GEOMETRIA_TIPO_ISOCRONA_CARRO_5MIN}"
+)
+METODO_RELATORIO_PONTUAL_ISOCRONA = (
+    f"setor_censitario_intersecao_area_{GEOMETRIA_TIPO_ISOCRONA_CARRO_10MIN}"
+)
 _METODO_DA_GEOMETRIA = {
     GEOMETRIA_TIPO_POLIGONO: METODO_RELATORIO_PONTUAL_POLIGONO,
-    GEOMETRIA_TIPO_ISOCRONA_CARRO_10MIN: METODO_RELATORIO_PONTUAL_ISOCRONA,
+    **{
+        geometria_tipo_isocrona(m): f"setor_censitario_intersecao_area_{geometria_tipo_isocrona(m)}"
+        for m in MINUTOS_ISOCRONAS
+    },
 }
 # BLK-RELPON-07: renda media domiciliar do bairro/distrito ponderada por domicilios
 # (Metodo A, D3.5), com exclusao simetrica de setor com renda ou domicilios nulos/<=0.
-METODO_RENDA_PERFIL_BAIRRO = "renda_responsavel_media_ponderada_por_domicilios"
+# E1 (plano de correcao da renda): ate aqui a media era da V06004 BRUTA (renda do RESPONSAVEL,
+# sem uplift nem fator, ~0,53x o card "Renda media domiciliar" do MESMO PDF); desde a E1 e a
+# renda domiciliar CANONICA de cada setor (`renda.setor`), a mesma escala do card. O rotulo do
+# metodo acompanha o valor -- mante-lo diria que o numero ainda e a renda do responsavel.
+METODO_RENDA_PERFIL_BAIRRO = "renda_domiciliar_media_ponderada_por_domicilios"
 
 # DEC-046: vocabulario da coluna `classe` da oferta. Mora AQUI, no motor, e nao na API, para
 # que o dashboard nao dependa de `motor_expansao.api` — a API produz o dado conforme este
@@ -272,8 +299,8 @@ def analisar_ponto_censitario_setores(
     """Analisa um ponto por intersecao real entre setores censitarios e circulo.
 
     DEC-074 (alcance do ponto): `geometria_tipo` rotula a geometria -- `"poligono"` (o
-    default quando ha' geometria: o desenho a mao, como antes) ou `"isocrona_carro_10min"`
-    (metodo `..._isocrona_carro_10min`). Na isocrona, (lat, lng) e' o PONTO CLICADO (a
+    default quando ha' geometria: o desenho a mao, como antes) ou `"isocrona_carro_{n}min"`
+    (n = 5 ou 10; metodo `..._isocrona_carro_{n}min`). Na isocrona, (lat, lng) e' o PONTO CLICADO (a
     origem do calculo de rotas), que o construtor da isocrona garante estar dentro dela.
     Um `raio_km` diferente de 1 ganha metodo proprio (`metodo_do_raio`). Nos dois casos o
     dict ganha `area_km2_exata` (sem arredondar) e `fator_regua` (area / pi; no raio,
@@ -371,8 +398,9 @@ def analisar_ponto_censitario_setores(
         # essa flag existia no artefato e morria na carga — 20,3% dos setores do pais chegavam
         # ao relatorio sem ressalva nenhuma. Campo ADITIVO: nao muda nenhum numero de renda.
         "fracao_uplift_extrapolado_raio": None,
-        "fator_temporal_renda": _constants.FATOR_TEMPORAL_RENDA,
-        "data_referencia_renda": _constants.DATA_REFERENCIA_RENDA,
+        # `fator_temporal_renda` (F_dom nacional) e `data_referencia_renda` (rotulo da versao
+        # de fatores vigente); com setores, o fator e refeito com a UF do ponto (abaixo).
+        **_renda.campos_referencia_ponto(),
         "densidade_pop_raio_hab_km2": None,
         # BLK-RELPON-06 (D1): densidade sobre area de espaco VALIDO (exclui agua/vazio) --
         # ver docstring abaixo. Difere de `densidade_pop_raio_hab_km2` (divide por pi*raio^2
@@ -539,8 +567,9 @@ def analisar_ponto_censitario_setores(
     # Fallback sem a V06004: reconstroi pela per capita BRUTA (V06004/moradores), nunca pela
     # calibrada — usar a calibrada aqui reintroduziria o k pela porta dos fundos.
     if renda_domiciliar.isna().any() and "renda_per_capita_setor_2022" in intersectados.columns:
-        _bruta = _numeric(intersectados, "renda_per_capita_setor_2022") * moradores
-        renda_domiciliar = renda_domiciliar.where(renda_domiciliar.notna(), _bruta)
+        renda_domiciliar = _renda.v06004_de_fallback(
+            renda_domiciliar, _numeric(intersectados, "renda_per_capita_setor_2022"), moradores
+        )
     # UF/municipio do ponto (moda) para a cascata do uplift.
     uf_ponto = None
     if "uf" in intersectados.columns:
@@ -555,13 +584,16 @@ def analisar_ponto_censitario_setores(
     # uplift responsavel->domicilio POR SETOR (parentesco); cascata setor->municipio->UF->nacional.
     fator_composicao_setor = pd.Series(
         [
-            uplift_composicao_por_setor(cod, uf_ponto, municipio_ponto)
+            _renda_insumos.uplift_setor(cod, uf_ponto, municipio_ponto)
             for cod in intersectados.get("cod_setor", pd.Series(index=intersectados.index))
         ],
         index=intersectados.index,
         dtype="float64",
     )
-    renda_domiciliar_total = renda_domiciliar * fator_composicao_setor * _constants.FATOR_TEMPORAL_RENDA
+    # (V06004 x uplift) x F_dom(uf) -- a mesma ordem de antes da E0, agora no modulo da renda.
+    renda_domiciliar_total = _renda.renda_domiciliar(
+        renda_domiciliar, fator_composicao_setor, uf_ponto
+    )
     # Renda PER CAPITA exibida = renda do domicilio dividida pelos moradores dele. E o mesmo
     # conceito que o IBGE publica (SIDRA t.10295 v.13431, "rendimento nominal medio mensal
     # domiciliar per capita") e que o M1 carrega em `renda_per_capita` — por isso e ele que se
@@ -574,17 +606,22 @@ def analisar_ponto_censitario_setores(
     # estar la, era ele estar no lugar do uplift.
     # Com esta troca, as duas rendas do relatorio passam a fechar entre si:
     #     renda domiciliar = renda per capita x moradores
-    renda_per_capita_domiciliar = renda_domiciliar_total / moradores.where(moradores > 0)
+    # Desde a E0 a per capita sai com o PROPRIO fator -- ((V06004 x uplift) x F_pc) / moradores --,
+    # nunca a domiciliar dividida: na versao 0 (F_pc == F_dom) e o mesmo float de antes; com os
+    # fatores PNAD, `domiciliar / moradores` carregaria a queda de moradores para a per capita.
+    renda_per_capita_domiciliar = _renda.renda_per_capita(
+        renda_domiciliar, fator_composicao_setor, moradores.where(moradores > 0), uf_ponto
+    )
     # Ressalva de leitura (ADITIVA): quanto do raio depende de uplift extrapolado.
     extrapolado_setor = pd.Series(
         [
-            uplift_extrapolado(cod)
+            _renda_insumos.uplift_extrapolado(cod)
             for cod in intersectados.get("cod_setor", pd.Series(index=intersectados.index))
         ],
         index=intersectados.index,
         dtype="boolean",
     ).fillna(False)
-    fator_composicao = uplift_renda_domiciliar(uf_ponto, municipio_ponto)
+    fator_composicao = _renda_insumos.uplift_municipio(uf_ponto, municipio_ponto)
     # Renda domiciliar do raio: ponderada por DOMICILIOS (fallback pop/area quando ausentes).
     renda_domiciliar_weight = dom_weights.where(dom_weights.gt(0), renda_weight)
 
@@ -731,8 +768,9 @@ def analisar_ponto_censitario_setores(
     result["uf_renda_uplift"] = uf_ponto
     result["cod_municipio_renda_uplift"] = municipio_ponto
     result["fator_uplift_renda_domiciliar"] = round(
-        uplift_efetivo * _constants.FATOR_TEMPORAL_RENDA, 4
+        _renda.fator_composto_domiciliar(uplift_efetivo, uf_ponto), 4
     )
+    result.update(_renda.campos_referencia_ponto(uf_ponto))
     result["fator_uplift_composicao"] = round(uplift_efetivo, 4)
     result["fator_uplift_composicao_municipio"] = round(fator_composicao, 4)
 
@@ -783,7 +821,8 @@ def agregar_perfil_bairro_distrito(
       NAO o raio de 1.0 km do relatorio (essa e a diferenca fundamental para os outros
       agregados do modulo, que sao sempre "no raio").
     - D3.5 (formula da renda media, fechada pelo Planner): `renda_media_domiciliar` e a media
-      de `renda_responsavel_media_setor_2022` PONDERADA por
+      da renda domiciliar CANONICA de cada setor (`renda.setor`: V06004 x uplift do setor x
+      F_dom; ate a E1 era a V06004 bruta) PONDERADA por
       `domicilios_particulares_ocupados_setor_2022` (Metodo A, leitura GeoFusion "Renda
       Media" -- distinta da renda per capita usada em outras 2 paginas do PDF). Exclusao
       SIMETRICA: um setor so entra no numerador E no denominador se renda E domicilios forem
@@ -806,7 +845,18 @@ def agregar_perfil_bairro_distrito(
     cod_bairro_str = str(cod_bairro).strip() if cod_bairro is not None else ""
     if cod_bairro_str and cod_bairro_str.lower() != "nan" and "cod_bairro" in setores_df.columns:
         tipo = "bairro"
-        mask = setores_df["cod_bairro"].astype(str).str.strip() == cod_bairro_str
+        # DEC-076: `aplicar_bairro_cnefe` troca o `cod_bairro` dos setores que o CNEFE nomeia por
+        # `cnefe:<mun>:<NOME>`. O setor que fica com o IBGE mantem o codigo do IBGE, mas os
+        # vizinhos da MESMA regiao do IBGE ja' nao o carregam em `cod_bairro` -- filtrar por ele
+        # somaria so' as sobras (Sao Jose dos Campos, "Setor Socioeconomico 13": 68 -> 1 setor).
+        # Codigo do IBGE agrega a regiao COMPLETA por `cod_bairro_ibge`; a chave do CNEFE (e o
+        # frame sem a coluna de auditoria) seguem por `cod_bairro`.
+        coluna_cod = (
+            "cod_bairro_ibge"
+            if "cod_bairro_ibge" in setores_df.columns and not cod_bairro_str.startswith("cnefe:")
+            else "cod_bairro"
+        )
+        mask = setores_df[coluna_cod].astype(str).str.strip() == cod_bairro_str
         nome_bairro_str = str(nome_bairro).strip() if nome_bairro is not None else ""
         nome_unidade = nome_bairro_str or cod_bairro_str
     else:
@@ -848,7 +898,10 @@ def agregar_perfil_bairro_distrito(
     pop = _numeric(subset, "pop_total_setor_2022")
     dom = _numeric(subset, "domicilios_particulares_ocupados_setor_2022")
     area = _numeric(subset, "area_setor_m2")
-    renda = _numeric(subset, "renda_responsavel_media_setor_2022")
+    # Renda media DOMICILIAR canonica do setor ((V06004 x uplift do setor) x F_dom), pelo
+    # modulo da renda -- a MESMA conta do card do raio. UF/municipio da propria linha quando o
+    # frame os traz (ponto de divisa mistura municipios); senao, os do chamador.
+    renda = _renda_setor.renda_domiciliar_setores(subset, uf=uf, cod_municipio=cod_municipio)
 
     populacao_total: float | None = None
     if pop.notna().any():

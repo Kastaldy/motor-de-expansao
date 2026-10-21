@@ -41,3 +41,42 @@ describe('legenda vertical: positivo em cima, negativo embaixo', () => {
     expect(fonte).toContain("[CRESC_ALTA_HEX, 'em alta (+30%)'],")
   })
 })
+
+describe('texto da legenda com mais contraste (pedido de 20/10/2026)', () => {
+  it('título, nome e sublinha usam os tokens FORTES do tema, com peso maior', async () => {
+    const { TITULO, NOME, SUB } = await import('./ScoreLegend')
+    expect(TITULO.color).toBe('var(--tx-strong)')
+    expect(NOME.color).toBe('var(--tx-strong)')
+    expect(SUB.color).toBe('var(--tx-soft)')
+    const peso = (f: unknown) => Number(String(f).split(' ')[0])
+    expect(peso(TITULO.font)).toBeGreaterThanOrEqual(600)
+    expect(peso(NOME.font)).toBeGreaterThanOrEqual(500)
+    expect(peso(SUB.font)).toBeGreaterThanOrEqual(500)
+  })
+
+  it('nenhum texto da legenda volta aos tokens de apoio', () => {
+    expect(fonte).not.toContain("color: 'var(--tx-sub)'")
+    expect(fonte).not.toContain("color: 'var(--tx-label)'")
+  })
+
+  it('os tokens fortes são os de maior contraste nos DOIS temas', () => {
+    const tokens = readFileSync(fileURLToPath(new URL('../styles/tokens.css', import.meta.url)), 'utf-8')
+    const valores = (nome: string) => [...tokens.matchAll(new RegExp(`--${nome}: (#[0-9a-f]{6});`, 'g'))].map((m) => m[1])
+    const luz = (h: string) => {
+      const c = [1, 3, 5].map((i) => parseInt(h.slice(i, i + 2), 16) / 255)
+      const l = c.map((x) => (x <= 0.03928 ? x / 12.92 : ((x + 0.055) / 1.055) ** 2.4))
+      return 0.2126 * l[0] + 0.7152 * l[1] + 0.0722 * l[2]
+    }
+    // [0] = tema escuro (:root), [1] = tema claro. No escuro o forte é mais CLARO, no
+    // claro mais ESCURO que os tokens de apoio de antes.
+    const [forteE, forteC] = valores('tx-strong')
+    const [suaveE, suaveC] = valores('tx-soft')
+    for (const antigo of ['tx-sub', 'tx-label']) {
+      const [e, c] = valores(antigo)
+      expect(luz(forteE)).toBeGreaterThan(luz(e))
+      expect(luz(suaveE)).toBeGreaterThan(luz(e))
+      expect(luz(forteC)).toBeLessThan(luz(c))
+      expect(luz(suaveC)).toBeLessThan(luz(c))
+    }
+  })
+})

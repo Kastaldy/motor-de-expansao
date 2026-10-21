@@ -98,7 +98,7 @@
       "cadencia": "GymScraping argentino roda MENSALMENTE no repositorio do Juan (decisao 0.10). O dado de concorrencia envelhece ate 30 dias — declarado, nao defeito."
     },
     "_fator_temporal": {
-      "_nota": "O Brasil precisa de fator temporal porque a renda do Censo e de julho/2022 e o PDF sai hoje (FATOR_TEMPORAL_RENDA, src/motor_expansao/dashboard/constants.py:453-473). A Argentina NAO precisa: a renda ja vem em pesos constantes de maio/2026, a mesma base monetaria de todo o pacote.",
+      "_nota": "O Brasil precisa de fator temporal porque a renda do Censo e de julho/2022 e o PDF sai hoje. A Argentina NAO precisa: a renda ja vem em pesos constantes de maio/2026, a mesma base monetaria de todo o pacote. Desde a E0 da correcao de renda o fator efetivo NAO sai deste bloco (ignorado pelo loader) nem do staging: sai de src/motor_expansao/renda/fatores/AR/ (VIGENTE = 2026-08_sem_atualizacao_v0, fatores 1,0), lido por motor_expansao.renda.carregar_fatores pelo pais do perfil. Ver docs/runbook_atualizacao_renda.md.",
       "valor": 1.0,
       "artefato": null,
       "rotulo": "maio/2026 (modelo EPH, cambio BCRA)",

@@ -2,12 +2,14 @@
 
 Substitui os testes de `dashboard.components._renda_media_domiciliar_series` — modulo
 DELETADO no corte do Streamlit (DEC-022). A implementacao de PRODUCAO agora e a do
-backend do piloto: `_derivar` (precedencia da renda de leitura), `_fator_domiciliar`
-(moradores x uplift x fator temporal, todos MUNICIPAIS) e `_renda_domiciliar_hex`
-(renda de leitura x fator; vazio quando falta renda OU cod_municipio).
+backend do piloto: `_derivar` (precedencia da renda de leitura) e `_renda_domiciliar_hex`
+/ `_renda_per_capita_hex` (renda de leitura x fator do hex; vazio quando falta renda OU
+cod_municipio). Desde a E0 o fator do hex (moradores x uplift MUNICIPAIS x fator temporal) e
+a conta moram em `motor_expansao.renda.hex` (`fator_hex`), e o fator temporal vem de uma
+versao de fatores lida pelo loader -- aqui SINTETICA, servida por `fixar_fatores`.
 
 READ-ONLY sobre o M1 e HERMETICO: os artefatos de staging (tabela municipal de
-uplift/moradores + fator temporal) sao SINTETICOS em tmp_path — nenhum `data/` em
+uplift/moradores) e a versao de fatores sao SINTETICOS em tmp_path — nenhum `data/` em
 disco. Formula (corrigida em 2026-08-13): BASE x moradores_muni x uplift_muni x fator_temporal,
 onde BASE desfaz a escala da coluna de origem (calibrada / k; renda_per_capita / uplift).
 Demais invariantes preservados: fallback calibrada -> renda_per_capita (por LINHA desde a
@@ -18,7 +20,7 @@ piloto o "NaN" do tooltip e servido como None (payload JSON-safe via `_num`).
 
 from __future__ import annotations
 
-import json
+import os
 import sys
 from pathlib import Path
 
@@ -28,6 +30,8 @@ import pytest
 from pytest import approx
 
 from motor_expansao.dashboard import constants as _const
+from motor_expansao.renda import InsumoRendaInvalido, carregar_fatores, fator, fator_hex
+from tests.unit.renda_fixtures import apontar_staging_renda, fixar_fatores
 
 _REPO = Path(__file__).resolve().parents[2]  # tests/unit/ -> raiz do worktree
 _SERVER = _REPO / "web" / "server"
@@ -37,16 +41,16 @@ if str(_SERVER) not in sys.path:
 import app as pilot  # noqa: E402  (backend do piloto; web/server no sys.path acima)
 
 # ---------------------------------------------------------------------------
-# Artefatos SINTETICOS de staging + isolamento do modulo constants.
+# Artefatos SINTETICOS de staging + isolamento do modulo da renda.
 #
-# `_fator_temporal_renda()` (lru_cache) chama `_init_renda_domiciliar_paths()`, que
-# MUTA `constants.UPLIFT_*_PATH`/`FATOR_TEMPORAL_RENDA_PATH` para `pilot.STAGING_DIR`
-# e zera as caches lazy. Os fixtures reapontam STAGING_DIR para tmp_path, registram os
-# atributos de `constants` no monkeypatch (restauracao pos-teste) e limpam a lru_cache
-# antes E depois — nenhum estado vaza entre testes nem para outros arquivos.
+# `_renda_staging_configurado()` (lru_cache) aponta `motor_expansao.renda.insumos` para
+# `pilot.STAGING_DIR` e zera os caches lazy. Os fixtures reapontam STAGING_DIR para tmp_path,
+# registram o apontamento e os caches no monkeypatch (`apontar_staging_renda`, restauracao
+# pos-teste) e limpam as lru_cache antes E depois — nenhum estado vaza entre testes nem para
+# outros arquivos. O fator temporal sintetico e uma versao de fatores (`fixar_fatores`).
 # ---------------------------------------------------------------------------
 
-FATOR_TEMPORAL = 1.25  # sintetico, dentro da faixa plausivel [1.0, 2.0] do artefato
+FATOR_TEMPORAL = 1.25  # sintetico, dentro da faixa plausivel [0,9; 1,8] do loader
 
 # 2026-08-13: a coluna calibrada carrega o `k` da calibragem, e a renda domiciliar tem de
 # DESFAZE-LO antes de aplicar `moradores x uplift x temporal` — senao o k vira um fator extra
@@ -75,27 +79,10 @@ _TABELA_MUNICIPIOS = pd.DataFrame(
 
 def _apontar_staging(monkeypatch: pytest.MonkeyPatch, staging: Path) -> None:
     monkeypatch.setattr(pilot, "STAGING_DIR", staging)
-    # Registra os originais: `_init_renda_domiciliar_paths` muta o MODULO constants.
-    for attr in (
-        "UPLIFT_COMPOSICAO_PATH",
-        "UPLIFT_COMPOSICAO_SETOR_PATH",
-        "FATOR_TEMPORAL_RENDA_PATH",
-        # Desde 2026-08-14 o init tambem REATRIBUI o fator/data no modulo (o binding
-        # congelava em 1.0 no container) — registrar aqui para o monkeypatch restaurar.
-        "FATOR_TEMPORAL_RENDA",
-        "DATA_REFERENCIA_RENDA",
-    ):
-        monkeypatch.setattr(_const, attr, getattr(_const, attr))
-    for cache in (
-        "_uplift_cache",
-        "_uplift_uf_cache",
-        "_moradores_cache",
-        "_moradores_uf_cache",
-        "_uplift_setor_cache",
-        "_uplift_setor_extrapolado_cache",
-    ):
-        monkeypatch.setattr(_const, cache, None)
-    pilot._fator_temporal_renda.cache_clear()
+    # Registra o apontamento e os caches do modulo da renda: o piloto os muta no
+    # `_renda_staging_configurado`, e o monkeypatch os restaura no fim do teste.
+    apontar_staging_renda(monkeypatch, staging)
+    pilot._renda_staging_configurado.cache_clear()
     pilot._k_calibracao_renda.cache_clear()
 
 
@@ -112,25 +99,27 @@ def staging_sintetico(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     staging = tmp_path / "staging"
     staging.mkdir()
     _TABELA_MUNICIPIOS.to_parquet(staging / "uplift_renda_domiciliar_municipio.parquet")
-    (staging / "fator_temporal_renda.json").write_text(
-        json.dumps({"fator_temporal_renda": FATOR_TEMPORAL, "competencia_atual_fim": "202606"}),
-        encoding="utf-8",
-    )
+    fixar_fatores(monkeypatch, tmp_path, per_capita=FATOR_TEMPORAL)
     _escrever_carimbo_k(staging, f"multiplicativo_global_k={K}")
     _apontar_staging(monkeypatch, staging)
     yield staging
-    pilot._fator_temporal_renda.cache_clear()
+    pilot._renda_staging_configurado.cache_clear()
     pilot._k_calibracao_renda.cache_clear()
 
 
 @pytest.fixture
 def staging_vazio(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
-    """Staging VAZIO (o cenario do CI): tudo cai nos fallbacks nacionais."""
+    """Staging VAZIO (o cenario do CI): uplift/moradores caem nos fallbacks nacionais.
+
+    O fator temporal NAO e fixado: e o da versao VIGENTE do pacote (a v0 brasileira), como em
+    qualquer instancia sem `MOTOR_DATA_DIR`.
+    """
     staging = tmp_path / "staging"
     staging.mkdir()
+    monkeypatch.delenv("MOTOR_DATA_DIR", raising=False)
     _apontar_staging(monkeypatch, staging)
     yield staging
-    pilot._fator_temporal_renda.cache_clear()
+    pilot._renda_staging_configurado.cache_clear()
     pilot._k_calibracao_renda.cache_clear()
 
 
@@ -148,15 +137,12 @@ def _frame() -> pd.DataFrame:
 
 def _serie_renda_dom(df: pd.DataFrame) -> pd.Series:
     """Renda media domiciliar por linha, pelo MESMO fluxo do endpoint `uf_view`:
-    `_derivar` (renda_leitura) -> fator municipal via `_fator_domiciliar` ->
-    `_renda_domiciliar_hex` por linha. dtype=object preserva os None do payload."""
+    `_derivar` (renda_leitura) -> `_renda_domiciliar_hex` por linha (fator municipal do modulo
+    da renda). dtype=object preserva os None do payload."""
     derivado = pilot._derivar(df)
     valores: dict[object, object] = {}
     for idx, linha in derivado.iterrows():
-        cod = linha.get("cod_municipio")
-        cod_str = None if cod is None or pd.isna(cod) else str(cod)
-        fator = pilot._fator_domiciliar(linha.get("uf"), cod_str)
-        valores[idx] = pilot._renda_domiciliar_hex(linha, fator)
+        valores[idx] = pilot._renda_domiciliar_hex(linha)
     return pd.Series(valores, dtype=object)
 
 
@@ -166,8 +152,8 @@ def _serie_renda_dom(df: pd.DataFrame) -> pd.Series:
 
 
 def test_formula_usa_moradores_e_uplift_municipais(staging_sintetico: Path) -> None:
-    assert pilot._fator_domiciliar("SP", "3550308") == approx(6.0)
-    assert pilot._fator_domiciliar("SP", "3509502") == approx(3.75)
+    assert fator_hex("SP", "3550308", "domiciliar") == approx(6.0)
+    assert fator_hex("SP", "3509502", "domiciliar") == approx(3.75)
     r = _serie_renda_dom(_frame())
     assert r.loc[0] == round(1500 / K * 6.0)   # base sem o k, x fator municipal
     assert r.loc[1] == round(2000 / K * 3.75)
@@ -307,9 +293,11 @@ def test_cod_municipio_nan_por_linha_retorna_none(staging_sintetico: Path) -> No
     r = _serie_renda_dom(df)
     assert r.loc[0] == round(1500 / K * 6.0)  # municipio resolvido
     assert r.loc[1] is None  # cod_municipio NaN -> tooltip vazio (nao fallback UF)
-    # O guardrail vive na PROPRIA funcao: nem um fator valido destrava a linha sem cod.
+    # O guardrail vive na PROPRIA funcao: a linha sem cod nao ganha renda nem de nivel UF
+    # (SP tem mediana na tabela sintetica, e mesmo assim fica vazia).
     linha_sem_cod = pilot._derivar(df).loc[1]
-    assert pilot._renda_domiciliar_hex(linha_sem_cod, 6.0) is None
+    assert pilot._renda_domiciliar_hex(linha_sem_cod) is None
+    assert pilot._renda_per_capita_hex(linha_sem_cod) is None
 
 
 # ===========================================================================
@@ -322,23 +310,42 @@ def test_fallback_municipio_ausente_usa_mediana_da_uf_e_depois_nacional(
 ) -> None:
     # Municipio fora da tabela -> medianas da UF: moradores med(3.2, 2.5) = 2.85 e
     # uplift med(1.5, 1.2) = 1.35 (so linhas `uplift_confiavel`).
-    assert pilot._fator_domiciliar("SP", "3599999") == approx(2.85 * 1.35 * FATOR_TEMPORAL)
+    assert fator_hex("SP", "3599999", "domiciliar") == approx(2.85 * 1.35 * FATOR_TEMPORAL)
     # UF fora da tabela -> constantes nacionais (2.79 x 1.632).
     esperado = (
         _const.MORADORES_DOMICILIO_NACIONAL * _const.UPLIFT_COMPOSICAO_NACIONAL * FATOR_TEMPORAL
     )
-    assert pilot._fator_domiciliar("ZZ", "9999999") == approx(esperado)
+    assert fator_hex("ZZ", "9999999", "domiciliar") == approx(esperado)
 
 
-def test_sem_artefatos_cai_no_nacional_com_fator_temporal_1(staging_vazio: Path) -> None:
-    """Staging vazio (CI): fatores NACIONAIS e fator temporal 1.0 — degradacao
-    graciosa que mantem o tooltip vivo sem os parquets."""
-    assert pilot._fator_temporal_renda() == approx(1.0)
-    esperado = _const.MORADORES_DOMICILIO_NACIONAL * _const.UPLIFT_COMPOSICAO_NACIONAL
-    assert pilot._fator_domiciliar("SP", "3550308") == approx(esperado)
+def test_sem_artefatos_em_dev_cai_no_nacional_com_o_fator_da_versao_vigente(
+    staging_vazio: Path,
+) -> None:
+    """Staging vazio sem `MOTOR_DATA_DIR` (dev/CI): uplift e moradores NACIONAIS do perfil e o
+    fator temporal da versao VIGENTE do pacote -- degradacao que mantem o tooltip vivo sem os
+    parquets. Ate a E0 o fator caia em 1,0 em silencio (o JSON do staging faltava); agora ele
+    vem da imagem, entao dev e producao exibem a mesma escala."""
+    f_dom = fator(None, "domiciliar")
+    # O F_dom nacional da versao VIGENTE empacotada (lido do modulo, nunca cravado aqui).
+    assert f_dom == carregar_fatores().nacional.domiciliar
+    esperado = (_const.MORADORES_DOMICILIO_NACIONAL * _const.UPLIFT_COMPOSICAO_NACIONAL) * f_dom
+    assert fator_hex("SP", "3550308", "domiciliar") == esperado
+    # A subida em dev nao derruba nada: so avisa.
+    pilot._init_renda_paths_no_boot()
     r = _serie_renda_dom(_frame())
     # Sem o staging hex, o k cai na CONSTANTE de fallback (nao no K sintetico do carimbo).
     assert r.loc[0] == round(1500.0 / pilot._K_CALIBRACAO_FALLBACK * esperado)
+
+
+def test_sem_artefatos_em_producao_a_subida_falha(
+    staging_vazio: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Com `MOTOR_DATA_DIR` setado (producao) e o staging sem os artefatos obrigatorios da
+    versao vigente, o boot do piloto CAI com erro explicito -- nada do fallback silencioso de
+    antes, nem do `try/except` que engolia a falha no hook de startup."""
+    monkeypatch.setenv("MOTOR_DATA_DIR", os.fspath(staging_vazio.parent))
+    with pytest.raises(InsumoRendaInvalido, match="uplift_renda_domiciliar_municipio"):
+        pilot._init_renda_paths_no_boot()
 
 
 def test_ancoragem_no_ibge_o_teste_que_teria_pego_o_defeito(staging_sintetico: Path) -> None:
@@ -391,11 +398,11 @@ def test_renda_per_capita_do_hex_e_a_domiciliar_per_capita(staging_sintetico: Pa
         }
     )
     linha = pilot._derivar(df).loc[0]
-    fator = pilot._fator_domiciliar("SP", "3550308")
-    dom = pilot._renda_domiciliar_hex(linha, fator)
-    pc = pilot._renda_per_capita_hex(linha, fator)
+    dom = pilot._renda_domiciliar_hex(linha)
+    pc = pilot._renda_per_capita_hex(linha)
 
-    # A invariante: domiciliar = per capita x moradores do municipio (3.2).
+    # A invariante: domiciliar = per capita x moradores do municipio (3.2) -- com F_pc == F_dom,
+    # como na versao sintetica deste arquivo (E0: cada renda com o seu fator).
     assert pc == approx(dom / 3.2, rel=1e-3)
     # E nao e mais a coluna calibrada crua.
     assert pc != approx(1500.0, rel=1e-3)
@@ -418,10 +425,9 @@ def test_payload_do_hex_serve_a_per_capita_domiciliar(staging_sintetico: Path) -
         }
     )
     linha = pilot._derivar(df).loc[0]
-    fator = pilot._fator_domiciliar("SP", "3550308")
-    payload = pilot._hex_dict(linha, fator)
+    payload = pilot._hex_dict(linha)
 
-    assert payload["renda"] == approx(pilot._renda_per_capita_hex(linha, fator))
+    assert payload["renda"] == approx(pilot._renda_per_capita_hex(linha))
     assert payload["renda"] != approx(1500.0, rel=1e-3)  # nao e a calibrada crua
     # A invariante do tooltip: domiciliar = per capita x moradores do municipio (3.2).
     assert payload["renda_dom"] == approx(payload["renda"] * 3.2, rel=1e-3)
@@ -452,14 +458,13 @@ def test_payload_sinaliza_fallback_municipal_da_renda(staging_sintetico: Path) -
             "renda_per_capita": [1400.0, 1800.0],
         }
     )
-    fator = pilot._fator_domiciliar("SP", "3550308")
     derivado = pilot._derivar(frame)
 
-    payload_setor = pilot._hex_dict(derivado.loc[0], fator)
+    payload_setor = pilot._hex_dict(derivado.loc[0])
     assert payload_setor["renda_municipal"] is False
     assert payload_setor["renda"] is not None
 
-    payload_municipal = pilot._hex_dict(derivado.loc[1], fator)
+    payload_municipal = pilot._hex_dict(derivado.loc[1])
     assert payload_municipal["renda_municipal"] is True
     # E o numero aparece: antes da DEC-058 esta linha nao exibia renda NENHUMA.
     assert payload_municipal["renda"] is not None
@@ -499,12 +504,12 @@ def test_payload_sinaliza_fallback_municipal_da_populacao(staging_sintetico: Pat
     )
 
     linha_granular = pilot._derivar(granular).loc[0]
-    payload_granular = pilot._hex_dict(linha_granular, None)
+    payload_granular = pilot._hex_dict(linha_granular)
     assert payload_granular["pop_municipal"] is False
     assert payload_granular["pop"] == 1200
 
     linha_municipal = pilot._derivar(municipal).loc[0]
-    payload_municipal = pilot._hex_dict(linha_municipal, None)
+    payload_municipal = pilot._hex_dict(linha_municipal)
     assert payload_municipal["pop_municipal"] is True
     assert payload_municipal["pop"] == 50000
 
@@ -558,10 +563,7 @@ def test_k_do_carimbo_manda_na_formula_do_hex(
     staging = tmp_path / "staging"
     staging.mkdir()
     _TABELA_MUNICIPIOS.to_parquet(staging / "uplift_renda_domiciliar_municipio.parquet")
-    (staging / "fator_temporal_renda.json").write_text(
-        json.dumps({"fator_temporal_renda": FATOR_TEMPORAL, "competencia_atual_fim": "202606"}),
-        encoding="utf-8",
-    )
+    fixar_fatores(monkeypatch, tmp_path, per_capita=FATOR_TEMPORAL)
     _escrever_carimbo_k(staging, "multiplicativo_global_k=2.0")
     _apontar_staging(monkeypatch, staging)
 
@@ -575,7 +577,7 @@ def test_k_do_carimbo_manda_na_formula_do_hex(
     )
     r = _serie_renda_dom(df)
     assert r.loc[0] == round(1500.0 / 2.0 * 6.0)  # base = calibrada / k_do_carimbo
-    pilot._fator_temporal_renda.cache_clear()
+    pilot._renda_staging_configurado.cache_clear()
     pilot._k_calibracao_renda.cache_clear()
 
 

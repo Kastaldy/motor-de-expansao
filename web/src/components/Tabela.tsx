@@ -37,7 +37,16 @@ export interface TabelaProps<T> {
   selecionada?: string
   vazio?: ReactNode
   alturaLinha?: number
+  /**
+   * Uma linha FIXA logo abaixo do cabeçalho (a média/total da rede na Carteira). Mora no
+   * `<thead>` de propósito: fica de fora da ordenação, do clique e do hover das linhas, e
+   * gruda junto com o cabeçalho ao rolar. Recebe cada coluna e devolve a célula dela.
+   */
+  linhaFixa?: (coluna: Coluna<T>) => ReactNode
 }
+
+/** Altura do cabeçalho: a linha fixa gruda logo abaixo dele. */
+const ALTURA_CABECALHO = 32
 
 const CELULA: CSSProperties = {
   padding: '0 10px',
@@ -58,6 +67,7 @@ export default function Tabela<T>({
   selecionada,
   vazio,
   alturaLinha = 38,
+  linhaFixa,
 }: TabelaProps<T>) {
   if (!dados.length) {
     return (
@@ -100,7 +110,7 @@ export default function Tabela<T>({
                   position: 'sticky',
                   top: 0,
                   zIndex: 2,
-                  height: 32,
+                  height: ALTURA_CABECALHO,
                   width: c.largura,
                   textAlign: c.alinhamento ?? 'left',
                   background: 'var(--surf-chrome)',
@@ -121,6 +131,30 @@ export default function Tabela<T>({
             )
           })}
         </tr>
+        {linhaFixa && (
+          <tr>
+            {colunas.map((c) => (
+              <td
+                key={c.chave}
+                style={{
+                  ...CELULA,
+                  position: 'sticky',
+                  top: ALTURA_CABECALHO,
+                  zIndex: 2,
+                  height: alturaLinha + 4,
+                  textAlign: c.alinhamento ?? 'left',
+                  // Fundo OPACO: a linha passa por cima das unidades ao rolar.
+                  background: 'var(--surf-chrome)',
+                  backdropFilter: 'blur(14px)',
+                  borderBottom: '1px solid var(--line-mid)',
+                  color: 'var(--tx-soft)',
+                }}
+              >
+                {linhaFixa(c)}
+              </td>
+            ))}
+          </tr>
+        )}
       </thead>
       <tbody>
         {dados.map((item, i) => {

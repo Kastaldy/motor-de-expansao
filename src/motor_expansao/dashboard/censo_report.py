@@ -187,7 +187,10 @@ _META_RESIDUAL_FITNESS_DISPONIVEL = _METAS.residual_fitness_disponivel
 TIPO_RECORTE_POLIGONO = "poligono"
 TIPO_RECORTE_ISOCRONA = "carro_10min"
 _RAIO_DO_TIPO_RECORTE = {"raio_1km": 1.0, "raio_2km": 2.0}
-TIPOS_RECORTE = (*_RAIO_DO_TIPO_RECORTE, TIPO_RECORTE_ISOCRONA, TIPO_RECORTE_POLIGONO)
+# As isocronas por TEMPO (DEC-074, Emenda 1: 5 min de carro, sem transito). Os textos saem
+# de `_recorte_da_isocrona(minutos, ...)` -- uma redacao so' para os dois tempos.
+_MINUTOS_DO_TIPO_RECORTE = {"carro_5min": 5, TIPO_RECORTE_ISOCRONA: 10}
+TIPOS_RECORTE = (*_RAIO_DO_TIPO_RECORTE, *_MINUTOS_DO_TIPO_RECORTE, TIPO_RECORTE_POLIGONO)
 
 #: As 4 metas de TOTAL (somam com a area). As de MEDIA -- renda per capita, renda
 #: domiciliar e score -- nao escalam: dobrar a area nao dobra a renda media de ninguem.
@@ -277,6 +280,23 @@ def _recorte_do_raio(raio_km: float) -> dict[str, str]:
     }
 
 
+def _recorte_da_isocrona(minutos: int, area_txt: str, carimbo: str) -> dict[str, str]:
+    """Textos da isocrona de `minutos` de carro sem transito (5 ou 10, DEC-074)."""
+    t = f"{int(minutos)} min de carro"
+    return {
+        "rotulo_capa": f"{t} (sem trânsito)",
+        "rotulo_longo": f"isócrona de {t} sem trânsito, {area_txt}",
+        "onde": f"em {t}",
+        "onde_longo": f"em {t}, sem trânsito",
+        "do_recorte": "da isócrona",
+        "de_longo": f"da isócrona de {t} (sem trânsito)",
+        "artigo_nome": f"a isócrona de {t}",
+        "mesmo_recorte": "na mesma isócrona",
+        "pop_do": "população da isócrona",
+        "descricao_censo": f"isócrona de {t} sem trânsito ({carimbo})",
+    }
+
+
 _RECORTE_PADRAO = _novo_recorte(
     "raio_1km", _recorte_do_raio(RAIO_CENSITARIO_DEFAULT_KM), _METAS
 )
@@ -354,21 +374,10 @@ def _contexto_recorte(recorte: Mapping[str, Any] | None) -> _RecortePdf:
 
     if tipo in _RAIO_DO_TIPO_RECORTE:
         textos = _recorte_do_raio(_RAIO_DO_TIPO_RECORTE[tipo])
-    elif tipo == TIPO_RECORTE_ISOCRONA:
+    elif tipo in _MINUTOS_DO_TIPO_RECORTE:
         malha = _texto_da_malha_viaria(recorte.get("versao_rotas"))
         carimbo = f"{area_txt}; {malha}" if malha else area_txt
-        textos = {
-            "rotulo_capa": "10 min de carro (sem trânsito)",
-            "rotulo_longo": f"isócrona de 10 min de carro sem trânsito, {area_txt}",
-            "onde": "em 10 min de carro",
-            "onde_longo": "em 10 min de carro, sem trânsito",
-            "do_recorte": "da isócrona",
-            "de_longo": "da isócrona de 10 min de carro (sem trânsito)",
-            "artigo_nome": "a isócrona de 10 min de carro",
-            "mesmo_recorte": "na mesma isócrona",
-            "pop_do": "população da isócrona",
-            "descricao_censo": f"isócrona de 10 min de carro sem trânsito ({carimbo})",
-        }
+        textos = _recorte_da_isocrona(_MINUTOS_DO_TIPO_RECORTE[tipo], area_txt, carimbo)
     else:
         textos = {
             "rotulo_capa": f"Área desenhada ({area_txt})",

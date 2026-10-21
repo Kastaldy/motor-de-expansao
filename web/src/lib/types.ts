@@ -27,7 +27,7 @@ export interface MePayload {
    *  nunca "nao precisa trocar". Quem le' e estreita e' `estadoDaSenhaDoPayload`. */
   senha?: unknown
   /** Os alcances do ponto que esta instância oferece (DEC-074): `raio_1km`, `raio_2km` e,
-   *  só com o serviço de rotas configurado, `carro_10min`. Ausente em backend anterior.
+   *  só com o serviço de rotas configurado, `carro_5min` e `carro_10min`. Ausente em backend anterior.
    *  Quem valida e estreita é `definirAlcances` em `lib/alcance.ts`. */
   alcances?: unknown
 }
@@ -406,7 +406,7 @@ export interface Cobertura1k {
 
 /**
  * Bloco D — um polígono de SETOR censitário para o mapa de calor opcional (densidade
- * demográfica / renda per capita). Mesmo formato de `PecaCobertura.anel`
+ * demográfica / renda média DOMICILIAR, desde a E1; antes era per capita). Mesmo formato de `PecaCobertura.anel`
  * ([anel_externo, buraco1, ...]) — um setor MultiPolygon vira mais de uma entrada aqui,
  * todas com os MESMOS atributos.
  */
@@ -415,8 +415,8 @@ export interface SetorHeatmap {
   anel: number[][]
   /** hab/km², já ponderado por área na malha do setor. `null` = sem leitura. */
   densidade: number | null
-  /** R$/pessoa/mês (per capita, calibrada) — a MESMA régua do Relatório Pontual. */
-  renda: number | null
+  /** Renda média DOMICILIAR do setor (R$/domicílio/mês): a do card do Relatório Pontual. */
+  renda_domiciliar: number | null
   pop: number | null
 }
 
@@ -1231,6 +1231,15 @@ export interface RedeMetrica {
 
 export type RedeSeveridade = 'alta' | 'media' | 'ok' | 'sem_base'
 
+export type RedeValorDaLinha = Pick<RedeMetrica, 'atual' | 'm1' | 'delta_pct'>
+
+export interface RedeLinhaRede {
+  media: Record<string, RedeValorDaLinha>
+  total: Record<string, RedeValorDaLinha>
+  n_unidades: number
+  n_comparaveis: number
+}
+
 export interface RedeAlerta {
   codigo: string
   titulo: string
@@ -1367,6 +1376,11 @@ export interface RedeCarteira {
   competencia_diagnostico: string | null
   totais: { rede: number; no_recorte: number; com_coordenada: number }
   kpis: Record<string, RedeMetrica>
+  /** A linha da REDE INTEIRA no topo da Carteira (ignora os filtros). `media` = média
+   *  simples por unidade comparável, a régua do "% vs média da rede"; `total` = os KPIs
+   *  da rede (soma para volume, taxa ponderada para churn e NPS). Opcional porque a
+   *  resposta de um servidor anterior a ela não traz o campo. */
+  rede_inteira?: RedeLinhaRede
   split: {
     recorrentes: number | null
     agregadores: number | null
@@ -2132,7 +2146,7 @@ export interface PontoPayload {
    */
   recorte?: {
     /** Identificador cru, NÃO acentuar. */
-    tipo: 'raio_1km' | 'raio_2km' | 'carro_10min' | 'poligono'
+    tipo: 'raio_1km' | 'raio_2km' | 'carro_5min' | 'carro_10min' | 'poligono'
     area_km2: number | null
     /** Só na área desenhada: quantos vértices o operador clicou. */
     n_vertices?: number

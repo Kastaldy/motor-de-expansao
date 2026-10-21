@@ -25,6 +25,12 @@ BLK-RELMUN-02 (resolve D9): a Pagina 6 lista bairros REAIS (IBGE 2022 `NM_BAIRRO
 pelas 3 zonas geometricas quando `bairros_por_hex` e resolvido (via `_carregar_bairros_por_hex`,
 leitura OFFLINE da particao geo do municipio); fallback gracioso por zona geometrica quando o
 municipio nao tem bairro mapeado (cobertura IBGE heterogenea). READ-ONLY sobre o M1.
+
+DEC-076: o nome do bairro passa a vir do CNEFE 2022 (bairro dominante por setor), com o
+`NM_BAIRRO` da malha como RESERVA. Os dois leitores de setores daqui (`_carregar_bairros_por_hex`
+e `carregar_bairros_geo`) passam por `bairro_cnefe.aplicar_bairro_cnefe` antes da cascata, entao
+a Pagina 6 (bairros por zona), os rotulos dos hexes destacados e os "Bairros oficiais" agrupam
+pelo MESMO bairro. Sem o artefato, tudo e' o de antes.
 """
 
 from __future__ import annotations
@@ -43,6 +49,11 @@ import pandas as pd
 from fpdf import FPDF
 from PIL import Image, ImageChops, ImageDraw, ImageFont
 
+from motor_expansao.dashboard.bairro_cnefe import (
+    FONTE_CNEFE,
+    aplicar_bairro_cnefe,
+    bairro_cnefe_disponivel,
+)
 from motor_expansao.dashboard.censo_map import (
     _BASEMAP_TILES_URL_ENV,
     _fetch_labels,
@@ -59,6 +70,7 @@ from motor_expansao.dashboard.competitors import (
 from motor_expansao.dashboard.constants import TEXTO_SEM_DADO
 from motor_expansao.dashboard.utils import score_band_to_color
 from motor_expansao.perfil import resolver_perfil
+from motor_expansao.renda import hex as _renda_hex
 
 from . import pdf_base
 
@@ -508,6 +520,7 @@ def _carregar_bairros_por_hex(
     uf: str | None,
     cod_municipio: str | None,
     censo_geo_dir: Path | None,
+    staging_dir: Path | str | None = None,
 ) -> dict[str, str]:
     """A2.3: le a particao geo do municipio e mapeia `hex_id` res-7 -> localidade dominante.
 
@@ -518,31 +531,54 @@ def _carregar_bairros_por_hex(
     (redundante). Deriva o centroide do setor (do bbox), mapeia a `hex_id` res-7 via h3 (import
     lazy) e resolve a localidade DOMINANTE por hex (mais populosa vence). Fallback gracioso: sem
     `censo_geo_dir`/particao/coluna -> `{}` (Pagina 6 simplificada).
+
+    `staging_dir` (DEC-076): a configuracao de staging do processo, onde mora o artefato do
+    CNEFE; `None` cai no fallback derivado de `censo_geo_dir` (ver `bairro_cnefe`).
     """
     if censo_geo_dir is None or not uf or not cod_municipio:
         return {}
     _bbox_pop = ["bbox_minx", "bbox_miny", "bbox_maxx", "bbox_maxy", "pop_total_setor_2022"]
+    # Tenta a cascata completa (bairro/subdistrito/distrito + nome_municipio p/ o guard); se a
+    # particao for de um schema antigo sem essas colunas, cai para so `nome_bairro`.
+    tentativas = [
+        ["nome_bairro", "nome_subdistrito", "nome_distrito", "nome_municipio", *_bbox_pop],
+        ["nome_bairro", *_bbox_pop],
+    ]
+    # DEC-076: com o artefato do CNEFE para a UF, le tambem `cod_setor` (a chave dele). Sem o
+    # artefato a leitura e' a de sempre, coluna a coluna. Particao SEM `cod_setor` (schema
+    # antigo) cai nas leituras de antes: o bairro segue o do IBGE, nunca some.
+    if bairro_cnefe_disponivel(censo_geo_dir, uf, staging_dir=staging_dir):
+        tentativas = [[*cols, "cod_setor"] for cols in tentativas] + tentativas
+    setores = _ler_setores_em_tentativas(censo_geo_dir, uf, cod_municipio, tentativas)
+    if setores is None:
+        return {}
+    return bairros_por_hex_de_setores(
+        aplicar_bairro_cnefe(setores, censo_geo_dir=censo_geo_dir, uf=uf, staging_dir=staging_dir)
+    )
+
+
+def _ler_setores_em_tentativas(
+    censo_geo_dir: Path | str,
+    uf: str,
+    cod_municipio: str,
+    tentativas: list[list[str]],
+) -> pd.DataFrame | None:
+    """Le a particao com a PRIMEIRA lista de colunas que o schema aceitar; `None` se nenhuma."""
     try:
         from motor_expansao.pipelines.materializar_setores_censitarios_geo import (
             ler_particao_setores,
         )
-
-        # Tenta a cascata completa (bairro/subdistrito/distrito + nome_municipio p/ o guard); se a
-        # particao for de um schema antigo sem essas colunas, cai para so `nome_bairro`.
+    except Exception:
+        return None
+    for colunas in tentativas:
         try:
-            setores = ler_particao_setores(
+            return ler_particao_setores(
                 root=Path(censo_geo_dir), uf=str(uf), cod_municipio=str(cod_municipio),
-                columns=["nome_bairro", "nome_subdistrito", "nome_distrito", "nome_municipio",
-                         *_bbox_pop],
+                columns=colunas,
             )
         except Exception:
-            setores = ler_particao_setores(
-                root=Path(censo_geo_dir), uf=str(uf), cod_municipio=str(cod_municipio),
-                columns=["nome_bairro", *_bbox_pop],
-            )
-    except Exception:
-        return {}
-    return bairros_por_hex_de_setores(setores)
+            continue
+    return None
 
 
 def bairros_por_hex_de_setores(setores: pd.DataFrame | None) -> dict[str, str]:
@@ -631,6 +667,7 @@ def carregar_bairros_geo(
     uf: str | None,
     cod_municipio: str | None,
     censo_geo_dir: Path | str | None,
+    staging_dir: Path | str | None = None,
 ) -> dict[str, Any]:
     """Limite territorial de cada bairro do municipio, em EPSG:3857, pronto para desenho.
 
@@ -654,10 +691,6 @@ def carregar_bairros_geo(
     try:
         from shapely import wkb as shapely_wkb
         from shapely.ops import unary_union
-
-        from motor_expansao.pipelines.materializar_setores_censitarios_geo import (
-            ler_particao_setores,
-        )
     except Exception:
         return vazio
 
@@ -673,22 +706,25 @@ def carregar_bairros_geo(
         "bbox_maxx",
         "bbox_maxy",
     ]
-    try:
-        setores = ler_particao_setores(
-            root=Path(censo_geo_dir), uf=str(uf), cod_municipio=str(cod_municipio),
-            columns=["nome_bairro", "nome_subdistrito", "nome_distrito", "nome_municipio", *medidas],
-        )
-    except Exception:
-        # Schema antigo (sem a cascata): so `nome_bairro` ja permite desenhar.
-        try:
-            setores = ler_particao_setores(
-                root=Path(censo_geo_dir), uf=str(uf), cod_municipio=str(cod_municipio),
-                columns=["nome_bairro", *medidas],
-            )
-        except Exception:
-            return vazio
+    # Schema antigo (sem a cascata): so `nome_bairro` ja permite desenhar.
+    tentativas = [
+        ["nome_bairro", "nome_subdistrito", "nome_distrito", "nome_municipio", *medidas],
+        ["nome_bairro", *medidas],
+    ]
+    # DEC-076: a chave do artefato do CNEFE, so' quando ele existe para a UF. Particao SEM
+    # `cod_setor` cai nas leituras de antes (bairro do IBGE), em vez de sumir.
+    if bairro_cnefe_disponivel(censo_geo_dir, uf, staging_dir=staging_dir):
+        tentativas = [[*cols, "cod_setor"] for cols in tentativas] + tentativas
+    setores = _ler_setores_em_tentativas(censo_geo_dir, str(uf), str(cod_municipio), tentativas)
     if setores is None or setores.empty or "geometry_wkb" not in setores.columns:
         return vazio
+    # DEC-076: o bairro do CNEFE substitui o do IBGE onde existe; o limite desenhado passa a ser
+    # o do bairro do CNEFE (dissolvido pelos setores), o mesmo que nomeia a Pagina 6.
+    setores_cnefe = aplicar_bairro_cnefe(
+        setores, censo_geo_dir=censo_geo_dir, uf=uf, staging_dir=staging_dir
+    )
+    usou_cnefe = setores_cnefe is not setores
+    setores = setores_cnefe
 
     nome_muni = ""
     if "nome_municipio" in setores.columns:
@@ -842,6 +878,9 @@ def carregar_bairros_geo(
         # Fracao de setores COM bairro/distrito: e o que diz se a contagem acima representa o
         # municipio ou so um pedaco dele. Quem exibe tem de olhar isto antes do numero.
         "cobertura": ((n_setores - sem_localidade) / n_setores) if n_setores else 0.0,
+        # DEC-076: a chave so' entra quando o CNEFE nomeou algum setor (sem o artefato, o dict
+        # e' o de antes). E' o que a Pagina 6 le para citar a fonte certa.
+        **({"fonte_bairro": FONTE_CNEFE} if usou_cnefe else {}),
     }
 
 
@@ -995,6 +1034,18 @@ def _instituto_censo() -> str:
     return achado.group(1).strip() if achado else nome
 
 
+def _renda_pc_canonica(df_muni: pd.DataFrame, coluna: str) -> pd.Series:
+    """Renda domiciliar per capita canonica de cada hex, lida SO de `coluna` (E1).
+
+    A conta e do modulo da renda (`renda.hex.renda_per_capita_por_linha`, a mesma cadeia do
+    card): a coluna de origem e convertida (k desfeito na calibrada, uplift desfeito na SIDRA)
+    e recebe uplift, moradores e o fator per capita do municipio. Coluna ausente -> tudo NaN.
+    """
+    if df_muni is None or df_muni.empty or coluna not in df_muni.columns:
+        return pd.Series(np.nan, index=getattr(df_muni, "index", None), dtype="float64")
+    return _renda_hex.renda_per_capita_por_linha(df_muni, precedencia=(coluna,))
+
+
 def _tabela_hexes(
     df_muni: pd.DataFrame,
     bairros_por_hex: dict[str, str] | None = None,
@@ -1027,17 +1078,20 @@ def _tabela_hexes(
     # mesma renda. Fallback para `renda_per_capita` onde a censitaria nao existir.
     # RENDA DOMICILIAR e' a leitura pedida (Juan, 2026-08-19): e' o numero com que se conversa
     # sobre praca -- "domicilio de R$ 4.500" diz algo, "per capita de R$ 1.500" nao diz. Vem de
-    # `renda_hex.renda_domiciliar_por_hex` (desde 2026-10-16 a MESMA formula do card do REP, sobre
+    # `motor_expansao.renda.hex.renda_domiciliar_por_hex` (desde 2026-10-16 a MESMA formula do card do REP, sobre
     # a coluna do hexagono). Cai para per capita so quando o mapa chega vazio.
+    # Os dois fallbacks (per capita, sem o mapa domiciliar) passam pelo MESMO modulo do card
+    # desde a E1 (`renda_per_capita_por_linha`): antes exibiam a coluna CRUA -- a calibrada na
+    # escala do score (com k, sem uplift nem fator) ou a SIDRA municipal sem fator.
     mapa_dom = dict(renda_domiciliar_por_hex or {})
     if mapa_dom:
         renda = df_muni["hex_id"].astype(str).map(mapa_dom).astype("float64")
         fonte_renda = "domiciliar"
     else:
-        renda = _coluna_numerica(df_muni, "renda_per_capita_setor_2022_calibrada")
+        renda = _renda_pc_canonica(df_muni, "renda_per_capita_setor_2022_calibrada")
         fonte_renda = "censo"
     if renda.dropna().empty:
-        renda = _coluna_numerica(df_muni, "renda_per_capita")
+        renda = _renda_pc_canonica(df_muni, "renda_per_capita")
         fonte_renda = "m1"
 
     pop = _coluna_numerica(df_muni, "populacao_corte_hex")
@@ -1466,7 +1520,11 @@ def agregar_municipio(
         pop_serie = _coluna_numerica(df_muni, "pop_total")
     pop_total_municipio = float(pop_serie.dropna().sum()) if not pop_serie.dropna().empty else float("nan")
 
-    renda = _coluna_numerica(df_muni, "renda_per_capita")
+    # Painel "Renda per capita": a SIDRA municipal (`renda_per_capita`, o insumo do M1, o MESMO
+    # valor em todo hex do municipio) convertida pela cadeia canonica do card (E1) -- uplift e
+    # moradores municipais e o fator per capita. Ate a E1 saia crua, sem fator: ~F abaixo da
+    # per capita do Relatorio Pontual por construcao. A coluna do M1 fica intocada.
+    renda = _renda_pc_canonica(df_muni, "renda_per_capita")
     pesos = _coluna_numerica(df_muni, "pop_total_setor_2022")
     valid = renda.notna() & pesos.notna() & (pesos > 0)
     if valid.any():
@@ -3035,12 +3093,23 @@ def _draw_rede_logo(pdf: _UltraPDF, rede: str, x: float, y: float, size: float =
         return False
 
 
+_NOTA_LINHA_H = 11.0
+
+
 def _draw_note(pdf: _UltraPDF, x: float, y: float, w: float, text: str) -> None:
     """Nota curta em cinza pequeno (legenda de calculo), sem poluir."""
     pdf.set_text_color(120, 120, 120)
     pdf.set_font("Helvetica", "", 8)
     pdf.set_xy(x, y)
-    pdf.multi_cell(w, 11, _ascii(text))
+    pdf.multi_cell(w, _NOTA_LINHA_H, _ascii(text))
+
+
+def _altura_note(pdf: _UltraPDF, w: float, text: str) -> float:
+    """Altura (pt) que `_draw_note` ocuparia, medida pelo `dry_run` do fpdf2 na MESMA fonte."""
+    pdf.set_font("Helvetica", "", 8)
+    linhas = pdf.multi_cell(w, _NOTA_LINHA_H, _ascii(text), dry_run=True, output="LINES")
+    assert isinstance(linhas, list)  # output="LINES" devolve a lista de linhas
+    return len(linhas) * _NOTA_LINHA_H
 
 
 def _encurtar(pdf: _UltraPDF, texto: str, largura: float) -> str:
@@ -3677,11 +3746,11 @@ def _tabela_hexes_page(pdf: _UltraPDF, result: dict[str, Any], assets: dict[str,
         )
     elif fonte == "censo":
         nota_renda = (
-            "Renda = per capita censitária do setor (a domiciliar exigiria a partição de "
+            "Renda = per capita do hexágono (a domiciliar exigiria a partição de "
             "setores, indisponível para este município)."
         )
     else:
-        nota_renda = "Renda = insumo do M1; sem renda censitária para estes hexágonos."
+        nota_renda = "Renda = per capita municipal; sem renda censitária por hexágono."
     if tabela.get("renda_constante"):
         nota_renda += " Neste município ela é a MESMA em todas as regiões (não diferencia)."
 
@@ -3779,6 +3848,18 @@ def _bairros_mapa_page(pdf: _UltraPDF, result: dict[str, Any], mapa: bytes | Non
     _draw_footer(pdf, versao=result.get("versao_contrato"))
 
 
+def _nota_fonte_bairro(result: dict[str, Any]) -> str:
+    """Primeira frase da nota de fonte da Pagina 6: diz de ONDE veio o nome do bairro (DEC-076)."""
+    instituto = _instituto_censo()
+    if (result.get("bairros_geo") or {}).get("fonte_bairro") == FONTE_CNEFE:
+        return (
+            f"Fonte: bairro do Cadastro de Endereços (CNEFE) do {instituto} Censo 2022, o mais "
+            "frequente em cada setor; sem bairro no CNEFE, usa bairro/subdistrito/distrito da "
+            "malha de setores. "
+        )
+    return f"Fonte: {instituto} Censo 2022 (bairro do setor; sem bairro, usa subdistrito/distrito). "
+
+
 def _bairros_page(pdf: _UltraPDF, result: dict[str, Any], assets: dict[str, bytes | None], *,
                   primary: tuple[int, int, int] = ULTRA_TURQUESA) -> None:
     """Pagina 6 — Bairros por Zona (BLK-RELMUN-02 / resolve D9).
@@ -3857,8 +3938,7 @@ def _bairros_page(pdf: _UltraPDF, result: dict[str, Any], assets: dict[str, byte
         if tem_bairros:
             _draw_note(
                 pdf, 36, yy + 2, _PAGE_W - 72,
-                f"Fonte: {_instituto_censo()} Censo 2022 (bairro do setor; sem bairro, usa subdistrito/distrito). "
-                "Cobertura heterogênea entre municípios; zonas por distância ao centroide "
+                _nota_fonte_bairro(result) + "Cobertura heterogênea entre municípios; zonas por distância ao centroide "
                 "(display, não altera o M1).",
             )
         else:
@@ -3909,14 +3989,6 @@ def _praca_calor_page(pdf: _UltraPDF, result: dict[str, Any], praca: Any,
     tem_densidade = "calor_cidade_densidade" in praca.mapas
     largura = _PRACA_MAPA_W if tem_densidade else _PRACA_MAPA_W * 1.4
     altura = largura * 1000.0 / 1400.0
-    chaves = [("calor_cidade_renda_domiciliar", primary)]
-    if tem_densidade:
-        chaves.append(("calor_cidade_densidade", secondary))
-    for idx, (chave, cor) in enumerate(chaves):
-        _draw_framed_map(
-            pdf, praca.mapas.get(chave), max_w=largura, max_h=altura,
-            x_anchor=36.0 + idx * (largura + 28.0), y_anchor=y, border_rgb=cor,
-        )
     legenda = (
         f"{praca.n_hexagonos_cidade} hexágonos de {praca.municipio}. Renda média domiciliar "
         + ("e densidade (habitantes por km² do hexágono), " if tem_densidade else "")
@@ -3927,7 +3999,21 @@ def _praca_calor_page(pdf: _UltraPDF, result: dict[str, Any], praca: Any,
         legenda += " Nesta base a renda é a do município inteiro, então o mapa de renda sai de uma cor só."
     if praca.populacao_municipal:
         legenda += " " + TEXTO_POP_MUNICIPAL
-    _draw_note(pdf, 36.0, y + altura + 24.0, _PAGE_W - 72.0, _praca_texto(legenda))
+    texto_nota = _praca_texto(legenda)
+    largura_nota = _PAGE_W - 72.0
+    # A nota tem de caber ACIMA do rodape: `auto_page_break` e OFF, e sem o mapa de densidade o mapa largo (602 x 430) empurrava a nota para y = 550,
+    # fora da pagina de 540. O mapa encolhe na altura (o fit-contain preserva a proporcao).
+    limite_nota = _PAGE_H - 22.0 - 4.0 - _altura_note(pdf, largura_nota, texto_nota)
+    altura = min(altura, limite_nota - 24.0 - y)
+    chaves = [("calor_cidade_renda_domiciliar", primary)]
+    if tem_densidade:
+        chaves.append(("calor_cidade_densidade", secondary))
+    for idx, (chave, cor) in enumerate(chaves):
+        _draw_framed_map(
+            pdf, praca.mapas.get(chave), max_w=largura, max_h=altura,
+            x_anchor=36.0 + idx * (largura + 28.0), y_anchor=y, border_rgb=cor,
+        )
+    _draw_note(pdf, 36.0, y + altura + 24.0, largura_nota, texto_nota)
     _draw_footer(pdf, versao=result.get("versao_contrato"))
 
 

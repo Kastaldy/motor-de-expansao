@@ -285,6 +285,15 @@ def _resolver_e_carregar(
             # painel com a primeira linha nao-nula, e o rotulo e' do ponto, nao do vizinho.
             setores_df = pd.concat([setores_df, *extras], ignore_index=True)
 
+    # DEC-076: o bairro de cada setor pelo CNEFE 2022 (IBGE como reserva), UMA vez aqui, para
+    # todo consumidor do ponto: bairro do ponto, perfil do bairro e o nome do hexagono da ficha
+    # (que reusa estes setores) leem a mesma coluna. Sem o artefato, devolve o mesmo frame.
+    from motor_expansao.dashboard.bairro_cnefe import aplicar_bairro_cnefe
+
+    # O artefato mora no staging DO PROCESSO (`API_STAGING_DIR`), nao no irmao da malha.
+    setores_df = aplicar_bairro_cnefe(
+        setores_df, censo_geo_dir=settings.censo_geo_dir, uf=uf, staging_dir=settings.staging_dir
+    )
     return uf, cod_municipio, setores_df
 
 
@@ -988,7 +997,11 @@ def analisar_ponto(lat: float, lng: float, consumidor: str | None, settings: Set
         "n_setores": result.get("n_setores", 0),
         "pop_total_raio": result.get("pop_total_raio"),
         "renda_per_capita_media_raio": result.get("renda_per_capita_media_raio"),
-        "renda_media_domiciliar_raio": result.get("renda_media_domiciliar_raio"),
+        # E1 (plano de correcao da renda): o campo passa a ser a renda media DOMICILIAR
+        # canonica do raio -- a do card do PDF (V06004 x uplift do setor x fator, pelo modulo
+        # da renda) -- e o nome fica verdadeiro. Ate a E1 servia a base PRE-uplift do motor
+        # (V06004 bruta = renda do RESPONSAVEL, ~0,53x), sob nome de renda domiciliar.
+        "renda_media_domiciliar_raio": result.get("renda_domiciliar_total_raio"),
         "renda_domiciliar_total_raio": result.get("renda_domiciliar_total_raio"),
         "domicilios_total_raio": result.get("domicilios_total_raio"),
         "metodo_renda_domiciliar_raio": result.get("metodo_renda_domiciliar_raio"),
@@ -1434,7 +1447,11 @@ def montar_pdf_municipio(
         gerar_payloads_download_relatorio_municipal,
         render_mapas_municipio,
     )
-    from motor_expansao.dashboard.renda_hex import renda_domiciliar_por_hex
+    from motor_expansao.renda import (
+        FatoresRendaInvalidos,
+        InsumoRendaInvalido,
+        renda_domiciliar_por_hex,
+    )
 
     uf = str(uf).strip().upper()
     if df_muni is None or df_muni.empty:
@@ -1465,7 +1482,9 @@ def montar_pdf_municipio(
                 resolve_cod_municipio_from_geo_dir(settings.censo_geo_dir, uf, nome_municipio)
             )
         if cod:
-            bairros = _carregar_bairros_por_hex(uf, cod, settings.censo_geo_dir)
+            bairros = _carregar_bairros_por_hex(
+                uf, cod, settings.censo_geo_dir, staging_dir=settings.staging_dir
+            )
     except Exception:
         bairros = None
     # BLK-RELMUN-06: limite territorial dos bairros (mesma particao geo, segunda leitura), nas
@@ -1474,12 +1493,14 @@ def montar_pdf_municipio(
     # levar junto o rotulo por hex da pagina "Bairros por Zona", que ja funcionava.
     try:
         if cod:
-            bairros_geo = carregar_bairros_geo(uf, cod, settings.censo_geo_dir)
+            bairros_geo = carregar_bairros_geo(
+                uf, cod, settings.censo_geo_dir, staging_dir=settings.staging_dir
+            )
     except Exception:
         bairros_geo = None
     # Renda DOMICILIAR por hexagono para a tabela de comparacao: vale nas DUAS unidades
     # (a tabela e' sempre por hexagono), entao fica fora do guard de `unidade` acima.
-    # A MESMA formula do card do REP (`renda_hex`), sobre os hexes que o chamador entregou:
+    # A MESMA formula do card do REP (`motor_expansao.renda.hex`), sobre os hexes que o chamador entregou:
     # ate 2026-10-16 o PDF jogava o setor inteiro no hexagono do centro do bbox e divergia do
     # card (Sao Roque/SP, 87a810361ffffff: R$ 13.261 no PDF, R$ 4.924 no card).
     # try/except proprio: falha aqui so tira a coluna de renda, nao o resto do relatorio.
@@ -1492,6 +1513,10 @@ def montar_pdf_municipio(
             renda_dom = renda_domiciliar_por_hex(
                 df_muni, uf=uf, cod_municipio=cod, staging_dir=settings.staging_dir
             )
+    except (FatoresRendaInvalidos, InsumoRendaInvalido):
+        # Configuracao de fatores ou insumo obrigatorio quebrado NAO vira coluna vazia em
+        # silencio (E0): sobe como erro, como na subida.
+        raise
     except Exception:
         renda_dom = None
 

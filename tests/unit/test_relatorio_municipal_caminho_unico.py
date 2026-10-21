@@ -16,9 +16,9 @@ import pandas as pd
 import pytest
 
 import motor_expansao.dashboard.relatorio_municipal as relmun
+import motor_expansao.renda as renda_pacote
 from motor_expansao.api import service
 from motor_expansao.api.settings import Settings
-from motor_expansao.dashboard import renda_hex
 
 
 def _df_homonimos() -> pd.DataFrame:
@@ -48,15 +48,15 @@ def capturado(monkeypatch: pytest.MonkeyPatch, tmp_path) -> dict:
         return pd.DataFrame({"rede": [pd.NA], "lat": [0.0], "lng": [0.0]}), None
 
     monkeypatch.setattr(service, "_competitors_ultra", _uniao)
-    monkeypatch.setattr(relmun, "_carregar_bairros_por_hex", lambda uf, cod, d: {"ac1": "Centro"})
+    monkeypatch.setattr(relmun, "_carregar_bairros_por_hex", lambda uf, cod, d, **k: {"ac1": "Centro"})
 
-    def _geo(uf, cod, d):
+    def _geo(uf, cod, d, **k):  # **k: `staging_dir` (DEC-076)
         cap["bairros_geo_cod"] = cod
         return {"bairros": ["Centro"]}
 
     monkeypatch.setattr(relmun, "carregar_bairros_geo", _geo)
     monkeypatch.setattr(
-        renda_hex, "renda_domiciliar_por_hex", lambda df, **k: {"ac1": 5000.0}
+        renda_pacote, "renda_domiciliar_por_hex", lambda df, **k: {"ac1": 5000.0}
     )
     monkeypatch.setattr(relmun, "carregar_poligono_municipio", lambda *a, **k: None)
 

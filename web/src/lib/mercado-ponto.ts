@@ -17,7 +17,7 @@
  * com o motivo que o servidor mandou — nunca como zero, que afirmaria mercado livre por
  * falta de dado.
  */
-import { rotuloDaAreaDesenhada, rotuloDaIsocrona, rotuloDoRaio, type TipoRecorte } from './recorte'
+import { minutosDoRecorte, rotuloDaAreaDesenhada, rotuloDaIsocrona, rotuloDoRaio, type TipoRecorte } from './recorte'
 import type { PontoMercado } from './types'
 
 /** Uma linha da conta, na ordem em que ela se le. */
@@ -57,14 +57,16 @@ export function recorteDoMercado(
   m: Pick<PontoMercado, 'grao' | 'raio_km' | 'area_km2'>,
   tipo?: TipoRecorte,
 ): string {
-  if (tipo === 'carro_10min') return rotuloDaIsocrona(m.area_km2)
+  const minutos = minutosDoRecorte(tipo)
+  if (minutos != null) return rotuloDaIsocrona(m.area_km2, minutos)
   if (m.grao === 'geometria') return rotuloDaAreaDesenhada(m.area_km2)
   return rotuloDoRaio(m.raio_km)
 }
 
 /** O complemento das contagens ("8 academias de rede alcançam ..."), no recorte do item. */
 function alvoDoRecorte(m: Pick<PontoMercado, 'grao'>, tipo?: TipoRecorte): string {
-  if (tipo === 'carro_10min') return 'a área de 10 min de carro'
+  const minutos = minutosDoRecorte(tipo)
+  if (minutos != null) return `a área de ${minutos} min de carro`
   return m.grao === 'geometria' ? 'a área' : 'o raio'
 }
 

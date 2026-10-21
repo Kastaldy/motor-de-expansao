@@ -5,6 +5,7 @@ import {
   ALTURA_MINIMA,
   DEGRAU_X,
   DEGRAU_Y,
+  LARGURA_FICHA_PONTO,
   LARGURA_MINIMA,
   LARGURA_PADRAO,
   MARGEM,
@@ -146,5 +147,42 @@ describe('reajustar', () => {
     expect(g.altura).toBe(ALTURA_MINIMA)
     expect(Number.isFinite(g.x)).toBe(true)
     expect(Number.isFinite(g.y)).toBe(true)
+  })
+})
+
+describe('a ficha de ponto nasce mais estreita (pedido de 20/10/2026)', () => {
+  it('480px na nascença, e as outras janelas seguem nos 520 de sempre', () => {
+    expect(LARGURA_FICHA_PONTO).toBe(480)
+    expect(LARGURA_FICHA_PONTO).toBeGreaterThanOrEqual(LARGURA_MINIMA)
+    expect(geometriaPadrao(AREA, TOPO, RECUO, 'esquerda', 0, LARGURA_FICHA_PONTO).largura).toBe(480)
+    expect(geometriaPadrao(AREA, TOPO, RECUO, 'esquerda').largura).toBe(LARGURA_PADRAO)
+  })
+
+  it('a ancoragem à direita usa a largura pedida, não a padrão', () => {
+    const g = geometriaPadrao(AREA, TOPO, RECUO, 'direita', 0, LARGURA_FICHA_PONTO)
+    expect(g.x + g.largura).toBe(AREA.largura - MARGEM)
+  })
+
+  it('largura pedida abaixo do mínimo vira o mínimo; área estreita ainda encolhe', () => {
+    expect(geometriaPadrao(AREA, TOPO, RECUO, 'esquerda', 0, 100).largura).toBe(LARGURA_MINIMA)
+    const g = geometriaPadrao({ largura: 400, altura: 800 }, TOPO, RECUO, 'esquerda', 0, LARGURA_FICHA_PONTO)
+    expect(g.largura).toBeLessThanOrEqual(400 - 2 * MARGEM)
+  })
+
+  it('só a nascença: redimensionar continua livre, para mais e para menos', () => {
+    const g = geometriaPadrao(AREA, TOPO, RECUO, 'esquerda', 0, LARGURA_FICHA_PONTO)
+    expect(redimensionar(g, 200, 0, AREA).largura).toBe(680)
+    expect(redimensionar(g, -100, 0, AREA).largura).toBe(380)
+    expect(redimensionar(g, -1000, 0, AREA).largura).toBe(LARGURA_MINIMA)
+  })
+
+  it('a ficha de ponto passa a largura dela à janela', async () => {
+    const { readFileSync } = await import('node:fs')
+    const { fileURLToPath } = await import('node:url')
+    const ler = (r: string) => readFileSync(fileURLToPath(new URL(r, import.meta.url)), 'utf-8')
+    expect(ler('../screens/PontoScreen.tsx')).toContain('larguraInicial={LARGURA_FICHA_PONTO}')
+    expect(ler('../components/JanelaFicha.tsx')).toContain(
+      'geometriaPadrao(area, TOPO_PADRAO, recuoInferior, ancora, degrau, larguraInicial)',
+    )
   })
 })

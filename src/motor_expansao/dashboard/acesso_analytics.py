@@ -11,9 +11,11 @@ O que este módulo entrega (e o corte deliberado do que NÃO entrega):
     parâmetros da simulação). O detalhe fino continua só na trilha bruta.
 
 ROLLUP DIÁRIO SEM DADO PESSOAL (`uso-diario.json`, no mesmo diretório da trilha):
-a trilha se poda em 90 dias (DEC-027); para tendência longa, cada dia BRT FECHADO é
-consolidado UMA vez em `{dia: {acoes, usuarios, por_aba}}` — contagens apenas, sem
-nome, sem IP, sem rota — e nunca recalculado (fica estável mesmo depois da poda).
+a trilha é SEM PRAZO desde a emenda 2 da DEC-027 (20/10/2026; era podada em 90 dias), mas
+a poda segue disponível por env (`MOTOR_ACESSO_RETENCAO_DIAS`). Para tendência longa sem
+reler a trilha inteira, cada dia BRT FECHADO é consolidado UMA vez em
+`{dia: {acoes, usuarios, por_aba}}` — contagens apenas, sem nome, sem IP, sem rota — e
+nunca recalculado (fica estável mesmo se a trilha for podada).
 A consolidação roda no startup do app e a cada abertura da aba; o nome do arquivo
 NÃO casa com o padrão de poda `acesso-*.jsonl` de propósito.
 
@@ -56,7 +58,9 @@ from motor_expansao.dashboard.acesso_log import (
 ROLLUP_ARQUIVO = "uso-diario.json"
 ROLLUP_VERSAO = 1
 
-#: Janela padrão e teto das agregações detalhadas (a trilha só guarda 90 dias).
+#: Janela padrão e teto das agregações detalhadas. O teto de 90 dias é decisão de TELA e
+#: não acompanha a retenção da trilha (sem prazo desde a emenda 2 da DEC-027): mudar o que a
+#: aba alcança é outra decisão, e o custo de agregar em memória cresce com a janela.
 JANELA_DIAS_DEFAULT = 30
 JANELA_DIAS_MAX = 90
 
@@ -284,7 +288,7 @@ def _hhmm(momento: object) -> str | None:
 
 
 # ---------------------------------------------------------------------------
-# Rollup diário sem dado pessoal (tendência além dos 90 dias da trilha)
+# Rollup diário sem dado pessoal (tendência além da janela de 90 dias da aba)
 # ---------------------------------------------------------------------------
 
 
@@ -301,7 +305,7 @@ def _carregar_rollup(diretorio: Path) -> tuple[str, dict[str, dict[str, Any]]]:
 
     A distinção importa (revisão adversarial de 2026-08-19): tratar QUALQUER falha
     como "vazio" fazia a consolidação REESCREVER o arquivo só com os dias que ainda
-    sobrevivem na trilha de 90 dias — destruindo o histórico longo em silêncio.
+    sobrevivem na trilha (então podada em 90 dias) — destruindo o histórico longo em silêncio.
     `ilegivel` = OSError com o arquivo existindo (soluço de IO: não tocar, tentar
     depois); `corrompido` = conteúdo inválido (quarentenar, nunca sobrescrever).
     """
@@ -437,10 +441,13 @@ def consolidar_rollup_seguro(
         return 0
 
 
-# A poda da trilha (90 dias) roda na virada de dia dentro de `acesso_log.registrar`;
+# A poda da trilha (só se `MOTOR_ACESSO_RETENCAO_DIAS` estiver definida; sem prazo por
+# padrão desde a emenda 2 da DEC-027) roda na virada de dia dentro de `acesso_log.registrar`;
 # a consolidação PRECISA acontecer antes que ela alcance um dia ainda não rollupado
-# (app 90+ dias sem restart e sem abertura da aba perderia dias — revisão adversarial
-# de 2026-08-19). O hook amarra as duas cadências sem import circular.
+# (app meses sem restart e sem abertura da aba perderia dias — revisão adversarial
+# de 2026-08-19). O hook roda na virada de dia COM ou SEM poda (travado em
+# `test_hook_do_rollup_roda_na_virada_mesmo_sem_poda`) e amarra as duas cadências sem
+# import circular.
 acesso_log.registrar_hook_virada_de_dia(consolidar_rollup_seguro)
 
 

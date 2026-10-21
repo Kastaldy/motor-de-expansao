@@ -62,9 +62,14 @@ describe('alcances do perfil (`/api/me`)', () => {
     expect(alcancesDisponiveis()).not.toContain('carro_10min')
   })
 
-  it('com o serviço de rotas, as três opções, na ordem do seletor', () => {
-    definirAlcances(['carro_10min', 'raio_2km', 'raio_1km'])
-    expect(alcancesDisponiveis()).toEqual(['raio_1km', 'raio_2km', 'carro_10min'])
+  it('com o serviço de rotas, as quatro opções, na ordem do seletor (Emenda 1 da DEC-074)', () => {
+    definirAlcances(['carro_10min', 'carro_5min', 'raio_2km', 'raio_1km'])
+    expect(alcancesDisponiveis()).toEqual(['raio_1km', 'raio_2km', 'carro_5min', 'carro_10min'])
+  })
+
+  it('sem o serviço de rotas, "5 min de carro" também SOME', () => {
+    definirAlcances(['raio_1km', 'raio_2km'])
+    expect(alcancesDisponiveis()).not.toContain('carro_5min')
   })
 
   it('o raio de 1 km entra SEMPRE (é para onde o seletor volta), e o desconhecido é ignorado', () => {
@@ -73,12 +78,20 @@ describe('alcances do perfil (`/api/me`)', () => {
   })
 
   it('rótulos de exibição acentuados; os valores crus não mudam', () => {
-    expect(ALCANCES).toEqual(['raio_1km', 'raio_2km', 'carro_10min'])
+    // Ordem pedida pelo dono: Raio de 1 km, Raio de 2 km, 5 min de carro, 10 min de carro.
+    expect(ALCANCES).toEqual(['raio_1km', 'raio_2km', 'carro_5min', 'carro_10min'])
     expect(ROTULO_ALCANCE).toEqual({
       raio_1km: 'Raio de 1 km',
       raio_2km: 'Raio de 2 km',
+      carro_5min: '5 min de carro',
       carro_10min: '10 min de carro',
     })
+    expect(ALCANCES.map((a) => ROTULO_ALCANCE[a])).toEqual([
+      'Raio de 1 km',
+      'Raio de 2 km',
+      '5 min de carro',
+      '10 min de carro',
+    ])
   })
 })
 
@@ -102,6 +115,8 @@ describe('alcanceDoItem', () => {
     }
     expect(alcanceDoItem(r2 as PontoPayload)).toBe('raio_2km')
     expect(alcanceDoItem(iso as PontoPayload)).toBe('carro_10min')
+    const cinco = { ...iso, recorte: { tipo: 'carro_5min', area_km2: 3.2, metodo: 'x' } }
+    expect(alcanceDoItem(cinco as PontoPayload)).toBe('carro_5min')
   })
 
   it('área desenhada não tem alcance', () => {

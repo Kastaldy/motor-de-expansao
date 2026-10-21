@@ -1,11 +1,14 @@
-"""Alcance da analise de ponto: raio de 1 km, raio de 2 km e 10 min de carro (DEC-074).
+"""Alcance da analise de ponto: raio de 1 km, raio de 2 km, 5 e 10 min de carro (DEC-074).
 
 O operador escolhe, NA FICHA do ponto, ate' onde a analise vai a partir do clique:
 
 - ``raio_1km``   -- o estudo de sempre (DEC-021). Fator de regua EXATAMENTE 1.0.
 - ``raio_2km``   -- o mesmo circulo, com o dobro do raio. Fator EXATAMENTE 4.0.
-- ``carro_10min`` -- a ISOCRONA de 10 min de carro sem transito, calculada por um Valhalla
-  proprio (container na VPS, opcional pela env ``MOTOR_ROTAS_URL``).
+- ``carro_5min`` / ``carro_10min`` -- a ISOCRONA de 5 ou 10 min de carro sem transito,
+  calculada por um Valhalla proprio (container na VPS, opcional pela env ``MOTOR_ROTAS_URL``).
+  Os dois sao a MESMA isocrona com outro tempo: o tempo mora em `MINUTOS_DO_ALCANCE`, e
+  quem consome (rota, motor, PDF, tela) le a tabela em vez de repetir o caso de 10 min. O de
+  5 min entrou pela Emenda 1 da DEC-074 (20/10/2026, pedido do Vinicius, sem transito).
 
 Identificadores CRUS, sem acento (CLAUDE.md secao 2): sao valor de payload e de query.
 
@@ -68,10 +71,15 @@ _LOG = logging.getLogger(__name__)
 # --------------------------------------------------------------------------- #
 ALCANCE_RAIO_1KM = "raio_1km"
 ALCANCE_RAIO_2KM = "raio_2km"
+ALCANCE_CARRO_5MIN = "carro_5min"
 ALCANCE_CARRO_10MIN = "carro_10min"
-ALCANCES = (ALCANCE_RAIO_1KM, ALCANCE_RAIO_2KM, ALCANCE_CARRO_10MIN)
 RAIO_DO_ALCANCE = {ALCANCE_RAIO_1KM: 1.0, ALCANCE_RAIO_2KM: 2.0}
-MINUTOS_ISOCRONA = 10
+# A TABELA dos alcances de carro (DEC-074, Emenda 1): o tempo e' o unico parametro que muda
+# entre eles. Um alcance novo de carro entra AQUI e no vocabulario da tela; o resto le daqui.
+MINUTOS_DO_ALCANCE = {ALCANCE_CARRO_5MIN: 5, ALCANCE_CARRO_10MIN: 10}
+# Ordem do seletor (decisao do dono): os raios, depois o carro do menor tempo ao maior.
+ALCANCES = (ALCANCE_RAIO_1KM, ALCANCE_RAIO_2KM, *MINUTOS_DO_ALCANCE)
+MINUTOS_ISOCRONA = 10  # o default de `isocrona_carro` (o alcance original da DEC-074)
 
 # O raio em que as reguas absolutas foram calibradas (DEC-021). Literal, e NAO importado de
 # `censo_point`, para o modulo seguir leve -- a igualdade e' travada por teste.
@@ -117,21 +125,23 @@ MSG_ROTAS_INDISPONIVEIS = (
     "O cálculo de tempo de deslocamento está indisponível agora. "
     "Tente de novo em instantes ou use o raio."
 )
+# As frases levam o TEMPO como campo (`{minutos}`): a mesma recusa vale para 5 e 10 min, e
+# dizer "10 min" a quem pediu 5 seria nomear outro recorte.
 MSG_SEM_VIA = (
-    "Não foi possível calcular os 10 min de carro a partir deste ponto (nenhuma rua "
+    "Não foi possível calcular os {minutos} min de carro a partir deste ponto (nenhuma rua "
     "alcançável por perto). Use o raio."
 )
 MSG_AREA_GRANDE = (
-    "A área de 10 min de carro a partir deste ponto passa de {teto:.0f} km², o teto da "
-    "análise. Use o raio de 2 km."
+    "A área de {minutos} min de carro a partir deste ponto passa de {teto:.0f} km², o teto "
+    "da análise. Use o raio de 2 km."
 )
 MSG_DIAGONAL_GRANDE = (
-    "A área de 10 min de carro a partir deste ponto se estende por mais de {teto:.0f} km, "
-    "o teto da análise. Use o raio de 2 km."
+    "A área de {minutos} min de carro a partir deste ponto se estende por mais de "
+    "{teto:.0f} km, o teto da análise. Use o raio de 2 km."
 )
 MSG_ORIGEM_FORA = (
-    "O ponto clicado fica a mais de {dist:.0f} m de qualquer rua alcançável, então os 10 min "
-    "de carro partiriam de outro lugar. Use o raio."
+    "O ponto clicado fica a mais de {dist:.0f} m de qualquer rua alcançável, então os "
+    "{minutos} min de carro partiriam de outro lugar. Use o raio."
 )
 
 
@@ -190,7 +200,8 @@ def url_rotas() -> str | None:
 
 
 def rotas_configuradas() -> bool:
-    """A opcao "10 min de carro" existe neste deploy? (So' a env; nao consulta o servico.)"""
+    """As opcoes de carro (5 e 10 min) existem neste deploy? (So' a env; nao consulta o
+    servico.)"""
     return url_rotas() is not None
 
 
@@ -314,7 +325,7 @@ def _so_poligonos(geom: BaseGeometry) -> BaseGeometry:
     return unary_union(partes) if partes else Polygon()
 
 
-def _geometria_da_resposta(corpo: Any) -> BaseGeometry:
+def _geometria_da_resposta(corpo: Any, minutos: int = MINUTOS_ISOCRONA) -> BaseGeometry:
     """FeatureCollection do Valhalla -> uma geometria de area (uniao das features)."""
     features = corpo.get("features") if isinstance(corpo, dict) else None
     if not isinstance(features, list):
@@ -329,7 +340,7 @@ def _geometria_da_resposta(corpo: Any) -> BaseGeometry:
         except Exception as exc:  # noqa: BLE001 - coordenada malformada vinda do servico
             raise RotasIndisponiveis(f"geometria malformada: {exc}") from exc
     if not partes:
-        raise AlcanceInvalido(MSG_SEM_VIA)
+        raise AlcanceInvalido(MSG_SEM_VIA.format(minutos=minutos))
     unida = unary_union(partes)
     if not unida.is_valid:
         # So' para artefato NUMERICO do contorno (anel que se toca num vertice). Aqui nao
@@ -337,7 +348,7 @@ def _geometria_da_resposta(corpo: Any) -> BaseGeometry:
         unida = shapely.make_valid(unida)
     unida = _so_poligonos(unida)
     if unida.is_empty or unida.area <= 0:
-        raise AlcanceInvalido(MSG_SEM_VIA)
+        raise AlcanceInvalido(MSG_SEM_VIA.format(minutos=minutos))
     return unida
 
 
@@ -376,7 +387,7 @@ def _construir_isocrona(lat: float, lng: float, minutos: int, url: str, versao: 
         # location", ponto longe de qualquer via). O servico esta' de pe'; o recorte e' que
         # nao existe -> 400, nao 503.
         _LOG.info("Isocrona recusada pelo servico (HTTP 400): %s", resp.text[:300])
-        raise AlcanceInvalido(MSG_SEM_VIA)
+        raise AlcanceInvalido(MSG_SEM_VIA.format(minutos=minutos))
     if resp.status_code >= 400:
         # Qualquer OUTRO 4xx (404/405 de URL errada, 401/403 de proxy, 429) e' defeito de
         # CONFIGURACAO ou de capacidade, nao do ponto: dizer "nenhuma rua por perto" a cada
@@ -387,7 +398,7 @@ def _construir_isocrona(lat: float, lng: float, minutos: int, url: str, versao: 
     except ValueError as exc:
         raise RotasIndisponiveis(f"resposta nao-JSON: {exc}") from exc
 
-    geom_wgs = _geometria_da_resposta(corpo)
+    geom_wgs = _geometria_da_resposta(corpo, minutos)
     para_m, para_graus = _projecoes(lat, lng)
     geom_m = _shp_transform(para_m.transform, geom_wgs)
     geom_m = _simplificar_ate_o_teto(geom_m)
@@ -396,23 +407,27 @@ def _construir_isocrona(lat: float, lng: float, minutos: int, url: str, versao: 
     if not geom_m.covers(origem_m):
         distancia = float(geom_m.distance(origem_m))
         if distancia > DIST_MAX_ORIGEM_M:
-            # A area alcancada comeca longe do clique: os 10 min partem de outro lugar.
-            raise AlcanceInvalido(MSG_ORIGEM_FORA.format(dist=DIST_MAX_ORIGEM_M))
+            # A area alcancada comeca longe do clique: os minutos partem de outro lugar.
+            raise AlcanceInvalido(
+                MSG_ORIGEM_FORA.format(dist=DIST_MAX_ORIGEM_M, minutos=minutos)
+            )
         # Faixa do clique ao contorno: o recorte continua UMA area ligada ao ponto, e nao
         # o contorno com um disco solto ao lado.
         _, perto = nearest_points(origem_m, geom_m)
         ligacao = LineString([origem_m, perto]).buffer(BUFFER_ORIGEM_M)
         geom_m = _so_poligonos(unary_union([geom_m, ligacao]))
     if not geom_m.covers(origem_m):  # defensivo: a uniao acima sempre cobre
-        raise AlcanceInvalido(MSG_ORIGEM_FORA.format(dist=DIST_MAX_ORIGEM_M))
+        raise AlcanceInvalido(MSG_ORIGEM_FORA.format(dist=DIST_MAX_ORIGEM_M, minutos=minutos))
 
     area_km2 = float(geom_m.area) / 1_000_000.0
     minx, miny, maxx, maxy = geom_m.bounds
     diagonal_km = math.hypot(maxx - minx, maxy - miny) / 1000.0
     if area_km2 > AREA_MAX_KM2:
-        raise AlcanceInvalido(MSG_AREA_GRANDE.format(teto=AREA_MAX_KM2))
+        raise AlcanceInvalido(MSG_AREA_GRANDE.format(teto=AREA_MAX_KM2, minutos=minutos))
     if diagonal_km > DIAGONAL_MAX_KM:
-        raise AlcanceInvalido(MSG_DIAGONAL_GRANDE.format(teto=DIAGONAL_MAX_KM))
+        raise AlcanceInvalido(
+            MSG_DIAGONAL_GRANDE.format(teto=DIAGONAL_MAX_KM, minutos=minutos)
+        )
 
     geom_graus = _shp_transform(para_graus.transform, geom_m)
     return Isocrona(
@@ -507,12 +522,14 @@ def contorno_geojson(geom: BaseGeometry) -> dict[str, Any]:
 __all__ = [
     "ALCANCES",
     "ALCANCE_CARRO_10MIN",
+    "ALCANCE_CARRO_5MIN",
     "ALCANCE_RAIO_1KM",
     "ALCANCE_RAIO_2KM",
     "AREA_MAX_KM2",
     "DIAGONAL_MAX_KM",
     "DIST_MAX_ORIGEM_M",
     "ENV_ROTAS",
+    "MINUTOS_DO_ALCANCE",
     "MINUTOS_ISOCRONA",
     "RAIO_DO_ALCANCE",
     "AlcanceInvalido",

@@ -231,7 +231,7 @@ def _praca_do_disco(
     pesos: Mapping[str, float] | None = None,
 ) -> dict[str, Any]:
     vazio = {
-        "hex_id": None, "municipio": None, "score_praca": None, "renda_per_capita": None,
+        "hex_id": None, "municipio": None, "score_praca": None,
         "populacao_entorno": None, "residual_entorno": None, "hexes_lidos": 0,
     }
     if hexes is None or not len(hexes) or not hex_da_unidade or uid not in hex_da_unidade:
@@ -263,7 +263,10 @@ def _praca_do_disco(
         "hex_id": central,
         "municipio": None if pd.isna(municipio) else str(municipio),
         "score_praca": _r(media("score_setor_2022_calibrado"), 1),
-        "renda_per_capita": _r(media("renda_per_capita_setor_2022_calibrada"), 0),
+        # `renda_per_capita` e `renda_domiciliar` do disco NAO saem daqui: sao montadas em
+        # `app._rede_territorio` pela cadeia canonica do hexagono (modulo da renda, E1). Ate
+        # a E1 a per capita era a media da calibrada CRUA (escala do score, com k, sem uplift
+        # nem fator), ao lado de uma domiciliar canonica no MESMO item.
         "populacao_entorno": _r(pop.sum(min_count=1), 0),
         # Residual É ENDÓGENO para unidade existente: ele já desconta a oferta da própria
         # Ultra (o motivo que tirou a coluna do E7, DEC-043). Exibido como contexto,

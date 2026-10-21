@@ -6,7 +6,6 @@ from pyproj import Transformer
 from shapely.geometry import box
 from shapely.ops import transform
 
-from motor_expansao.dashboard import constants as _const
 from motor_expansao.dashboard.censo_point import (
     CRS_ORIGEM_CENSO,
     METODO_RELATORIO_PONTUAL_CENSITARIO,
@@ -15,6 +14,8 @@ from motor_expansao.dashboard.censo_point import (
     agregar_perfil_bairro_distrito,
     analisar_ponto_censitario_setores,
 )
+from motor_expansao.renda import fator
+from tests.unit.renda_fixtures import fixar_fatores, fixar_uplift_setor
 
 LAT_C = -23.55
 LNG_C = -46.63
@@ -116,11 +117,16 @@ def test_motor_censitario_setor_totalmente_dentro_do_raio():
     # setor levada a escala do domicilio pelo uplift e atualizada pelo fator temporal. Expressa
     # em termos do que o proprio motor devolve, para nao fixar no teste o valor de um insumo.
     assert result["renda_per_capita_media_raio"] == pytest.approx(
-        1800 * result["fator_uplift_composicao"] * _const.FATOR_TEMPORAL_RENDA, rel=1e-3
+        1800 * result["fator_uplift_composicao"] * fator(None, "per_capita"), rel=1e-3
     )
-    # A invariante que o relatorio precisa fechar: domiciliar = per capita x moradores.
+    # A invariante que o relatorio precisa fechar: domiciliar = per capita x moradores, corrigida
+    # pela razao dos fatores (E0: cada renda com o seu; na versao 0 a razao e 1).
     assert result["renda_domiciliar_total_raio"] == pytest.approx(
-        result["renda_per_capita_media_raio"] * 3.0, rel=1e-3
+        result["renda_per_capita_media_raio"]
+        * 3.0
+        * fator(None, "domiciliar")
+        / fator(None, "per_capita"),
+        rel=1e-3,
     )
     assert result["score_setor_medio"] == pytest.approx(82)
     setores = result["setores_intersectados"]
@@ -254,7 +260,7 @@ def test_motor_censitario_nao_muta_dataframe_de_entrada():
 # ── BLK-RELPON-05: lookup do setor que CONTEM o ponto ────────────────────────────
 
 
-def test_lookup_setor_do_ponto_dentro_da_malha(monkeypatch):
+def test_lookup_setor_do_ponto_dentro_da_malha(monkeypatch, tmp_path):
     # Setor A cobre o ponto (0,0 no CRS metrico local) por completo. Setor B fica fora do
     # ambito de A (nao compartilha fronteira com o ponto) mas ainda DENTRO do raio, com
     # renda/score bem diferentes -- serve para provar que o valor do ponto NAO e reciclagem
@@ -273,11 +279,10 @@ def test_lookup_setor_do_ponto_dentro_da_malha(monkeypatch):
     # Fatores FIXOS: desde a correcao de 2026-08-13 este campo e renda DOMICILIAR per capita
     # (V06004 x uplift x temporal / moradores), entao ele passou a depender do uplift. Sem
     # monkeypatch o esperado viraria funcao do artefato presente na maquina.
-    from motor_expansao.dashboard import censo_point
 
     uplift = 1.6
-    monkeypatch.setattr(censo_point, "uplift_composicao_por_setor", lambda *_a, **_k: uplift)
-    monkeypatch.setattr(censo_point._constants, "FATOR_TEMPORAL_RENDA", 1.0)
+    fixar_uplift_setor(monkeypatch, uplift)
+    fixar_fatores(monkeypatch, tmp_path, per_capita=1.0)
 
     result = analisar_ponto_censitario_setores(LAT_C, LNG_C, df)
 
@@ -389,7 +394,12 @@ def _bairro_row(
     }
 
 
-def test_agregar_perfil_bairro_agrega_todos_setores_do_bairro_por_cod_bairro():
+def test_agregar_perfil_bairro_agrega_todos_setores_do_bairro_por_cod_bairro(
+    monkeypatch, tmp_path
+):
+    # E1: a renda do perfil e a domiciliar CANONICA (V06004 x uplift do setor x F_dom).
+    fixar_uplift_setor(monkeypatch, 1.5)
+    fixar_fatores(monkeypatch, tmp_path, per_capita=1.2)
     df = pd.DataFrame(
         [
             _bairro_row(
@@ -412,8 +422,9 @@ def test_agregar_perfil_bairro_agrega_todos_setores_do_bairro_por_cod_bairro():
     assert perfil["populacao_total"] == pytest.approx(3000)
     assert perfil["domicilios_total"] == pytest.approx(300)
     assert perfil["densidade_hab_km2"] == pytest.approx(1500.0)
-    assert perfil["renda_media_domiciliar"] == pytest.approx(2666.67, abs=0.01)
-    assert perfil["metodo_renda_perfil_bairro"] == "renda_responsavel_media_ponderada_por_domicilios"
+    # Media da V06004 ponderada por domicilios = 2.666,67; x uplift 1,5 x F_dom 1,2 = 4.800.
+    assert perfil["renda_media_domiciliar"] == pytest.approx(4800.0, abs=0.01)
+    assert perfil["metodo_renda_perfil_bairro"] == "renda_domiciliar_media_ponderada_por_domicilios"
 
 
 def test_agregar_perfil_bairro_fallback_para_distrito_quando_bairro_ausente():
@@ -445,7 +456,11 @@ def test_agregar_perfil_bairro_fallback_para_distrito_quando_bairro_ausente():
     assert perfil["domicilios_total"] == pytest.approx(200)
 
 
-def test_agregar_perfil_bairro_renda_exclui_setor_com_domicilio_zero_ou_renda_nula():
+def test_agregar_perfil_bairro_renda_exclui_setor_com_domicilio_zero_ou_renda_nula(
+    monkeypatch, tmp_path
+):
+    fixar_uplift_setor(monkeypatch, 1.0)
+    fixar_fatores(monkeypatch, tmp_path, per_capita=1.0)
     df = pd.DataFrame(
         [
             _bairro_row(
@@ -517,16 +532,15 @@ def _setor_com_renda_completa(k: float, resp: float, moradores: float) -> dict[s
     return rec
 
 
-def test_renda_domiciliar_nao_leva_o_k_da_calibragem(monkeypatch):
+def test_renda_domiciliar_nao_leva_o_k_da_calibragem(monkeypatch, tmp_path):
     """O k NAO pode aparecer na renda domiciliar — o uplift ja fez essa conversao.
 
     O fixture usa k = 2,0, grande e obvio: se ele vazar, o numero DOBRA.
     """
-    from motor_expansao.dashboard import censo_point
 
     k, resp, moradores, uplift = 2.0, 3000.0, 3.0, 1.6
-    monkeypatch.setattr(censo_point, "uplift_composicao_por_setor", lambda *_a, **_k: uplift)
-    monkeypatch.setattr(censo_point._constants, "FATOR_TEMPORAL_RENDA", 1.0)
+    fixar_uplift_setor(monkeypatch, uplift)
+    fixar_fatores(monkeypatch, tmp_path, per_capita=1.0)
 
     result = analisar_ponto_censitario_setores(
         LAT_C, LNG_C, pd.DataFrame([_setor_com_renda_completa(k, resp, moradores)])
@@ -539,7 +553,7 @@ def test_renda_domiciliar_nao_leva_o_k_da_calibragem(monkeypatch):
     assert result["renda_domiciliar_total_raio"] != pytest.approx(resp * k * uplift, abs=0.01)
 
 
-def test_renda_per_capita_exibida_e_a_domiciliar_per_capita(monkeypatch):
+def test_renda_per_capita_exibida_e_a_domiciliar_per_capita(monkeypatch, tmp_path):
     """A per capita exibida e a renda do DOMICILIO dividida pelos moradores dele.
 
     Este teste substitui um anterior (de 2026-08-13 pela manha) que travava a per capita na
@@ -550,11 +564,10 @@ def test_renda_per_capita_exibida_e_a_domiciliar_per_capita(monkeypatch):
 
     O k segue intocado onde ele tem funcao: `renda_pct_nacional_calibrado` -> score.
     """
-    from motor_expansao.dashboard import censo_point
 
     k, resp, moradores, uplift = 2.0, 3000.0, 3.0, 1.6
-    monkeypatch.setattr(censo_point, "uplift_composicao_por_setor", lambda *_a, **_k: uplift)
-    monkeypatch.setattr(censo_point._constants, "FATOR_TEMPORAL_RENDA", 1.0)
+    fixar_uplift_setor(monkeypatch, uplift)
+    fixar_fatores(monkeypatch, tmp_path, per_capita=1.0)
 
     result = analisar_ponto_censitario_setores(
         LAT_C, LNG_C, pd.DataFrame([_setor_com_renda_completa(k, resp, moradores)])
@@ -569,13 +582,12 @@ def test_renda_per_capita_exibida_e_a_domiciliar_per_capita(monkeypatch):
     )
 
 
-def test_renda_domiciliar_cai_na_per_capita_BRUTA_quando_falta_a_v06004(monkeypatch):
+def test_renda_domiciliar_cai_na_per_capita_BRUTA_quando_falta_a_v06004(monkeypatch, tmp_path):
     """O fallback tambem nao pode reintroduzir o k pela porta dos fundos."""
-    from motor_expansao.dashboard import censo_point
 
     k, resp, moradores, uplift = 2.0, 3000.0, 3.0, 1.6
-    monkeypatch.setattr(censo_point, "uplift_composicao_por_setor", lambda *_a, **_k: uplift)
-    monkeypatch.setattr(censo_point._constants, "FATOR_TEMPORAL_RENDA", 1.0)
+    fixar_uplift_setor(monkeypatch, uplift)
+    fixar_fatores(monkeypatch, tmp_path, per_capita=1.0)
 
     rec = _setor_com_renda_completa(k, resp, moradores)
     del rec["renda_responsavel_media_setor_2022"]  # so sobra a per capita (bruta e calibrada)
@@ -585,7 +597,7 @@ def test_renda_domiciliar_cai_na_per_capita_BRUTA_quando_falta_a_v06004(monkeypa
     assert result["renda_domiciliar_total_raio"] == pytest.approx(resp * uplift, abs=0.01)
 
 
-def test_setor_do_ponto_e_raio_na_MESMA_escala(monkeypatch):
+def test_setor_do_ponto_e_raio_na_MESMA_escala(monkeypatch, tmp_path):
     """Com UM setor cobrindo o raio inteiro, o valor do ponto e o do raio tem de ser IGUAIS.
 
     E a trava do descasamento introduzido em 2026-08-13 e corrigido em seguida: naquele estado
@@ -598,11 +610,10 @@ def test_setor_do_ponto_e_raio_na_MESMA_escala(monkeypatch):
     setor so E aquele setor, entao qualquer diferenca aqui e diferenca de ESCALA — nao de
     agregacao. Voltar a ler a calibrada faz este teste falhar com `k` visivel: 2,0 no fixture.
     """
-    from motor_expansao.dashboard import censo_point
 
     k, resp, moradores, uplift = 2.0, 3000.0, 3.0, 1.6
-    monkeypatch.setattr(censo_point, "uplift_composicao_por_setor", lambda *_a, **_k: uplift)
-    monkeypatch.setattr(censo_point._constants, "FATOR_TEMPORAL_RENDA", 1.0)
+    fixar_uplift_setor(monkeypatch, uplift)
+    fixar_fatores(monkeypatch, tmp_path, per_capita=1.0)
 
     # Setor unico, grande o bastante para conter o ponto E cobrir todo o raio.
     rec = _setor_com_renda_completa(k, resp, moradores)
@@ -638,7 +649,7 @@ def test_setor_do_ponto_e_raio_na_MESMA_escala(monkeypatch):
     )
 
 
-def test_os_tres_campos_de_renda_per_capita_do_payload_na_MESMA_escala(monkeypatch):
+def test_os_tres_campos_de_renda_per_capita_do_payload_na_MESMA_escala(monkeypatch, tmp_path):
     """Os TRES campos irmaos de renda per capita tem de sair na mesma grandeza.
 
     O Relatorio Pontual expoe renda per capita em tres lugares do MESMO payload
@@ -656,11 +667,10 @@ def test_os_tres_campos_de_renda_per_capita_do_payload_na_MESMA_escala(monkeypat
     Com UM setor cobrindo o raio inteiro, os tres tem de coincidir: a media ponderada de um
     setor so' e' aquele setor, e min = mediana = max. Qualquer divergencia aqui e' de ESCALA.
     """
-    from motor_expansao.dashboard import censo_point
 
     k, resp, moradores, uplift = 2.0, 3000.0, 3.0, 1.6
-    monkeypatch.setattr(censo_point, "uplift_composicao_por_setor", lambda *_a, **_k: uplift)
-    monkeypatch.setattr(censo_point._constants, "FATOR_TEMPORAL_RENDA", 1.0)
+    fixar_uplift_setor(monkeypatch, uplift)
+    fixar_fatores(monkeypatch, tmp_path, per_capita=1.0)
 
     rec = _sector_record(
         "355030801000001",

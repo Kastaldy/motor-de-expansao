@@ -38,9 +38,17 @@ const CAIXA: React.CSSProperties = {
   width: 'fit-content',
 }
 
-const TITULO: React.CSSProperties = {
-  font: '500 8.5px/1 var(--f-ui)',
-  color: 'var(--tx-label)',
+/* TEXTO DA LEGENDA COM MAIS CONTRASTE (pedido do Vinicius, 2026-10-20: "texto mais
+   saturação com menos valor de cor, para facilitar a visibilidade"). Os três estilos
+   usavam os tokens de APOIO (`--tx-label`/`--tx-sub`, peso 400) e a caixa flutua sobre o
+   mapa, que é o fundo mais carregado da tela. Agora o texto usa os tokens FORTES do tema
+   e peso maior: no claro eles são os cinzas mais escuros (`--tx-strong` #2b2b2b,
+   `--tx-soft` #3a3a3a, contra #5c5c5c/#535353 de antes); no escuro, os mais claros
+   (#e6edf3/#cdd8e2, contra #727f8d/#8b97a5). Tamanhos e swatches intactos: a caixa não
+   cresce, só fica legível. */
+export const TITULO: React.CSSProperties = {
+  font: '700 8.5px/1 var(--f-ui)',
+  color: 'var(--tx-strong)',
   marginBottom: 5,
   textTransform: 'uppercase',
   letterSpacing: '.06em',
@@ -71,8 +79,8 @@ const SEPARADOR: React.CSSProperties = LEGENDA_VERTICAL
   ? { paddingTop: 5, borderTop: '1px solid var(--line-mid)', alignSelf: 'stretch' }
   : { paddingLeft: 7, borderLeft: '1px solid var(--line-mid)' }
 
-const NOME: React.CSSProperties = { font: '400 8.5px/1 var(--f-ui)', color: 'var(--tx-sub)' }
-const SUB: React.CSSProperties = { font: '400 7.5px/1 var(--f-num)', color: 'var(--tx-label)' }
+export const NOME: React.CSSProperties = { font: '600 8.5px/1 var(--f-ui)', color: 'var(--tx-strong)' }
+export const SUB: React.CSSProperties = { font: '500 7.5px/1 var(--f-num)', color: 'var(--tx-soft)' }
 
 /** Um bloco: swatch + nome (+ sublinha opcional com a leitura em alunos).
 
@@ -155,9 +163,7 @@ function LegendaCrescimento({ comAlunos }: { comAlunos?: boolean }) {
         {CLASSES_CRESCIMENTO.map(([cor, rotulo]) => (
           <span key={rotulo} style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
             <span style={{ width: 8, height: 8, borderRadius: 2, background: cor }} />
-            <span style={{ font: '400 8.5px/1 var(--f-ui)', color: 'var(--tx-sub)' }}>
-              {rotulo}
-            </span>
+            <span style={NOME}>{rotulo}</span>
           </span>
         ))}
         {comAlunos ? <MarcaAlunos /> : null}
