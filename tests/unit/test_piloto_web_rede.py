@@ -1182,3 +1182,34 @@ def test_filtro_de_master_desconhecido_nao_derruba_a_rota(rede: Path) -> None:
     """
     carteira = pilot.rede_carteira(master="Quem Nao Existe")
     assert carteira["unidades"] == []
+
+
+def test_linha_da_rede_inteira_media_e_total(rede: Path) -> None:
+    """A linha da rede no topo da Carteira (pedido do Vinicius, 2026-10-20).
+
+    `media` e' a referencia do "% vs media" de cada celula -- recalculada aqui a mao das
+    unidades comparaveis --, `total` e' o mesmo numero dos KPIs, e as duas IGNORAM o filtro.
+    """
+    completa = pilot.rede_carteira(mes="2026-07")
+    filtrada = pilot.rede_carteira(mes="2026-07", uf="RJ")
+    linha = completa["rede_inteira"]
+    assert linha == filtrada["rede_inteira"]
+    assert set(linha["media"]) == set(linha["total"]) == {"faturamento", "ativos", "churn_pct", "cancelados", "nps"}
+
+    comparaveis = [u for u in completa["unidades"] if u["comparavel"]]
+    assert linha["n_comparaveis"] == len(comparaveis)
+    assert linha["n_unidades"] == completa["totais"]["rede"]
+    for chave in ("faturamento", "ativos", "churn_pct", "nps"):
+        valores = [u["metricas"][chave]["atual"] for u in comparaveis if u["metricas"][chave]["atual"] is not None]
+        # Tolerancia de arredondamento: a celula sai com 1 casa nas taxas, a media vem do bruto.
+        assert linha["media"][chave]["atual"] == pytest.approx(sum(valores) / len(valores), abs=0.06)
+
+    # Uma unidade com o valor da media le ~0% no "% vs media" da propria celula.
+    u = comparaveis[0]
+    m = u["metricas"]["faturamento"]
+    esperado = 100.0 * (m["atual"] - linha["media"]["faturamento"]["atual"]) / linha["media"]["faturamento"]["atual"]
+    assert m["vs_media_pct"] == pytest.approx(esperado, abs=0.1)
+
+    # Total = KPI do topo sem filtro (soma para volume, taxa ponderada para churn e NPS).
+    for chave in linha["total"]:
+        assert linha["total"][chave] == completa["kpis"][chave]

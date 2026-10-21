@@ -1191,13 +1191,7 @@ def contexto_comparativo(
     ADMINISTRACAO (R$ 218 de faturamento) na media contra a qual as 89 sao medidas.
     """
     saida = mes.copy()
-    if comparaveis is None:
-        comparaveis = (
-            saida["operacao_mes_cheio"].fillna(False).astype(bool)
-            if "operacao_mes_cheio" in saida.columns
-            else pd.Series(True, index=saida.index)
-        )
-    comparaveis = comparaveis.reindex(saida.index).fillna(False).astype(bool)
+    comparaveis = mascara_comparaveis(saida, comparaveis)
 
     for espec in metricas:
         if espec.chave not in saida.columns:
@@ -1212,6 +1206,44 @@ def contexto_comparativo(
             if pd.notna(media)
             else pd.Series(float("nan"), index=valores.index, dtype="float64")
         )
+    return saida
+
+
+def mascara_comparaveis(mes: pd.DataFrame, comparaveis: pd.Series | None = None) -> pd.Series:
+    """Quem entra no ranking e na media da rede: por padrao, quem operou a janela inteira.
+
+    Uma definicao so', lida por `contexto_comparativo` (o `vs_media` de cada celula) e por
+    `medias_da_rede` (a linha "media da rede" da Carteira) -- senao a linha e o "% vs media"
+    da celula mediriam contra universos diferentes e uma unidade com o valor da linha nao
+    leria "na media".
+    """
+    if comparaveis is None:
+        comparaveis = (
+            mes["operacao_mes_cheio"].fillna(False).astype(bool)
+            if "operacao_mes_cheio" in mes.columns
+            else pd.Series(True, index=mes.index)
+        )
+    return comparaveis.reindex(mes.index).fillna(False).astype(bool)
+
+
+def medias_da_rede(
+    mes: pd.DataFrame,
+    chaves: Iterable[str],
+    comparaveis: pd.Series | None = None,
+) -> dict[str, float | None]:
+    """A media SIMPLES por unidade de cada metrica -- a MESMA de `contexto_comparativo`.
+
+    E' a referencia do "% vs media da rede": uma unidade cujo valor e' igual ao devolvido
+    aqui le 0% ali. Metrica ausente ou sem nenhuma unidade com valor devolve `None`.
+    """
+    mascara = mascara_comparaveis(mes, comparaveis)
+    saida: dict[str, float | None] = {}
+    for chave in chaves:
+        if chave not in mes.columns:
+            saida[chave] = None
+            continue
+        media = pd.to_numeric(mes[chave], errors="coerce").where(mascara).mean()
+        saida[chave] = float(media) if pd.notna(media) else None
     return saida
 
 

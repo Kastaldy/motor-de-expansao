@@ -99,8 +99,8 @@ def renda_entregue(staging: Path, monkeypatch: pytest.MonkeyPatch, tmp_path: Pat
     cap: dict = {}
     monkeypatch.setattr(service, "_competitors_ultra", lambda s: (None, None))
     monkeypatch.setattr(service, "_dominio_df", lambda s: None)
-    monkeypatch.setattr(relmun, "_carregar_bairros_por_hex", lambda uf, cod, d: None)
-    monkeypatch.setattr(relmun, "carregar_bairros_geo", lambda uf, cod, d: None)
+    monkeypatch.setattr(relmun, "_carregar_bairros_por_hex", lambda uf, cod, d, **k: None)
+    monkeypatch.setattr(relmun, "carregar_bairros_geo", lambda uf, cod, d, **k: None)
     monkeypatch.setattr(relmun, "carregar_poligono_municipio", lambda *a, **k: None)
 
     def _agregar(df, **k):
