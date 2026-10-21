@@ -109,7 +109,7 @@ from motor_expansao.dimensionamento.payload_viabilidade import (  # noqa: E402
     montar_payload_viabilidade,
 )
 from motor_expansao.renda import hex as _renda_hex  # noqa: E402
-from motor_expansao.renda import insumos as _renda_insumos  # noqa: E402
+from motor_expansao.renda import setor as _renda_setor  # noqa: E402
 
 # --- Superficie que este modulo continua expondo, por ATRIBUICAO ------------------
 # Os nomes abaixo nao sao usados AQUI DENTRO — sao lidos de fora, por `app.<nome>`
@@ -4453,8 +4453,12 @@ def _perfil_do_cliente() -> dict[str, Any]:
     Repeti-la aqui era uma quarta copia, que envelhece calada como qualquer outra.
 
     As duas RESOLVIDAS, que nao sao transcricao de campo do perfil:
-      reguas.bandas_renda_setor     -> as faixas do choropleth de renda por setor
-      reguas.bandas_densidade_setor -> idem, densidade populacional
+      reguas.bandas_renda_setor     -> as faixas de renda PER CAPITA (`RENDA_PER_CAPITA_BANDS`)
+      reguas.bandas_densidade_setor -> as faixas do calor de densidade populacional
+
+    Desde a E1 o mapa de calor de RENDA por setor pinta a renda media DOMICILIAR do setor,
+    nas faixas domiciliares do front (`RENDA_DOMICILIAR_SETOR_BANDS`, `web/src/lib/colors.ts`):
+    `bandas_renda_setor` sao per capita e NAO alimentam esse calor.
 
     Elas saem daqui JA RESOLVIDAS pelo Python (`RENDA_PER_CAPITA_BANDS` /
     `DENSIDADE_POP_BANDS`), e nao como o campo cru `reguas.faixas_*` do perfil. E'
@@ -6491,7 +6495,11 @@ def _ranking_hexagonos(
                 "quadrante": _texto(r.get(COL_QUADRANTE)),
                 "score": _num(r.get("score_setor_2022_calibrado"), 1),
                 "pop": _num(r.get("pop_leitura")),
-                "renda": _num(r.get("renda_leitura")),
+                # Renda domiciliar PER CAPITA canonica, a MESMA do tooltip do hexagono
+                # (`_renda_per_capita_hex`, modulo da renda). Ate a E1 servia `renda_leitura`
+                # crua: a calibrada na escala do score (com k, sem uplift nem fator) ou a SIDRA
+                # municipal sem fator, misturadas por linha.
+                "renda": _renda_per_capita_hex(r),
                 "tag": etiqueta,
                 "tom": tom,
                 "tag_cor": cor,
@@ -7690,6 +7698,7 @@ def _setores_heatmap_features(uf: str, cod_municipio: str) -> list[dict[str, Any
     if df.empty:
         return []
 
+    _renda_staging_configurado()  # aponta os insumos da renda para o STAGING_DIR (1x)
     feats: list[dict[str, Any]] = []
     for _, r in df.iterrows():
         wkb = r.get("geometry_wkb")
@@ -7712,13 +7721,24 @@ def _setores_heatmap_features(uf: str, cod_municipio: str) -> list[dict[str, Any
         # existe: rio/rodovia cortando o poligono) vira mais de uma "peca" aqui, todas
         # com os MESMOS atributos — o deck.gl PolygonLayer nao desenha corretamente um
         # MultiPolygon dentro de uma unica entrada `getPolygon`.
+        # Renda media DOMICILIAR canonica do setor, pelo modulo da renda (E1): (V06004 x uplift
+        # do setor) x F_dom -- a mesma conta do Relatorio Pontual e da camada de setores da
+        # ficha da rede. Ate a E1 servia a coluna CALIBRADA crua (escala do score, V06004 /
+        # moradores x k, sem uplift nem fator) sob o rotulo "Renda domiciliar": 19% a 35% da
+        # domiciliar do mesmo setor.
+        # A chave MUDA de `renda` para `renda_domiciliar` de proposito (quebra declarada): o
+        # bundle antigo pinta `renda` nas faixas PER CAPITA, entao servir a domiciliar sob a
+        # chave velha jogaria quase todo setor na faixa do topo -- cor errada em silencio. Sem a
+        # chave, a aba ainda nao recarregada cai no cinza "sem leitura" ate o reload (SPA e API
+        # saem na mesma imagem).
+        domiciliar = _renda_setor.renda_domiciliar_da_linha(r, uf, cod_municipio)
         for parte in cobertura_1km._aneis(geom):
             feats.append(
                 {
                     "setor": _texto(r.get("cod_setor")),
                     "anel": parte,
                     "densidade": _num(r.get("densidade_pop_setor_hab_km2")),
-                    "renda": _num(r.get("renda_per_capita_setor_2022_calibrada")),
+                    "renda_domiciliar": _num(domiciliar),
                     "pop": _num(r.get("pop_total_setor_2022")),
                 }
             )
@@ -10159,6 +10179,9 @@ def _rede_territorio() -> dict[str, dict[str, Any]]:
         item["renda_domiciliar"] = (
             _rede_renda_domiciliar(hexes.loc[celulas], pesos.get(uid)) if celulas else None
         )
+        item["renda_per_capita"] = (
+            _rede_renda_per_capita(hexes.loc[celulas], pesos.get(uid)) if celulas else None
+        )
         for rede in item.get("redes_no_entorno", []):
             rede["logo"] = _icone_rede(rede["rede"])
     return fatos
@@ -10171,6 +10194,24 @@ def _rede_renda_domiciliar(bloco: pd.DataFrame, pesos: dict[str, float] | None =
     `_renda_domiciliar_hex`): nada de fórmula nova, senão a ficha e o mapa mostrariam dois
     números para o mesmo lugar. Hexágono sem município ou sem renda fica fora da média.
     """
+    return _rede_renda_do_disco(bloco, pesos, _renda_domiciliar_hex)
+
+
+def _rede_renda_per_capita(bloco: pd.DataFrame, pesos: dict[str, float] | None = None) -> float | None:
+    """Renda domiciliar PER CAPITA do disco da unidade, ponderada por população (E1).
+
+    A cadeia do tooltip (`_renda_per_capita_hex`, com o PRÓPRIO fator), não a domiciliar
+    dividida por moradores. Até a E1 era a média da calibrada crua (escala do score).
+    """
+    return _rede_renda_do_disco(bloco, pesos, _renda_per_capita_hex)
+
+
+def _rede_renda_do_disco(
+    bloco: pd.DataFrame,
+    pesos: dict[str, float] | None,
+    conta: Callable[[pd.Series], float | None],
+) -> float | None:
+    """Média, ponderada pela população dentro do raio, de uma renda do hexágono (`conta`)."""
     if not len(bloco):
         return None
     trabalho = bloco.copy()
@@ -10185,11 +10226,11 @@ def _rede_renda_domiciliar(bloco: pd.DataFrame, pesos: dict[str, float] | None =
             cod_txt = cod_txt[:-2]
         linha = linha.copy()
         linha["cod_municipio"] = cod_txt
-        dom = _renda_domiciliar_hex(linha)
+        valor = conta(linha)
         # Peso = população DENTRO do raio de 1 km (fração da área do hexágono no círculo).
         pop = (_numf(linha.get("pop_total_setor_2022")) or 0.0) * (pesos or {}).get(linha.name, 1.0)
-        if dom is not None and pop > 0:
-            soma += dom * pop
+        if valor is not None and pop > 0:
+            soma += valor * pop
             peso += pop
     return _num(soma / peso, 0) if peso else None
 
@@ -10326,22 +10367,10 @@ def _rede_setores_entorno(unidade_id: str) -> str:
                 geom = geom.simplify(SETORES_HEATMAP_SIMPLIFY_GRAUS, preserve_topology=True)
             except Exception:  # noqa: BLE001
                 pass
-            renda = _numf(r.get("renda_responsavel_media_setor_2022"))
-            if renda is None:
-                # Fallback pela per capita BRUTA, nunca a calibrada (reintroduziria o k).
-                renda = _renda.v06004_de_fallback(
-                    renda,
-                    _numf(r.get("renda_per_capita_setor_2022")),
-                    _numf(r.get("avg_moradores_domicilio_setor_2022")),
-                )
-            # (V06004 x uplift do setor) x F_dom(uf), pelo modulo da renda (E0).
-            domiciliar = (
-                _renda.renda_domiciliar(
-                    renda, float(_renda_insumos.uplift_setor(r.get("cod_setor"), uf, cod)), uf
-                )
-                if renda is not None
-                else None
-            )
+            # (V06004 x uplift do setor) x F_dom(uf), pelo modulo da renda; a V06004 ausente e
+            # reconstruida pela per capita BRUTA, nunca a calibrada (reintroduziria o k). A
+            # MESMA redacao do mapa de calor de setor do Mapa (`renda.setor`, E1).
+            domiciliar = _renda_setor.renda_domiciliar_da_linha(r, uf, cod)
             for parte in cobertura_1km._aneis(geom):
                 feats.append(
                     {
@@ -12443,6 +12472,71 @@ def _alunos_p50_por_m2(m2_arred: int) -> float | None:
         return None
 
 
+#: Coluna do artefato do coletor -> coluna da base do piloto com o MESMO significado. O
+#: coletor copia a renda do hexagono como esta na base (a calibrada na escala do score, ou a
+#: SIDRA municipal); o mapeamento so serve ao fallback de `_op_renda_pc_por_hex`.
+_OP_RENDA_ORIGEM = {
+    "censo_renda_per_capita_hex": "renda_per_capita_setor_2022_calibrada",
+    "m1_renda_per_capita": "renda_per_capita",
+}
+
+
+def _op_renda_pc_por_hex(df: pd.DataFrame) -> dict[int, float | None]:
+    """Renda domiciliar PER CAPITA canonica de cada imovel (indice de `df` -> valor), E1.
+
+    A MESMA do tooltip do hexagono do imovel: a linha do hexagono e lida da base do piloto
+    (so as colunas da renda, filtrada pelos `hex_id`) e passa por `_renda_per_capita_hex`.
+    Ate a E1 a tela mostrava a coluna do coletor CRUA (a calibrada na escala do score, com k
+    e sem uplift nem fator, ou a SIDRA municipal sem fator).
+
+    Hexagono fora da base: o valor do coletor passa pelo MESMO modulo (`renda.hex`), com a
+    coluna equivalente como origem e a cascata da UF no lugar do municipio que falta. Nunca
+    sai cru.
+    """
+    saida: dict[int, float | None] = {}
+    if df.empty:
+        return saida
+    _renda_staging_configurado()
+    base = pd.DataFrame()
+    ids = sorted({str(h) for h in df.get("hex_id", pd.Series(dtype=object)).dropna()})
+    if ids and ENRICHED_DIR.exists():
+        try:
+            import pyarrow.compute as pc
+            import pyarrow.dataset as ds
+
+            dset = ds.dataset(str(ENRICHED_DIR), partitioning="hive")
+            cols = [
+                c for c in ("hex_id", "uf", "cod_municipio", *_renda_hex.COLS_RENDA_LEITURA)
+                if c in set(dset.schema.names)
+            ]
+            base = (
+                dset.to_table(filter=pc.field("hex_id").isin(ids), columns=cols)
+                .to_pandas()
+                .drop_duplicates("hex_id")
+                .set_index("hex_id")
+            )
+        except Exception as erro:  # noqa: BLE001 -- sem a base, cai no fallback pelo modulo
+            print(f"[oportunidades] base do hexagono ilegivel ({erro})", file=sys.stderr)
+            base = pd.DataFrame()
+    if len(base):
+        base["renda_leitura"], base["renda_origem"] = _serie_renda(base)
+    for idx, linha in df.iterrows():
+        hid = _op_txt(linha.get("hex_id"))
+        if hid and hid in base.index:
+            saida[idx] = _renda_per_capita_hex(base.loc[hid])
+            continue
+        uf = _op_txt(linha.get("uf"))
+        valor = None
+        for coluna, origem in _OP_RENDA_ORIGEM.items():
+            v = _op_num(linha.get(coluna))
+            if v:
+                b = _renda_hex.base_renda_domiciliar(v, origem, uf, None, _k_calibracao_renda)
+                valor = _num(_renda_hex.renda_per_capita_hex(b, uf, None))
+                break
+        saida[idx] = valor
+    return saida
+
+
 def _carregar_oportunidades() -> list[dict[str, Any]]:
     """Le o parquet UMA vez e monta os dicts sem PII, ordenados por residual."""
     global _OPORTUNIDADES_CACHE
@@ -12470,8 +12564,9 @@ def _carregar_oportunidades() -> list[dict[str, Any]]:
             ordenar_por, ascending=False, na_position="last", kind="stable"
         )
     ticket = _ticket_proj_mensal()
+    renda_pc = _op_renda_pc_por_hex(df)
     itens: list[dict[str, Any]] = []
-    for r in df.itertuples(index=False):
+    for idx, r in zip(df.index, df.itertuples(index=False), strict=True):
         d = r._asdict()
         area = _op_num(d.get("area_relevante_m2")) or _op_num(d.get("area_util_m2"))
         aluguel = _op_num(d.get("preco_aluguel")) or _op_num(d.get("preco"))
@@ -12505,8 +12600,7 @@ def _carregar_oportunidades() -> list[dict[str, Any]]:
                 "censo_score": _op_num(d.get("censo_score_setorial_hex"), 1),
                 "faixa": _op_txt(d.get("m1_faixa_oportunidade")),
                 "pop": _op_num(d.get("censo_pop_hex")) or _op_num(d.get("m1_pop_hex")),
-                "renda_pc": _op_num(d.get("censo_renda_per_capita_hex"))
-                or _op_num(d.get("m1_renda_per_capita")),
+                "renda_pc": renda_pc.get(idx),
                 "sam": _op_num(d.get("m1_sam_fitness")),
                 "n_ultra": _op_num(d.get("m1_n_unidades_ultra")),
                 "first_seen": primeiro[:10] if primeiro else None,

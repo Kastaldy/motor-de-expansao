@@ -1323,7 +1323,7 @@ export default function HexMap({
               getFillColor: (d) =>
                 (modoCalor === 'densidade'
                   ? densidadeSetorToColor(d.densidade)
-                  : rendaSetorToColor(d.renda)) ?? [120, 120, 140, 60],
+                  : rendaSetorToColor(d.renda_domiciliar)) ?? [120, 120, 140, 60],
               stroked: false,
               updateTriggers: { getFillColor: [modoCalor] },
               pickable: false,

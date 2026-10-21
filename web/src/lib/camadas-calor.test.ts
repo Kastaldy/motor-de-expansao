@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 
 import { alternarCalor, alternarCoresHex, legendaDoCalor, SEM_LEITURA_CALOR } from './camadas-calor'
-import { DENSIDADE_BANDS, RENDA_SETOR_BANDS } from './colors'
+import { DENSIDADE_BANDS, RENDA_DOMICILIAR_SETOR_BANDS } from './colors'
 
 describe('alternarCalor', () => {
   it('ligar um calor desliga as cores dos hexágonos', () => {
@@ -72,8 +72,9 @@ describe('legendaDoCalor', () => {
     expect(d.faixas[0].cor).toBe('rgba(254,229,217,0.59)')
 
     const r = legendaDoCalor('renda')
-    expect(r.titulo).toBe('Renda domiciliar per capita')
-    expect(r.faixas.map((f) => f.rotulo)).toEqual(RENDA_SETOR_BANDS.map(([, x]) => x))
+    expect(r.titulo).toBe('Renda domiciliar')
+    expect(r.unidade).toBe('por domicílio/mês')
+    expect(r.faixas.map((f) => f.rotulo)).toEqual(RENDA_DOMICILIAR_SETOR_BANDS.map(([, x]) => x))
     expect(r.faixas.at(-1)?.cor).toBe('rgba(0,204,0,0.59)')
   })
 

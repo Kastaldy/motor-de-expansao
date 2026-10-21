@@ -166,7 +166,7 @@ JSON é o padrão. PDF é ativado por qualquer das 3 formas abaixo (em ordem de 
 | `n_setores` | `int` | Setores IBGE 2022 cruzados |
 | `pop_total_raio` | `float \| null` | População total no raio |
 | `renda_per_capita_media_raio` | `float \| null` | Renda **domiciliar per capita** média ponderada (conceito IBGE/SIDRA). ⚠️ **Escala mudou em 2026-08-14**: antes saía da coluna calibrada (~19% abaixo do IBGE); agora = renda domiciliar ÷ moradores — o valor SOBE ~50% para o mesmo ponto |
-| `renda_media_domiciliar_raio` | `float \| null` | Renda domiciliar **PRÉ-uplift** (R$/mês por domicílio, V06004 **bruta** desde 2026-08-14 — antes carregava o `k` da calibração, ~23% maior), ponderada por domicílios — menor que a exibida no PDF |
+| `renda_media_domiciliar_raio` | `float \| null` | Renda média **domiciliar** do raio (R$/mês por domicílio), ponderada por domicílios, com uplift de composição setorial e fator temporal — **igual a `renda_domiciliar_total_raio`** e ao card do PDF. ⚠️ **Escala mudou na E1 do plano de correção da renda (2026-10)**: até então era a base **pré-uplift** (renda do responsável, V06004 bruta, ~0,53x do card); para o mesmo ponto o valor SOBE. Não aplique uplift nem fator sobre ele. Nome e tipo inalterados |
 | `renda_domiciliar_total_raio` | `float \| null` | Renda **por domicílio** (R$/mês) com uplift setorial + fator temporal — NÃO é massa/somatório; é o valor exibido no PDF. ⚠️ Escala corrigida em 2026-08-14 (fim da dupla contagem do `k`: cai ÷1,2335 para o mesmo ponto) |
 | `domicilios_total_raio` | `float \| null` | Domicílios estimados no raio |
 | `metodo_renda_domiciliar_raio` | `string \| null` | `"ponderada_domicilios_estimados"`, `"ponderada_populacao_ou_area"` ou `"ausente"` |

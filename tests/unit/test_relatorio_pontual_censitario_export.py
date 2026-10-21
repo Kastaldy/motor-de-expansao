@@ -147,7 +147,7 @@ _PERFIL_BAIRRO_OK = {
     "area_total_m2": 2_000_000.0,
     "densidade_hab_km2": 6172.5,
     "renda_media_domiciliar": 3210.55,
-    "metodo_renda_perfil_bairro": "renda_responsavel_media_ponderada_por_domicilios",
+    "metodo_renda_perfil_bairro": "renda_domiciliar_media_ponderada_por_domicilios",
     "flag_perfil_disponivel": True,
     "municipio_nome": "SAO PAULO",
     "uf": "SP",

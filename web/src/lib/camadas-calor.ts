@@ -1,4 +1,4 @@
-import { DENSIDADE_BANDS, RENDA_SETOR_BANDS } from './colors'
+import { DENSIDADE_BANDS, RENDA_DOMICILIAR_SETOR_BANDS } from './colors'
 
 /* Mapa de calor de setor censitário: as regras puras das duas chaves (densidade e
    renda) e da legenda delas, num lugar só para serem testadas — o vitest roda em node
@@ -60,12 +60,13 @@ function rgba([r, g, b, a]: readonly number[]): string {
 
 /** Título, unidade e faixas da legenda de cada modo — os rótulos são os das réguas. */
 export function legendaDoCalor(modo: ModoCalor): LegendaCalor {
-  const faixas = modo === 'densidade' ? DENSIDADE_BANDS : RENDA_SETOR_BANDS
+  const faixas = modo === 'densidade' ? DENSIDADE_BANDS : RENDA_DOMICILIAR_SETOR_BANDS
   return {
-    // A coluna é a renda domiciliar PER CAPITA do setor (a régua do Relatório Pontual),
-    // não a renda do domicílio: o título diz isso, senão "R$ 5.000" leria como a casa.
-    titulo: modo === 'densidade' ? 'Densidade demográfica' : 'Renda domiciliar per capita',
-    unidade: modo === 'densidade' ? 'hab/km²' : 'por pessoa/mês',
+    // Desde a E1 o servidor manda a renda média DOMICILIAR do setor (a mesma do card do
+    // Relatório Pontual), e as faixas são as domiciliares: o título e a unidade dizem isso,
+    // senão "R$ 14.000" leria como renda de uma pessoa.
+    titulo: modo === 'densidade' ? 'Densidade demográfica' : 'Renda domiciliar',
+    unidade: modo === 'densidade' ? 'hab/km²' : 'por domicílio/mês',
     faixas: faixas.map(([, rotulo, cor]) => ({ cor: rgba(cor), rotulo })),
   }
 }

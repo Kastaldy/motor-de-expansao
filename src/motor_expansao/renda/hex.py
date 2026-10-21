@@ -230,3 +230,54 @@ def renda_domiciliar_por_hex(
         if base is not None:
             out[hex_id] = base * fator_dom
     return out
+
+
+def renda_per_capita_por_linha(
+    df: pd.DataFrame,
+    *,
+    precedencia: Sequence[str] = COLS_RENDA_LEITURA,
+    uf: str | None = None,
+    cod_municipio: str | None = None,
+    staging_dir: Path | str | None = None,
+) -> pd.Series:
+    """Renda domiciliar per capita CANONICA de cada hexagono de `df` (float64, NaN sem leitura).
+
+    A mesma cadeia do card (`serie_renda` -> `base_renda_domiciliar` -> `renda_per_capita_hex`),
+    para superficies que ate a E1 exibiam a coluna de origem CRUA (a calibrada na escala do
+    score, ou a SIDRA municipal sem fator). `precedencia` restringe as colunas lidas -- o
+    painel per capita municipal, por exemplo, le so a SIDRA (`("renda_per_capita",)`).
+
+    UF e municipio da cascata: os da PROPRIA linha (`uf`/`cod_municipio`) quando existem;
+    senao, os argumentos. Sem municipio a cascata cai na mediana da UF (nao em branco): quem
+    exige o municipio, como o tooltip, filtra antes de chamar.
+    """
+    if df is None or df.empty:
+        return pd.Series(dtype="float64")
+    valor, origem = serie_renda(df, precedencia)
+    k_lido: list[float] = []
+
+    def _k() -> float:
+        if not k_lido:
+            k_lido.append(k_calibracao_renda(staging_dir))
+        return k_lido[0]
+
+    def _txt(v: object) -> str | None:
+        if v is None or v is pd.NA or (isinstance(v, float) and math.isnan(v)):
+            return None
+        s = str(v).strip().removesuffix(".0")
+        return s or None
+
+    ufs = df["uf"] if "uf" in df.columns else pd.Series([None] * len(df), index=df.index)
+    cods = (
+        df["cod_municipio"]
+        if "cod_municipio" in df.columns
+        else pd.Series([None] * len(df), index=df.index)
+    )
+    saida: list[float] = []
+    for v, o, uf_l, cod_l in zip(valor, origem, ufs, cods, strict=True):
+        uf_x = _txt(uf_l) or uf
+        cod_x = _txt(cod_l) or cod_municipio
+        base = base_renda_domiciliar(v, o, uf_x, cod_x, _k)
+        pc = renda_per_capita_hex(base, uf_x, cod_x)
+        saida.append(float("nan") if pc is None else float(pc))
+    return pd.Series(saida, index=df.index, dtype="float64")

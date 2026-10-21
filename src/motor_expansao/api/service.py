@@ -997,7 +997,11 @@ def analisar_ponto(lat: float, lng: float, consumidor: str | None, settings: Set
         "n_setores": result.get("n_setores", 0),
         "pop_total_raio": result.get("pop_total_raio"),
         "renda_per_capita_media_raio": result.get("renda_per_capita_media_raio"),
-        "renda_media_domiciliar_raio": result.get("renda_media_domiciliar_raio"),
+        # E1 (plano de correcao da renda): o campo passa a ser a renda media DOMICILIAR
+        # canonica do raio -- a do card do PDF (V06004 x uplift do setor x fator, pelo modulo
+        # da renda) -- e o nome fica verdadeiro. Ate a E1 servia a base PRE-uplift do motor
+        # (V06004 bruta = renda do RESPONSAVEL, ~0,53x), sob nome de renda domiciliar.
+        "renda_media_domiciliar_raio": result.get("renda_domiciliar_total_raio"),
         "renda_domiciliar_total_raio": result.get("renda_domiciliar_total_raio"),
         "domicilios_total_raio": result.get("domicilios_total_raio"),
         "metodo_renda_domiciliar_raio": result.get("metodo_renda_domiciliar_raio"),

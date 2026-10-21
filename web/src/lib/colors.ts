@@ -343,7 +343,7 @@ export function conc1kmToColor(
 }
 
 /* ---------------------------------------------------------------------------
-   Bloco D — mapa de calor de SETOR censitario (densidade / renda per capita).
+   Bloco D — mapa de calor de SETOR censitario (densidade / renda domiciliar).
 
    Porte 1:1 de `dashboard/constants.py` (mesmos cortes e cores do Relatorio Pontual
    Censitario, estilo GeoFusion) — a ideia e' que o operador reconheca a MESMA leitura
@@ -363,17 +363,20 @@ export const DENSIDADE_BANDS: readonly FaixaAbsoluta[] = [
   [Infinity, '>25.000', [165, 15, 21, 150]],
 ]
 
-/** RENDA_PER_CAPITA_BANDS (dashboard/constants.py) — moeda de renda/pessoa/mês,
- *  amarelo->verde. O rótulo usa `moedaRenda()` (não `moeda()` cru — a Argentina serve
- *  a coluna de renda em USD, diferente da moeda oficial) em vez do símbolo cravado;
- *  cortes e cores são os mesmos números do núcleo, travados por
- *  `tests/unit/test_paridade_paleta_web.py`. */
-export const RENDA_SETOR_BANDS: readonly FaixaAbsoluta[] = [
-  [1_000, `até ${moedaRenda()} 1.000`, [247, 244, 139, 150]],
-  [2_000, `${moedaRenda()} 1.001-2.000`, [255, 255, 0, 150]],
-  [3_500, `${moedaRenda()} 2.001-3.500`, [255, 210, 28, 150]],
-  [5_000, `${moedaRenda()} 3.501-5.000`, [168, 255, 168, 150]],
-  [Infinity, `>${moedaRenda()} 5.000`, [0, 204, 0, 150]],
+/** RENDA_MEDIA_DOMICILIAR_BANDS (dashboard/constants.py) — moeda de renda/domicílio/mês,
+ *  amarelo->verde: as MESMAS faixas domiciliares (2.000/4.000/8.000/14.000) da camada de
+ *  renda do Relatório Pontual e da ficha da rede. Desde a E1 o mapa de calor de setor pinta
+ *  a renda DOMICILIAR do setor (o servidor manda `renda_domiciliar`); até ali pintava a
+ *  per capita calibrada nas faixas per capita, sob o rótulo "Renda domiciliar". O rótulo usa
+ *  `moedaRenda()` (não `moeda()` cru — a Argentina serve a coluna de renda em USD, diferente
+ *  da moeda oficial) em vez do símbolo cravado; cortes e cores são os mesmos números do
+ *  núcleo, travados por `tests/unit/test_paridade_paleta_web.py`. */
+export const RENDA_DOMICILIAR_SETOR_BANDS: readonly FaixaAbsoluta[] = [
+  [2_000, `até ${moedaRenda()} 2.000`, [247, 244, 139, 150]],
+  [4_000, `${moedaRenda()} 2.001-4.000`, [255, 255, 0, 150]],
+  [8_000, `${moedaRenda()} 4.001-8.000`, [255, 210, 28, 150]],
+  [14_000, `${moedaRenda()} 8.001-14.000`, [168, 255, 168, 150]],
+  [Infinity, `>${moedaRenda()} 14.000`, [0, 204, 0, 150]],
 ]
 
 function faixaAbsolutaToColor(
@@ -391,7 +394,7 @@ export function densidadeSetorToColor(valor: number | null | undefined, alpha = 
   return faixaAbsolutaToColor(valor, DENSIDADE_BANDS, alpha)
 }
 
-/** Cor do polígono de setor pela renda per capita (R$/mês). `null` = sem leitura. */
+/** Cor do polígono de setor pela renda média domiciliar (R$/domicílio/mês). `null` = sem leitura. */
 export function rendaSetorToColor(valor: number | null | undefined, alpha = 150): RGBA | null {
-  return faixaAbsolutaToColor(valor, RENDA_SETOR_BANDS, alpha)
+  return faixaAbsolutaToColor(valor, RENDA_DOMICILIAR_SETOR_BANDS, alpha)
 }

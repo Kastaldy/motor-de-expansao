@@ -38,6 +38,21 @@ O que ele procura (AST, sem docstrings; comentarios nao entram na arvore)
   (`1.1641`). Sem isto, `x * _renda.fator(uf, "domiciliar")` abriria um segundo ponto de
   aplicacao que o `VIGENTE` novo nao alcancaria.
 
+- **R6** (E1) -- SUPERFICIE servindo renda CRUA: num campo de payload/linha cujo nome tem
+  `renda` (chave de dict literal ou `x["...renda..."] = ...`), o valor LE diretamente (argumento
+  de chamada, como `r.get("...")`/`media("...")`, ou indice `df["..."]`) uma coluna de renda
+  crua -- a V06004 (`renda_responsavel_media_setor_2022`), a calibrada na escala do score, a per
+  capita bruta, a SIDRA municipal (`renda_per_capita`), a `renda_leitura` do hexagono, as
+  copias do coletor (`censo_renda_per_capita_hex`, `m1_renda_per_capita`) ou a base pre-uplift
+  do motor do ponto (`renda_media_domiciliar_raio`) -- SEM passar por uma conversao do modulo
+  (chamada cujo nome tem `renda_domiciliar`/`renda_per_capita`/`renda_pc`, como
+  `_renda_per_capita_hex(r)` ou `renda_domiciliar_da_linha(r, uf, cod)`). Copiar uma COLUNA DE
+  INSUMO do artefato sob o PROPRIO nome (`{"renda_per_capita_setor_2022": r.get(<mesmo nome>)}`)
+  nao e exibir renda: e passar o insumo adiante. Escopo: as superficies (`web/server/`,
+  `src/motor_expansao/api/`, `src/motor_expansao/dashboard/`); o score, o M1 e os produtores
+  LEEM as colunas cruas por definicao. Era o defeito das telas da frente (b): mapa de calor de
+  setor, `/api/hexagonos`, rede, Oportunidades e o campo `renda_media_domiciliar_raio` da API.
+
 "Operando de `*` ou `/`" inclui as formas equivalentes por chamada (`a.mul(b)`, `.div`,
 `.truediv`, `np.multiply`, `np.divide`, `operator.mul`, `operator.truediv`...) e os ALIASES:
 um nome atribuido a partir de uplift/moradores (`fator_setor = uplift_setor(...)`,
@@ -58,6 +73,7 @@ from __future__ import annotations
 
 import ast
 import re
+import textwrap
 from pathlib import Path
 
 import pytest
@@ -111,6 +127,37 @@ _EMBRULHOS = frozenset(
     {
         "float", "int", "round", "Series", "to_numeric", "asarray", "array", "list", "tuple",
         "where", "fillna", "astype", "clip", "mask", "abs",
+    }
+)
+
+#: R6 -- superficies (quem serve tela, payload e PDF).
+_SUPERFICIES = ("web/server/", "src/motor_expansao/api/", "src/motor_expansao/dashboard/")
+#: R6 -- colunas de INSUMO do artefato (copia-las sob o proprio nome e passar o insumo).
+_COLUNAS_INSUMO_RENDA = frozenset(
+    {
+        "renda_responsavel_media_setor_2022",
+        "renda_per_capita_setor_2022_calibrada",
+        "renda_per_capita_setor_2022",
+        "renda_per_capita",
+    }
+)
+#: R6 -- tudo que e renda CRUA: os insumos e as copias/derivadas sem conversao.
+_COLUNAS_RENDA_CRUA = _COLUNAS_INSUMO_RENDA | frozenset(
+    {
+        "renda_leitura",
+        "censo_renda_per_capita_hex",
+        "m1_renda_per_capita",
+        "renda_media_domiciliar_raio",
+    }
+)
+_RE_CAMPO_RENDA = re.compile(r"(?i)renda")
+#: Chamada que CONVERTE a renda pela cadeia canonica (do modulo ou o wrapper dele).
+_RE_CONVERSAO_RENDA = re.compile(r"(?i)renda_(?:domiciliar|per_capita|pc)")
+#: Chamadas que NAO devolvem o valor da renda (mascara, contagem, teste): nao a carregam.
+_CHAMADAS_SEM_VALOR = frozenset(
+    {
+        "len", "notna", "isna", "notnull", "isnull", "count", "nunique", "any", "all",
+        "isin", "between", "isinstance", "bool", "hasattr", "eq", "ne", "gt", "ge", "lt", "le",
     }
 )
 
@@ -259,6 +306,163 @@ def _imports_do_fator(arvore: ast.AST) -> list[tuple[int, str]]:
     return achados
 
 
+def _leitura_crua(no: ast.AST) -> str | None:
+    """A string `no`, se ela for o NOME de uma coluna de renda crua (argumento ou indice)."""
+    if isinstance(no, ast.Constant) and isinstance(no.value, str) and no.value in _COLUNAS_RENDA_CRUA:
+        return no.value
+    return None
+
+
+def _crus(expr: ast.AST | None, vars_crus: dict[str, set[str]]) -> set[str]:
+    """Colunas de renda CRUA que chegam ao VALOR de `expr`, avaliado por OPERANDO.
+
+    Le a coluna crua: argumento string de chamada (`r.get("x")`, `_numeric(df, "x")`) ou indice
+    (`df["x"]`, `df.loc[m, "x"]`). Propaga por embrulho/metodo/aritmetica/indice e por variavel
+    marcada (`vars_crus`). Uma chamada de CONVERSAO devolve renda canonica (vazio) -- so ela, e
+    nao a expressao inteira: em `cru or convertido` o ramo cru continua cru. Comparacao e
+    chamada que nao devolve o valor (`notna`, `len`...) tambem nao carregam renda.
+    """
+    if expr is None or isinstance(expr, (ast.Constant, ast.Compare, ast.Lambda)):
+        return set()
+    if isinstance(expr, ast.Name):
+        return set(vars_crus.get(expr.id, ()))
+    if isinstance(expr, ast.BoolOp):
+        return set().union(*(_crus(v, vars_crus) for v in expr.values))
+    if isinstance(expr, ast.IfExp):
+        return _crus(expr.body, vars_crus) | _crus(expr.orelse, vars_crus)
+    if isinstance(expr, ast.BinOp):
+        return _crus(expr.left, vars_crus) | _crus(expr.right, vars_crus)
+    if isinstance(expr, ast.UnaryOp):
+        return _crus(expr.operand, vars_crus)
+    if isinstance(expr, (ast.Attribute, ast.Starred, ast.Await)):
+        return _crus(expr.value, vars_crus)
+    if isinstance(expr, (ast.List, ast.Tuple, ast.Set)):
+        return set().union(*(_crus(e, vars_crus) for e in expr.elts))
+    if isinstance(expr, ast.Call):
+        nome = _nome_chamado(expr.func)
+        if _RE_CONVERSAO_RENDA.search(nome) or nome in _CHAMADAS_SEM_VALOR:
+            return set()
+        lidas: set[str] = set()
+        for arg in [*expr.args, *(k.value for k in expr.keywords)]:
+            coluna = _leitura_crua(arg)
+            lidas |= {coluna} if coluna else _crus(arg, vars_crus)
+        if isinstance(expr.func, ast.Attribute):
+            lidas |= _crus(expr.func.value, vars_crus)  # receptor: `renda.mean()`
+        return lidas
+    if isinstance(expr, ast.Subscript):
+        lidas = _crus(expr.value, vars_crus)
+        indices = expr.slice.elts if isinstance(expr.slice, ast.Tuple) else [expr.slice]
+        lidas |= {c for c in (_leitura_crua(i) for i in indices) if c}
+        return lidas
+    return set()
+
+
+def _filhos_do_escopo(escopo: ast.AST) -> list[ast.AST]:
+    """Nos do escopo SEM descer em funcao aninhada (que e escopo proprio, herdando este)."""
+    nos: list[ast.AST] = []
+    pilha = list(ast.iter_child_nodes(escopo))
+    while pilha:
+        no = pilha.pop()
+        nos.append(no)
+        if not isinstance(no, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            pilha.extend(ast.iter_child_nodes(no))
+    return nos
+
+
+def _marcar_vars(nos: list[ast.AST], herdadas: dict[str, set[str]]) -> dict[str, set[str]]:
+    """Variaveis do escopo que guardam renda crua (ate ponto fixo; insensivel a fluxo)."""
+    marcadas = {k: set(v) for k, v in herdadas.items()}
+    while True:
+        mudou = False
+        for no in nos:
+            if isinstance(no, ast.Assign):
+                alvos, valor = no.targets, no.value
+            elif isinstance(no, (ast.AnnAssign, ast.AugAssign, ast.NamedExpr)) and no.value is not None:
+                alvos, valor = [no.target], no.value
+            else:
+                continue
+            crus = _crus(valor, marcadas)
+            if not crus:
+                continue
+            for alvo in alvos:
+                if isinstance(alvo, ast.Name) and not crus <= marcadas.get(alvo.id, set()):
+                    marcadas.setdefault(alvo.id, set()).update(crus)
+                    mudou = True
+        if not mudou:
+            return marcadas
+
+
+def _campos_de_renda(no: ast.AST) -> list[tuple[str, ast.AST, bool]]:
+    """(campo, valor, e_coluna) servidos por `no`: chave de dict, `x["campo"] = v` (coluna) e
+    `f(campo=v)`."""
+    if isinstance(no, ast.Dict):
+        return [
+            (k.value, v, False)
+            for k, v in zip(no.keys, no.values, strict=True)
+            if isinstance(k, ast.Constant) and isinstance(k.value, str)
+        ]
+    if isinstance(no, ast.Assign):
+        return [
+            (alvo.slice.value, no.value, True)
+            for alvo in no.targets
+            if isinstance(alvo, ast.Subscript)
+            and isinstance(alvo.slice, ast.Constant)
+            and isinstance(alvo.slice.value, str)
+        ]
+    if isinstance(no, ast.Call) and not _RE_CONVERSAO_RENDA.search(_nome_chamado(no.func)):
+        # `.update(renda=...)`, `dict(renda=...)`, schema(renda_x=...). A chamada de conversao
+        # recebe a renda crua como INSUMO por keyword: isso e o certo, nao servir.
+        return [(k.arg, k.value, False) for k in no.keywords if k.arg]
+    return []
+
+
+def _crua_permitida(campo: str, crus: set[str], *, e_coluna: bool) -> bool:
+    """Renda crua LEGITIMA no campo: e o proprio insumo, nao renda servida ao usuario.
+
+    (a) insumo copiado sob o PROPRIO nome (registro interno do mapa do PDF);
+    (b) intermediario de nome declarado cru (`_COLUNAS_RENDA_CRUA`, fora dos insumos) nascendo
+        SO de insumos -- ex.: `renda_media_domiciliar_raio` do motor, V06004 pre-uplift: o nome
+        ja diz cru, e quem o servir sera pego ao LER esse nome;
+    (c) coluna de insumo preenchida por OUTRO insumo no proprio frame (fallback de entrada,
+        `df["<insumo>"] = <insumo>`) -- so em atribuicao de coluna, nunca em chave de dict, que
+        e onde o payload nasce.
+    """
+    if not crus <= _COLUNAS_INSUMO_RENDA:
+        return False
+    if crus == {campo}:
+        return True
+    if campo in _COLUNAS_RENDA_CRUA - _COLUNAS_INSUMO_RENDA:
+        return True
+    return e_coluna and campo in _COLUNAS_INSUMO_RENDA
+
+
+def _violacoes_superficie(texto: str) -> list[tuple[int, str, str]]:
+    """R6: campo de renda de payload/linha servindo coluna de renda CRUA sem conversao.
+
+    Segue a renda crua guardada em VARIAVEL (por escopo de funcao) ate o campo servido.
+    """
+    achados: list[tuple[int, str, str]] = []
+
+    def _varrer(escopo: ast.AST, herdadas: dict[str, set[str]]) -> None:
+        nos = _filhos_do_escopo(escopo)
+        vars_crus = _marcar_vars(nos, herdadas)
+        for no in nos:
+            if isinstance(no, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                _varrer(no, vars_crus)
+                continue
+            for campo, valor, e_coluna in _campos_de_renda(no):
+                if not _RE_CAMPO_RENDA.search(campo):
+                    continue
+                crus = _crus(valor, vars_crus)
+                if crus and not _crua_permitida(campo, crus, e_coluna=e_coluna):
+                    achados.append(
+                        (getattr(valor, "lineno", 0), "R6", f"{campo} <- {sorted(crus)[0]}")
+                    )
+
+    _varrer(ast.parse(texto), {})
+    return sorted(set(achados))
+
+
 def _violacoes(texto: str, *, produtor: bool = False) -> list[tuple[int, str, str]]:
     """(linha, regra, trecho) de cada violacao em `texto` (codigo Python).
 
@@ -364,6 +568,173 @@ def test_renda_exibida_tem_um_ponto_unico_de_aplicacao() -> None:
         "argumento; o fator vem de `fator(uf, tipo)`.\n\nAchado em:\n  "
         + "\n  ".join(ocorrencias)
     )
+
+
+def test_nenhuma_superficie_serve_renda_crua() -> None:
+    """R6 (E1): tela, payload e PDF so servem renda que passou pela cadeia canonica do modulo."""
+    ocorrencias: list[str] = []
+    for arquivo, rel in _fontes():
+        if rel in _EXCECOES or not rel.startswith(_SUPERFICIES):
+            continue
+        try:
+            violacoes = _violacoes_superficie(arquivo.read_text(encoding="utf-8"))
+        except (UnicodeDecodeError, OSError, SyntaxError) as exc:
+            # Pular seria passar calado, como na varredura principal.
+            ocorrencias.append(f"{rel}: ilegivel/nao parseia ({exc})")
+            continue
+        ocorrencias.extend(f"{rel}:{n}: [{regra}] {trecho}" for n, regra, trecho in violacoes)
+    assert not ocorrencias, (
+        "Superficie servindo renda CRUA (V06004, calibrada do score, SIDRA sem fator, "
+        "`renda_leitura`...). Converta pelo modulo `motor_expansao.renda` (`renda.setor`, "
+        "`renda.hex`, `_renda_per_capita_hex`/`_renda_domiciliar_hex`).\n\nAchado em:\n  "
+        + "\n  ".join(ocorrencias)
+    )
+
+
+def test_a_varredura_de_superficie_cobre_as_telas_da_e1() -> None:
+    """As superficies corrigidas na E1 continuam DENTRO do escopo da R6."""
+    rels = {rel for _, rel in _fontes() if rel.startswith(_SUPERFICIES)}
+    for rel in (
+        "web/server/app.py",
+        "web/server/rede_inteligencia.py",
+        "src/motor_expansao/api/service.py",
+        "src/motor_expansao/dashboard/censo_point.py",
+        "src/motor_expansao/dashboard/relatorio_municipal.py",
+    ):
+        assert rel in rels, rel
+
+
+@pytest.mark.parametrize(
+    "trecho",
+    [
+        # As cinco linhas de antes da E1, como estavam.
+        '{"renda": _num(r.get("renda_per_capita_setor_2022_calibrada"))}',
+        '{"renda": _num(r.get("renda_leitura"))}',
+        '{"renda_per_capita": _r(media("renda_per_capita_setor_2022_calibrada"), 0)}',
+        '{"renda_pc": _op_num(d.get("censo_renda_per_capita_hex")) or _op_num(d.get("m1_renda_per_capita"))}',
+        '{"renda_media_domiciliar_raio": result.get("renda_media_domiciliar_raio")}',
+        # V06004 bruta e SIDRA sem fator, por indice e por atribuicao.
+        'item["renda_media"] = float(df["renda_responsavel_media_setor_2022"].mean())',
+        'linha = {"renda": row["renda_per_capita"]}',
+        'x = {"renda_bairro": _coluna_numerica(df, "renda_per_capita_setor_2022")}',
+        # As outras duas superficies de antes da E1: a leitura crua GUARDADA numa variavel e
+        # so depois servida (perfil do bairro em censo_point; painel per capita e tabela de
+        # hexagonos em relatorio_municipal).
+        textwrap.dedent(
+            """
+            def agregar(subset, dom, result):
+                renda = _numeric(subset, "renda_responsavel_media_setor_2022")
+                renda_mask = renda.notna() & dom.notna() & dom.gt(0)
+                result["renda_media_domiciliar"] = round(
+                    float(np.average(renda[renda_mask], weights=dom[renda_mask])), 2
+                )
+            """
+        ),
+        textwrap.dedent(
+            """
+            def agregar_municipio(df_muni):
+                renda = _coluna_numerica(df_muni, "renda_per_capita")
+                pesos = _coluna_numerica(df_muni, "pop_total_setor_2022")
+                valid = renda.notna() & pesos.notna() & (pesos > 0)
+                renda_per_capita_media = float(
+                    (renda[valid] * pesos[valid]).sum() / pesos[valid].sum()
+                )
+                return {"renda_per_capita_media": renda_per_capita_media}
+            """
+        ),
+        textwrap.dedent(
+            """
+            def _tabela_hexes(df_muni, mapa_dom):
+                if mapa_dom:
+                    renda = df_muni["hex_id"].map(mapa_dom)
+                else:
+                    renda = _coluna_numerica(df_muni, "renda_per_capita_setor_2022_calibrada")
+                return pd.DataFrame({"renda": renda})
+            """
+        ),
+        # Isencao por OPERANDO: um ramo convertido nao lava o ramo cru.
+        '{"renda_pc": _op_num(d.get("censo_renda_per_capita_hex")) or _renda_per_capita_hex(r)}',
+        '{"renda": _renda_per_capita_hex(r) if ok else r.get("renda_leitura")}',
+        # Keyword (`.update`, `dict(...)`, schema).
+        'item.update(renda=_num(r.get("renda_leitura")))',
+        'Resp(renda_media=df["renda_per_capita"].mean())',
+        # Variavel a variavel, e indice com mascara.
+        textwrap.dedent(
+            """
+            v = r.get("renda_leitura")
+            w = float(v)
+            linha = {"renda": w}
+            """
+        ),
+        'x = {"renda": df.loc[m, "renda_per_capita_setor_2022_calibrada"].mean()}',
+    ],
+)
+def test_r6_pega_superficie_com_renda_crua(trecho: str) -> None:
+    assert "R6" in {r for _, r, _ in _violacoes_superficie(trecho)}, trecho
+
+
+@pytest.mark.parametrize(
+    "trecho",
+    [
+        # Convertida pelo modulo (ou pelo wrapper do app, que chama o modulo).
+        '{"renda": _renda_per_capita_hex(r)}',
+        '{"renda_domiciliar": _num(_renda_setor.renda_domiciliar_da_linha(r, uf, cod))}',
+        '{"renda_media_domiciliar_raio": result.get("renda_domiciliar_total_raio")}',
+        'item["renda_pc"] = _renda_hex.renda_per_capita_por_linha(df, precedencia=("renda_per_capita",))',
+        # Insumo copiado sob o PROPRIO nome (registro interno do mapa do PDF).
+        '{"renda_responsavel_media_setor_2022": row.get("renda_responsavel_media_setor_2022")}',
+        # Comparacao com o nome da coluna (procedencia de leitura), nao leitura de valor.
+        '{"renda_municipal": r.get("renda_origem") == "renda_per_capita"}',
+        # Mapeamento de nomes (literal solto) e campo que nao e renda.
+        '{"censo_renda_per_capita_hex": "renda_per_capita_setor_2022_calibrada"}',
+        '{"score": _num(r.get("score_setor_2022_calibrado"))}',
+        # Variavel que passa pela conversao antes de ser servida.
+        textwrap.dedent(
+            """
+            def f(df):
+                renda = _renda_pc_canonica(df, "renda_per_capita")
+                return {"renda_per_capita_media": float(renda.mean())}
+            """
+        ),
+        # Contagem/mascara da renda crua nao e servir a renda.
+        textwrap.dedent(
+            """
+            renda = _numeric(df, "renda_per_capita")
+            x = {"n_renda": int(renda.notna().sum())}
+            """
+        ),
+        # Insumo entregue por keyword a quem CONVERTE.
+        'x = {"renda": renda_domiciliar_da_linha(renda=r.get("renda_responsavel_media_setor_2022"))}',
+        # Intermediario de nome declarado cru nascendo de insumo (motor: V06004 pre-uplift).
+        textwrap.dedent(
+            """
+            v = _numeric(s, "renda_responsavel_media_setor_2022")
+            result["renda_media_domiciliar_raio"] = media(v)
+            """
+        ),
+        # Fallback de entrada entre colunas de insumo do proprio frame.
+        textwrap.dedent(
+            """
+            renda = _numeric(df, "renda_per_capita_setor_2022")
+            df["renda_per_capita_setor_2022_calibrada"] = renda
+            """
+        ),
+        # A mesma variavel em OUTRA funcao nao contamina esta.
+        textwrap.dedent(
+            """
+            def a(df):
+                renda = df["renda_leitura"]
+                return renda.isna()
+
+            def b(df):
+                renda = _renda_per_capita_hex(df)
+                return {"renda": renda}
+            """
+        ),
+    ],
+)
+def test_r6_nao_pega_o_que_e_legitimo(trecho: str) -> None:
+    assert _violacoes_superficie(trecho) == [], trecho
 
 
 def test_a_lista_de_excecoes_continua_vazia() -> None:
