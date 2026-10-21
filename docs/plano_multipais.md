@@ -172,7 +172,7 @@ Esta seção é o guardrail contra inflar. Regra: **se um item não está na col
 | Métrica | Alvo | Referência de hoje | Como medir |
 |---|---|---|---|
 | Latência acrescida por requisição pelo perfil | **0 ms** (dict congelado no import; nenhum I/O em caminho quente) | — | `scripts/perf_piloto.py` (novo), p50/p95 por rota, 3 execuções |
-| Tempo de subida (import + 3 hooks) | **≤ 1,10× do valor medido no B1** | Os 3 hooks (`web/server/app.py:1209`, `:1223`, `:3247`) leem só o `fator_temporal_renda.json`, os PNGs de logo e o rollup de acessos. **Nenhum parquet no import** — o boot não cresce com país nenhum | `time` até o primeiro `/api/health` 200 |
+| Tempo de subida (import + 3 hooks) | **≤ 1,10× do valor medido no B1** | Os 3 hooks (`web/server/app.py:1209`, `:1223`, `:3247`) leem só os fatores de renda versionados do pacote (`motor_expansao.renda`, desde a E0 da correção de renda; antes, o `fator_temporal_renda.json`), os PNGs de logo e o rollup de acessos (a checagem de subida da renda também lê uma coluna do carimbo `k`). **Nenhum parquet no import** — o boot não cresce com país nenhum | `time` até o primeiro `/api/health` 200 |
 | Carga a frio de partição | **inalterada** | RO 46.455 hexes → 0,996 s / 329,7 MB de pico; SC 20.373 → 0,446 s / 342,3 MB; AM 293.991 → 2,544 s / 826,0 MB (`docs/arquitetura_app_atual.md:486-492`) | Mesmo script do BLK-REV-01 |
 | Teto de memória do cache de partição | **declarado em bytes**, alvo 3 GB, verificado por teste | Hoje `maxsize=6` (`web/server/app.py:421`) trata SC (342 MB) e AM (826 MB) como iguais | Teste que carrega as 27 UFs em sequência e assere o teto |
 | `mem_limit` — Brasil | **8g / 10g swap** (inalterado) | `docker-compose.prod.yml:156-157` | — |

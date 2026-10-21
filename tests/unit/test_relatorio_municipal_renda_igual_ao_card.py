@@ -10,7 +10,6 @@ Hermetico: staging sintetico em tmp_path; as fronteiras de dado do preparo sao d
 
 from __future__ import annotations
 
-import json
 import sys
 from pathlib import Path
 
@@ -21,7 +20,7 @@ from pytest import approx
 import motor_expansao.dashboard.relatorio_municipal as relmun
 from motor_expansao.api import service
 from motor_expansao.api.settings import Settings
-from motor_expansao.dashboard import constants as _const
+from tests.unit.renda_fixtures import apontar_staging_renda, fixar_fatores
 
 _SERVER = Path(__file__).resolve().parents[2] / "web" / "server"
 if str(_SERVER) not in sys.path:
@@ -45,29 +44,19 @@ def staging(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
             "moradores_por_domicilio_municipio": [3.0],
         }
     ).to_parquet(st / "uplift_renda_domiciliar_municipio.parquet")
-    (st / "fator_temporal_renda.json").write_text(
-        json.dumps({"fator_temporal_renda": 1.25, "competencia_atual_fim": "202606"}),
-        encoding="utf-8",
-    )
     pd.DataFrame({"metodo_calibracao_renda": ["multiplicativo_global_k=1.1"]}).to_parquet(
         st / "censo2022_setores_calibrado.parquet"
     )
     monkeypatch.setattr(pilot, "STAGING_DIR", st)
-    for attr in (
-        "UPLIFT_COMPOSICAO_PATH", "UPLIFT_COMPOSICAO_SETOR_PATH", "FATOR_TEMPORAL_RENDA_PATH",
-        "FATOR_TEMPORAL_RENDA", "DATA_REFERENCIA_RENDA",
-    ):
-        monkeypatch.setattr(_const, attr, getattr(_const, attr))
-    for cache in (
-        "_uplift_cache", "_uplift_uf_cache", "_moradores_cache", "_moradores_uf_cache",
-        "_uplift_setor_cache", "_uplift_setor_extrapolado_cache",
-    ):
-        monkeypatch.setattr(_const, cache, None)
-    pilot._fator_temporal_renda.cache_clear()
+    # Desde a E0: fator SINTETICO servido pelo loader (raiz alternativa) e insumos do modulo da
+    # renda apontados para o staging de teste -- o PDF (API) e o card (web) leem os dois.
+    fixar_fatores(monkeypatch, tmp_path, per_capita=1.25)
+    apontar_staging_renda(monkeypatch, st)
+    pilot._renda_staging_configurado.cache_clear()
     pilot._k_calibracao_renda.cache_clear()
-    pilot._fator_temporal_renda()  # o boot do web reaponta `constants` para o STAGING_DIR
+    pilot._renda_staging_configurado()  # o boot do web aponta os insumos para o STAGING_DIR
     yield st
-    pilot._fator_temporal_renda.cache_clear()
+    pilot._renda_staging_configurado.cache_clear()
     pilot._k_calibracao_renda.cache_clear()
 
 
@@ -89,8 +78,7 @@ def _renda_do_card(df: pd.DataFrame) -> dict[str, float]:
     """O que o card do REP mostra em "Renda domiciliar" para cada hexagono."""
     out = df.copy()
     out["renda_leitura"], out["renda_origem"] = pilot._serie_renda(out)
-    fator = pilot._fator_domiciliar("SP", _COD)
-    return {r["hex_id"]: pilot._renda_domiciliar_hex(r, fator) for _, r in out.iterrows()}
+    return {r["hex_id"]: pilot._renda_domiciliar_hex(r) for _, r in out.iterrows()}
 
 
 @pytest.fixture
@@ -139,3 +127,38 @@ def test_valores_ancorados_na_formula(renda_entregue: dict) -> None:
     assert renda_entregue["h1"] == approx(1500.0 / 1.1 * fator)
     assert renda_entregue["h2"] == approx(2400.0 / 1.1 * fator)
     assert renda_entregue["h3"] == approx(1800.0 / 1.5 * fator)
+
+
+@pytest.mark.parametrize("tem_densidade", [False, True])
+def test_nota_do_calor_da_cidade_cabe_na_pagina(monkeypatch, tem_densidade):
+    """Sem o mapa de densidade, o mapa largo empurrava a nota para y = 550.
+
+    `auto_page_break` e OFF: a nota saia FORA da pagina de 540 pt em silencio.
+    """
+    from types import SimpleNamespace
+
+    notas: list[tuple[float, float, str]] = []
+    original = relmun._draw_note
+
+    def _espiao(pdf, x, y, w, text):
+        notas.append((y, relmun._altura_note(pdf, w, text), text))
+        original(pdf, x, y, w, text)
+
+    monkeypatch.setattr(relmun, "_draw_note", _espiao)
+    mapas = {"calor_cidade_renda_domiciliar": None}
+    if tem_densidade:
+        mapas["calor_cidade_densidade"] = None
+    praca = SimpleNamespace(
+        mapas=mapas,
+        n_hexagonos_cidade=1234,
+        municipio="Cidade de Teste com Nome Comprido",
+        renda_municipal=True,
+        populacao_municipal=not tem_densidade,
+    )
+    pdf = relmun._UltraPDF()
+    relmun._praca_calor_page(
+        pdf, {"versao_contrato": "v-teste"}, praca, {},
+        primary=(0, 0, 0), secondary=(0, 0, 0),
+    )
+    ((y, altura, _texto),) = notas
+    assert y + altura <= relmun._PAGE_H - 22.0, (y, altura)

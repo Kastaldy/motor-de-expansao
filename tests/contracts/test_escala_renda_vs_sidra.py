@@ -45,7 +45,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from motor_expansao.dashboard.constants import uplift_composicao_por_setor
+from motor_expansao.renda.insumos import uplift_setor as uplift_composicao_por_setor
 
 _RAIZ = Path(__file__).resolve().parents[2]
 GEO_DIR = _RAIZ / "data" / "outputs" / "setores_censitarios_2022_geo"
@@ -196,7 +196,7 @@ def test_motor_nao_introduz_fator_sobre_o_artefato() -> None:
     que um fator multiplicativo espurio de 23% quebra assim que a faixa for mais estreita que ele.
     """
     from motor_expansao.dashboard.censo_point import analisar_ponto_censitario_setores
-    from motor_expansao.dashboard.constants import FATOR_TEMPORAL_RENDA
+    from motor_expansao.renda import fator
 
     # Marilia/SP: ponto real, usado como referencia em toda a investigacao de 2026-08-13.
     part = GEO_DIR / "uf=SP" / "cod_municipio=3529005"
@@ -245,8 +245,9 @@ def test_motor_nao_introduz_fator_sobre_o_artefato() -> None:
         return float(np.average(valores[ok], weights=pesos[ok]))
 
     base_esperada = _pond(resp_v, dom_v)
-    total_esperado = _pond(resp_v * up_v * float(FATOR_TEMPORAL_RENDA), dom_v)
-    pc_esperada = _pond(resp_v * up_v * float(FATOR_TEMPORAL_RENDA) / mor_v, pop_v)
+    # Cada renda com o SEU fator (E0): domiciliar com F_dom, per capita com F_pc.
+    total_esperado = _pond(resp_v * up_v * fator("SP", "domiciliar"), dom_v)
+    pc_esperada = _pond(resp_v * up_v * fator("SP", "per_capita") / mor_v, pop_v)
 
     assert base == pytest.approx(base_esperada, rel=0.005), (
         f"a base da renda domiciliar do motor (R$ {base:,.2f}) nao reproduz a media ponderada por "

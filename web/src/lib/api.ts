@@ -323,7 +323,14 @@ export function baixar(blob: Blob, filename: string): void {
 let _me: Promise<MePayload> | null = null
 
 export const api = {
-  health: () => pedir<{ status: string; data_ok: boolean }>('/api/health', {}, 10_000),
+  /* `/api/health` é mudo desde o pentest (Onda B #8): só `status` e, desde a E0 da renda, a
+     versão de fatores vigente. O `data_ok` saiu de lá para a rota de admin. */
+  health: () =>
+    pedir<{ status: string; renda_fatores?: { versao: string; fixada_por_env: boolean } }>(
+      '/api/health',
+      {},
+      10_000,
+    ),
 
   /** Quem sou eu + que abas posso usar (controle temporário de acesso). A SPA
    *  esconde o que está fora da lista; o bloqueio real é do backend (middleware).

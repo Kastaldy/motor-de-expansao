@@ -11,17 +11,11 @@ from shapely.geometry import Point
 from shapely.geometry.base import BaseGeometry
 from shapely.ops import transform
 
-# `constants` importado como MODULO de proposito: `FATOR_TEMPORAL_RENDA`/`DATA_REFERENCIA_RENDA`
-# sao recalculados quando o piloto reaponta os paths de staging para caminhos absolutos
-# (`_init_renda_domiciliar_paths` em web/server/app.py). Importar o NOME congelaria aqui o
-# valor do import — no container do piloto (CWD=web/server) isso era o fallback 1.0, e toda
-# renda do /ponto saia em valores nominais de julho/2022, mesmo com o artefato montado.
-from motor_expansao.dashboard import constants as _constants
-from motor_expansao.dashboard.constants import (
-    uplift_composicao_por_setor,
-    uplift_extrapolado,
-    uplift_renda_domiciliar,
-)
+# Renda exibida pelo ponto unico (`motor_expansao.renda`, E0): fator temporal, uplift e as
+# formulas vem de la. Os insumos sao lidos como ATRIBUTO de modulo (`_renda_insumos.uplift_setor`)
+# e nao por nome importado, para que um teste que fixe o uplift no modulo valha aqui tambem.
+from motor_expansao import renda as _renda
+from motor_expansao.renda import insumos as _renda_insumos
 
 CRS_ORIGEM_CENSO = "EPSG:4674"
 # DEC-021 (2026-07-29, AUTORIZADA por Felipe): o raio do Relatorio Pontual Censitario passa de
@@ -399,8 +393,9 @@ def analisar_ponto_censitario_setores(
         # essa flag existia no artefato e morria na carga — 20,3% dos setores do pais chegavam
         # ao relatorio sem ressalva nenhuma. Campo ADITIVO: nao muda nenhum numero de renda.
         "fracao_uplift_extrapolado_raio": None,
-        "fator_temporal_renda": _constants.FATOR_TEMPORAL_RENDA,
-        "data_referencia_renda": _constants.DATA_REFERENCIA_RENDA,
+        # `fator_temporal_renda` (F_dom nacional) e `data_referencia_renda` (rotulo da versao
+        # de fatores vigente); com setores, o fator e refeito com a UF do ponto (abaixo).
+        **_renda.campos_referencia_ponto(),
         "densidade_pop_raio_hab_km2": None,
         # BLK-RELPON-06 (D1): densidade sobre area de espaco VALIDO (exclui agua/vazio) --
         # ver docstring abaixo. Difere de `densidade_pop_raio_hab_km2` (divide por pi*raio^2
@@ -567,8 +562,9 @@ def analisar_ponto_censitario_setores(
     # Fallback sem a V06004: reconstroi pela per capita BRUTA (V06004/moradores), nunca pela
     # calibrada — usar a calibrada aqui reintroduziria o k pela porta dos fundos.
     if renda_domiciliar.isna().any() and "renda_per_capita_setor_2022" in intersectados.columns:
-        _bruta = _numeric(intersectados, "renda_per_capita_setor_2022") * moradores
-        renda_domiciliar = renda_domiciliar.where(renda_domiciliar.notna(), _bruta)
+        renda_domiciliar = _renda.v06004_de_fallback(
+            renda_domiciliar, _numeric(intersectados, "renda_per_capita_setor_2022"), moradores
+        )
     # UF/municipio do ponto (moda) para a cascata do uplift.
     uf_ponto = None
     if "uf" in intersectados.columns:
@@ -583,13 +579,16 @@ def analisar_ponto_censitario_setores(
     # uplift responsavel->domicilio POR SETOR (parentesco); cascata setor->municipio->UF->nacional.
     fator_composicao_setor = pd.Series(
         [
-            uplift_composicao_por_setor(cod, uf_ponto, municipio_ponto)
+            _renda_insumos.uplift_setor(cod, uf_ponto, municipio_ponto)
             for cod in intersectados.get("cod_setor", pd.Series(index=intersectados.index))
         ],
         index=intersectados.index,
         dtype="float64",
     )
-    renda_domiciliar_total = renda_domiciliar * fator_composicao_setor * _constants.FATOR_TEMPORAL_RENDA
+    # (V06004 x uplift) x F_dom(uf) -- a mesma ordem de antes da E0, agora no modulo da renda.
+    renda_domiciliar_total = _renda.renda_domiciliar(
+        renda_domiciliar, fator_composicao_setor, uf_ponto
+    )
     # Renda PER CAPITA exibida = renda do domicilio dividida pelos moradores dele. E o mesmo
     # conceito que o IBGE publica (SIDRA t.10295 v.13431, "rendimento nominal medio mensal
     # domiciliar per capita") e que o M1 carrega em `renda_per_capita` — por isso e ele que se
@@ -602,17 +601,22 @@ def analisar_ponto_censitario_setores(
     # estar la, era ele estar no lugar do uplift.
     # Com esta troca, as duas rendas do relatorio passam a fechar entre si:
     #     renda domiciliar = renda per capita x moradores
-    renda_per_capita_domiciliar = renda_domiciliar_total / moradores.where(moradores > 0)
+    # Desde a E0 a per capita sai com o PROPRIO fator -- ((V06004 x uplift) x F_pc) / moradores --,
+    # nunca a domiciliar dividida: na versao 0 (F_pc == F_dom) e o mesmo float de antes; com os
+    # fatores PNAD, `domiciliar / moradores` carregaria a queda de moradores para a per capita.
+    renda_per_capita_domiciliar = _renda.renda_per_capita(
+        renda_domiciliar, fator_composicao_setor, moradores.where(moradores > 0), uf_ponto
+    )
     # Ressalva de leitura (ADITIVA): quanto do raio depende de uplift extrapolado.
     extrapolado_setor = pd.Series(
         [
-            uplift_extrapolado(cod)
+            _renda_insumos.uplift_extrapolado(cod)
             for cod in intersectados.get("cod_setor", pd.Series(index=intersectados.index))
         ],
         index=intersectados.index,
         dtype="boolean",
     ).fillna(False)
-    fator_composicao = uplift_renda_domiciliar(uf_ponto, municipio_ponto)
+    fator_composicao = _renda_insumos.uplift_municipio(uf_ponto, municipio_ponto)
     # Renda domiciliar do raio: ponderada por DOMICILIOS (fallback pop/area quando ausentes).
     renda_domiciliar_weight = dom_weights.where(dom_weights.gt(0), renda_weight)
 
@@ -759,8 +763,9 @@ def analisar_ponto_censitario_setores(
     result["uf_renda_uplift"] = uf_ponto
     result["cod_municipio_renda_uplift"] = municipio_ponto
     result["fator_uplift_renda_domiciliar"] = round(
-        uplift_efetivo * _constants.FATOR_TEMPORAL_RENDA, 4
+        _renda.fator_composto_domiciliar(uplift_efetivo, uf_ponto), 4
     )
+    result.update(_renda.campos_referencia_ponto(uf_ponto))
     result["fator_uplift_composicao"] = round(uplift_efetivo, 4)
     result["fator_uplift_composicao_municipio"] = round(fator_composicao, 4)
 

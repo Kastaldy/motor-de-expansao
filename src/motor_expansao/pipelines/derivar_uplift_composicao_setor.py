@@ -54,7 +54,7 @@ vindo do IBGE. E por isso que um R2 out-of-fold modesto entre municipios ainda e
 acertar o FORMATO relativo da distribuicao intra-municipal, nao o nivel (que continua vindo do IBGE).
 
 IMPORTANTE — valores de JULHO/2022 (referencia do Censo). A atualizacao temporal e um fator
-SEPARADO (`FATOR_TEMPORAL_RENDA`, em dashboard/constants.py). Nao embuta inflacao aqui: foi essa
+SEPARADO (versionado em `motor_expansao/renda/fatores/`). Nao embuta inflacao aqui: foi essa
 mistura que fez o fator antigo (2.15) envelhecer escondido.
 """
 
@@ -551,7 +551,7 @@ def gerar_relatorio(df: pd.DataFrame, diagnostico: dict[str, float]) -> str:
         "## Valores em JULHO/2022",
         "",
         "Data de referencia do Censo. A atualizacao temporal e um fator SEPARADO",
-        "(`FATOR_TEMPORAL_RENDA`) — de proposito: o fator antigo (2.15) misturava composicao com",
+        "(`motor_expansao/renda/fatores/`) — de proposito: o fator antigo (2.15) misturava composicao com",
         "deriva temporal e envelhecia sem ninguem perceber.",
         "",
         "## Distribuicao do uplift por setor",

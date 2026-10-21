@@ -85,6 +85,7 @@ import praca_indice  # noqa: E402  (indice conjuntivo da camada 5 — DEC-041)
 import pressao_1km  # noqa: E402  (PROTOTIPO — chave de raio 2 km / 1 km por area)
 import rede_inteligencia  # noqa: E402  (territorio, retencao, rampa e sinais da rede Ultra)
 
+from motor_expansao import renda as _renda  # noqa: E402  (renda exibida: ponto unico, E0)
 from motor_expansao.dashboard import (  # noqa: E402
     acesso_analytics,
     acesso_log,
@@ -97,7 +98,6 @@ from motor_expansao.dashboard import (  # noqa: E402
     rede_faturamento_financeiro,
     rede_metricas,
 )
-from motor_expansao.dashboard import renda_hex as _renda_hex  # noqa: E402
 
 # Contrato financeiro do ponto — REGUA UNICA (FIN-VIAB-01). Estas funcoes moravam aqui
 # dentro; foram para o `src/` para que a API GeoEspacial as use SEM importar esta app.
@@ -108,6 +108,8 @@ from motor_expansao.dimensionamento.payload_viabilidade import (  # noqa: E402
     montar_payload_para_pdf,
     montar_payload_viabilidade,
 )
+from motor_expansao.renda import hex as _renda_hex  # noqa: E402
+from motor_expansao.renda import insumos as _renda_insumos  # noqa: E402
 
 # --- Superficie que este modulo continua expondo, por ATRIBUICAO ------------------
 # Os nomes abaixo nao sao usados AQUI DENTRO — sao lidos de fora, por `app.<nome>`
@@ -1783,57 +1785,25 @@ def _texto(v: Any) -> str | None:
 # ============================================================================
 
 
-def _init_renda_domiciliar_paths() -> float:
-    """Reaponta os artefatos de renda domiciliar para o DATA_DIR absoluto e le o
-    FATOR_TEMPORAL_RENDA real.
-
-    No motor, `UPLIFT_COMPOSICAO_PATH`/`FATOR_TEMPORAL_RENDA_PATH` sao RELATIVOS
-    ao CWD ("data/staging/..."). Como o uvicorn do piloto sobe de web/server, eles
-    nao resolvem e o uplift/moradores/temporal cairiam no fallback NACIONAL
-    (~1.632 / ~2.79 / 1.0) — mesma pegadinha do `_BASEMAP_CACHE_DIR`. Reaponta para
-    o checkout absoluto ANTES da 1a leitura (as caches sao lazy) e devolve o fator.
-    """
-    from motor_expansao.dashboard import constants as _const
-
-    _const.UPLIFT_COMPOSICAO_PATH = STAGING_DIR / "uplift_renda_domiciliar_municipio.parquet"
-    _const.UPLIFT_COMPOSICAO_SETOR_PATH = STAGING_DIR / "uplift_composicao_setor.parquet"
-    _const.FATOR_TEMPORAL_RENDA_PATH = STAGING_DIR / "fator_temporal_renda.json"
-    _const._uplift_cache = None
-    _const._uplift_uf_cache = None
-    _const._moradores_cache = None
-    _const._moradores_uf_cache = None
-    # As caches SETORIAIS tambem: sem estas duas linhas, uma carga que rodasse antes do
-    # re-point (ex.: /api/ponto como 1a requisicao) congelava um mapa VAZIO para sempre —
-    # o uplift por setor degradava para o municipal em todo /ponto, sem log.
-    _const._uplift_setor_cache = None
-    _const._uplift_setor_extrapolado_cache = None
-    fator, ref = _const._carregar_fator_temporal()
-    # O binding de modulo congela no import (CWD=web/server -> path relativo nao resolve ->
-    # fallback 1.0). Reatribuir aqui e' o que faz `constants.FATOR_TEMPORAL_RENDA` valer o
-    # artefato real para quem le via modulo (censo_point/censo_map depois da correcao de
-    # 2026-08-14; antes eles importavam o NOME e ficavam com o 1.0 congelado).
-    _const.FATOR_TEMPORAL_RENDA = fator
-    _const.DATA_REFERENCIA_RENDA = ref
-    return fator
-
-
 @functools.lru_cache(maxsize=1)
-def _fator_temporal_renda() -> float:
-    return _init_renda_domiciliar_paths()
+def _renda_staging_configurado() -> Path:
+    """Aponta os insumos da renda (`motor_expansao.renda.insumos`) para o STAGING_DIR (1x).
 
-
-def _fator_domiciliar(uf: str | None, cod_municipio: str | None) -> float | None:
-    """Fator renda per capita -> renda media domiciliar do municipio (`renda_hex`).
-
-    `_fator_temporal_renda()` tambem reaponta os paths de `constants` para o STAGING_DIR (1x).
+    Em producao o default do modulo (`<raiz do perfil>/staging`) ja e o STAGING_DIR; o
+    apontamento explicito existe para o STAGING_DIR que a suite troca por `monkeypatch`.
+    Substitui o `_init_renda_domiciliar_paths` de antes da E0, que reapontava atributos de
+    `dashboard.constants` e reatribuia o fator temporal no modulo. `limpar_caches()` zera
+    este cache e o proximo leitor reaponta.
     """
-    return _renda_hex.fator_domiciliar(uf, cod_municipio, _fator_temporal_renda())
+    _renda.configurar_staging(STAGING_DIR)
+    return STAGING_DIR
 
 
 _LOG_RENDA = logging.getLogger("piloto.renda")
 
-# A formula mora em `motor_expansao.dashboard.renda_hex` desde 2026-10-16: o Relatorio
-# Municipal usa a mesma, e o card e o PDF mostram o mesmo numero para o mesmo hexagono.
+# A formula mora em `motor_expansao.renda.hex` (era `dashboard/renda_hex.py` de 2026-10-16 ate a
+# E0): o Relatorio Municipal usa a mesma, e o card e o PDF mostram o mesmo numero para o mesmo
+# hexagono.
 _K_CALIBRACAO_FALLBACK = _renda_hex.K_CALIBRACAO_FALLBACK
 _CENSO_HEX_STAGING_PARQUET = _renda_hex.CENSO_HEX_STAGING_PARQUET
 _CENSO_MALHA_PARQUET = _renda_hex.CENSO_MALHA_PARQUET
@@ -1841,7 +1811,7 @@ _CENSO_MALHA_PARQUET = _renda_hex.CENSO_MALHA_PARQUET
 
 @functools.lru_cache(maxsize=1)
 def _k_calibracao_renda() -> float:
-    """O `k` da coluna calibrada do hex, lido do carimbo no STAGING_DIR (`renda_hex`)."""
+    """O `k` da coluna calibrada do hex, lido do carimbo no STAGING_DIR (`renda.hex`)."""
     return _renda_hex.k_calibracao_renda(STAGING_DIR)
 
 
@@ -1853,45 +1823,44 @@ def _base_renda_domiciliar(r: pd.Series, uf: str | None, cod: str | None) -> flo
     )
 
 
-def _renda_domiciliar_hex(r: pd.Series, fator: float | None) -> float | None:
-    """Renda media domiciliar do hex = base (escala V06004 per capita) x fator municipal.
+def _base_renda_hex(r: pd.Series) -> tuple[float | None, str | None, str | None]:
+    """(base, uf, cod) da renda do hex; base None quando falta renda OU cod_municipio.
 
-    NaN (tooltip em branco) quando falta renda OU cod_municipio — fiel ao contrato
-    do Streamlit, que nao exibe estimativa de nivel UF para hex sem municipio.
+    NaN (tooltip em branco) quando falta o municipio -- fiel ao contrato do Streamlit, que nao
+    exibe estimativa de nivel UF para hex sem municipio.
     """
-    if fator is None:
-        return None
     cod = r.get("cod_municipio")
     if cod is None or pd.isna(cod):
-        return None
-    base = _base_renda_domiciliar(r, r.get("uf"), str(cod))
+        return None, None, None
+    _renda_staging_configurado()
+    uf = r.get("uf")
+    return _base_renda_domiciliar(r, uf, str(cod)), uf, str(cod)
+
+
+def _renda_domiciliar_hex(r: pd.Series) -> float | None:
+    """Renda media domiciliar do hex = base x (moradores x uplift municipais) x F_dom.
+
+    A conta e do modulo da renda (`renda.hex.renda_domiciliar_hex`); aqui so o arredondamento
+    do payload.
+    """
+    base, uf, cod = _base_renda_hex(r)
     if base is None:
         return None
-    return _num(base * fator)
+    return _num(_renda_hex.renda_domiciliar_hex(base, uf, cod))
 
 
-def _renda_per_capita_hex(
-    r: pd.Series, fator: float | None, dom: float | None = None
-) -> float | None:
+def _renda_per_capita_hex(r: pd.Series) -> float | None:
     """Renda DOMICILIAR per capita do hex — o mesmo conceito que o Relatorio Pontual exibe.
 
-    = renda do domicilio / moradores. Como `fator` ja e `moradores x uplift x temporal`, basta
-    dividir o domiciliar pelos moradores municipais. Ate 2026-08-13 o tooltip exibia a coluna
-    calibrada crua (V06004/moradores x k), que ficava ~20% abaixo da referencia do IBGE e nao
-    batia com o numero do Relatorio Pontual para a mesma coordenada.
-
-    `dom` pre-calculado evita refazer a cadeia inteira: `_hex_dict` roda por hex em cargas de
-    dezenas de milhares por UF, e as duas chamadas irmas dobravam o custo do endpoint.
+    Desde a E0 com o PROPRIO fator (`renda.hex.renda_per_capita_hex`), nunca a domiciliar
+    dividida pelos moradores: na versao 0 dos fatores (F_pc == F_dom) e o mesmo numero de
+    antes, bit a bit. Ate 2026-08-13 o tooltip exibia a coluna calibrada crua
+    (V06004/moradores x k), ~20% abaixo da referencia do IBGE.
     """
-    if dom is None:
-        dom = _renda_domiciliar_hex(r, fator)
-    if dom is None:
+    base, uf, cod = _base_renda_hex(r)
+    if base is None:
         return None
-    from motor_expansao.dashboard.constants import moradores_por_domicilio
-
-    cod = r.get("cod_municipio")
-    moradores = moradores_por_domicilio(r.get("uf"), None if cod is None or pd.isna(cod) else str(cod))
-    return _num(dom / moradores) if moradores else None
+    return _num(_renda_hex.renda_per_capita_hex(base, uf, cod))
 
 
 @functools.lru_cache(maxsize=1)
@@ -1953,16 +1922,21 @@ COMPETITORS_LOGO_DIR = Path(
 
 @app.on_event("startup")
 def _init_renda_paths_no_boot() -> None:
-    """Reaponta os artefatos de renda para caminhos ABSOLUTOS antes da 1a requisicao.
+    """Aponta os insumos da renda para o STAGING_DIR e VALIDA a renda antes da 1a requisicao.
 
-    Sem isto a classe de bug e' de ordem: se a primeira requisicao do processo fosse
-    /api/ponto (bot, deep-link), o motor censitario carregaria uplift/fator temporal
-    pelos paths RELATIVOS do motor (CWD=web/server -> nao resolvem) e cachearia o
-    resultado vazio. Gracioso por construcao: staging ausente so' ativa os fallbacks."""
-    try:
-        _fator_temporal_renda()
-    except Exception:  # noqa: BLE001 — startup nunca derruba o servico por artefato de renda
-        _LOG_RENDA.warning("re-point dos artefatos de renda falhou no boot", exc_info=True)
+    Desde a E0 SEM `try/except`: fatores invalidos (sempre) ou, em producao (`MOTOR_DATA_DIR`),
+    insumo obrigatorio ausente / carimbo k ilegivel DERRUBAM a subida com erro explicito. A
+    redacao anterior engolia a excecao e o servico subia exibindo a renda com o fallback 1,0
+    sem pista nenhuma. Em dev/teste a ausencia de artefato so loga WARNING."""
+    _renda_staging_configurado()
+    fatores = _renda.validar_na_subida(STAGING_DIR)
+    # WARNING quando a versao foi FIXADA por env (rollback): o deploy esta fora do VIGENTE e
+    # isso tem de aparecer no log de quem olhar o boot, nao so no `/api/health`.
+    _LOG_RENDA.log(
+        logging.WARNING if fatores.fixada_por_env else logging.INFO,
+        "renda: fatores versao=%s pais=%s fixada_por_env=%s staging=%s",
+        fatores.versao, fatores.pais, fatores.fixada_por_env, STAGING_DIR,
+    )
 
 
 @app.on_event("startup")
@@ -3984,13 +3958,11 @@ def montar_funil_uf(df_uf: pd.DataFrame, uf: str) -> list[dict[str, Any]]:
     ]
 
 
-def _hex_dict(
-    r: pd.Series, fator_dom: float | None, bairro: str | None = None
-) -> dict[str, Any]:
+def _hex_dict(r: pd.Series, bairro: str | None = None) -> dict[str, Any]:
     """Serializa um hex para o mapa (compartilhado entre as rotas UF e município)."""
-    # A renda domiciliar sai UMA vez e alimenta as duas chaves (`renda` per capita deriva
-    # dela) — hoisting vindo da main com o k nacional unico.
-    renda_dom = _renda_domiciliar_hex(r, fator_dom)
+    # Desde a E0 a per capita NAO deriva da domiciliar: cada uma com o seu fator, as duas
+    # pelo modulo da renda.
+    renda_dom = _renda_domiciliar_hex(r)
     dados: dict[str, Any] = {
         "id": r["hex_id"],
         "lat": _num(r["lat"], 6),
@@ -4014,7 +3986,7 @@ def _hex_dict(
         # `renda` e a renda DOMICILIAR per capita (conceito do IBGE), a mesma grandeza que o
         # Relatorio Pontual exibe — antes era a coluna calibrada crua, e as duas superficies
         # mostravam numeros diferentes para a mesma coordenada.
-        "renda": _renda_per_capita_hex(r, fator_dom, dom=renda_dom),
+        "renda": _renda_per_capita_hex(r),
         "renda_dom": renda_dom,
         # Fallback municipal (Bloco A/DEC-050): `renda_origem` vem de `_derivar`, que
         # tenta `renda_per_capita_setor_2022_calibrada` (setor, granular) primeiro e so
@@ -4315,8 +4287,13 @@ async def health() -> dict[str, Any]:
     parquet) vazava o layout do FS e a camada de M&A para QUALQUER autenticado, ja' que
     /api/health e' rota livre. O inventario mudou para `/api/acessos/saude-artefatos`,
     gated pela allowlist de admin.
+
+    E0 da renda: ganha `renda_fatores` = {versao, fixada_por_env} -- versao de fator e
+    informacao publica de METODOLOGIA (nao de infra: sem caminho), e e por ela que se confere
+    de fora se o deploy subiu com o VIGENTE ou com um rollback por env. Os fatores ja foram
+    carregados e validados no boot (`_init_renda_paths_no_boot`), entao aqui e cache.
     """
-    return {"status": "ok"}
+    return {"status": "ok", "renda_fatores": _renda.fatores_do_health()}
 
 
 def _inventario_artefatos() -> dict[str, Any]:
@@ -7601,13 +7578,7 @@ def uf_view(uf: str, limite: int = 15000) -> dict[str, Any]:
     else:
         vis = df
 
-    # Fator domiciliar por município (poucos únicos) para a renda do tooltip.
-    fatores: dict[str, float | None] = {}
-    if "cod_municipio" in vis.columns:
-        for cod in vis["cod_municipio"].dropna().astype(str).unique():
-            fatores[cod] = _fator_domiciliar(uf.upper(), cod)
-
-    hexes = [_hex_dict(r, fatores.get(str(r.get("cod_municipio")))) for _, r in vis.iterrows()]
+    hexes = [_hex_dict(r) for _, r in vis.iterrows()]
     for p in passos:
         p["hexes"] = p["hexes"][:400]
 
@@ -7660,13 +7631,7 @@ def municipio(uf: str, municipio: str, limite: int = 4000) -> dict[str, Any]:
     else:
         vis = sel
 
-    # Fator municipal renda per capita -> renda media domiciliar (escalar por
-    # municipio, como no tooltip do Streamlit). Calculado 1x aqui.
-    fator_dom = _fator_domiciliar(uf.upper(), cod)
-
-    hexes = [
-        _hex_dict(r, fator_dom, bairros.get(str(r.get("hex_id")))) for _, r in vis.iterrows()
-    ]
+    hexes = [_hex_dict(r, bairros.get(str(r.get("hex_id")))) for _, r in vis.iterrows()]
 
     for p in passos:
         p["hexes"] = p["hexes"][:400]
@@ -10220,7 +10185,7 @@ def _rede_renda_domiciliar(bloco: pd.DataFrame, pesos: dict[str, float] | None =
             cod_txt = cod_txt[:-2]
         linha = linha.copy()
         linha["cod_municipio"] = cod_txt
-        dom = _renda_domiciliar_hex(linha, _fator_domiciliar(linha.get("uf"), cod_txt))
+        dom = _renda_domiciliar_hex(linha)
         # Peso = população DENTRO do raio de 1 km (fração da área do hexágono no círculo).
         pop = (_numf(linha.get("pop_total_setor_2022")) or 0.0) * (pesos or {}).get(linha.name, 1.0)
         if dom is not None and pop > 0:
@@ -10292,7 +10257,8 @@ def _rede_setores_entorno(unidade_id: str) -> str:
     """Setores censitários a ~2 km da unidade, com renda DOMICILIAR e densidade (JSON).
 
     Camadas opcionais do mapa da ficha. Renda domiciliar pela fórmula canônica do Relatório
-    Pontual (`censo_map.py`): V06004 BRUTA x uplift SETORIAL x fator temporal — nunca a per
+    Pontual (`censo_map.py`, via `motor_expansao.renda`): V06004 BRUTA x uplift SETORIAL x
+    fator temporal — nunca a per
     capita calibrada x moradores, que reintroduziria o `k` (+23,35%, ver CLAUDE.md §4).
     Lê os municípios de TODOS os hexágonos do entorno: unidade na divisa desenharia meia
     praça se só o município dela entrasse. Devolve string (imutável) para o cache.
@@ -10330,7 +10296,7 @@ def _rede_setores_entorno(unidade_id: str) -> str:
         print(f"[rede] municípios do entorno ilegíveis ({erro})", file=sys.stderr)
         return vazio
 
-    fator_temporal = _fator_temporal_renda()  # também reaponta os caminhos do uplift (1x)
+    _renda_staging_configurado()  # aponta os insumos da renda para o STAGING_DIR (1x)
     circulo = cobertura_1km._disco(lat, lng, rede_inteligencia.RAIO_ENTORNO_M * 1.15)
     minx, miny, maxx, maxy = circulo.bounds
     feats: list[dict[str, Any]] = []
@@ -10363,10 +10329,16 @@ def _rede_setores_entorno(unidade_id: str) -> str:
             renda = _numf(r.get("renda_responsavel_media_setor_2022"))
             if renda is None:
                 # Fallback pela per capita BRUTA, nunca a calibrada (reintroduziria o k).
-                bruta, moradores = _numf(r.get("renda_per_capita_setor_2022")), _numf(r.get("avg_moradores_domicilio_setor_2022"))
-                renda = bruta * moradores if bruta is not None and moradores is not None else None
+                renda = _renda.v06004_de_fallback(
+                    renda,
+                    _numf(r.get("renda_per_capita_setor_2022")),
+                    _numf(r.get("avg_moradores_domicilio_setor_2022")),
+                )
+            # (V06004 x uplift do setor) x F_dom(uf), pelo modulo da renda (E0).
             domiciliar = (
-                renda * float(_constants.uplift_composicao_por_setor(r.get("cod_setor"), uf, cod)) * float(fator_temporal)
+                _renda.renda_domiciliar(
+                    renda, float(_renda_insumos.uplift_setor(r.get("cod_setor"), uf, cod)), uf
+                )
                 if renda is not None
                 else None
             )

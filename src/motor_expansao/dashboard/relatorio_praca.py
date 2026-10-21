@@ -179,7 +179,7 @@ def mediana_renda_da_cidade(
     vale o mesmo que um hexagono urbano de 10 mil habitantes e a regua sobe; com o rateio por
     area da DEC-072 a pagina "Onde crescer" esvaziava em 87 municipios (Trindade/GO,
     Pontalina/GO...). Ponderada, a mediana e' a renda do MORADOR mediano da cidade, nao a do
-    hexagono mediano. A regra ficou quando a renda do PDF passou a ser a do card (`renda_hex`,
+    hexagono mediano. A regra ficou quando a renda do PDF passou a ser a do card (`renda.hex`,
     PR #460, emenda 1 da DEC-072).
 
     Definicao (deterministica): entre os hexagonos com renda > 0 e populacao > 0, ordenados por
@@ -792,7 +792,7 @@ def preparar_hexes_da_cidade(
     """Frame NOVO com as tres colunas que as paginas da cidade leem.
 
     - `renda_domiciliar`: do mapa `hex_id -> renda` que o relatorio municipal ja carrega para a
-      tabela de regioes (`renda_hex.renda_domiciliar_por_hex`). Sem o mapa a coluna fica nula e a
+      tabela de regioes (`renda.hex.renda_domiciliar_por_hex`). Sem o mapa a coluna fica nula e a
       selecao diz que nao ha renda publicada -- cair na per capita trocaria a escala em silencio.
     - `densidade_hab_km2`: populacao de leitura sobre a area da CELULA. A coluna
       `densidade_pop_setor_hab_km2` e' do setor e repetiria o numero de um setor denso num

@@ -659,7 +659,7 @@ def test_limite_de_threads_do_banco_acompanha_o_pool() -> None:
 def test_health_nao_espera_thread() -> None:
     """`/api/health` e' `async def`: nao depende de thread livre no pool padrao."""
     assert inspect.iscoroutinefunction(pilot.health)
-    assert asyncio.run(pilot.health()) == {"status": "ok"}
+    assert asyncio.run(pilot.health()) == _health_esperado()
 
 
 def test_rota_livre_nao_salta_para_thread(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -1646,3 +1646,17 @@ def test_conexao_do_pool_nao_registra_recusa_por_falta_de_recurso_local(
     with pytest.raises(psycopg.OperationalError):
         classe.connect("host=x")
     assert mod._ultima_recusa > 0
+
+
+def _health_esperado() -> dict:
+    """O `/api/health` publico EXATO: status + versao de fatores da renda (E0), nada mais.
+
+    A versao vem do loader (muda a cada atualizacao de fatores, por isso nao e literal); o
+    que o teste trava e o FORMATO -- nenhuma chave alem destas, nenhum caminho.
+    """
+    from motor_expansao.renda import carregar_fatores
+
+    return {
+        "status": "ok",
+        "renda_fatores": {"versao": carregar_fatores().versao, "fixada_por_env": False},
+    }

@@ -39,17 +39,19 @@ telegram-bot ──HTTP interno──► api ──► volumes :ro (outputs + ib
 | `data/staging/vulnerabilidade_ma_redes.parquet` | unidades de rede vistas pelo agregador (DEC-046) | **Sim, na prática** — ver aviso abaixo |
 | `data/staging/uplift_renda_domiciliar_municipio.parquet` | uplift de composição + `moradores_por_domicilio_municipio`, por município | **Sim, na prática** — ver aviso abaixo |
 | `data/staging/uplift_composicao_setor.parquet` | uplift de composição por setor (choropleth `renda_domiciliar` do PDF) | **Sim, na prática** — ver aviso abaixo |
-| `data/staging/fator_temporal_renda.json` | fator temporal CAGED (renda jul/2022 → corrente) | **Sim, na prática** — ver aviso abaixo |
+| *(fator temporal da renda)* | **não é mais arquivo de staging** desde a E0 da correção de renda: viaja **na imagem**, em `src/motor_expansao/renda/fatores/BR/` (versão em uso no `VIGENTE`). Não há `scp` dele | — (ver `docs/runbook_atualizacao_renda.md`) |
 | `data/ultra/` | assets de branding do PDF | Não (fallback de cor sólida) |
 
-> **⚠ Falha SILENCIOSA (custou um deploy em 2026-07-17).** Os três artefatos de renda domiciliar acima
-> não quebram nada quando faltam: o código cai em fallback e o PDF sai **com renda domiciliar errada, sem
-> erro nenhum**. Os fallbacks são `UPLIFT_COMPOSICAO_NACIONAL = 1.632`, `MORADORES_DOMICILIO_NACIONAL = 2.79`
-> e `FATOR_TEMPORAL_RENDA_FALLBACK = 1.0` (renda nominal de jul/2022, sem correção) — todos em
-> `dashboard/constants.py:377-387`. Numa VPS nova, num restore ou num volume recriado, o defeito volta
-> calado. **Conferir a presença dos três antes de dar o deploy por concluído.**
-> Regeneráveis por `pipelines/derivar_uplift_renda_domiciliar.py`, `pipelines/derivar_uplift_composicao_setor.py`
-> e `pipelines/derivar_fator_temporal_renda.py`.
+> **⚠ Falha SILENCIOSA (custou um deploy em 2026-07-17).** Até a E0 da correção de renda, os artefatos de
+> renda domiciliar acima não quebravam nada quando faltavam: o código caía em fallback (uplift 1,632,
+> moradores 2,79 e fator temporal 1,0) e o PDF saía **com renda domiciliar errada, sem erro nenhum**.
+> Desde a E0, com `MOTOR_DATA_DIR` setado, a checagem de subida de `motor_expansao.renda`
+> (`validar_na_subida`) exige os dois parquets (e o carimbo `k` legível) e **recusa subir** sem eles; o
+> fator temporal saiu do staging e vai na imagem. **Conferir a presença dos dois antes do deploy** —
+> agora a falta derruba a subida em vez de mentir no PDF.
+> Regeneráveis por `pipelines/derivar_uplift_renda_domiciliar.py` e `pipelines/derivar_uplift_composicao_setor.py`.
+> O `pipelines/derivar_fator_temporal_renda.py` foi aposentado: fator novo é versão nova no pacote
+> (`python -m motor_expansao.renda.atualizar_fatores`, runbook em `docs/runbook_atualizacao_renda.md`).
 
 > **⚠ Falha SILENCIOSA que MUDOU DE SINAL (DEC-046).** Os dois parquets de M&A acima não
 > quebram nada quando faltam — mas desde a DEC-046 a ausência deixou de ser inofensiva. Antes,
@@ -71,9 +73,10 @@ scp -i "$env:USERPROFILE\.ssh\id_ultra" -r data/ibge   root@2.25.137.241:/opt/mo
 scp -i "$env:USERPROFILE\.ssh\id_ultra" data/staging/concorrentes_mapeados.parquet `
     data/staging/unidades_ultra_mapeadas.parquet data/staging/hexagonos_mercado_mapeado.parquet `
     root@2.25.137.241:/opt/motor-expansao/data/staging/
-# renda domiciliar (os 3 do aviso acima) — em 2026-07-17 foram enviados com a chave `id_ultra_mcp`
+# renda domiciliar (os 2 do aviso acima) — em 2026-07-17 foram enviados com a chave `id_ultra_mcp`
+# (o fator_temporal_renda.json NAO vai mais: o fator viaja na imagem desde a E0)
 scp -i "$env:USERPROFILE\.ssh\id_ultra_mcp" data/staging/uplift_renda_domiciliar_municipio.parquet `
-    data/staging/uplift_composicao_setor.parquet data/staging/fator_temporal_renda.json `
+    data/staging/uplift_composicao_setor.parquet `
     root@2.25.137.241:/opt/motor-expansao/data/staging/
 ```
 

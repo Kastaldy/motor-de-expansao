@@ -40,6 +40,11 @@ services:
     environment:
       # O backend deriva OUTPUTS/STAGING/ULTRA/etc. de MOTOR_DATA_DIR (igual ao BR).
       MOTOR_DATA_DIR: "/app/data"
+      # Rollback de EMERGENCIA da renda exibida (E0; docs/runbook_atualizacao_renda.md):
+      # fixa uma versao de fatores que JA existe na imagem, por cima do `VIGENTE`. Vazia
+      # (default) = nao fixada. Tem de estar listada AQUI: este compose nao tem `env_file`,
+      # e por o valor so no `.env` da VPS nao chegaria ao container (falha muda).
+      MOTOR_FATORES_RENDA_VERSAO: ${MOTOR_FATORES_RENDA_VERSAO:-}
       WEB_DIST_DIR: "/app/web/dist"
       # ── Acesso (a "segunda armadilha" do plano_multipais.md, BLK-INTL-08) ──────
       # Sem MOTOR_CADASTRO_DIR e sem override, `abas_do_usuario`
