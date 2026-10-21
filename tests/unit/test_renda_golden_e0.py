@@ -2,7 +2,11 @@
 
 Regra-mae da E0 (plano de correcao da renda, secao 10.4): com a versao 0 dos fatores
 (BR `2026-08_caged_v0`, F = 1,1641 -- o mesmo float que a VPS aplicava), toda superficie que
-exibe renda tem de sair IGUAL bit a bit ao que saia antes da migracao. Igualdade EXATA (`==`),
+exibe renda tem de sair IGUAL bit a bit ao que saia antes da migracao.
+
+Desde a E2 (DEC-075) o `VIGENTE` aponta para a versao da PNAD, entao este golden FIXA a v0 por
+`MOTOR_FATORES_RENDA_VERSAO` -- o mesmo mecanismo do rollback de producao. Ele continua provando
+que a migracao nao mudou numero e, de quebra, que o rollback para a v0 devolve a escala de antes. Igualdade EXATA (`==`),
 nunca `approx`: uma troca na ORDEM das operacoes (`v x (u x F)` no lugar de `(v x u) x F`)
 muda o ultimo bit e `approx` deixaria passar.
 
@@ -87,6 +91,8 @@ def _carregar_fator_temporal_antigo(d: dict) -> tuple[float, str]:
 
 
 F_ANTIGO, ROTULO_ANTIGO = _carregar_fator_temporal_antigo(_JSON_VPS)
+#: A versao que reproduz producao de antes da E0 (fixada por env: o VIGENTE e a da E2).
+VERSAO_V0 = "2026-08_caged_v0"
 
 def _v06004_antiga(v, pc, m):
     """A reconstrucao da V06004 de antes da E0, nos tres consumidores (so chamada sem V06004)."""
@@ -147,9 +153,9 @@ def staging(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     pd.DataFrame({"metodo_calibracao_renda": [f"multiplicativo_global_k={_K}"]}).to_parquet(
         st / "censo2022_setores_calibrado.parquet"
     )
-    # A versao VIGENTE do pacote, sem fixacao por env e sem fator sintetico.
+    # A v0 do pacote FIXADA por env (o caminho do rollback), sem fator sintetico.
     monkeypatch.delenv("MOTOR_DATA_DIR", raising=False)
-    monkeypatch.delenv(ENV_VERSAO, raising=False)
+    monkeypatch.setenv(ENV_VERSAO, VERSAO_V0)
     carregar_fatores.cache_clear()
     monkeypatch.setattr(pilot, "STAGING_DIR", st)
     apontar_staging_renda(monkeypatch, st)
@@ -161,9 +167,11 @@ def staging(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     carregar_fatores.cache_clear()
 
 
-def test_a_versao_vigente_e_o_fator_que_a_producao_aplicava() -> None:
+def test_a_v0_e_o_fator_que_a_producao_aplicava(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv(ENV_VERSAO, VERSAO_V0)
     carregar_fatores.cache_clear()
-    f = carregar_fatores()
+    f = carregar_fatores("BR")
+    assert f.versao == VERSAO_V0 and f.fixada_por_env is True
     assert f.nacional.domiciliar == F_ANTIGO
     assert f.nacional.per_capita == F_ANTIGO
     assert f.rotulo_referencia == ROTULO_ANTIGO

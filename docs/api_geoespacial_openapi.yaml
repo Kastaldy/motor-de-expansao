@@ -188,7 +188,7 @@ components:
           properties:
             versao:
               type: string
-              example: 2026-08_caged_v0
+              example: 2026-10_pnad2025_v1
             fixada_por_env:
               type: boolean
               example: false
@@ -428,7 +428,8 @@ components:
             renda_domiciliar do PDF. MUDANCA DE ESCALA em 2026-08-14 (fim da dupla contagem
             do k na base: para o mesmo ponto o valor cai /1,2335). O example abaixo assume
             fator temporal 1,0; em producao multiplica o fator domiciliar da versao vigente
-            de motor_expansao.renda (v0 BR = 1,1641; o fator viaja na imagem, nao mais em
+            de motor_expansao.renda (BR desde a DEC-075: PNAD Continua 2025, com fator
+            proprio para PE e MS; o fator viaja na imagem, nao mais em
             data/staging/fator_temporal_renda.json).
           example: 25740.0
         fracao_uplift_extrapolado_raio:

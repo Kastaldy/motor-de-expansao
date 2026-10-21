@@ -22,9 +22,6 @@ import pytest
 
 from motor_expansao.renda import carregador, formula, insumos
 
-#: Fator da versao 0 brasileira (`fatores/BR/2026-08_caged_v0.json`): o que producao exibe.
-F_V0_BR = 1.1641
-
 _CACHES_INSUMOS = (
     "_uplift_cache",
     "_uplift_uf_cache",

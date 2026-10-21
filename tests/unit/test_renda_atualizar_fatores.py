@@ -18,6 +18,7 @@ import ast
 import json
 import math
 import os
+import re
 import shutil
 import zipfile
 from datetime import date
@@ -287,12 +288,12 @@ def _sidra_7531(*, adulterar_2025: float = 1.0, nao_uniforme: bool = False) -> l
     return resp
 
 
-def _vigente(dir_: Path) -> Path:
+def _vigente(dir_: Path, versao: str = "2026-08_caged_v0") -> Path:
     d = dir_ / "fatores" / "BR"
     d.mkdir(parents=True)
-    (d / "VIGENTE").write_text("2026-08_caged_v0\n", encoding="utf-8")
-    origem = Path(af.__file__).parent / "fatores" / "BR" / "2026-08_caged_v0.json"
-    shutil.copyfile(origem, d / "2026-08_caged_v0.json")
+    (d / "VIGENTE").write_text(f"{versao}\n", encoding="utf-8")
+    origem = Path(af.__file__).parent / "fatores" / "BR" / f"{versao}.json"
+    shutil.copyfile(origem, d / f"{versao}.json")
     return dir_ / "fatores"
 
 
@@ -668,15 +669,36 @@ def test_auto_teste_da_varredura_ast(tmp_path: Path) -> None:
 _CACHE_REAL = os.environ.get("MOTOR_PNAD_CACHE_DIR")
 
 
-@pytest.mark.skipif(
-    not _CACHE_REAL or not Path(_CACHE_REAL).is_dir(),
-    reason="MOTOR_PNAD_CACHE_DIR ausente (microdados reais)",
-)
-def test_reproduz_numeros_reais_do_cache(tmp_path: Path) -> None:
-    cache = Path(_CACHE_REAL or "")
+_SEM_CACHE_REAL = not _CACHE_REAL or not Path(_CACHE_REAL).is_dir()
+
+
+def _cache_real_isolado(tmp_path: Path) -> tuple[Path, Path]:
+    """Microdados e layouts do cache real ligados (hardlink; copia se nao der) num diretorio
+    do teste, mais a 7531. O `atualizar_fatores` ESCREVE no cache (manifesto, parquets de
+    extracao): sem isto o teste sujaria o cache de quem o roda, que pode ser so-leitura."""
+    # Guarda propria: o helper nao e teste, entao um `skipif` em cima dele nao faria nada. Sem
+    # ela, `Path("")` varreria o diretorio corrente e um diretorio inexistente daria
+    # FileNotFoundError em vez de skip.
+    if _SEM_CACHE_REAL or not _CACHE_REAL:
+        pytest.skip("MOTOR_PNAD_CACHE_DIR ausente (microdados reais)")
+    cache = Path(_CACHE_REAL)
     sidra_json = Path(os.environ.get("MOTOR_PNAD_SIDRA_7531_JSON") or cache / "t7531_uf.json")
     if not sidra_json.exists():
         pytest.skip(f"sem a 7531 em cache ({sidra_json})")
+    isolado = tmp_path / "cache_real"
+    isolado.mkdir()
+    for arq in sorted(cache.iterdir()):
+        if arq.is_file() and arq.name.startswith(("PNADC_", "input_PNADC_")):
+            try:
+                os.link(arq, isolado / arq.name)
+            except OSError:
+                shutil.copyfile(arq, isolado / arq.name)
+    return isolado, sidra_json
+
+
+@pytest.mark.skipif(_SEM_CACHE_REAL, reason="MOTOR_PNAD_CACHE_DIR ausente (microdados reais)")
+def test_reproduz_numeros_reais_do_cache(tmp_path: Path) -> None:
+    cache, sidra_json = _cache_real_isolado(tmp_path)
     _vigente(tmp_path)
     argv = [
         "--pais",
@@ -714,6 +736,79 @@ def test_reproduz_numeros_reais_do_cache(tmp_path: Path) -> None:
     assert erros["2025"]["visita"] == 1 and erros["2025"]["erro_max"] == pytest.approx(
         0.00370, abs=5e-6
     )
+
+
+_FATORES_PACOTE = Path(af.__file__).parent / "fatores"
+_REPO = Path(__file__).resolve().parents[2]
+#: Campos que o humano preenche DEPOIS da geracao (aprovacao e onde o relatorio foi versionado).
+_CAMPOS_DA_APROVACAO = ("dec", "aprovado_por", "relatorio")
+
+
+def _iguais_aprox(a: object, b: object, caminho: str = "") -> list[str]:
+    """Diferencas entre dois JSON; float compara com rel 1e-12 (soma em outra maquina/BLAS)."""
+    if isinstance(a, dict) and isinstance(b, dict):
+        difs = [f"{caminho}: chaves {sorted(set(a) ^ set(b))}"] if set(a) != set(b) else []
+        for k in sorted(set(a) & set(b)):
+            difs += _iguais_aprox(a[k], b[k], f"{caminho}.{k}")
+        return difs
+    if isinstance(a, list) and isinstance(b, list):
+        if len(a) != len(b):
+            return [f"{caminho}: {len(a)} x {len(b)} itens"]
+        return [
+            d
+            for i, (x, y) in enumerate(zip(a, b, strict=True))
+            for d in _iguais_aprox(x, y, f"{caminho}[{i}]")
+        ]
+    if isinstance(a, float) and isinstance(b, float):
+        return [] if a == pytest.approx(b, rel=1e-12, abs=1e-15) else [f"{caminho}: {a!r} x {b!r}"]
+    return [] if a == b else [f"{caminho}: {a!r} x {b!r}"]
+
+
+@pytest.mark.skipif(_SEM_CACHE_REAL, reason="MOTOR_PNAD_CACHE_DIR ausente (microdados reais)")
+def test_reproduz_a_versao_publicada_a_partir_do_cache(tmp_path: Path) -> None:
+    """Teste 8 do plano (secao 10.4, item 6): a versao VIGENTE publicada sai de novo, identica,
+    do comando documentado sobre os microdados em cache -- com as MESMAS UFs aprovadas e a mesma
+    data de extracao. So `dec`, `aprovado_por` e `relatorio` (preenchidos na aprovacao) diferem;
+    o relatorio gerado tem de ser byte a byte o versionado em `docs/` (mesmo sha256)."""
+    vigente = (_FATORES_PACOTE / "BR" / "VIGENTE").read_text(encoding="utf-8").strip()
+    publicada = json.loads((_FATORES_PACOTE / "BR" / f"{vigente}.json").read_text(encoding="utf-8"))
+    if not str(publicada["fonte"].get("pesquisa", "")).startswith("PNAD"):
+        pytest.skip(f"VIGENTE {vigente} nao e uma versao gerada pela PNAD")
+    # O ponto de partida da geracao: a versao que era vigente quando ela foi gerada. Sai do
+    # proprio relatorio versionado (linha "Versao vigente comparada"), nao de um nome cravado:
+    # a proxima versao anual parte desta, nao da v0, e o relatorio compara contra a de partida.
+    relatorio_versionado = (_REPO / publicada["relatorio"]["caminho"]).read_text(encoding="utf-8")
+    partida = re.search(r"Versão vigente comparada: `([^`]+)`", relatorio_versionado)
+    assert partida, "relatorio versionado sem a linha 'Versão vigente comparada'"
+    if not (_FATORES_PACOTE / "BR" / f"{partida.group(1)}.json").exists():
+        pytest.skip(f"versao de partida {partida.group(1)} nao esta mais no pacote")
+    cache, sidra_json = _cache_real_isolado(tmp_path)
+    _vigente(tmp_path, partida.group(1))
+    argv = [
+        "--pais", "BR",
+        "--ano-base", str(publicada["ano_base_renda"]),
+        "--ano-alvo", str(publicada["ano_alvo"]),
+        "--offline",
+        "--cache-dir", str(cache),
+        "--saida-dir", str(tmp_path / "saida"),
+        "--fatores-dir", str(tmp_path / "fatores"),
+        "--sidra-7531-json", str(sidra_json),
+    ]
+    for uf in sorted(publicada["excecoes_aprovadas"]):
+        argv += ["--aprovar-uf", uf]
+    hoje = date.fromisoformat(publicada["data_extracao"])
+    res = af.executar(af.construir_parser().parse_args(argv), hoje=hoje)
+    assert res["versao"] == vigente
+    gerada = json.loads(res["json"].read_text(encoding="utf-8"))
+    sem = {k: v for k, v in publicada.items() if k not in _CAMPOS_DA_APROVACAO}
+    assert _iguais_aprox({k: v for k, v in gerada.items() if k not in _CAMPOS_DA_APROVACAO}, sem) == []
+    # Relatorio: o gerado agora == o versionado (o blob do git e LF; o checkout pode ser CRLF).
+    import hashlib
+
+    versionado = (_REPO / publicada["relatorio"]["caminho"]).read_bytes().replace(b"\r\n", b"\n")
+    assert res["relatorio"].read_bytes() == versionado
+    assert hashlib.sha256(versionado).hexdigest() == publicada["relatorio"]["sha256"]
+    assert gerada["relatorio"]["sha256"] == publicada["relatorio"]["sha256"]
 
 
 def test_main_cli_imprime_resumo(

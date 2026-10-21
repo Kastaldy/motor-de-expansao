@@ -94,16 +94,11 @@ def fator_efetivo(versao: Mapping[str, Any], uf: str, tipo: str) -> float:
 # ---------------------------------------------------------------------------
 
 
-def _fmt(x: float, casas: int = 4) -> str:
-    return f"{x:.{casas}f}".replace(".", ",")
-
-
-def _rotulo_referencia(ano_alvo: int, nac: Mapping[str, float]) -> str:
+def _rotulo_referencia(ano_alvo: int, data_referencia_base: str) -> str:
     """`rotulo_referencia` da versao (vira o `data_referencia_renda` do resultado do ponto)."""
-    return (
-        f"{ano_alvo} (PNAD Contínua; Censo jul/2022 x {_fmt(nac['per_capita'])} per capita, "
-        f"x {_fmt(nac['domiciliar'])} domiciliar)"
-    )
+    ano, mes = data_referencia_base.split("-")
+    meses = ("jan", "fev", "mar", "abr", "mai", "jun", "jul", "ago", "set", "out", "nov", "dez")
+    return f"{ano_alvo} (PNAD Contínua; Censo {meses[int(mes) - 1]}/{ano})"
 
 
 def _arquivos_fonte(insumos: pnad.Insumos) -> list[dict[str, Any]]:
@@ -159,7 +154,7 @@ def montar_versao(
             ),
         }
     nac = calc.nacional
-    rotulo_ref = _rotulo_referencia(calc.ano_alvo, nac)
+    rotulo_ref = _rotulo_referencia(calc.ano_alvo, str(vigente["data_referencia_base"]))
     campos_candidata = (
         "uf",
         "desvio_pc_v1",
@@ -399,7 +394,9 @@ def _gravar(path: Path, texto: str) -> None:
     if path.exists():
         raise AtualizacaoAbortada(f"{path} ja' existe — versoes sao imutaveis")
     tmp = path.with_name(path.name + ".tmp")
-    tmp.write_text(texto, encoding="utf-8")
+    # Bytes, nao `write_text`: no Windows o modo texto grava CRLF e o sha256 do relatorio
+    # (calculado sobre o texto em LF) deixaria de bater com o arquivo em disco.
+    tmp.write_bytes(texto.encode("utf-8"))
     tmp.replace(path)
 
 

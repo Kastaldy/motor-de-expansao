@@ -125,11 +125,6 @@ export default function DetalheRegiao({
             </div>
           )}
 
-          {detalhe.data_referencia && (
-            <p style={{ font: '400 10.5px/1.4 var(--f-ui)', color: 'var(--tx-sub)', margin: 0 }}>
-              Fonte: Censo 2022{instituto ? ` do ${instituto}` : ''} · {detalhe.data_referencia}
-            </p>
-          )}
         </div>
       )}
     </div>

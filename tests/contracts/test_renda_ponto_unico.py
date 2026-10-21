@@ -34,8 +34,8 @@ O que ele procura (AST, sem docstrings; comentarios nao entram na arvore)
 - **R4** -- importar o modulo aposentado `motor_expansao.dashboard.renda_hex`.
 - **R5** -- o fator pela API NOVA fora do dono: `fator`/`fator_hex` como atributo ou nome
   importado de `motor_expansao.renda`, o nome `fator_hex` em qualquer posicao,
-  `fator_composto_domiciliar` como operando de `*`/`/`, e o literal do fator vigente
-  (`1.1641`). Sem isto, `x * _renda.fator(uf, "domiciliar")` abriria um segundo ponto de
+  `fator_composto_domiciliar` como operando de `*`/`/`, e os literais dos fatores de TODA
+  versao empacotada, exatos e com 4 casas (`1.1641` da v0, `1.3401`/`1.247` da PNAD 2025...). Sem isto, `x * _renda.fator(uf, "domiciliar")` abriria um segundo ponto de
   aplicacao que o `VIGENTE` novo nao alcancaria.
 
 - **R6** (E1) -- SUPERFICIE servindo renda CRUA: num campo de payload/linha cujo nome tem
@@ -114,7 +114,28 @@ _MODULO_APOSENTADO = "motor_expansao.dashboard.renda_hex"
 _ATRIBUTOS_FATOR = frozenset({"fator", "fator_hex"})
 _NOMES_FATOR_SEMPRE = frozenset({"fator_hex"})
 _FATOR_COMPOSTO = "fator_composto_domiciliar"
-_LITERAIS_FATOR = frozenset({1.1641})
+
+
+def _literais_das_versoes() -> frozenset[float]:
+    """Todo fator per capita/domiciliar de TODA versao empacotada (nacional e excecoes), exato e
+    arredondado a 4 casas -- a grafia de quem o copiaria a mao. `1.0` fica de fora (a AR e o
+    `moradores` da v0 o usam, e `x * 1.0` nao e fator)."""
+    import json
+
+    raiz = Path(__file__).resolve().parents[2] / "src" / "motor_expansao" / "renda" / "fatores"
+    out: set[float] = {1.1641}
+    for arq in raiz.glob("*/*.json"):
+        dados = json.loads(arq.read_text(encoding="utf-8"))
+        grupos = [dados["nacional"], *dados.get("excecoes_aprovadas", {}).values()]
+        for g in grupos:
+            for tipo in ("per_capita", "domiciliar"):
+                v = float(g[tipo])
+                if v != 1.0:
+                    out |= {v, round(v, 4)}
+    return frozenset(out)
+
+
+_LITERAIS_FATOR = _literais_das_versoes()
 #: Chamadas equivalentes a `*` e `/` (metodo do pandas/numpy ou funcao de `operator`/`np`).
 _CHAMADAS_ARITMETICAS = frozenset(
     {
@@ -818,6 +839,8 @@ def test_a_lista_de_ignorados_e_so_de_diretorio_gerado() -> None:
         ("from motor_expansao.renda import fator", "R5"),
         ("d = b * _renda.fator_composto_domiciliar(u, uf)", "R5"),
         ("total = v * 1.1641", "R5"),
+        ("total = v * 1.3401", "R5"),  # nacional per capita da PNAD 2025, copiado a mao
+        ("total = v * 1.3461", "R5"),  # domiciliar de PE
         ("from motor_expansao.dashboard import renda_hex", "R4"),
         ("from motor_expansao.dashboard.renda_hex import renda_domiciliar_por_hex", "R4"),
         ("import motor_expansao.dashboard.renda_hex", "R4"),
