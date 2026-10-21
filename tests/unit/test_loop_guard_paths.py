@@ -63,6 +63,11 @@ def _classe(path: str) -> str | None:
         "src/motor_expansao/renda/fatores/BR/VIGENTE",
         "src/motor_expansao/renda/fatores/BR/2026-08_caged_v0.json",
         "src/motor_expansao/renda/atualizar_fatores.py",
+        # Recomendacao unica (DEC-077): regua versionada, VIGENTE e o nucleo do Top 10.
+        "src/motor_expansao/recomendacao/qualquer.py",
+        "src/motor_expansao/recomendacao/nucleo.py",
+        "src/motor_expansao/recomendacao/regra/BR/VIGENTE",
+        "src/motor_expansao/recomendacao/regra/BR/2026-10_v1.json",
         "data/staging/hexagonos_mercado_mapeado.parquet",
         "data/outputs/carteira_expansao_acionavel.parquet",
         "data/outputs/plano_expansao_curto_prazo.parquet",
@@ -188,6 +193,8 @@ def test_caminhos_governanca(path: str) -> None:
         # Contraprova da regra da renda: os TESTES do modulo e o runbook seguem limpos.
         "tests/unit/test_renda_modulo.py",
         "docs/runbook_atualizacao_renda.md",
+        # Contraprova da regra da recomendacao unica: os TESTES dela seguem limpos.
+        "tests/unit/test_recomendacao_nucleo.py",
         "tests/unit/dimensionamento/test_huff.py",
         "tests/integration/test_streamlit_app.py",
         "docs/x.md",
