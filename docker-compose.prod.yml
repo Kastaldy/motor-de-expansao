@@ -151,6 +151,11 @@ services:
       # MOTOR_DATA_DIR sao `web/server/app.py` e `scripts/check_artifacts.py`, e o
       # `Settings` daqui tem env_prefix `API_`, que nao casa com este nome.
       MOTOR_DATA_DIR: "/app/data"
+      # Rollback de EMERGENCIA da renda exibida (E0; docs/runbook_atualizacao_renda.md):
+      # fixa uma versao de fatores que JA existe na imagem, por cima do `VIGENTE`. Vazia
+      # (default) = nao fixada. Tem de estar listada AQUI: este compose nao tem `env_file`,
+      # e por o valor so no `.env` da VPS nao chegaria ao container (falha muda).
+      MOTOR_FATORES_RENDA_VERSAO: ${MOTOR_FATORES_RENDA_VERSAO:-}
     volumes:
       # O perfil do pais. Bind de ARQUIVO, e nao de diretorio, porque `/app/data` vem da
       # IMAGEM e so os subdiretorios abaixo sao montados — a RAIZ nao e mount, entao
@@ -270,6 +275,11 @@ services:
     environment:
       # O backend deriva OUTPUTS/STAGING/IBGE/ULTRA/CENSO_GEO/ENRICHED de MOTOR_DATA_DIR.
       MOTOR_DATA_DIR: "/app/data"
+      # Rollback de EMERGENCIA da renda exibida (E0; docs/runbook_atualizacao_renda.md):
+      # fixa uma versao de fatores que JA existe na imagem, por cima do `VIGENTE`. Vazia
+      # (default) = nao fixada. Tem de estar listada AQUI: este compose nao tem `env_file`,
+      # e por o valor so no `.env` da VPS nao chegaria ao container (falha muda).
+      MOTOR_FATORES_RENDA_VERSAO: ${MOTOR_FATORES_RENDA_VERSAO:-}
       WEB_DIST_DIR: "/app/web/dist"
       # DEC-023 — cadastro operacional das unidades (consultor, master franquia). E a
       # UNICA escrita do piloto, e por isso mora FORA do MOTOR_DATA_DIR: assim nenhum

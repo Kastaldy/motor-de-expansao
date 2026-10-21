@@ -56,7 +56,7 @@ O app le Parquets locais apontados por `MOTOR_DATA_DIR` (montados `:ro` em produ
 | `data/staging/growth_api_historico.parquet` | Visao Executiva (numeros reais da rede) | recomendado; sem ele a tela responde 404 |
 | `data/staging/base_calibracao_maduras.parquet` | semente p50 da demanda na Viabilidade | recomendado |
 | `data/staging/hexagonos_mercado_mapeado.parquet` | residual fitness do ponto no Relatorio Pontual | opcional |
-| `data/staging/uplift_renda_domiciliar_municipio.parquet`, `uplift_composicao_setor.parquet`, `fator_temporal_renda.json` | renda media domiciliar municipal (tooltip e PDF) | opcional (fallback nacional) |
+| `data/staging/uplift_renda_domiciliar_municipio.parquet`, `uplift_composicao_setor.parquet` | renda media domiciliar municipal (tooltip e PDF) | obrigatorio em producao (com `MOTOR_DATA_DIR` a subida recusa sem eles); em dev, fallback nacional com aviso no log. O fator temporal NAO e mais arquivo de staging: viaja na imagem, em `src/motor_expansao/renda/fatores/` (`docs/runbook_atualizacao_renda.md`) |
 
 Dados brutos e staging nacionais grandes sao artefatos externos ao codigo (`docs/artefatos_dados.md`).
 

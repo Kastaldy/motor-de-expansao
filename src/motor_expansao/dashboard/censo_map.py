@@ -14,10 +14,9 @@ from pyproj import Transformer
 from shapely.geometry import MultiPolygon, Point, Polygon, box
 from shapely.geometry.base import BaseGeometry
 
-# `constants` tambem como MODULO: `FATOR_TEMPORAL_RENDA` e' recalculado quando o piloto
-# reaponta os paths de staging (ver nota equivalente em censo_point.py) — importar o NOME
-# congelaria aqui o fallback 1.0 do import feito com CWD errado.
-from motor_expansao.dashboard import constants as _constants
+# Renda exibida pelo ponto unico (`motor_expansao.renda`, E0); insumos como atributo de modulo
+# (ver a nota equivalente em censo_point.py).
+from motor_expansao import renda as _renda
 from motor_expansao.dashboard.censo_point import (
     CRS_ORIGEM_CENSO,
     GEOMETRIA_TIPO_ISOCRONA_CARRO_10MIN,
@@ -43,10 +42,10 @@ from motor_expansao.dashboard.constants import (
     RENDA_MEDIA_DOMICILIAR_BANDS,
     RENDA_PER_CAPITA_BANDS,
     TEXTO_SEM_DADO,
-    uplift_composicao_por_setor,
 )
 from motor_expansao.dashboard.utils import score_band_to_color
 from motor_expansao.perfil import resolver_perfil
+from motor_expansao.renda import insumos as _renda_insumos
 
 # Simbolo/codigo da moeda de RENDA da instancia ("R$" no Brasil, "USD" na Argentina).
 # Resolvido UMA vez, como todo o perfil (DEC-047); rotulo, nunca caminho de execucao.
@@ -2015,20 +2014,21 @@ def render_mapas_censitarios_combinados(
         )
         if pd.isna(renda_domiciliar):
             # Fallback pela per capita BRUTA, nunca pela calibrada: a calibrada reintroduziria o k.
-            renda_domiciliar = (
-                pd.to_numeric(record.get("renda_per_capita_setor_2022"), errors="coerce")
-                * moradores
+            renda_domiciliar = _renda.v06004_de_fallback(
+                renda_domiciliar,
+                pd.to_numeric(record.get("renda_per_capita_setor_2022"), errors="coerce"),
+                moradores,
             )
         uf_val = record.get("uf")
         mun_val = record.get("cod_municipio")
-        uplift_setor = uplift_composicao_por_setor(
+        uf_txt = str(uf_val) if pd.notna(uf_val) else None
+        fator_setor = _renda_insumos.uplift_setor(
             str(record.get("cod_setor") or ""),
-            str(uf_val) if pd.notna(uf_val) else None,
+            uf_txt,
             str(mun_val) if pd.notna(mun_val) else None,
         )
-        renda_domiciliar_total = (
-            renda_domiciliar * uplift_setor * float(_constants.FATOR_TEMPORAL_RENDA)
-        )
+        # (V06004 x uplift) x F_dom(uf): mesma ordem de antes da E0, no modulo da renda.
+        renda_domiciliar_total = _renda.renda_domiciliar(renda_domiciliar, fator_setor, uf_txt)
         renda_domiciliar_vals.append(float(renda_domiciliar_total))
         # A camada "Renda per capita" sai da MESMA conta, dividida pelos moradores — igual ao
         # `renda_per_capita_domiciliar` de `censo_point.py`. Ate aqui ela era a coluna CALIBRADA
@@ -2036,8 +2036,10 @@ def render_mapas_censitarios_combinados(
         # mapa de per capita saia numa escala e o Big Number de per capita da MESMA pagina saia
         # noutra. Pior que divergir no numero, as faixas de cor (`RENDA_PER_CAPITA_BANDS`) sao
         # cortes ABSOLUTOS — colorir pela escala antiga contra regua nova pinta a faixa errada.
+        # Desde a E0, com o PROPRIO fator (F_pc), nunca a domiciliar dividida -- na versao 0 e o
+        # mesmo float de antes.
         renda_vals.append(
-            float(renda_domiciliar_total / moradores)
+            float(_renda.renda_per_capita(renda_domiciliar, fator_setor, moradores, uf_txt))
             if pd.notna(moradores) and moradores > 0
             else float("nan")
         )

@@ -16,9 +16,9 @@ import pandas as pd
 import pytest
 
 import motor_expansao.dashboard.relatorio_municipal as relmun
+import motor_expansao.renda as renda_pacote
 from motor_expansao.api import service
 from motor_expansao.api.settings import Settings
-from motor_expansao.dashboard import renda_hex
 
 
 def _df_homonimos() -> pd.DataFrame:
@@ -56,7 +56,7 @@ def capturado(monkeypatch: pytest.MonkeyPatch, tmp_path) -> dict:
 
     monkeypatch.setattr(relmun, "carregar_bairros_geo", _geo)
     monkeypatch.setattr(
-        renda_hex, "renda_domiciliar_por_hex", lambda df, **k: {"ac1": 5000.0}
+        renda_pacote, "renda_domiciliar_por_hex", lambda df, **k: {"ac1": 5000.0}
     )
     monkeypatch.setattr(relmun, "carregar_poligono_municipio", lambda *a, **k: None)
 

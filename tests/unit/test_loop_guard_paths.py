@@ -58,6 +58,11 @@ def _classe(path: str) -> str | None:
         "src/motor_expansao/pipelines/gerar_plano_expansao_curto_prazo.py",
         "src/motor_expansao/pipelines/enriquecer_outputs_residual_mercado.py",
         "src/motor_expansao/dashboard/relatorio_municipal.py",  # limiares DEC-011
+        # Ponto unico da renda exibida (E0): formula, fatores versionados e o VIGENTE.
+        "src/motor_expansao/renda/formula.py",
+        "src/motor_expansao/renda/fatores/BR/VIGENTE",
+        "src/motor_expansao/renda/fatores/BR/2026-08_caged_v0.json",
+        "src/motor_expansao/renda/atualizar_fatores.py",
         "data/staging/hexagonos_mercado_mapeado.parquet",
         "data/outputs/carteira_expansao_acionavel.parquet",
         "data/outputs/plano_expansao_curto_prazo.parquet",
@@ -180,6 +185,9 @@ def test_caminhos_governanca(path: str) -> None:
         "tests/unit/test_foo.py",
         "tests/unit/test_relatorio_municipal.py",
         "tests/unit/test_calcular_colunas_mercado_gate.py",
+        # Contraprova da regra da renda: os TESTES do modulo e o runbook seguem limpos.
+        "tests/unit/test_renda_modulo.py",
+        "docs/runbook_atualizacao_renda.md",
         "tests/unit/dimensionamento/test_huff.py",
         "tests/integration/test_streamlit_app.py",
         "docs/x.md",

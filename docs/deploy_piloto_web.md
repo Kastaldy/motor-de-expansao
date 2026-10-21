@@ -95,9 +95,13 @@ Confira o que o piloto precisa (senão a feature degrada em silêncio):
 - `data/outputs/hexagonos_dashboard_enriquecido/` — **obrigatório** (Mapa Territorial, carga por UF).
 - `data/outputs/setores_censitarios_2022_geo/` — Relatório Pontual (malha real IBGE).
 - `data/staging/base_calibracao_maduras.parquet` — semente p50/faixa da Viabilidade.
-- `data/staging/{uplift_renda_domiciliar_municipio,uplift_composicao_setor}.parquet` +
-  `fator_temporal_renda.json` — **renda domiciliar municipal**; sem eles, o tooltip cai no
-  fallback NACIONAL (~4,55×). Enviar por scp (ver [[project_deploy_pin_digest_prod]] / memória).
+- `data/staging/{uplift_renda_domiciliar_municipio,uplift_composicao_setor}.parquet` —
+  **renda domiciliar municipal**; desde a E0 da correção de renda, com `MOTOR_DATA_DIR` setado
+  a subida **recusa** sem eles (antes o tooltip caía em silêncio no fallback NACIONAL, ~4,55×).
+  Enviar por scp (ver [[project_deploy_pin_digest_prod]] / memória). O
+  `fator_temporal_renda.json` **não vai mais**: o fator viaja na imagem
+  (`src/motor_expansao/renda/fatores/`); conferir a versão no `/api/health` depois do deploy
+  (`docs/runbook_atualizacao_renda.md`).
 - `data/staging/{crescimento_municipal,crescimento_hex}.parquet` — passo 4 do funil
   ("Como a cidade está indo"). **OPCIONAIS**: sem eles o passo sobe, avisa que não há
   leitura e o resto do piloto segue igual — mas a feature fica morta. Gerados por

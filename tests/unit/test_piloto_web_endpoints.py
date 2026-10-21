@@ -47,7 +47,7 @@ _CACHED = [
     "carregar_uf",
     "carregar_uf_completo",
     "listar_ufs",
-    "_fator_temporal_renda",
+    "_renda_staging_configurado",
     "_faixa_labels",
     "_icone_rede",
     "_icone_ultra",
@@ -206,7 +206,7 @@ def test_todas_as_rotas_registradas() -> None:
 def test_health_contrato(empty_data: Path) -> None:
     # /api/health publico e' mudo (pentest Onda B #8); o diagnostico com data_dir/data_ok
     # migrou para `_inventario_artefatos()` (rota admin /api/acessos/saude-artefatos).
-    assert asyncio.run(pilot.health()) == {"status": "ok"}
+    assert asyncio.run(pilot.health()) == _health_esperado()
     inv = pilot._inventario_artefatos()
     assert inv["status"] == "ok"
     assert inv["data_ok"] is False
@@ -726,6 +726,9 @@ def test_leituras_nao_mutam_artefatos(synth_data: Path) -> None:
     assert m["nivel"] == "municipio"
     assert m["hexes"]
     assert m["passos"][0]["itens"]  # funil acendeu com o dado sintetico
+
+    # A versao de fatores da renda e dado INTERNO (so no /api/health): nunca no payload.
+    assert "renda_meta" not in uf and "renda_meta" not in m
 
     # Todos os payloads sao JSON-safe de ponta a ponta.
     for payload in (munis, uf, m):
@@ -2033,3 +2036,17 @@ def test_sem_build_a_tela_de_entrar_devolve_404_e_nao_500(
     with pytest.raises(HTTPException) as erro:
         pilot.entrar_html()
     assert erro.value.status_code == 404
+
+
+def _health_esperado() -> dict:
+    """O `/api/health` publico EXATO: status + versao de fatores da renda (E0), nada mais.
+
+    A versao vem do loader (muda a cada atualizacao de fatores, por isso nao e literal); o
+    que o teste trava e o FORMATO -- nenhuma chave alem destas, nenhum caminho.
+    """
+    from motor_expansao.renda import carregar_fatores
+
+    return {
+        "status": "ok",
+        "renda_fatores": {"versao": carregar_fatores().versao, "fixada_por_env": False},
+    }
