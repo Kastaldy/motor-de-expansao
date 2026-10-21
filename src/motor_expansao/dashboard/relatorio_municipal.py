@@ -660,7 +660,9 @@ def bairros_aprovados(bairros_geo: dict[str, Any] | None) -> list[str] | None:
     if not tem_bairro_real(bairros_geo) or not (bairros_geo or {}).get("metricas_mercado"):
         return None
     nomes = {
-        str(b["nome"]) for b in bairros_geo["bairros"] if b.get("destacado") and not b.get("sobra")
+        str(b["nome"])
+        for b in (bairros_geo or {}).get("bairros") or []
+        if b.get("destacado") and not b.get("sobra")
     }
     # Ordem sem acento ("Agua Rasa" antes de "Alto de Pinheiros"), como o leitor procura.
     return sorted(
@@ -2391,7 +2393,7 @@ def dividir_bairros_em_partes(
     """
     if not tem_bairro_real(bairros_geo):
         return None
-    todos_bairros = [b for b in bairros_geo["bairros"] if not b.get("sobra")]
+    todos_bairros = [b for b in (bairros_geo or {}).get("bairros") or [] if not b.get("sobra")]
     bairros = todos_bairros
     if max_numerados is not None and len(bairros) > max_numerados:
         bairros = sorted(bairros, key=lambda b: (-_safe_float(b.get("pop")), str(b["nome"])))[:max_numerados]
@@ -2697,7 +2699,8 @@ def _render_mapa_bairros(
             r = max(11, tw // 2 + 5)
             rdraw.ellipse([px - r, py - r, px + r, py + r], fill=_BAIRRO_NUMERO_RGBA,
                           outline=(255, 255, 255, 255), width=2)
-            _draw_text(rdraw, (px - tw / 2, py - 8), texto, font=fonte_num, fill=(255, 255, 255))
+            _draw_text(rdraw, (int(round(px - tw / 2)), int(round(py - 8))), texto, font=fonte_num,
+                       fill=(255, 255, 255))
         fonte_parte = _font(24)
         for mx, my, texto, cor in marcadores or []:
             px, py = project(mx, my)
@@ -2705,7 +2708,8 @@ def _render_mapa_bairros(
             r = max(22, tw // 2 + 10)
             rdraw.ellipse([px - r, py - r, px + r, py + r], fill=(*cor, 255),
                           outline=(255, 255, 255, 255), width=3)
-            _draw_text(rdraw, (px - tw / 2, py - 15), texto, font=fonte_parte, fill=(255, 255, 255))
+            _draw_text(rdraw, (int(round(px - tw / 2)), int(round(py - 15))), texto, font=fonte_parte,
+                       fill=(255, 255, 255))
     _compor_no_map_box(rotulos)
 
     if localizar:
@@ -3638,7 +3642,8 @@ def _tabela_bairros_aprovados(pdf: _UltraPDF, nomes: list[str], x: float, y: flo
     total = len(nomes)
     cortado = pop is not None and total > _BAIRROS_APROVADOS_LISTADOS_MAX
     if cortado:
-        maiores = set(sorted(nomes, key=lambda n: (-pop.get(n, 0.0), n))[:_BAIRROS_APROVADOS_LISTADOS_MAX])
+        pesos = pop or {}
+        maiores = set(sorted(nomes, key=lambda n: (-pesos.get(n, 0.0), n))[:_BAIRROS_APROVADOS_LISTADOS_MAX])
         nomes = [*[n for n in nomes if n in maiores], f"+ {total - len(maiores)} outros"]
     _rounded_panel(pdf, x, y, w, h, border_rgb=cor)
     pdf.set_text_color(*cor)
@@ -3830,7 +3835,7 @@ def renda_por_faixa_de_score(
     """
     if not tem_bairro_real(bairros_geo):
         return None
-    reais = [b for b in bairros_geo["bairros"] if not b.get("sobra")]
+    reais = [b for b in (bairros_geo or {}).get("bairros") or [] if not b.get("sobra")]
     # Renda DOMICILIAR (Juan, 2026-10-20) -- a mesma do card do mapa, trazida do hexagono. Sem ela
     # (base sem fator temporal, ou bairros sem metricas de mercado), a per capita do Censo.
     usa_dom = any(not math.isnan(_safe_float(b.get("renda_dom"))) for b in reais)

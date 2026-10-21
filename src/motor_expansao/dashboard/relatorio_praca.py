@@ -542,7 +542,7 @@ def resumir_crescimento(
         med = _fmt_pct(_v("cres_uf_mediana"))
         ref = f" (mediana {uf or 'da UF'}: {med})" if med is not None else ""
         linhas.append(("Variação do emprego desde dez/2022", f"{emp}{ref}"))
-    ref = dict(referencias or {})
+    refs_uf = dict(referencias or {})
     sigla = uf or "da UF"
     subtitulos: dict[str, str] = {}
     saldo = _fmt_int(_v("cres_saldo_empresas"))
@@ -567,12 +567,12 @@ def resumir_crescimento(
         var = _fmt_pct(_v("cres_salario_var"))
         linhas.append((rot, f"R$ {sal}" + (f" ({var} em 12 meses)" if var else "")))
         partes: list[str] = []
-        if "salario" in ref:
-            rel = round(100.0 * (float(_v("cres_salario")) / float(ref["salario"]) - 1.0))
+        if "salario" in refs_uf:
+            rel = round(100.0 * (float(_v("cres_salario")) / float(refs_uf["salario"]) - 1.0))
             lado = "perto dela" if abs(rel) < 5 else f"{abs(rel)}% {'acima' if rel > 0 else 'abaixo'}"
-            partes.append(f"mediana {sigla}: R$ {_fmt_int(ref['salario'])} ({lado})")
-        if var and "salario_var" in ref:
-            partes.append(f"variação na mediana: {_fmt_pct(ref['salario_var'])}")
+            partes.append(f"mediana {sigla}: R$ {_fmt_int(refs_uf['salario'])} ({lado})")
+        if var and "salario_var" in refs_uf:
+            partes.append(f"variação na mediana: {_fmt_pct(refs_uf['salario_var'])}")
         if partes:
             subtitulos[texto_pdf(rot)] = texto_pdf("; ".join(partes))
     setor = _v("cres_setor")
