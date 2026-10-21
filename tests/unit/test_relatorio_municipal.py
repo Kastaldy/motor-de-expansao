@@ -11,6 +11,8 @@ Pontual recente nem do classico (isolamento estrito).
 
 from __future__ import annotations
 
+import re
+import zlib
 from io import BytesIO
 
 import h3
@@ -51,6 +53,39 @@ _PII_FORBIDDEN = (
     b"96346-2974",
     b"@ultraacademia.com.br",
 )
+
+
+def _paginas_do_pdf(pdf_bytes: bytes) -> list[str]:
+    """Texto de cada pagina, na ordem do `/Kids`, lido do PDF CRU -- sem leitor de PDF.
+
+    A CI nao instala leitor de PDF (o `pymupdf` daqui e' so' do venv local). O fpdf2 grava o
+    texto da fonte core em latin-1, um `(...) Tj` por trecho, com parenteses e barra escapados;
+    cada trecho vira uma linha. O relatorio sai sem compressao; um `FPDF` cru comprime
+    (`/FlateDecode`), e o zlib da biblioteca padrao abre.
+    """
+    cru = pdf_bytes.decode("latin-1")
+    kids = re.search(r"/Kids \[([^\]]*)\]", cru)
+    paginas: list[str] = []
+    for ref in re.findall(r"(\d+) 0 R", kids.group(1) if kids else ""):
+        pagina = re.search(rf"(?m)^{ref} 0 obj\s*<<(.*?)>>\s*endobj", cru, re.S)
+        conteudo = re.search(r"/Contents (\d+) 0 R", pagina.group(1)) if pagina else None
+        stream = ""
+        if conteudo:
+            cab = re.search(rf"(?m)^{conteudo.group(1)} 0 obj\s*<<(.*?)>>\s*stream\r?\n", cru, re.S)
+            tamanho = re.search(r"/Length (\d+)", cab.group(1)) if cab else None
+            if cab and tamanho:
+                stream = cru[cab.end(): cab.end() + int(tamanho.group(1))]
+                if "/FlateDecode" in cab.group(1):
+                    stream = zlib.decompress(stream.encode("latin-1")).decode("latin-1")
+        trechos = re.findall(r"\(((?:\\.|[^\\)])*)\)\s*Tj", stream)
+        paginas.append("\n".join(re.sub(r"\\(.)", r"\1", t) for t in trechos))
+    return paginas
+
+
+def _keywords_do_pdf(pdf_bytes: bytes) -> str:
+    """`/Keywords` do `/Info`, do PDF cru (o fpdf2 grava string ASCII entre parenteses)."""
+    achado = re.search(rb"/Keywords \(((?:\\.|[^\\)])*)\)", pdf_bytes)
+    return re.sub(r"\\(.)", r"\1", achado.group(1).decode("latin-1")) if achado else ""
 
 
 def _hex(lat: float, lng: float) -> str:
@@ -1246,10 +1281,7 @@ def test_pdf_municipal_pagina_bairros_oficiais():
     assert "Bairros Oficiais".encode("latin-1") in pdf_bytes
     # Desde 2026-10-20 a coluna da direita e' o INDICE dos bairros numerados no mapa (os paineis
     # "Bairros identificados" e "Mais populosos" sairam): 2 bairros cabem numa pagina so'.
-    import pymupdf
-
-    with pymupdf.open(stream=pdf_bytes, filetype="pdf") as doc:
-        texto = " ".join(p.get_text() for p in doc)
+    texto = " ".join(_paginas_do_pdf(pdf_bytes))
     assert "BAIRROS (2)" in texto
     assert "BAIRROS IDENTIFICADOS" not in texto
     assert b"Bela Vista" in pdf_bytes

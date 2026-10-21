@@ -12,7 +12,6 @@ from __future__ import annotations
 from io import BytesIO
 
 import numpy as np
-import pymupdf
 from PIL import Image
 
 from motor_expansao.dashboard import relatorio_municipal as rm
@@ -25,12 +24,14 @@ from motor_expansao.dashboard.relatorio_municipal import (
     gerar_pdf_relatorio_municipal,
     render_mapas_municipio,
 )
-from tests.unit.test_relatorio_municipal import _bairros_geo_sample, _sample_df
+from tests.unit.test_relatorio_municipal import (
+    _bairros_geo_sample,
+    _keywords_do_pdf,
+    _paginas_do_pdf,
+    _sample_df,
+)
 
-
-def _paginas(pdf_bytes: bytes) -> list[str]:
-    with pymupdf.open(stream=pdf_bytes, filetype="pdf") as doc:
-        return [p.get_text() for p in doc]
+_paginas = _paginas_do_pdf
 
 
 def _visao_geral(paginas: list[str]) -> str:
@@ -67,15 +68,13 @@ def test_nenhuma_pagina_tem_o_rodape_e_a_versao_vai_para_os_metadados():
     for i, texto in enumerate(_paginas(pdf_bytes), start=1):
         assert "Relatório gerado pelo Motor" not in texto, f"rodape na pagina {i}"
         assert "INALTERADO" not in texto, f"carimbo de versao na pagina {i}"
-    with pymupdf.open(stream=pdf_bytes, filetype="pdf") as doc:
-        keywords = doc.metadata.get("keywords") or ""
+    keywords = _keywords_do_pdf(pdf_bytes)
     assert VERSAO_CONTRATO_MUNICIPAL in keywords
     assert "report_id=rid-123" in keywords
 
 
 def test_versao_nos_metadados_mesmo_sem_report_id():
-    with pymupdf.open(stream=_pdf(report_id=None), filetype="pdf") as doc:
-        assert VERSAO_CONTRATO_MUNICIPAL in (doc.metadata.get("keywords") or "")
+    assert VERSAO_CONTRATO_MUNICIPAL in _keywords_do_pdf(_pdf(report_id=None))
 
 
 def test_cobertura_hexagono_sem_amarelo_e_sem_legenda(monkeypatch):
@@ -530,8 +529,7 @@ def test_tabela_de_aprovados_lista_os_mais_populosos_e_fecha_com_o_total():
     pdf = FPDF(orientation="L", unit="pt", format=(540, 960))
     pdf.add_page()
     rm._tabela_bairros_aprovados(pdf, nomes, 600.0, 90.0, 320.0, 400.0, cor=(0, 0, 0), pop=pop)
-    with pymupdf.open(stream=bytes(pdf.output()), filetype="pdf") as doc:
-        texto = doc[0].get_text()
+    texto = _paginas(bytes(pdf.output()))[0]
     assert "BAIRROS APROVADOS (168)" in texto and "os 60 mais populosos" in texto
     assert "Bairro 167" in texto and "Bairro 000" not in texto
     assert "+ 108 outros" in texto
