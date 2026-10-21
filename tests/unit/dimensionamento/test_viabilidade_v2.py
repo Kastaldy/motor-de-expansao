@@ -308,11 +308,41 @@ def test_c10_pondera_pela_area_intersectada_e_renda_pela_populacao():
     assert e.renda_dom_c10 == pytest.approx(e.renda_pc_c10 * e.pop_c10 / e.dom_c10)
 
 
-def test_c10_cai_na_bruta_so_quando_a_calibrada_e_toda_nula():
+def test_c10_cai_na_bruta_quando_a_calibrada_e_toda_nula():
     malha = _malha()
     malha["renda_per_capita_setor_2022_calibrada"] = float("nan")
     e = agregar_entradas_c10(malha, box(-46.63, -23.53, -46.59, -23.50), -23.515, -46.615)
     assert e.renda_fonte == "bruta" and e.renda_pc_c10 == pytest.approx(9.0)
+
+
+def test_c10_cai_na_bruta_setor_a_setor_como_o_estudo():
+    # 04_atributos.py: renda = calibrada.fillna(bruta). Com a regra antiga ("so' se TODA
+    # nula"), o setor B sem calibrada sumia da media e a renda saia 2000.
+    malha = _malha()
+    malha.loc[1, "renda_per_capita_setor_2022_calibrada"] = float("nan")
+    e = agregar_entradas_c10(malha, box(-46.63, -23.53, -46.59, -23.50), -23.515, -46.615)
+    assert e.renda_fonte == "mista"
+    assert e.renda_pc_c10 == pytest.approx((2000 * 1000 + 9 * 3000) / 4000, rel=2e-3)
+
+
+def test_c10_flag_de_geometria_ausente_conta_como_valida_como_o_estudo():
+    malha = _malha()
+    malha["flag_geometria_valida"] = [True, None]
+    e = agregar_entradas_c10(malha, box(-46.63, -23.53, -46.59, -23.50), -23.515, -46.615)
+    assert e.n_setores == 2
+    malha["flag_geometria_valida"] = [True, False]
+    assert agregar_entradas_c10(malha, box(-46.63, -23.53, -46.59, -23.50), -23.515, -46.615).n_setores == 1
+
+
+def test_c10_acima_de_40_km2_pesa_o_setor_inteiro_pelo_ponto_representativo():
+    # isocrona grande (~10 x 9 km) que pega A inteiro e so' a borda de B (ponto
+    # representativo de B fora): A entra com peso 1 e B nao entra.
+    iso = box(-46.66, -23.56, -46.6095, -23.48)
+    e = agregar_entradas_c10(_malha(), iso, -23.515, -46.615)
+    assert e.n_setores == 1 and e.pop_c10 == pytest.approx(1000.0)
+    # a mesma borda numa isocrona PEQUENA entra pela fracao de area
+    pequena = box(-46.62, -23.52, -46.6095, -23.51)
+    assert agregar_entradas_c10(_malha(), pequena, -23.515, -46.615).n_setores == 2
 
 
 def test_c10_sem_setor_na_area_ou_sem_domicilio_e_indisponivel():
