@@ -1,4 +1,4 @@
-"""Viabilidade v2 — a COLA entre o modelo puro, os coeficientes e o contrato (DEC-075).
+"""Viabilidade v2 — a COLA entre o modelo puro, os coeficientes e o contrato (DEC-077).
 
 - Carregador dos coeficientes (`v2_coeficientes.json`, exportado pelo Felipe): schema
   estrito; ausente ou invalido -> v2 INDISPONIVEL com motivo, nunca erro 500.

@@ -1,4 +1,4 @@
-"""Entradas da Viabilidade v2 na ISOCRONA de 10 min de carro (DEC-075 ampliada).
+"""Entradas da Viabilidade v2 na ISOCRONA de 10 min de carro (DEC-077 ampliada).
 
 Recebe a malha de setores JA CARREGADA (a uniao das particoes que a isocrona alcanca —
 mecanismo da DEC-065/DEC-071, em `api.service._resolver_e_carregar(geometria=...)`) e o

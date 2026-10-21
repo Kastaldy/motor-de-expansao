@@ -118,7 +118,7 @@ class ViabilidadeInputs(BaseModel):
     # Meses de rampa de maturacao (Simulador E13; default do motor = 8). Controlavel
     # pelo operador; afeta a serie e o payback, nao a margem/breakeven de steady-state.
     rampa_meses: int | None = Field(default=None, ge=1, le=36)
-    # FORMA da rampa (DEC-075): "curva_uni03" (curva observada na rede, BLK-UNI-03) ou
+    # FORMA da rampa (DEC-077): "curva_uni03" (curva observada na rede, BLK-UNI-03) ou
     # "reta" (a rampa historica, com `rampa_meses` e os alunos iniciais do config). None =
     # `forma_rampa_padrao()`: a reta, porque a demanda deste corpo e' a do OPERADOR (a curva
     # so' e' padrao com a demanda da v2). Na curva, `rampa_meses` e' aceito e IGNORADO pelo
@@ -187,7 +187,7 @@ class ViabilidadeIn(ViabilidadeInputs):
 
     lat: float = Field(ge=-90, le=90)
     lng: float = Field(ge=-180, le=180)
-    # Viabilidade v2 (DEC-075 ampliada). So' no PILOTO (a API publica monta o corpo de
+    # Viabilidade v2 (DEC-077 ampliada). So' no PILOTO (a API publica monta o corpo de
     # `ViabilidadeInputs`, que nao tem estes campos). None/"densidade" = o de sempre, e o
     # payload sai byte a byte igual. "v2" exige `demanda_v2` (o token de procedencia e as
     # entradas da isocrona devolvidos pela rota de sugestao): a `demanda` continua a do
@@ -296,7 +296,7 @@ def investimento_do_body(body: ViabilidadeIn) -> dict[str, Any]:
 
 
 def forma_rampa_padrao(*, demanda_v2: bool = False) -> str:
-    """Forma da rampa de quem nao escolhe (DEC-075, decisao do dono de 2026-10-20).
+    """Forma da rampa de quem nao escolhe (DEC-077, decisao do dono de 2026-10-20).
 
     A curva observada so' e' o padrao quando a demanda vem da Viabilidade v2; com a
     demanda do operador (o unico modo do produto hoje) e' `SIM_FORMA_RAMPA_PADRAO`, a reta.
@@ -349,7 +349,7 @@ def premissas_do_body(body: ViabilidadeIn):  # -> simulador.Premissas
         ticket_cheio=float(body.ticket or SIM_MENSALIDADE_BALCAO),
         aluguel_mes=float(body.aluguel),
         tickets_studios=tickets_studios_do_body(body),
-        # O default do PRODUTO sai de `forma_rampa_padrao()` (DEC-075), nunca do default do
+        # O default do PRODUTO sai de `forma_rampa_padrao()` (DEC-077), nunca do default do
         # dataclass: e' ele que a constante do config controla. A demanda deste corpo e' a
         # do operador, entao o padrao e' o da demanda do operador.
         # Na v2 a curva e' o padrao (e a reta e' forcada sem agregador): ver a funcao.
@@ -574,7 +574,7 @@ def montar_payload_viabilidade(
             # `maturacao_meses` e' o PARAMETRO da reta (ecoado mesmo na curva, onde nao
             # vale). O fim da rampa que de fato valeu e' `mes_maturidade_rampa`: LEIA dele.
             "maturacao_meses": int(premissas.maturacao_meses),
-            # Forma da rampa (DEC-075) e, na curva, as fracoes da demanda nos meses 1..N
+            # Forma da rampa (DEC-077) e, na curva, as fracoes da demanda nos meses 1..N
             # (depois, 1,0). Na reta `curva_rampa` vai null: a forma e' a do parametro acima.
             "forma_rampa": str(premissas.forma_rampa),
             "mes_maturidade_rampa": int(premissas.mes_maturidade_rampa),

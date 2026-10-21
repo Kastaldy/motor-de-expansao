@@ -1576,7 +1576,7 @@ def _viab_normalizado(viabilidade: Mapping[str, Any]) -> dict[str, Any]:
         "flag_fora_envelope": viabilidade.get("flag_fora_envelope"),
         "flag_zona_morta": viabilidade.get("flag_zona_morta"),
         "motivo_zona_morta": viabilidade.get("motivo_zona_morta"),
-        # Viabilidade v2 (DEC-075 ampliada): so' existe no payload do modo v2. Ausente, o
+        # Viabilidade v2 (DEC-077 ampliada): so' existe no payload do modo v2. Ausente, o
         # rodape e' o de sempre, byte a byte.
         "demanda_v2": viabilidade.get("demanda_v2"),
         "demanda_fonte": viabilidade.get("demanda_fonte"),
@@ -1601,7 +1601,7 @@ def _viab_normalizado(viabilidade: Mapping[str, Any]) -> dict[str, Any]:
 
 
 def _viab_linha_demanda_v2(dados: Mapping[str, Any]) -> str | None:
-    """Linha da origem da demanda no modo v2 (DEC-075 ampliada); `None` no modo densidade.
+    """Linha da origem da demanda no modo v2 (DEC-077 ampliada); `None` no modo densidade.
 
     Pontuacao ASCII de proposito (fonte core do fpdf2, latin-1): sem travessao, seta,
     reticencias nem sinal de menos tipografico. Acento portugues e' latin-1 e sai normal.

@@ -586,10 +586,10 @@ export interface ViabilidadeIn {
   /** Meses de rampa de maturacao do balcao (Simulador E13; default do motor = 8). So'
    *  vale na forma `reta`; na curva o motor o aceita e ignora. */
   rampa_meses?: number
-  /** Forma da rampa (DEC-075): `curva_uni03` (curva observada) ou `reta`. Ausente = o
+  /** Forma da rampa (DEC-077): `curva_uni03` (curva observada) ou `reta`. Ausente = o
    *  padrao do SERVIDOR (hoje a reta: a curva so' e' padrao com a demanda da v2). */
   forma_rampa?: 'curva_uni03' | 'reta'
-  /** Fonte da demanda (DEC-075 ampliada). Ausente/`densidade` = o de sempre. `v2` exige
+  /** Fonte da demanda (DEC-077 ampliada). Ausente/`densidade` = o de sempre. `v2` exige
    *  `demanda_v2` (o token devolvido por `/api/demanda-v2`); a `demanda` continua a do
    *  corpo — o servidor só confere se ela é a sugerida ou foi editada. */
   modelo_demanda?: 'densidade' | 'v2'
@@ -866,7 +866,7 @@ export interface PremissasViabilidade {
   /** Parametro da RETA (ecoado mesmo na curva, onde nao vale). O fim da rampa que de
    *  fato valeu e' `mes_maturidade_rampa`. */
   maturacao_meses: number
-  /** Forma da rampa usada (DEC-075). Ausente = backend anterior, que era sempre a reta. */
+  /** Forma da rampa usada (DEC-077). Ausente = backend anterior, que era sempre a reta. */
   forma_rampa?: 'curva_uni03' | 'reta'
   /** Primeiro mes de operacao com a demanda cheia, na forma usada. */
   mes_maturidade_rampa?: number
@@ -1115,7 +1115,7 @@ export interface ViabilidadeOut {
   /** "premissa_explicita" (DEC-009) no modo densidade; no modo v2, "modelo_v2" (a
    *  sugestão da v2) ou "premissa_editada" (o operador mudou a sugestão). */
   demanda_fonte: string
-  /** Só no modo v2 (DEC-075 ampliada): a sugestão conferida pelo servidor. */
+  /** Só no modo v2 (DEC-077 ampliada): a sugestão conferida pelo servidor. */
   demanda_v2?: DemandaV2Out
   /** Alunos assumidos por canal. `studios` traz um valor por studio, na ordem dos
    *  tickets (vazio ou ausente sem studio). */

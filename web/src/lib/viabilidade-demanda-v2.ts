@@ -1,5 +1,5 @@
 /* ---------------------------------------------------------------------------
-   Viabilidade v2 na tela (DEC-075 ampliada): quando o SERVIDOR diz que a v2 está
+   Viabilidade v2 na tela (DEC-077 ampliada): quando o SERVIDOR diz que a v2 está
    disponível, a demanda é semeada pelo p50 dela (editável), a faixa p10–p90 aparece
    marcada como provisória e o pedido leva o token de procedência.
 

@@ -1,5 +1,5 @@
 /* ---------------------------------------------------------------------------
-   Viabilidade: a FORMA da rampa de alunos (DEC-075).
+   Viabilidade: a FORMA da rampa de alunos (DEC-077).
 
    Duas formas, calculadas SÓ no motor (`dimensionamento/simulador.py`):
    - `reta`: a rampa histórica da planilha, dos alunos iniciais até a demanda em N meses
@@ -30,7 +30,7 @@ export interface PremissasRampa {
   mes_maturidade_rampa?: number | null
 }
 
-/** Forma servida pelo payload; ausente (backend anterior à DEC-075) = reta. */
+/** Forma servida pelo payload; ausente (backend anterior à DEC-077) = reta. */
 export function formaDoPayload(p: PremissasRampa | null | undefined): FormaRampa {
   return p?.forma_rampa === 'curva_uni03' ? 'curva_uni03' : 'reta'
 }
@@ -100,7 +100,7 @@ export function ajudaDaRampa(forma: FormaRampa | null, curva?: readonly number[]
 
 /**
  * Mês em que a rampa de fato termina. Lê `mes_maturidade_rampa` (servido pelo motor);
- * backend anterior à DEC-075 não o manda, e lá a rampa era sempre a reta de
+ * backend anterior à DEC-077 não o manda, e lá a rampa era sempre a reta de
  * `maturacao_meses` — o fallback reproduz exatamente aquilo.
  */
 export function mesFimDaRampa(p: PremissasRampa | null | undefined): number | null {
@@ -114,7 +114,7 @@ export function notaDaRampa(p: PremissasRampa): string {
   const fim = mesFimDaRampa(p)
   if (formaDoPayload(p) === 'curva_uni03') {
     return (
-      `Curva observada na rede (BLK-UNI-03, DEC-075): cada mês tem uma fração da ` +
+      `Curva observada na rede (BLK-UNI-03, DEC-077): cada mês tem uma fração da ` +
       `demanda madura, até a demanda cheia no mês ${fim ?? '?'}. O faturamento segue ` +
       'alunos × ticket: o ticket menor dos primeiros meses (promoções) não é modelado, ' +
       'e por isso o caixa do 1º ano tende a sair otimista. Afeta o caixa e o payback, ' +
@@ -138,7 +138,7 @@ export function casaNoMes1(p: PremissasRampa): string {
 
 /**
  * Como a nota do EBITDA descreve os primeiros meses. Na reta o EBITDA deles é bem
- * negativo (texto de antes da DEC-075, intacto); na curva o mês 1 pode já ser positivo
+ * negativo (texto de antes da DEC-077, intacto); na curva o mês 1 pode já ser positivo
  * (+R$ 37 mil no caso de referência), então a frase não afirma o sinal.
  */
 export function ebitdaDosPrimeirosMeses(p: PremissasRampa): string {

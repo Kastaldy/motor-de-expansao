@@ -283,7 +283,7 @@ export default function ViabilityScreen({
   // A busca da faixa já respondeu (com ou sem p50)? Só depois disso a tela pode
   // afirmar "sem comparáveis" e trocar o número pelo campo de digitação.
   const [faixaBuscada, setFaixaBuscada] = useState(false)
-  // Viabilidade v2 (DEC-075 ampliada): o SERVIDOR diz se ela está disponível; só então a
+  // Viabilidade v2 (DEC-077 ampliada): o SERVIDOR diz se ela está disponível; só então a
   // demanda é semeada pelo p50 dela (editável, mesma `demandaTocada`). Indisponível ou
   // com erro -> o modo densidade de sempre, com o motivo discreto.
   const [estadoV2, setEstadoV2] = useState<EstadoDemandaV2 | null>(null)
@@ -292,7 +292,7 @@ export default function ViabilityScreen({
   // Rampa de maturação (Simulador E13; padrão 8). Controlável na sidebar: alonga
   // a curva de alunos e o fluxo de caixa (afeta payback), não a margem steady.
   const [rampaMeses, setRampaMeses] = useState(8)
-  // Forma da rampa (DEC-075) ESCOLHIDA pelo operador; `null` = sem escolha, e então o
+  // Forma da rampa (DEC-077) ESCOLHIDA pelo operador; `null` = sem escolha, e então o
   // pedido vai sem `forma_rampa` e vale o padrão do SERVIDOR (a reta, com a demanda do
   // operador). Os meses acima ficam guardados mesmo na curva, para voltarem intactos.
   const [formaRampa, setFormaRampa] = useState<FormaRampa | null>(null)

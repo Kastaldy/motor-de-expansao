@@ -209,7 +209,7 @@ class Premissas:
     # Neste modo `alunos_inicial` esta em unidades de BALCAO.
     rampa_apenas_balcao: bool = False
 
-    # FORMA da rampa (DEC-075). "reta" (default DO NUCLEO, que preserva o motor antigo byte
+    # FORMA da rampa (DEC-077). "reta" (default DO NUCLEO, que preserva o motor antigo byte
     # a byte): `alunos_inicial` no mes 1 ate a demanda em `maturacao_meses`. "curva_uni03":
     # alunos(t) = demanda x `curva_rampa[t-1]` nos meses 1..len(curva) e a demanda cheia
     # depois — `alunos_inicial` e `maturacao_meses` NAO entram. O default do PRODUTO (tela,
@@ -870,7 +870,7 @@ def gerar_serie_mensal_completa(
         frac = min(t / maturacao, 1.0)
         studios: tuple[float, ...]
         if p.usa_curva:
-            # Curva observada (DEC-075): fracao do mes sobre a demanda madura, mesmo split
+            # Curva observada (DEC-077): fracao do mes sobre a demanda madura, mesmo split
             # da reta. `alunos_inicial`/`maturacao_meses` nao entram nesta forma.
             alunos_total = float(demanda_total) * p.fracao_curva(t)
             bal, agr, studios = p.split_alunos(alunos_total)

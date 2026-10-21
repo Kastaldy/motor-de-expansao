@@ -1,4 +1,4 @@
-"""Viabilidade v2 — o MODELO, puro (sem I/O). DEC-075 (ampliada em 2026-10-20).
+"""Viabilidade v2 — o MODELO, puro (sem I/O). DEC-077 (ampliada em 2026-10-20).
 
 O que a v2 faz: sugere o FATURAMENTO MENSAL MADURO de uma unidade a partir da praca (a
 isocrona de 10 min de carro) e da metragem, e converte esse faturamento em alunos pelas

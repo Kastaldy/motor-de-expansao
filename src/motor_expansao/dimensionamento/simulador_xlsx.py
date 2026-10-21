@@ -278,7 +278,7 @@ _NOTA_ESTIMATIVA = (
 # folha pelo faturamento MADURO e o valor resultante vale desde o mes 1.
 _MODOS_FOLHA = ("percentual do faturamento maduro", "quadro de pessoal")
 _MODOS_RAMPA = ("demanda total", "apenas balcão")
-# Forma da rampa (DEC-075), na ordem de `SIM_FORMAS_RAMPA`: o texto da celula e' rotulo de
+# Forma da rampa (DEC-077), na ordem de `SIM_FORMAS_RAMPA`: o texto da celula e' rotulo de
 # usuario; o identificador (`curva_uni03`/`reta`) fica no motor.
 _FORMAS_RAMPA = ("curva observada", "reta")
 _FORMA_RAMPA_RETA_XLSX = _FORMAS_RAMPA[1]
@@ -560,14 +560,14 @@ def _fonte_da_demanda(demanda_v2: Mapping[str, Any] | None) -> str:
     if not demanda_v2:
         return "Entrada do operador (DEC-009: nunca de lat/lng)"
     if demanda_v2.get("demanda_fonte") == "modelo_v2":
-        return "Sugerida pela Viabilidade v2 (faixa provisória; DEC-075)"
+        return "Sugerida pela Viabilidade v2 (faixa provisória; DEC-077)"
     sugerida = demanda_v2.get("demanda_sugerida")
     extra = (
         f"; a v2 sugeriu {_num_br(float(sugerida), 0)}"
         if sugerida is not None and _finito(sugerida)
         else ""
     )
-    return f"Editada pelo operador{extra} (DEC-075)"
+    return f"Editada pelo operador{extra} (DEC-077)"
 
 
 def _bloco_origem_v2(v2: Mapping[str, Any]) -> list[dict[str, Any]]:
@@ -634,12 +634,12 @@ def _bloco_demanda(
     demanda_v2: Mapping[str, Any] | None = None,
 ) -> list[dict[str, Any]]:
     # A premissa "Forma da rampa" (e as notas de "so' vale na reta") existem SO' na planilha
-    # da curva (DEC-075). Na reta a planilha e' a de antes da DEC, byte a byte: a curva so'
+    # da curva (DEC-077). Na reta a planilha e' a de antes da DEC, byte a byte: a curva so'
     # entra quando foi pedida, e nada dela aparece no arquivo de quem nao a pediu.
     curva = p.usa_curva
     forma = [
         _e("forma_rampa", "Forma da rampa", valor=_FORMAS_RAMPA[0], unidade="lista",
-           fonte="DEC-075 (curva observada, BLK-UNI-03) ou a reta histórica",
+           fonte="DEC-077 (curva observada, BLK-UNI-03) ou a reta histórica",
            nota="\"curva observada\": alunos do mês = demanda × fração da tabela \"Curva "
                 "observada da rampa\" (1,0 depois do último mês); alunos iniciais e "
                 "maturação NÃO entram. \"reta\": parte dos alunos iniciais e chega à "
@@ -719,11 +719,11 @@ def _primeiro_mes_cheio(n: int) -> str:
 
 
 def _bloco_curva_rampa(p: Premissas) -> list[dict[str, Any]]:
-    """Fracoes da curva observada (DEC-075), uma linha por mes, e o mes em que ela fecha."""
+    """Fracoes da curva observada (DEC-077), uma linha por mes, e o mes em que ela fecha."""
     n = len(p.curva_rampa)
     linhas = [
         _e(f"curva_m{i}", f"Curva observada — mês {i}", valor=float(f), unidade="% da demanda",
-           fonte="BLK-UNI-03, tabela P1 (alunos, mediana), DEC-075", fmt=_FMT_PCT2)
+           fonte="BLK-UNI-03, tabela P1 (alunos, mediana), DEC-077", fmt=_FMT_PCT2)
         for i, f in enumerate(p.curva_rampa, start=1)
     ]
     linhas.append(
@@ -1350,7 +1350,7 @@ def _write_aba_premissas(
 
     # Validacoes de lista nas premissas de texto.
     _validacao_lista(ws, _MODOS_RAMPA, [refs["modo_rampa"]])
-    if "forma_rampa" in refs:  # so' a planilha da curva tem a escolha (DEC-075)
+    if "forma_rampa" in refs:  # so' a planilha da curva tem a escolha (DEC-077)
         _validacao_lista(ws, _FORMAS_RAMPA, [refs["forma_rampa"]])
     _validacao_lista(
         ws, tuple(str(i) for i in range(SIM_STUDIOS_MAX + 1)), [refs["n_studios"]]
@@ -1630,7 +1630,7 @@ def _dre_formulas(j: int, meses: list[int], refs: dict[str, str]) -> dict[str, A
     t = c("t")
     frac = f"MIN({t}/{P['maturacao']},1)"
     reta_total = f"{P['alunos_ini_ef']}+({P['demanda']}-{P['alunos_ini_ef']})*{frac}"
-    # Curva observada (DEC-075): fracao do mes t na tabela das Premissas, 1 depois dela.
+    # Curva observada (DEC-077): fracao do mes t na tabela das Premissas, 1 depois dela.
     # CHOOSE com o indice ja' travado em 1..n: a recalculadora pode avaliar o ramo mesmo
     # quando o IF de fora o descarta (pre-abertura, t = 0).
     n_curva = sum(1 for k in P if re.fullmatch(r"curva_m\d+", k))
@@ -1755,7 +1755,7 @@ _SUB_DRE_RETA = (
     "custo operacional INTEGRAL desde o mês 1 — inclusive a FOLHA, que é fixa e não "
     "acompanha a rampa (é por isso que o EBITDA do mês 1 é bem negativo)."
 )
-# Planilha da curva (DEC-075): a celula "Forma da rampa" troca entre curva e reta, entao o
+# Planilha da curva (DEC-077): a celula "Forma da rampa" troca entre curva e reta, entao o
 # texto tem de valer nas DUAS. Na curva o mes 1 ja' abre com 68% da demanda e o EBITDA
 # dele pode ser POSITIVO; "negativo" so' e' a regra na reta. A planilha da reta (sem a
 # celula) mantem o texto de antes da DEC.
@@ -2491,7 +2491,7 @@ def _pares_afericao(
         ("EBITDA do mês 1 (negativo por construção)" if not p.usa_curva
          else "EBITDA do mês 1 (início da rampa)", m1.get("ebitda_mensal", 0.0),
          rrefs["ebitda_m1"], brl),
-        # "meio/fim da rampa" so' e' verdade na reta de 8 meses; na curva (DEC-075) a
+        # "meio/fim da rampa" so' e' verdade na reta de 8 meses; na curva (DEC-077) a
         # rampa fecha no mes 10 e o rotulo diria uma coisa falsa.
         ("EBITDA do mês 4 (meio da rampa)" if not p.usa_curva else "EBITDA do mês 4 (rampa)",
          serie.get(4, {}).get("ebitda_mensal", 0.0), dre_mes("ebitda", 4), brl),
@@ -2986,7 +2986,7 @@ def gerar_simulador_xlsx(
         identico ao anterior, byte a byte.
     demanda_v2:
         Bloco `demanda_v2` CONFERIDO (`viabilidade_v2.conferir_demanda_v2`), so' no modo v2
-        (DEC-075 ampliada): acrescenta o bloco "Origem da demanda" (faturamento previsto
+        (DEC-077 ampliada): acrescenta o bloco "Origem da demanda" (faturamento previsto
         p10/p50/p90 como valor; FIXO, R_ALUNO e os alunos como FORMULA) e troca a fonte da
         linha "Demanda". `None` (default) = a planilha de antes, byte a byte.
 

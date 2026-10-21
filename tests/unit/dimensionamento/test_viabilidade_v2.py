@@ -1,4 +1,4 @@
-"""Viabilidade v2 (DEC-075 ampliada): carregador, modelo, conversao, token, c10 e payload.
+"""Viabilidade v2 (DEC-077 ampliada): carregador, modelo, conversao, token, c10 e payload.
 
 Os coeficientes daqui sao FICTICIOS (`COEF_FICTICIO`), gravados num `tmp_path`: nunca no
 lugar do arquivo real (`dimensionamento/v2_coeficientes.json`, que chega pelo Felipe). O
@@ -548,13 +548,13 @@ def _coeficientes_reais():
 def _motivo_sem_aceitacao():
     coef = _coeficientes_reais()
     if coef is None:
-        return "v2_coeficientes.json ausente (DEC-075)"
+        return "v2_coeficientes.json ausente (DEC-077)"
     if not coef.aceitacao_turma_2026:
         # O JSON da rodada 2 (reconstruido com o Valhalla, 21/10/2026) omite o bloco DE PROPOSITO:
         # ele e' o golden que reproduz a FICHA do Felipe, e monta-lo com as previsoes do proprio
-        # script seria conferir o script contra ele mesmo (DEC-075, "Ressalvas").
+        # script seria conferir o script contra ele mesmo (DEC-077, "Ressalvas").
         return (
-            "v2_coeficientes.json sem o bloco aceitacao_turma_2026 (omitido de proposito, DEC-075)"
+            "v2_coeficientes.json sem o bloco aceitacao_turma_2026 (omitido de proposito, DEC-077)"
         )
     return None
 

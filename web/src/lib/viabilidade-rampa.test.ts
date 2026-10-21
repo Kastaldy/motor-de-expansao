@@ -18,7 +18,7 @@ import {
 const CURVA = { maturacao_meses: 8, forma_rampa: 'curva_uni03', mes_maturidade_rampa: 10 }
 const RETA = { maturacao_meses: 8, forma_rampa: 'reta', mes_maturidade_rampa: 8 }
 
-describe('forma da rampa (DEC-075)', () => {
+describe('forma da rampa (DEC-077)', () => {
   it('os identificadores são os do motor e os rótulos são de usuário', () => {
     expect([...FORMAS_RAMPA]).toEqual(['curva_uni03', 'reta'])
     expect(ROTULO_FORMA_RAMPA.curva_uni03).toBe('Curva observada')
@@ -33,7 +33,7 @@ describe('forma da rampa (DEC-075)', () => {
 describe('seletor Curva / Reta (lógica pura)', () => {
   it('sem escolha, o pedido vai SEM forma_rampa e vale o padrão do servidor', () => {
     expect(formaParaEnviar(null)).toBeUndefined()
-    // a chave some do JSON: o corpo é o mesmo de antes da DEC-075
+    // a chave some do JSON: o corpo é o mesmo de antes da DEC-077
     expect(JSON.stringify({ forma_rampa: formaParaEnviar(null) })).toBe('{}')
   })
 
@@ -93,7 +93,7 @@ describe('fim da rampa lido do payload', () => {
     expect(mesFimDaRampa(CURVA)).toBe(10)
   })
 
-  it('backend anterior à DEC-075 (sem o campo) cai na reta de maturacao_meses', () => {
+  it('backend anterior à DEC-077 (sem o campo) cai na reta de maturacao_meses', () => {
     expect(mesFimDaRampa({ maturacao_meses: 8 })).toBe(8)
     expect(formaDoPayload({ maturacao_meses: 8 })).toBe('reta')
   })

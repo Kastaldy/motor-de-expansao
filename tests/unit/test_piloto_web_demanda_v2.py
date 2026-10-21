@@ -1,4 +1,4 @@
-"""Viabilidade v2 nas superficies: rotas do piloto, planilha e PDF (DEC-075 ampliada).
+"""Viabilidade v2 nas superficies: rotas do piloto, planilha e PDF (DEC-077 ampliada).
 
 Coeficientes FICTICIOS (os mesmos de `test_viabilidade_v2.py`), num `tmp_path`.
 """
