@@ -1236,7 +1236,8 @@ du -sh /opt/motor-expansao/data/outputs/
 ### Trilha de acesso do piloto (DEC-027)
 
 Quem fez o quê no piloto: JSONL diário com usuário (Authelia), IP real, rota, status e
-latência em `/opt/motor-expansao/logs/acesso/` (retenção 90 dias, podada pelo backend) +
+latência em `/opt/motor-expansao/logs/acesso/` (sem prazo de retenção desde a emenda 2 da
+DEC-027, 20/10/2026; poda só com `MOTOR_ACESSO_RETENCAO_DIAS` definida) +
 access log do Caddy em `/opt/motor-expansao/logs/caddy/` + Authelia em `level: info`
 (logins com sucesso e falha). Contrato, comandos de consulta e os passos manuais de
 habilitação na VPS: **`docs/trilha_acesso_piloto.md`**.

@@ -11,9 +11,13 @@ GUARDRAIS (mesmo desenho do rede_cadastro):
   - Rastro, nao transacao: falha de escrita NUNCA derruba a requisicao.
 
 Formato: `acesso-AAAA-MM-DD.jsonl` (um arquivo por dia UTC), append-only.
-Retencao: na primeira escrita de cada dia (por processo), remove arquivos com o
-padrao proprio mais antigos que `MOTOR_ACESSO_RETENCAO_DIAS` (default 90). A poda
-casa SOMENTE `acesso-*.jsonl` com data valida no nome — nunca outro arquivo.
+Retencao: SEM PRAZO por padrao (emenda 2 da DEC-027, 20/10/2026 — decisao do
+Vinicius: "o arquivo deve seguir salvo"). Ate' entao a trilha era podada aos 90 dias.
+A poda continua existindo como OPCAO: `MOTOR_ACESSO_RETENCAO_DIAS` com inteiro
+positivo faz a primeira escrita de cada dia (por processo) remover os arquivos com o
+padrao proprio mais antigos que esse prazo. Ausente, vazia ou INVALIDA = nada e'
+apagado. A poda casa SOMENTE `acesso-*.jsonl` com data valida no nome — nunca outro
+arquivo.
 
 Sem inflar: `relevante()` filtra o que nao diz nada sobre uso — assets estaticos
 do SPA e o `/api/health` (healthcheck interno a cada 30s). Todo o resto entra.
@@ -31,7 +35,8 @@ from pathlib import Path
 
 PREFIXO_ARQUIVO = "acesso-"
 SUFIXO_ARQUIVO = ".jsonl"
-RETENCAO_DIAS_DEFAULT = 90
+#: Sem prazo: `None` = a trilha nao e' podada (emenda 2 da DEC-027, 20/10/2026). Era 90.
+RETENCAO_DIAS_DEFAULT: int | None = None
 
 #: Tetos de tamanho por campo — trilha de acesso, nao dump de payload.
 _TETO_USUARIO = 120  # mesmo teto do `autor` no cadastro_log
@@ -48,8 +53,9 @@ _TETO_AGENTE = 200
 #: no dia do corte a trilha da DEC-027 DOBRA de tamanho -- e a metade nova nao diz nada, porque
 #: cada `/api/verify` e' o eco da requisicao real que vem logo atras e ja' tem linha propria.
 #: Pior que o volume: a pergunta que a trilha responde e' "quem fez o que", e essas linhas
-#: respondem "a borda perguntou se alguem podia" -- ruido com forma de resposta. A retencao de
-#: 90 dias tambem paga: dobrar o volume e' dobrar o dado pessoal guardado pelo mesmo prazo.
+#: respondem "a borda perguntou se alguem podia" -- ruido com forma de resposta. E, com a
+#: trilha SEM PRAZO desde a emenda 2 da DEC-027, dobrar o volume e' dobrar o dado pessoal
+#: guardado para sempre.
 _ROTAS_IGNORADAS = {"/api/health", "/api/verify"}
 _PREFIXOS_IGNORADOS = ("/assets/",)
 #: Estaticos do SPA servidos pelo mount de raiz (js/fontes/imagens/sourcemaps).
@@ -64,11 +70,14 @@ _PADRAO_NOME = re.compile(
 _LOCK = threading.Lock()
 _ultimo_dia_podado: date | None = None
 _avisou_falha = False
+_avisou_retencao_invalida = False
 
 #: Hooks chamados UMA vez por virada de dia, ANTES da poda — é o ponto onde o
-#: rollup da aba Acessos (emenda DEC-027) consolida um dia fechado antes que a
-#: retenção de 90 dias possa alcançá-lo. Registro externo (acesso_analytics) para
-#: não criar import circular; hook que falhar é engolido (a trilha é rastro).
+#: rollup da aba Acessos (emenda DEC-027) consolida um dia fechado antes que uma
+#: retenção configurada possa alcançá-lo. Rodam TAMBÉM sem poda (trilha sem prazo,
+#: emenda 2): o rollup é o que alimenta a tendência da aba, e deixar de podar não
+#: pode deixar de consolidar. Registro externo (acesso_analytics) para não criar
+#: import circular; hook que falhar é engolido (a trilha é rastro).
 _hooks_virada_de_dia: list = []
 
 
@@ -86,14 +95,36 @@ def acesso_log_dir() -> Path:
     return Path(__file__).resolve().parents[3] / "data" / "acesso_log"
 
 
-def retencao_dias() -> int:
-    """Dias de retencao. `MOTOR_ACESSO_RETENCAO_DIAS` manda; valor invalido cai no default."""
-    bruto = os.environ.get("MOTOR_ACESSO_RETENCAO_DIAS", "")
+def retencao_dias() -> int | None:
+    """Dias de retencao, ou `None` = sem prazo (nada e' podado).
+
+    `MOTOR_ACESSO_RETENCAO_DIAS` com inteiro positivo liga a poda naquele prazo.
+    Ausente ou vazia = sem prazo, que e' o padrao desde a emenda 2 da DEC-027.
+
+    Valor INVALIDO (texto, zero, negativo) tambem vira SEM PRAZO, com um aviso por
+    processo no stderr. A direcao e' deliberada: ate' a emenda, invalido caia em 90
+    dias; hoje o padrao e' guardar, e um erro de digitacao na env nao pode ser o
+    motivo de apagar dado que o dono mandou manter. O aviso existe para quem QUERIA
+    ligar a poda descobrir que ela nao esta' ligada.
+    """
+    global _avisou_retencao_invalida
+    bruto = os.environ.get("MOTOR_ACESSO_RETENCAO_DIAS", "").strip()
+    if not bruto:
+        return RETENCAO_DIAS_DEFAULT
     try:
         dias = int(bruto)
     except ValueError:
-        return RETENCAO_DIAS_DEFAULT
-    return dias if dias > 0 else RETENCAO_DIAS_DEFAULT
+        dias = 0
+    if dias > 0:
+        return dias
+    if not _avisou_retencao_invalida:
+        print(
+            f"[acesso_log] MOTOR_ACESSO_RETENCAO_DIAS={bruto!r} invalido "
+            "(esperado inteiro positivo): trilha segue SEM PRAZO, nada sera' podado",
+            file=sys.stderr,
+        )
+        _avisou_retencao_invalida = True
+    return RETENCAO_DIAS_DEFAULT
 
 
 def relevante(caminho: str) -> bool:
@@ -163,7 +194,10 @@ def montar_evento(
 
 
 def registrar(evento: dict[str, object], base: Path | None = None) -> None:
-    """Anexa uma linha JSON a trilha do dia e, na virada de dia, poda a retencao.
+    """Anexa uma linha JSON a trilha do dia e, na virada de dia, roda os hooks e a poda.
+
+    A poda so' apaga algo se houver retencao configurada (`retencao_dias()`); os hooks
+    (rollup da aba Acessos) rodam na virada de dia de qualquer forma.
 
     Nunca levanta: a trilha e' rastro, nao transacao — se o volume nao estiver
     montado/escrevivel, a requisicao segue e um unico aviso sai no stderr.
@@ -182,6 +216,9 @@ def registrar(evento: dict[str, object], base: Path | None = None) -> None:
             arquivo = diretorio / f"{PREFIXO_ARQUIVO}{agora.date().isoformat()}{SUFIXO_ARQUIVO}"
             with _abrir_para_anexar(arquivo) as fh:
                 fh.write(linha + "\n")
+            # `_ultimo_dia_podado` e' o gate da VIRADA DE DIA (hooks + poda), nao prova de
+            # que algo foi apagado: sem retencao configurada a poda e' no-op, e o gate
+            # continua existindo para os hooks rodarem uma vez por dia.
             if _ultimo_dia_podado != agora.date():
                 for hook in list(_hooks_virada_de_dia):
                     try:
@@ -207,8 +244,14 @@ def _abrir_para_anexar(arquivo: Path):
 
 
 def _podar(diretorio: Path, hoje: date) -> None:
-    """Remove APENAS `acesso-AAAA-MM-DD.jsonl` mais antigos que a retencao."""
-    limite = hoje - timedelta(days=retencao_dias())
+    """Remove APENAS `acesso-AAAA-MM-DD.jsonl` mais antigos que a retencao.
+
+    Sem retencao configurada (padrao desde a emenda 2 da DEC-027) nao toca em nada.
+    """
+    dias_retencao = retencao_dias()
+    if dias_retencao is None:
+        return  # sem prazo: a trilha segue salva
+    limite = hoje - timedelta(days=dias_retencao)
     for arquivo in diretorio.glob(f"{PREFIXO_ARQUIVO}*{SUFIXO_ARQUIVO}"):
         casamento = _PADRAO_NOME.match(arquivo.name)
         if not casamento:

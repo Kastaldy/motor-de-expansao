@@ -17,7 +17,7 @@ e de onde".
 
 | Camada | O que registra | Onde persiste | Retenção |
 |---|---|---|---|
-| **1. App (backend do piloto)** | usuário real, IP de origem, método, rota+query, status, latência, user-agent, bytes | `/opt/motor-expansao/logs/acesso/acesso-AAAA-MM-DD.jsonl` (volume `:rw` próprio) | 90 dias, podada pelo próprio backend (`MOTOR_ACESSO_RETENCAO_DIAS`) |
+| **1. App (backend do piloto)** | usuário real, IP de origem, método, rota+query, status, latência, user-agent, bytes | `/opt/motor-expansao/logs/acesso/acesso-AAAA-MM-DD.jsonl` (volume `:rw` próprio) | **sem prazo** desde a emenda 2 da DEC-027 (20/10/2026; era 90 dias). Poda só se `MOTOR_ACESSO_RETENCAO_DIAS` for definida |
 | **2. Caddy (edge)** | access log HTTP completo do host `piloto.` em JSON (IP real, TLS, user-agent, latência) | `/opt/motor-expansao/logs/caddy/piloto-access.log` | rotação do próprio Caddy: 20 MiB × 10 arquivos, máx. 2160h (90 dias) |
 | **3. Authelia (login)** | tentativas de login com usuário + IP — **sucesso e falha** (`level: info`) | stdout do container (rotação do daemon Docker) | ~semanas (10 MB × 3) |
 
@@ -50,14 +50,18 @@ A camada 1 é a fonte primária de auditoria de uso; a 2 é o registro bruto de 
   compose a cada 30 s). Todo o resto entra — inclusive `/` e deep-links do SPA (sinal de
   navegação) e todos os `/api/*` (a query do Relatório Pontual carrega lat/lng e inputs
   de viabilidade: é exatamente o "o quê" da auditoria).
-- **Arquivo por dia UTC** (`acesso-AAAA-MM-DD.jsonl`), append-only. Na primeira escrita
-  de cada dia o gravador **poda** arquivos do padrão próprio (e somente dele) mais
-  antigos que a retenção.
+- **Arquivo por dia UTC** (`acesso-AAAA-MM-DD.jsonl`), append-only. **Sem prazo de
+  retenção por padrão** (emenda 2 da DEC-027, 20/10/2026): nenhum arquivo é apagado.
+  A poda continua disponível como opção — com `MOTOR_ACESSO_RETENCAO_DIAS` definida com
+  um inteiro positivo, a primeira escrita de cada dia remove os arquivos do padrão
+  próprio (e somente dele) mais antigos que esse prazo. Valor inválido (texto, zero,
+  negativo) **não** liga a poda: a trilha segue sem prazo e sai 1 aviso no stderr.
 - **Rastro, não transação:** qualquer falha de escrita é engolida (1 aviso por processo
   no stderr) — a trilha **nunca** derruba uma requisição. Sem o volume montado, o app
   sobe e funciona normalmente.
 - **Config:** `MOTOR_ACESSO_LOG_DIR` (default dev: `<repo>/data/acesso_log`, gitignored;
-  produção: `/app/logs/acesso` via compose) e `MOTOR_ACESSO_RETENCAO_DIAS` (default 90).
+  produção: `/app/logs/acesso` via compose) e `MOTOR_ACESSO_RETENCAO_DIAS` (default:
+  ausente = sem prazo; era 90 até a emenda 2 da DEC-027).
 
 ### Guardrails
 
@@ -70,7 +74,9 @@ A camada 1 é a fonte primária de auditoria de uso; a 2 é o registro bruto de 
 - **Sem segredo, sem excesso:** a trilha não grava headers de autenticação, cookies nem
   corpo de requisição. O Caddy (camada 2) redige `Authorization`/`Cookie` por default
   (>= 2.5). Usuários são logins internos do Authelia; IPs são dado operacional de
-  auditoria com retenção definida (90 dias) — postura LGPD da DEC-005 mantida.
+  auditoria. **A retenção deixou de ser definida** na emenda 2 da DEC-027 (20/10/2026):
+  a trilha nominal (usuário + IP + rota) é guardada sem prazo, por decisão do Vinicius —
+  um afastamento declarado da postura "retenção definida" da DEC-005, registrado na emenda.
 - **Limite de confiança da identidade:** `Remote-User`/`X-Forwarded-For` são headers, e o
   backend `web:8899` não tem autenticação própria — a camada 1 só é **confiável para
   tráfego que passou pelo Caddy** (que sobrescreve `Remote-User` com o valor do Authelia
@@ -167,7 +173,7 @@ Decisões de contrato que valem sempre:
 - **Nada de enxurrada.** Os eventos saem de *handlers* de gesto humano, nunca de
   `useEffect` que observa estado. Hover de pin e campo de busca livre **não** são
   instrumentados de propósito: um arrasto no mapa ou uma frase digitada gerariam dezenas
-  de linhas e inutilizariam 90 dias de trilha.
+  de linhas e inutilizariam a trilha (que, sem prazo, guardaria o ruído para sempre).
 - **Rastro não pode quebrar interação.** `api.eventoImobiliaria` é fire-and-forget
   (`keepalive`, `.catch(() => {})`); falha de rede é engolida, como no gravador.
 - **Gate do evento:** `{mapa, imobiliaria}` — o pin do Mapa Territorial também abre ficha
@@ -208,9 +214,10 @@ A trilha ganhou um consumidor visual: a aba `Acessos` do piloto
   sem usuário e sem query) — observabilidade do sistema, não atividade de alguém.
 - **Rollup `uso-diario.json`** (mesmo diretório da trilha): consolidação
   write-once por dia BRT fechado com `{acoes, usuarios, por_aba}` — contagens,
-  sem nome/IP/rota — e SEM poda: é o que dá tendência além dos 90 dias. Roda no
-  startup do `web`, a cada abertura da aba **e na virada de dia da trilha**
-  (hook em `acesso_log.registrar`, ANTES da poda — app meses de pé sem abertura
+  sem nome/IP/rota — e SEM poda: é o que dá tendência além da janela de 90 dias da
+  aba sem reler a trilha inteira. Roda no startup do `web`, a cada abertura da aba
+  **e na virada de dia da trilha** (hook em `acesso_log.registrar`, ANTES da poda
+  quando ela estiver configurada, e TAMBÉM sem poda — app meses de pé sem abertura
   da aba não perde dia). O nome não casa com o padrão `acesso-*.jsonl` da poda
   de propósito. Dia consolidado nunca é recalculado (o histórico fica estável
   mesmo depois de a trilha ser podada); um dia só consolida quando o SEU arquivo
@@ -236,8 +243,13 @@ A trilha ganhou um consumidor visual: a aba `Acessos` do piloto
   requisições de tile com valor de auditoria baixo.
 - **Envio dos logs para fora da VPS** (backup/central): pendente com o BLK-SEC-04
   (backup automatizado).
-- **A poda de retenção é melhor-esforço**: ela roda dentro do `registrar()` (primeira
-  escrita relevante de cada dia) — app parado ou sem tráfego = poda não roda. E o
-  diretório é bind mount: **descomissionar o piloto exige apagar
+- **A poda de retenção, quando configurada, é melhor-esforço**: ela roda dentro do
+  `registrar()` (primeira escrita relevante de cada dia) — app parado ou sem tráfego =
+  poda não roda. Sem `MOTOR_ACESSO_RETENCAO_DIAS` (o padrão desde a emenda 2 da DEC-027)
+  ela não apaga nada. E o diretório é bind mount: **descomissionar o piloto exige apagar
   `/opt/motor-expansao/logs/acesso/` e `/opt/motor-expansao/logs/caddy/` à mão**, senão
-  a trilha nominal fica órfã no host além do prazo declarado.
+  a trilha nominal fica órfã no host.
+- **Crescimento sem teto**: sem prazo, o diretório só cresce. Estimativa (não medida em
+  produção) na emenda 2 da DEC-027: na casa de dezenas de MB por ano no volume atual.
+  O único alarme é o de disco do HOST (`scripts/healthcheck_vps.sh`, `df /`), que olha a
+  partição inteira e não este diretório.
