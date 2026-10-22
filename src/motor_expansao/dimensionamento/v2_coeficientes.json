@@ -1,0 +1,81 @@
+{
+  "versao": "v2-sem-masters-valhalla-2026-10-21-r2A",
+  "fonte": "data/analysis/uni/ficha_v2/valhalla/v2_valhalla.py (reconstrucao local com isocrona Valhalla; NAO e' a ficha do Felipe)",
+  "data": "2026-10-21",
+  "beta": {
+    "intercepto": 7.175805778630778,
+    "ln_m2": 0.476030099799996,
+    "ln_renda_dom_c10": 0.2832125760981391,
+    "ln_pop_c10": -0.07715339171349145,
+    "studios": 0.2629997533003946
+  },
+  "xtx_inv": [
+    [
+      42.767306615194805,
+      -3.721469223122862,
+      -0.7970811144953004,
+      -0.7431445930648354,
+      0.01038877015202377
+    ],
+    [
+      -3.721469223122862,
+      0.5059576498001408,
+      -0.020414428901889516,
+      0.019275150402424446,
+      -0.03177595387845764
+    ],
+    [
+      -0.7970811144953004,
+      -0.020414428901889516,
+      0.09271564571533367,
+      0.011735830256869278,
+      -0.008175787038982005
+    ],
+    [
+      -0.7431445930648354,
+      0.019275150402424446,
+      0.011735830256869278,
+      0.04251368844059229,
+      0.019417185681464187
+    ],
+    [
+      0.01038877015202377,
+      -0.03177595387845764,
+      -0.008175787038982005,
+      0.019417185681464187,
+      0.12093220372364587
+    ]
+  ],
+  "sigma": 0.29842874012958337,
+  "cal_2026": -0.02045573574571513,
+  "envelope": {
+    "ln_m2": [
+      6.84587987526405,
+      7.937374696163295
+    ],
+    "ln_renda_dom_c10": [
+      7.830547767446156,
+      9.87143783832439
+    ],
+    "ln_pop_c10": [
+      9.208724286624664,
+      12.824134762511552
+    ]
+  },
+  "faixa": {
+    "p10": 0.676746802952236,
+    "p90": 1.6106356291640924,
+    "provisoria": true
+  },
+  "sha256_insumos": {
+    "growth_api_historico.parquet": "2a5d10166a87660a7baa4aebc72141f971d093b9517535f915528360c15be6d6",
+    "faturamento_financeiro.parquet": "af8f73db6706b01e7c706e035a7801a6ecbdc4e94a5655549f9d45f1bfcfedda",
+    "cadastro_unidades_campos_usados.json": "ce378ed4dbf080e0a9f0f64e8e5803de57379841a8ac7441cf7ae2ebb1602a4c",
+    "dados_academias.xlsx": "24e9dfee2514736febad5daa561e19f022fba2fbba24a0629fe44bb17b1c4606",
+    "unidades_ultra_mapeadas.parquet": "d374a18c70f2c7ef27e3ab28404f34f9dc766fdcd129196171b9b899d4749db5",
+    "setores_censitarios_2022_geo (45 particoes lidas)": "f93ae66a7292853b092b511a775ac1b0f8de1b7c02b5407fa871843837ae3c9b",
+    "municipios_*.geojson (malha IBGE)": "3a935e08d845953466f399ff1a3cc1c9e14a6e37184abcb3df4aa9ed97dec52b",
+    "uni02/resultado_uni02.md (lista de teste)": "4fc3668264ed69ffff9d7ba126c341ec180711a352d6f202cc118104e79da93d",
+    "v2_valhalla_r2.py": "15509d8eddfc04081d2c4792f172ba6bd2341c83051338bd66d64e2535671e99"
+  }
+}

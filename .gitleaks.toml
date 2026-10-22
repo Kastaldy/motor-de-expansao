@@ -64,4 +64,10 @@ regexes = [
     # lista. Mesma familia: nome de coluna, nao segredo. Robusto a drift de linha,
     # o que importa aqui porque o graph.json e' regravado INTEIRO a cada reindexacao.
     '''domicilios_setor_2022''',
+    # DEC-078: sha256 do insumo `growth_api_historico.parquet` registrado em
+    # src/motor_expansao/dimensionamento/v2_coeficientes.json (`sha256_insumos`), para
+    # auditar de qual arquivo os coeficientes sairam. generic-api-key le' o "api" do nome do
+    # arquivo + o hash como chave. E' HASH DE ARQUIVO, nao segredo. O valor exato (e nao um
+    # padrao de hash) para nao liberar nada alem dele; o JSON e' imutavel (sha travado em teste).
+    '''2a5d10166a87660a7baa4aebc72141f971d093b9517535f915528360c15be6d6''',
 ]

@@ -1,6 +1,7 @@
 import { alunos, brl, pctFrac, rotuloMes } from '../lib/format'
 import type { DreViabilidade, PremissasViabilidade } from '../lib/types'
 import { Glass } from './primitives'
+import { casaNoMes1, ebitdaDosPrimeirosMeses, notaDaRampa } from '../lib/viabilidade-rampa'
 
 /* ---------------------------------------------------------------------------
    Notas metodologicas — o "manual" da tela de Viabilidade.
@@ -152,7 +153,7 @@ function montarSecoes(p: PremissasViabilidade, demandaPremissa: number | null): 
             `dimensionado uma vez — ${pctFrac(p.folha_pct)} do faturamento MADURO ` +
             `(${brl(p.folha_base_faturamento_maduro, true)}, a casa cheia) — e é pago ` +
             'integralmente já no primeiro mês, porque a equipe é contratada ANTES dos ' +
-            'alunos chegarem. Não acompanha a rampa: no mês 1, com a casa vazia, a ' +
+            `alunos chegarem. Não acompanha a rampa: no mês 1, ${casaNoMes1(p)}, a ` +
             'folha é a mesma do mês de regime pleno (só o reajuste anual a move). É ' +
             'por isso que ela conta como custo FIXO, e não como percentual da receita ' +
             'do mês.',
@@ -187,8 +188,8 @@ function montarSecoes(p: PremissasViabilidade, demandaPremissa: number | null): 
             'Faturamento menos deduções, impostos e custos operacionais. A margem é ' +
             'sobre a receita BRUTA. O custo é integral desde o mês 1 — e a folha ' +
             `(${brl(p.folha_fixa_mes, true)}/mês) entra CHEIA já no mês 1, sem ` +
-            'acompanhar a rampa — então o EBITDA dos primeiros meses é bem NEGATIVO ' +
-            'enquanto a casa não enche. A alavancagem operacional é alta: quase todo ' +
+            `acompanhar a rampa — ${ebitdaDosPrimeirosMeses(p)} ` +
+            'A alavancagem operacional é alta: quase todo ' +
             'o custo é fixo e cada aluno novo cai direto no resultado. Isso é o ' +
             'comportamento correto, não um defeito do gráfico.',
         },
@@ -335,9 +336,7 @@ function montarSecoes(p: PremissasViabilidade, demandaPremissa: number | null): 
         },
         {
           kpi: 'Rampa de maturação',
-          como:
-            `${p.maturacao_meses} meses para a demanda sair do piso inicial e chegar ao ` +
-            'valor assumido. Afeta o caixa e o payback, não a margem de steady-state.',
+          como: notaDaRampa(p),
         },
         {
           kpi: 'Reajuste anual',

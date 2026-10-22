@@ -355,6 +355,14 @@ def _premissas_do_ponto(
     extras = {
         k: v for k, v in kwargs.items() if k in _CAMPOS_PREMISSAS and k not in _CHAVES_PROPRIAS
     }
+    # Forma da rampa: o padrao do PRODUTO (`forma_rampa_padrao()`, DEC-078), nao o default
+    # do dataclass -- senao trocar a constante do config deixaria estes caminhos legados
+    # (dashboard/backtest/batch) na reta. A demanda daqui e' a do operador. Com
+    # `rampa_apenas_balcao` so' a reta e' suportada: fica o default do dataclass.
+    if "forma_rampa" not in extras and not extras.get("rampa_apenas_balcao"):
+        from motor_expansao.dimensionamento.payload_viabilidade import forma_rampa_padrao
+
+        extras["forma_rampa"] = forma_rampa_padrao()
     return Premissas(
         ticket_cheio=float(ticket_medio),
         share_balcao=float(share_balcao),
