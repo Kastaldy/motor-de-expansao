@@ -90,6 +90,16 @@ def capturado(monkeypatch: pytest.MonkeyPatch, tmp_path) -> dict:
     return cap
 
 
+@pytest.fixture
+def bot_na_camada_de_mercado(monkeypatch: pytest.MonkeyPatch) -> None:
+    """O bot so' le a camada de mercado sem regua de recomendacao (Argentina). Com regua (Brasil)
+    ele le a particao enriquecida da UF -- e 503 sem ela (DEC-077, item 5 do Felipe)."""
+    from motor_expansao import recomendacao
+
+    monkeypatch.setattr(recomendacao, "carregar_regra", lambda *a, **k: None)
+
+
+@pytest.mark.usefixtures("bot_na_camada_de_mercado")
 def test_telegram_nao_mistura_municipio_homonimo_de_outra_uf(capturado: dict) -> None:
     """Rio Branco/AC nao pode levar junto os hexagonos de Rio Branco/MT."""
     service.gerar_pdf_municipio("AC", "Rio Branco", None, capturado["settings"], unidade="hexagono")
@@ -99,6 +109,7 @@ def test_telegram_nao_mistura_municipio_homonimo_de_outra_uf(capturado: dict) ->
     assert capturado["bairros_geo_cod"] == "1200401"
 
 
+@pytest.mark.usefixtures("bot_na_camada_de_mercado")
 def test_telegram_hexagono_leva_bairros_renda_e_independentes(capturado: dict) -> None:
     service.gerar_pdf_municipio("AC", "Rio Branco", None, capturado["settings"], unidade="hexagono")
     k = capturado["agregar"]

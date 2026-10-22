@@ -518,8 +518,9 @@ def resumir_crescimento(
     tendencia E sem veredito, a pagina diz que nao ha dado -- nunca some.
 
     `com_veredito=False` (Relatorio Municipal do Brasil, DEC-077): o `v_frase` ("E' praca para
-    entrar") nao vira a frase da pagina nem conta como dado -- a resposta de onde expandir e' so'
-    a recomendacao unica. A frase passada por `frase` segue valendo.
+    entrar") nao vira a frase da pagina -- a resposta de onde expandir e' so' a recomendacao
+    unica. Os outros numeros da linha continuam: a pagina so' diz que nao ha dado quando nao
+    sobra nenhum. A frase passada por `frase` segue valendo.
     """
     m = dict(municipio or {})
 
@@ -535,9 +536,13 @@ def resumir_crescimento(
         return valor
 
     tend = _v("cres_tendencia")
-    veredito = _v("v_frase") if com_veredito else None
-    if tend is None and not veredito:
+    v_frase = _v("v_frase")
+    if tend is None and not v_frase:
         return CrescimentoCidade(disponivel=False, linhas=[], frase=TEXTO_SEM_CRESCIMENTO)
+    # Sem veredito a linha segue com dado: a tendencia e' nula DE PROPOSITO onde a confiabilidade
+    # e' muito baixa (2.182 municipios na base de 2026-10), e emprego, saldo, salario e setor
+    # continuam valendo. Antes do ajuste esses municipios saiam com "Sem dado".
+    veredito = v_frase if com_veredito else None
 
     linhas: list[tuple[str, str]] = []
     if tend is not None:
@@ -594,6 +599,9 @@ def resumir_crescimento(
             valor = f"{qtd.replace('.', ',')} vínculos ({_LEITURA_FRAGIL[str(conf)]})"
         linhas.append((ROTULO_POUCOS_EMPREGOS, valor))
 
+    if not linhas and not (frase or veredito):
+        # So' o veredito, que saiu (DEC-077): nao ha numero a mostrar.
+        return CrescimentoCidade(disponivel=False, linhas=[], frase=TEXTO_SEM_CRESCIMENTO)
     return CrescimentoCidade(
         disponivel=True,
         linhas=[(texto_pdf(r), texto_pdf(v)) for r, v in linhas],

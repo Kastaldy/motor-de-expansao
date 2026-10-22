@@ -1804,31 +1804,45 @@ def test_limiar_de_cobertura_ainda_governa_o_aviso():
     assert "cobrem só".encode("latin-1") not in pdf_ok
 
 
-def test_sobra_e_visivel_no_mapa():
-    """A área sem bairro tem de LER como cinza declarado, não como branco/vazio.
-
-    Regressão (Tangará da Serra/MT, reportada por Juan): com alpha 30 a sobra sumia no
-    basemap claro e o mapa parecia ter um buraco -- mas ela é um estado avaliado, não
-    ausência de render.
+def test_sobra_deixa_o_fundo_do_mapa_a_vista_e_segue_com_contorno():
+    """A área sem bairro não tapa o fundo de ruas (Juan, SJC, 2026-10-22): é quase sempre mata,
+    parque ou zona rural, e o OpenMapTiles mostra isso. O estado segue DECLARADO pelo contorno
+    cinza e pelo rodapé -- a lição de Tangará da Serra/MT (2026-08-19, "uma área em branco")
+    era não deixar a sobra sumir sem dizer nada.
     """
+    from motor_expansao.dashboard import relatorio_municipal as rm
     from motor_expansao.dashboard.relatorio_municipal import (
+        _SOBRA_CONTORNO_RGBA,
         _SOBRA_FILL_RGBA,
         _render_mapa_bairros,
     )
 
-    assert _SOBRA_FILL_RGBA[3] >= 60, "alpha baixo demais: a sobra vira invisível"
+    assert _SOBRA_FILL_RGBA[3] == 0, "a sobra voltou a ter preenchimento: tapa o fundo de ruas"
 
     geo = _bairros_geo_sample(com_sobra=True)
     for b in geo["bairros"]:
         b["score"] = 85.0
-    png = _render_mapa_bairros(geo, metrica="score", basemap=False)
-    arr = np.asarray(Image.open(BytesIO(png)).convert("RGB")).astype(int)
+    escritos: list[str] = []
+    original = rm._draw_text
 
-    # Cinza da sobra tem de aparecer numa area relevante: canais proximos entre si
-    # (r~g~b) e claramente mais escuro que o canvas 245 do fallback offline.
+    def _espia(draw, xy, texto, *a, **kw):
+        escritos.append(str(texto))
+        return original(draw, xy, texto, *a, **kw)
+
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setattr(rm, "_draw_text", _espia)
+        png = _render_mapa_bairros(geo, metrica="score", basemap=False)
+    arr = np.asarray(Image.open(BytesIO(png)).convert("RGB")).astype(int)
     r, g, b = arr[:, :, 0], arr[:, :, 1], arr[:, :, 2]
+
+    # Sem o cinza de preenchimento: no alpha 90 eram dezenas de milhares de pixels nesta faixa.
     cinza = (abs(r - g) < 14) & (abs(g - b) < 14) & (r > 180) & (r < 240)
-    assert cinza.sum() > 3_000, f"sobra pouco visivel (pixels cinza: {cinza.sum()})"
+    assert cinza.sum() < 3_000, f"a sobra ainda sai pintada de cinza ({cinza.sum()} pixels)"
+    # O contorno cinza segue desenhado (sobre o canvas 245 do modo offline).
+    alvo = np.array(_SOBRA_CONTORNO_RGBA[:3]) * 0.745 + 245 * 0.255
+    contorno = np.abs(arr - alvo).sum(axis=2) < 30
+    assert contorno.sum() > 300, f"contorno da sobra sumiu ({contorno.sum()} pixels)"
+    assert any("sem bairro na base" in t for t in escritos), escritos
 
 
 def test_recorte_urbano_ignora_area_rural_extensa():

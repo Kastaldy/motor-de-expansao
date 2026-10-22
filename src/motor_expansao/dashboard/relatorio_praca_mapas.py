@@ -411,6 +411,12 @@ def render_pressao_raios(
 #: academias as logos se empilham e escondem os proprios discos que a pagina quer mostrar.
 LOGOS_MAX_CIDADE = 120
 
+#: Zoom do mapa da cidade (Juan, 2026-10-22: "ainda da' pra dar zoom"). Com pelo menos tantas
+#: academias o quadro fecha em 2,5%-97,5% delas (antes 1%-99%) e a folga cai para meio raio.
+_PRESSAO_N_ZOOM_FECHADO = 60
+_PRESSAO_QUANTIL_FECHADO = 0.025
+_PRESSAO_FOLGA_EM_RAIOS = 0.5
+
 
 def render_pressao_cidade(
     hexes_cidade: pd.DataFrame | None,
@@ -438,19 +444,24 @@ def render_pressao_cidade(
     pts_lat = [float(v) for df in (conc, ult) if df is not None for v in pd.to_numeric(df["lat"])]
     pts_lng = [float(v) for df in (conc, ult) if df is not None for v in pd.to_numeric(df["lng"])]
     if pts_lat:
-        # 1% a 99% das academias: meia duzia isolada na borda nao pode desfazer o zoom. As que
-        # ficam fora sao contadas no subtitulo -- nunca somem em silencio.
+        # 1% a 99% das academias (2,5% a 97,5% a partir de `_PRESSAO_N_ZOOM_FECHADO`): meia duzia
+        # isolada na borda nao pode desfazer o zoom. As que ficam fora sao contadas no subtitulo
+        # -- nunca somem em silencio.
         if len(pts_lat) >= 20:
-            lat_lo, lat_hi = (float(v) for v in np.quantile(pts_lat, [0.01, 0.99]))
-            lng_lo, lng_hi = (float(v) for v in np.quantile(pts_lng, [0.01, 0.99]))
+            q = _PRESSAO_QUANTIL_FECHADO if len(pts_lat) >= _PRESSAO_N_ZOOM_FECHADO else 0.01
+            lat_lo, lat_hi = (float(v) for v in np.quantile(pts_lat, [q, 1.0 - q]))
+            lng_lo, lng_hi = (float(v) for v in np.quantile(pts_lng, [q, 1.0 - q]))
         else:
             lat_lo, lat_hi, lng_lo, lng_hi = min(pts_lat), max(pts_lat), min(pts_lng), max(pts_lng)
         fora = sum(
             1 for la, lo in zip(pts_lat, pts_lng, strict=True)
             if not (lat_lo <= la <= lat_hi and lng_lo <= lo <= lng_hi)
         )
-        folga_lat = raio_m / 111_320.0
-        folga_lng = raio_m / (111_320.0 * max(math.cos(math.radians((lat_lo + lat_hi) / 2.0)), 0.2))
+        # Folga de MEIO raio (era um): o disco da borda pode sair cortado -- o que importa e' ver
+        # onde a disputa se concentra, e a folga inteira afastava o quadro (Juan, 2026-10-22).
+        folga_lat = _PRESSAO_FOLGA_EM_RAIOS * raio_m / 111_320.0
+        folga_lng = _PRESSAO_FOLGA_EM_RAIOS * raio_m / (
+            111_320.0 * max(math.cos(math.radians((lat_lo + lat_hi) / 2.0)), 0.2))
         quadro = _Quadro(_bounds_de_pontos(
             [lat_lo - folga_lat, lat_hi + folga_lat], [lng_lo - folga_lng, lng_hi + folga_lng], margem=0.01,
         ), _W, _H)
@@ -464,6 +475,7 @@ def render_pressao_cidade(
     n = (0 if conc is None else len(conc)) + (0 if ult is None else len(ult))
     draw = _discos_sobre(
         image, quadro, conc, ult, raio_m=raio_m, lat_ref=float(np.nanmean(lats)), logos=n <= LOGOS_MAX_CIDADE,
+        realce=True,
     )
     _legenda_discos(draw)
     return _fechar(image, draw, quadro, desenhou)
@@ -484,6 +496,15 @@ def _rede(row: pd.Series) -> str:
     return "" if sem_rede else str(rede)
 
 
+#: Mapa da CIDADE (`realce=True`, Juan, 2026-10-22): o que a pagina mostra e' ONDE ha disputa, e
+#: o raio e' a leitura -- nao o ponto exato. Por tipo (independente, rede, Ultra): alpha do disco,
+#: alpha e espessura da borda, e o raio do ponto quando nao ha logo. A ordem de desenho segue a
+#: mesma (independente por baixo, Ultra por cima), entao o raio de rede nao some sob o ambar das
+#: independentes, que sao a maioria (SJC: 139 de 166).
+_DISCO_REALCE = {0: (40, 170, 2, 7), 1: (60, 235, 3, 9), 2: (75, 255, 4, 11)}
+_LOGO_REALCE_PX = 40
+
+
 def _discos_sobre(
     image: Image.Image,
     quadro: _Quadro,
@@ -493,8 +514,14 @@ def _discos_sobre(
     raio_m: float,
     lat_ref: float,
     logos: bool = True,
+    realce: bool = False,
 ) -> ImageDraw.ImageDraw:
-    """Pinta os discos (e as logos) sobre `image` e devolve um `draw` novo da imagem composta."""
+    """Pinta os discos (e as logos) sobre `image` e devolve um `draw` novo da imagem composta.
+
+    `realce` (mapa da cidade): discos desenhados por tipo, independente por baixo e Ultra por
+    cima, com a borda de rede e Ultra mais forte, e marcadores maiores (`_DISCO_REALCE`). Sem
+    ele (pressao do ponto), o desenho de antes.
+    """
     # Discos numa camada propria, recortada a caixa do mapa: disco de academia fora do quadro
     # nao pode pintar a legenda.
     camada = Image.new("RGBA", (_W, _H), (0, 0, 0, 0))
@@ -510,12 +537,19 @@ def _discos_sobre(
         for _, row in df.iterrows():
             px, py = quadro.lnglat(float(row["lng"]), float(row["lat"]))
             c = cor_de(row)
-            dc.ellipse([px - r_px, py - r_px, px + r_px, py + r_px], fill=(*c, _ALPHA_DISCO), outline=(*c, _ALPHA_BORDA), width=2)
             chave = chave_de(row)
             marcas.append((2 if chave == "__ultra__" else 1 if chave else 0, px, py, chave, c))
 
     _pintar(concorrentes, lambda row: _COR_CADEIA if _rede(row) else _COR_INDEPENDENTE, _rede)
     _pintar(ultra, lambda _row: _COR_ULTRA, lambda _row: "__ultra__")
+    # Sem `realce` a ordem e' a das linhas (o desenho de antes); com ele, por tipo (sort estavel).
+    for ordem, px, py, _chave, c in (sorted(marcas, key=lambda t: t[0]) if realce else marcas):
+        if realce:
+            a_disco, a_borda, espessura, _r = _DISCO_REALCE[ordem]
+        else:
+            a_disco, a_borda, espessura = _ALPHA_DISCO, _ALPHA_BORDA, 2
+        dc.ellipse([px - r_px, py - r_px, px + r_px, py + r_px], fill=(*c, a_disco), outline=(*c, a_borda),
+                   width=espessura)
 
     mascara = Image.new("L", (_W, _H), 0)
     ImageDraw.Draw(mascara).rectangle(quadro.caixa, fill=255)
@@ -524,11 +558,19 @@ def _discos_sobre(
     image.alpha_composite(recorte)
     draw = ImageDraw.Draw(image, "RGBA")
     left, top, right, bottom = quadro.caixa
-    for _ordem, px, py, chave, cor in sorted(marcas, key=lambda t: t[0]):
+    for ordem, px, py, chave, cor in sorted(marcas, key=lambda t: t[0]):
         if not (left <= px <= right and top <= py <= bottom):
             continue
         if logos:
-            _paste_logo_pin(image, int(round(px)), int(round(py)), chave)
+            if realce:
+                # O tamanho do independente e' fixo em `_paste_logo_pin` (DEC-046): so' rede e
+                # Ultra crescem, e o independente segue o menor, como pedido.
+                _paste_logo_pin(image, int(round(px)), int(round(py)), chave, size=_LOGO_REALCE_PX)
+            else:
+                _paste_logo_pin(image, int(round(px)), int(round(py)), chave)
+        elif realce:
+            r = _DISCO_REALCE[ordem][3]
+            draw.ellipse([px - r, py - r, px + r, py + r], fill=(*cor, 255), outline=(255, 255, 255, 255), width=2)
         else:
             draw.ellipse([px - 4, py - 4, px + 4, py + 4], fill=(*cor, 255), outline=(255, 255, 255, 255))
     return ImageDraw.Draw(image, "RGBA")
@@ -583,6 +625,26 @@ _COR_TOP_SOCIO = (37, 99, 235)
 _COR_TOP_SOCIO_BORDA = (30, 64, 175)
 
 
+def _cidade_sem_regiao(hexes_cidade: pd.DataFrame | None, subtitulo: str, *, basemap: bool) -> bytes | None:
+    """A cidade inteira em cinza, sem nenhum destaque: o Top 10 saiu sem regiao (DEC-077)."""
+    if hexes_cidade is None or hexes_cidade.empty or "hex_id" not in hexes_cidade.columns:
+        return None
+    quadro = _quadro_da_cidade(hexes_cidade, None, None)
+    if quadro is None:
+        return None
+    image, draw, desenhou = _base(quadro, "Onde crescer", subtitulo, basemap=basemap)
+    # Camada propria + alpha_composite, como em `render_onde_crescer`: RGBA direto na imagem
+    # gravaria o alpha e a cidade sairia cinza opaco.
+    camada = Image.new("RGBA", (_W, _H), (0, 0, 0, 0))
+    dc = ImageDraw.Draw(camada, "RGBA")
+    for h in hexes_cidade["hex_id"].astype(str):
+        _desenhar_hex(dc, quadro, h, _COR_CIDADE)
+    image.alpha_composite(camada)
+    draw = ImageDraw.Draw(image, "RGBA")
+    _legenda(draw, "Legenda", [("Regioes da cidade", _COR_CIDADE)])
+    return _fechar(image, draw, quadro, desenhou)
+
+
 def render_onde_crescer_duas_listas(
     hexes_cidade: pd.DataFrame | None,
     top_residual: pd.DataFrame,
@@ -591,16 +653,24 @@ def render_onde_crescer_duas_listas(
     basemap: bool = True,
     rotulos_listas: tuple[str, str] = ("Maior residual", "Maior socioeconomico"),
     subtitulo: str = "Top 5 por residual e top 5 por socioeconomico",
+    subtitulo_sem_regiao: str | None = None,
 ) -> bytes | None:
     """A cidade em cinza com as DUAS listas da pagina: maior residual em verde e maior score
     socioeconomico em azul, cada uma numerada na ordem da sua tabela (2026-10-20).
 
     No Brasil as duas listas sao a recomendacao unica (DEC-077): Mata Virgem no verde e Premium
     no azul, com `rotulos_listas`/`subtitulo` dizendo isso. Ali os segmentos sao exclusivos e o
-    hexagono cortado ao meio nao acontece; ele segue para as listas por coluna (Argentina)."""
+    hexagono cortado ao meio nao acontece; ele segue para as listas por coluna (Argentina).
+
+    Listas vazias: `None` ("Mapa indisponivel" na pagina), a menos que `subtitulo_sem_regiao`
+    venha -- ai' o mapa mostra a cidade inteira em cinza com esse subtitulo. No Brasil nenhuma
+    regiao passar na regua e' resultado da regua (59 das 313 cidades com 100 mil+ habitantes),
+    nao falha do mapa."""
     listas = [df for df in (top_residual, top_socio) if df is not None and not df.empty and "hex_id" in df.columns]
     if not listas:
-        return None
+        if subtitulo_sem_regiao is None:
+            return None
+        return _cidade_sem_regiao(hexes_cidade, subtitulo_sem_regiao, basemap=basemap)
     juntos = pd.concat(listas, ignore_index=True)
     # Zoom FECHADO nos 10 hexagonos (Juan, 2026-10-20: "dar um zoom maior"): a margem de 0,6 do
     # mapa de uma lista so' sobrava demais com as duas listas espalhadas pela cidade. Folga fixa de

@@ -226,6 +226,86 @@ def test_pressao_da_cidade_troca_logo_por_ponto_quando_ha_academia_demais():
         assert colar.call_count == 0
 
 
+def _elipses(monkeypatch: pytest.MonkeyPatch) -> list[tuple[float, tuple | None, int]]:
+    """Espia `ImageDraw.ellipse`: (raio, cor de preenchimento, espessura) na ordem de desenho."""
+    from PIL import ImageDraw
+
+    chamadas: list[tuple[float, tuple | None, int]] = []
+    original = ImageDraw.ImageDraw.ellipse
+
+    def _espia(self, xy, fill=None, outline=None, width=1):
+        x0, _y0, x1, _y1 = (*xy[0], *xy[1]) if len(xy) == 2 else xy
+        chamadas.append(((x1 - x0) / 2.0, tuple(fill) if fill is not None else None, width))
+        return original(self, xy, fill=fill, outline=outline, width=width)
+
+    monkeypatch.setattr(ImageDraw.ImageDraw, "ellipse", _espia)
+    return chamadas
+
+
+def test_pressao_da_cidade_pinta_independente_por_baixo_e_ultra_por_cima(monkeypatch):
+    """Juan, 2026-10-22: o raio e' a leitura; o de rede nao some sob o ambar das independentes
+    (SJC: 139 de 166), e a Ultra fica por cima de todos."""
+    df = _df_cidade(2)
+    # Rede ANTES da independente nas linhas: a ordem de desenho tem de vir do tipo, nao da tabela.
+    conc = pd.DataFrame({"rede": ["smart_fit", None, "bluefit", None],
+                         "lat": [_LAT, _LAT + 0.003, _LAT - 0.003, _LAT + 0.006], "lng": [_LNG] * 4})
+    ultra = pd.DataFrame({"lat": [_LAT + 0.001], "lng": [_LNG + 0.002]})
+    chamadas = _elipses(monkeypatch)
+    rpm.render_pressao_cidade(df, conc, ultra, basemap=False)
+    raio_disco = max(r for r, _f, _w in chamadas)
+    discos = [f[:3] for r, f, _w in chamadas if r == raio_disco and f is not None]
+    assert discos == [rpm._COR_INDEPENDENTE] * 2 + [rpm._COR_CADEIA] * 2 + [rpm._COR_ULTRA], discos
+    bordas = {f[:3]: w for r, f, w in chamadas if r == raio_disco and f is not None}
+    assert bordas[rpm._COR_CADEIA] > bordas[rpm._COR_INDEPENDENTE]
+    assert bordas[rpm._COR_ULTRA] > bordas[rpm._COR_CADEIA]
+
+
+def test_pressao_da_cidade_com_muitas_academias_desenha_pontos_maiores(monkeypatch):
+    df = _df_cidade(2)
+    n = rpm.LOGOS_MAX_CIDADE + 1
+    conc = pd.DataFrame({"rede": [None] * (n - 1) + ["smart_fit"], "lat": [_LAT] * n, "lng": [_LNG] * n})
+    ultra = pd.DataFrame({"lat": [_LAT], "lng": [_LNG]})
+    chamadas = _elipses(monkeypatch)
+    rpm.render_pressao_cidade(df, conc, ultra, basemap=False)
+    pontos = {f[:3]: r for r, f, _w in chamadas if f is not None and len(f) == 4 and f[3] == 255 and r < 20}
+    # Antes: 4 px para todos. Agora a Ultra maior que a rede, e a rede maior que a independente.
+    assert pontos[rpm._COR_INDEPENDENTE] >= 7
+    assert pontos[rpm._COR_ULTRA] > pontos[rpm._COR_CADEIA] > pontos[rpm._COR_INDEPENDENTE]
+
+
+def test_pressao_do_ponto_segue_com_o_desenho_de_antes(monkeypatch):
+    """O realce e' so' do mapa da cidade: a pressao do Relatorio Pontual nao muda."""
+    conc = pd.DataFrame({"rede": ["smart_fit", None], "lat": [_LAT + 0.002, _LAT - 0.002], "lng": [_LNG] * 2})
+    chamadas = _elipses(monkeypatch)
+    rpm.render_pressao_raios(_LAT, _LNG, conc, None, basemap=False)
+    discos = [(f[:3], w) for _r, f, w in chamadas if f is not None and len(f) == 4 and f[3] == rpm._ALPHA_DISCO]
+    # Ordem das linhas (rede antes da independente), alpha e espessura de sempre.
+    assert discos == [(rpm._COR_CADEIA, 2), (rpm._COR_INDEPENDENTE, 2)]
+
+
+def test_zoom_da_pressao_da_cidade_fecha_com_muitas_academias():
+    rng = np.random.default_rng(3)
+    conc = pd.DataFrame({"rede": [None] * 200, "lat": _LAT + rng.normal(0, 0.03, 200),
+                         "lng": _LNG + rng.normal(0, 0.03, 200)})
+    df = _df_cidade(2)
+    escalas: list[float] = []
+    original = rpm._Quadro.__init__
+
+    def _espia(self, bounds, w, h):
+        original(self, bounds, w, h)
+        escalas.append(self.scale)
+
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setattr(rpm._Quadro, "__init__", _espia)
+        rpm.render_pressao_cidade(df, conc, None, basemap=False)
+        fechado = escalas[-1]
+        mp.setattr(rpm, "_PRESSAO_QUANTIL_FECHADO", 0.01)
+        mp.setattr(rpm, "_PRESSAO_FOLGA_EM_RAIOS", 1.0)
+        rpm.render_pressao_cidade(df, conc, None, basemap=False)
+        aberto = escalas[-1]
+    assert fechado > aberto * 1.1, (fechado, aberto)
+
+
 # --------------------------------------------------------------------------- #
 # PDF                                                                         #
 # --------------------------------------------------------------------------- #

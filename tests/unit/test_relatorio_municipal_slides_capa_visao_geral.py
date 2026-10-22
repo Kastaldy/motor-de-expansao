@@ -226,6 +226,132 @@ def test_bairros_oficiais_em_partes_gera_uma_pagina_por_parte():
         assert any(f"Parte {i} de {k}" in p for p in paginas), i
 
 
+def test_todo_bairro_sem_numero_ganha_a_parte_do_numerado_mais_proximo():
+    """SJC (2026-10-22): so' os 40 numerados tinham cor e o cinza cobria 84% do municipio."""
+    geo = _grade_de_bairros(10)  # 100 bairros: 40 numerados, 60 de fora
+    div = rm.dividir_bairros_em_partes(geo)
+    assert set(div["parte_de"]) == {str(b["nome"]) for b in geo["bairros"]} - set(div["avulsos"])
+    for k, parte in enumerate(div["partes"]):
+        assert all(div["parte_de"][n] == k for n in parte)
+    centro = {str(b["nome"]): b["rotulo_xy"] for b in geo["bairros"]}
+
+    def _d2(a: str, b: str) -> float:
+        return (centro[a][0] - div["ponto"][b][0]) ** 2 + (centro[a][1] - div["ponto"][b][1]) ** 2
+
+    numerados = [n for p in div["partes"] for n in p]
+    for nome in div["fora"]:
+        perto = min(numerados, key=lambda n: (_d2(nome, n), div["numero"][n]))
+        assert div["parte_de"][nome] == div["parte_de"][perto], nome
+    assert rm.dividir_bairros_em_partes(geo)["parte_de"] == div["parte_de"]
+
+
+def test_bairros_oficiais_pinta_o_municipio_inteiro_nas_cores_das_partes(monkeypatch):
+    df = _sample_df()
+    geo = _grade_de_bairros(10)
+    res = agregar_municipio(df, nome_municipio="SAO PAULO", uf="SP", bairros_geo=geo)
+    chamadas: list[dict] = []
+    original = rm._render_mapa_bairros
+
+    def _espia(bairros_geo, **kw):
+        chamadas.append(kw)
+        return original(bairros_geo, **kw)
+
+    monkeypatch.setattr(rm, "_render_mapa_bairros", _espia)
+    render_mapas_municipio(df, res, basemap=False, unidade=UNIDADE_HEXAGONO)
+    div = rm.dividir_bairros_em_partes(geo)
+    geral = next(c for c in chamadas if c.get("marcadores"))
+    # Nenhum bairro em cinza: os de fora na cor clara da sua parte, os numerados na cheia.
+    assert set(geral["cor_por_bairro"]) == set(div["parte_de"])
+    assert not geral["apagados"]
+    assert geral["cor_clara"] == set(div["fora"])
+    assert not geral.get("so_contorno"), "a visao geral mostra as partes em cor cheia"
+    for k, parte in enumerate(div["partes"]):
+        mapa = next(c for c in chamadas if c.get("titulo") == f"Bairros oficiais - parte {k + 1}")
+        da_parte = {n for n, kk in div["parte_de"].items() if kk == k}
+        assert set(mapa["cor_por_bairro"]) == da_parte
+        assert mapa["cor_clara"] == da_parte - set(parte)
+        assert set(mapa["numeros"]) == set(parte)
+        # Paginas das partes: o LIMITE do bairro, nao a cor cheia (Juan, 2026-10-22).
+        assert mapa["so_contorno"] is True
+
+
+def test_pagina_da_parte_contorna_o_bairro_na_cor_forte_sem_preencher():
+    from tests.unit.test_relatorio_municipal import _bairro_quadrado
+
+    lado = 40_000.0
+    geo = {"bairros": [_bairro_quadrado("Unico", -5_190_000.0, -2_700_000.0, lado, pop=1000.0)],
+           "contorno": [], "n_bairros": 1, "n_setores": 1, "sem_localidade": 0, "cobertura": 1.0}
+    png = rm._render_mapa_bairros(geo, basemap=False, cor_por_bairro={"Unico": rm.ULTRA_LARANJA},
+                                  so_contorno=True)
+    img = np.asarray(Image.open(BytesIO(png)).convert("RGB")).astype(int)
+    meio = img[img.shape[0] // 2, img.shape[1] // 2]
+    assert all(v >= 240 for v in meio), f"o bairro saiu preenchido: {meio}"
+    laranja = np.abs(img - np.array(rm.ULTRA_LARANJA)).sum(axis=2) < 25
+    assert laranja.sum() > 1_000, "o contorno na cor da parte nao saiu forte"
+
+
+def test_cor_da_parte_sai_cheia_e_nao_bege():
+    """A composicao antiga aplicava o alpha tres vezes: o laranja da parte 3 saia bege."""
+    from tests.unit.test_relatorio_municipal import _bairro_quadrado
+
+    lado = 40_000.0
+    geo = {"bairros": [_bairro_quadrado("Unico", -5_190_000.0, -2_700_000.0, lado, pop=1000.0)],
+           "contorno": [], "n_bairros": 1, "n_setores": 1, "sem_localidade": 0, "cobertura": 1.0}
+
+    def _centro(png: bytes) -> tuple[int, int, int]:
+        img = np.asarray(Image.open(BytesIO(png)).convert("RGB")).astype(int)
+        r, g, b = img[img.shape[0] // 2, img.shape[1] // 2]
+        return int(r), int(g), int(b)
+
+    r, g, b = _centro(rm._render_mapa_bairros(
+        geo, basemap=False, cor_por_bairro={"Unico": rm.ULTRA_LARANJA}))
+    # Laranja (243, 146, 0) com alpha 185 sobre o fundo (245, 245, 245): ~ (243, 173, 67).
+    assert r > 230 and b < 90 and r - b > 150, (r, g, b)
+    r2, _g2, b2 = _centro(rm._render_mapa_bairros(
+        geo, basemap=False, cor_por_bairro={"Unico": rm.ULTRA_LARANJA}, cor_clara={"Unico"}))
+    assert b2 > b and r2 > 230, "o tom claro tem de ser mais claro que o cheio, na mesma cor"
+
+
+def test_partes_dizem_quantos_bairros_cada_cor_tem():
+    df = _sample_df()
+    geo = _grade_de_bairros(8)  # 64 bairros, 40 numerados
+    res = agregar_municipio(df, nome_municipio="SAO PAULO", uf="SP", bairros_geo=geo)
+    paginas = _paginas(gerar_pdf_relatorio_municipal(res, render_mapas_municipio(df, res, basemap=False)))
+    geral = next(p for p in paginas if "PARTES DO MUNICÍPIO" in p)
+    div = rm.dividir_bairros_em_partes(geo)
+    com_total = 0
+    for k, parte in enumerate(div["partes"]):
+        total = sum(1 for kk in div["parte_de"].values() if kk == k)
+        if total > len(parte):
+            com_total += 1
+            assert f"Parte {k + 1} - {len(parte)} de {total} bairros" in geral, (k, geral)
+    assert com_total, "nenhuma parte recebeu bairro sem numero: o teste nao exercitou nada"
+    assert "no tom mais claro da parte mais próxima" in geral
+    assert "aparecem em cinza" not in geral
+
+
+def test_numero_do_espaco_sai_num_circulo_por_cima_do_mapa(monkeypatch):
+    """SJC (2026-10-22): o branco de 7 pt sumia sob as ruas e os nomes do fundo de ruas."""
+    df = _sample_df()
+    df["oferta_efetiva_disponivel"] = [4451.0, 6300.0, 500.0, 2100.0]
+    res = agregar_municipio(df, nome_municipio="SAO PAULO", uf="SP")
+    mapas = render_mapas_municipio(df, res, basemap=False)
+    circulos: list[tuple[int, float]] = []
+    original = rm._UltraPDF.ellipse
+
+    def _espia(self, x, y, w, h, *a, **kw):
+        if w == h:
+            circulos.append((self.page_no(), w))
+        return original(self, x, y, w, h, *a, **kw)
+
+    monkeypatch.setattr(rm._UltraPDF, "ellipse", _espia)
+    paginas = _paginas(gerar_pdf_relatorio_municipal(res, mapas))
+    n_pag = 1 + next(i for i, p in enumerate(paginas) if p.startswith("Como chegamos ao Espaço"))
+    pontos = res["espaco_rotulos"]["pontos"]
+    assert pontos and all(t in paginas[n_pag - 1] for _x, _y, t in pontos)
+    assert sum(1 for pag, w in circulos if pag == n_pag and w >= 13.0) == len(pontos)
+
+
 def test_resumo_na_ordem_espaco_concorrentes_ultra_e_a_pagina_que_explica_o_espaco():
     paginas = _paginas(_pdf())
     i = next(k for k, p in enumerate(paginas) if p.startswith("Resumo da Região"))

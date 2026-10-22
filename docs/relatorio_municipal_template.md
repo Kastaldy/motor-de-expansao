@@ -21,7 +21,7 @@ template GeoFusion/Ultra (turquesa + magenta + laranja; capa escura com hexágon
 > São Paulo sai com 6 partes.
 
 > Fonte de verdade da contagem/ordem: `PDF_SECTION_HEADERS` em
-> `src/motor_expansao/dashboard/relatorio_municipal.py` (10 entradas), travada por
+> `src/motor_expansao/dashboard/relatorio_municipal.py` (11 entradas), travada por
 > `tests/unit/test_relatorio_municipal.py` (asserts em `/Count 11`). Ao mudar a estrutura,
 > atualizar ESTE doc no mesmo PR — a página 2 abaixo ficou 1 mês fora dele (BLK-RELMUN-01-FU1).
 
@@ -41,17 +41,20 @@ onde expandir: a do "Onde crescer", que é o Top 10 do módulo único
 
 | Página | No Brasil |
 |---|---|
+| Capa | Subtítulo "Mapeamento competitivo por região - Ultra, concorrência e capacidade não atendida" (sem "espaço disponível para novas academias"). |
+| Bairros Oficiais | Município sem bairro na base: a nota não promete mais "as zonas geométricas" das páginas seguintes, que saíram. |
 | Visão Geral do Município | Só o mapa da cidade, centralizado: sem verde de aprovado, sem a tabela "BAIRROS APROVADOS" e sem contagem. |
 | Resumo da Região | Mapa neutro com Ultra e as maiores redes, no enquadramento de Score e Residual (sem foco em escolhidos). Painel com os números da cidade; "Como calculamos o espaço" fala em "regiões com 2.000 ou mais". |
-| Como chegamos ao Espaço | Fica, com os números por hexágono; o texto diz "regiões com residual a partir de 2.000 alunos (capacidade não atendida)" em vez de "aprovadas". |
+| Como chegamos ao Espaço | Fica, com os números por hexágono em laranja (não no verde do aprovado) e sem o quadro "ONDE CABEM MAIS" (Felipe, 22/10); o texto diz "regiões com residual a partir de 2.000 alunos (capacidade não atendida)" em vez de "aprovadas". |
 | Expansão de Domínio e Bairros por Zona | Fora, até chegarem os dados do gestor. |
-| Como a cidade está indo | Sem a frase de veredito ("É praça para entrar", `v_frase`): a caixa do topo fica só com o nome da cidade. |
-| Onde crescer | Tabela **Mata Virgem** (5, em ordem de residual) e tabela **Premium** (5, em ordem de população), colunas #, Região, Residual, População e Renda domiciliar. Vaga sem candidato: "Vaga vazia: …" com o motivo do módulo; sem o carimbo k da malha, uma linha "Renda indisponível …" por segmento. Nome = bairro de mais moradores (`rotulos_das_regioes`); sem bairro, o município. Mapa: verde = Mata Virgem, azul = Premium. |
-| Síntese | Dois cards (penetração e residual); o de zonas sai. O residual diz quanto dele está "nas regiões com residual a partir de 2.000 alunos". |
+| Como a cidade está indo | Sem a frase de veredito ("É praça para entrar", `v_frase`): a caixa do topo fica só com o nome da cidade. Os outros números continuam; "Sem dado" só quando não sobra nenhum. |
+| Onde crescer | Tabela **Mata Virgem** (5, em ordem de residual) e tabela **Premium** (5, em ordem de população), colunas #, Região, Residual, População e Renda domiciliar. Vaga sem candidato: "Vaga vazia: …" com o motivo do módulo; sem o carimbo k da malha, ou com a base recusada pelo módulo, uma linha "… indisponível …" por segmento, sem número. Nome = bairro de mais moradores (`rotulos_das_regioes`); o "A / B" que não cabe vai em duas linhas; sem bairro, o município, e a nota avisa. Mapa: verde = Mata Virgem, azul = Premium, subtítulo com as vagas preenchidas e o teto da régua; sem nenhuma região, a cidade em cinza ("Nenhuma regiao da cidade atende a regua", sem acento como todo texto dos mapas da praça). Nota com os números e os critérios da régua. |
+| Síntese | Título "Síntese - Diagnóstico". Dois cards (penetração e residual); o de zonas sai. O residual diz quanto dele está "nas regiões com residual a partir de 2.000 alunos". |
 | Espaço e academias | O número sai como "Espaço para academias: capacidade não atendida nas regiões com residual a partir de 2.000 alunos". |
 
-Base: o bot/API lê a partição enriquecida da UF (a da tela), com a coluna `uf`. Carimbo:
-`BLK-RELMUN | contrato v3`.
+Base: o bot/API lê a partição enriquecida da UF (a da tela), com a coluna `uf`; sem ela, recusa
+(503, `base_da_tela_ausente`). A subida da API confere a régua e o carimbo k da malha
+(`recomendacao.validar_na_subida`). Carimbo: `BLK-RELMUN | contrato v3`.
 
 ### Página 1 — Capa
 - Eyebrow: "ANÁLISE DE EXPANSÃO".
@@ -68,8 +71,10 @@ Base: o bot/API lê a partição enriquecida da UF (a da tela), com a coluna `uf
 - **Mapa** do município INTEIRO com o **limite territorial de cada bairro** (contorno vermelho),
   a divisa do município (contorno preto) e um **número** dentro de cada bairro; o nome vai no
   índice ao lado (desde 2026-10-20: o mapa único de São Paulo cabia 29 de 96 nomes e a placa
-  cruzava a divisa). A área **cinza** é a que não tem bairro na base — nunca sai como se fosse
-  divisa oficial.
+  cruzava a divisa). A área **sem bairro na base** sai **sem cor, só com contorno cinza** — nunca
+  como se fosse divisa oficial. Desde 2026-10-22 (Juan, SJC) ela não tem preenchimento: é quase
+  sempre mata, parque ou zona rural, e o fundo de ruas (OpenMapTiles) mostra isso; o cinza de
+  alpha 90 (Tangará da Serra, 2026-08-19) tapava o verde. Vale para todos os mapas por bairro.
 - **Em partes** (`dividir_bairros_em_partes`): quando os números não cabem num quadro, a página
   vira uma visão geral com as partes coloridas e numeradas + **uma página por parte** ("Parte k
   de K"), com zoom só nela, os vizinhos em cinza, mini-mapa de localização e o índice dos seus
@@ -77,8 +82,18 @@ Base: o bot/API lê a partição enriquecida da UF (a da tela), com a coluna `uf
   grande (zona rural longe da cidade) vira corte; parte de até 3 bairros é numerada no mapa geral.
 - **Só os 40 mais populosos são numerados** (`_BAIRROS_NUMERADOS_MAX`, Juan, 2026-10-21): com o
   CNEFE o município tem centenas de bairros (São José dos Campos: 331 contra as 35 regiões do
-  IBGE) e numerar todos dava 40 partes. Os demais ficam no mapa em cinza, sem número; o título
-  diz "40 de N bairros" e a nota repete o recorte. Em SJC: 5 partes.
+  IBGE) e numerar todos dava 40 partes. O título diz "40 de N bairros" e a nota repete o recorte.
+  Em SJC: 5 partes.
+- **O município inteiro nas cores das partes** (Juan, 2026-10-22): cada bairro sem número vai
+  para a parte do numerado mais próximo (`parte_de`) e sai no **tom claro** da cor dela; os
+  numerados, no tom cheio. Antes os sem número saíam em cinza — em SJC, 84% da área e metade da
+  população —, e as partes, com alpha baixo e composição que escurecia a cor, saíam bege. O índice
+  diz "Parte k - n de N bairros". Nas **páginas das partes** o bairro sai só com **contorno forte
+  na cor da parte, sem preenchimento** (`so_contorno`, Juan, 2026-10-22): ali o que se lê é o
+  limite do bairro, e a cor cheia fazia a página parecer mais um mapa temático. Traço grosso nos
+  numerados, fino nos demais da parte; os das outras partes, em cinza. Nenhum bairro falta: em SJC os 331 bairros
+  e a área sem bairro (160 km², 3,3 mil habitantes) cobrem o município (~1 km² sem polígono, de
+  arredondamento).
 - Fonte: o **bairro do CNEFE 2022** (DEC-076), o mais frequente em cada setor, com a malha do
   IBGE como reserva (`nome_bairro` → `nome_subdistrito` → `nome_distrito`). O limite é o dos
   setores censitários do **IBGE Censo 2022** (`geometry_wkb`) **dissolvidos** por esse bairro
@@ -177,6 +192,9 @@ Base: o bot/API lê a partição enriquecida da UF (a da tela), com a coluna `uf
   de academias de 2.500 alunos que cabem nele (`academias_por_hex`: residual ÷ 2.500 pelos maiores
   restos, para os números somarem exatamente o espaço do Resumo). Por hexágono de propósito: é o
   grão em que o espaço é calculado; repartir por bairro perdia academias nos hexágonos de borda.
+  O número sai como texto do PDF dentro de um **círculo grafite com borda branca** (2026-10-22):
+  em branco direto no hexágono ele sumia sob as ruas e os nomes do fundo de ruas, que vêm por cima
+  dos hexágonos.
 - Ao lado: o total ("ESPAÇO PARA ACADEMIAS") e "ONDE CABEM MAIS" (hexágonos com mais academias, pelo
   bairro dominante). Mesma fórmula da DEC-011 parte 2; só display. Implementação:
   `_espaco_explicado_page`.
@@ -230,7 +248,7 @@ Base: o bot/API lê a partição enriquecida da UF (a da tela), com a coluna `uf
 `service.montar_pdf_municipio` — o preparo único do motor e do bot (#373) — monta `praca=PracaDaCidade` (`service._praca_da_cidade`) e o PDF ganha **quatro páginas** (11 -> 15 no modo bairro). Sem `praca` o PDF sai o de antes; as páginas são condicionais e ficam fora de `PDF_SECTION_HEADERS`. Cores pelos ordinais 12..15 de `_tema_bicolor`, então nenhuma página existente troca de cor. Falha no preparo deixa o PDF sair sem as quatro; falha de um mapa vira "Mapa indisponível". Lógica pura em `dashboard/relatorio_praca.py`, PNGs em `dashboard/relatorio_praca_mapas.py`, testes em `tests/unit/test_relatorio_municipal_praca.py`.
 
 - **Mapas de calor da cidade** (depois de Score Censitário): renda média domiciliar e densidade por hexágono, lado a lado. Renda pelo mesmo mapa da tabela de regiões (`carregar_renda_domiciliar_por_hex`); sem ele a coluna fica nula, nunca cai na per capita. Densidade = população de leitura (`COLS_POPULACAO`, a precedência do piloto) sobre a área da célula, e não `densidade_pop_setor_hab_km2`, que é do setor. Cores do slide "Mapas de calor" do pontual; cortes pelos quintis da própria cidade (`quebras_por_quantil`), porque a pergunta é "quais bairros desta praça".
-- **Pressão concorrencial** (depois de Residual Fitness): um disco de `RAIO_INFLUENCIA_M` (1 km, DEC-051) por academia do município — o recorte do slide Concorrentes (`filtrar_pins_do_municipio`) — sobre a cidade inteira. Com mais de `LOGOS_MAX_CIDADE` (120) academias as logos viram pontos, senão escondem os discos. Painel: concorrentes, independentes, Ultra, % dos hexágonos com o centro sob algum raio, % com 3+ raios (`N_DISCOS_DISPUTA`), máximo num hexágono e as 5 redes com mais unidades (`pressao_na_cidade`).
+- **Pressão concorrencial** (depois de Residual Fitness): um disco de `RAIO_INFLUENCIA_M` (1 km, DEC-051) por academia do município — o recorte do slide Concorrentes (`filtrar_pins_do_municipio`) — sobre a cidade inteira. Com mais de `LOGOS_MAX_CIDADE` (120) academias as logos viram pontos, senão escondem os discos. **Desde 2026-10-22 (Juan)** o raio é a leitura, não o ponto exato: os discos saem por tipo — independente por baixo, rede no meio, Ultra por cima — com a borda de rede e Ultra mais forte (`_DISCO_REALCE`), para o raio de rede não sumir sob o âmbar das independentes (SJC: 139 de 166); pontos de 7/9/11 px (independente/rede/Ultra, eram 4) e logos de rede/Ultra em 40 px; quadro mais fechado (2,5%–97,5% das academias a partir de 60, folga de meio raio), com as que ficam fora contadas no subtítulo. A pressão do Relatório Pontual não muda. Painel: concorrentes, independentes, Ultra, % dos hexágonos com o centro sob algum raio, % com 3+ raios (`N_DISCOS_DISPUTA`), máximo num hexágono e as 5 redes com mais unidades (`pressao_na_cidade`).
 - **Onde crescer** (depois de Expansão de Domínio): os 5 hexágonos de `selecionar_onde_crescer`, com o bairro dominante. **Não é o residual puro** (Spearman ~0,995 com população, DEC-041): elegível = residual > 0 **e** renda domiciliar >= mediana da cidade; ordem pelo `indice_praca` da DEC-041, desempate por renda e `hex_id`. O índice é calculado por `dashboard/praca_indice.py`, o MESMO módulo da camada 5 do funil — ele saiu de `web/server/` para `src/` porque o container da API não importa `web/server`, e `web/server/praca_indice.py` virou alias (`sys.modules`). Leitura só do PDF: funil, `/api/hexagonos` e índice não mudam.
 - **Como a cidade está indo** (antes da Síntese): a linha do município em `crescimento_municipal.parquet` da staging (`linha_crescimento_municipal`, por `cod6` e, sem ele, por `UF|NOME`), lida pelo service para o bot e o motor terem a mesma página — a base do bot não traz as colunas `cres_*`. Frase = `v_frase`. Município sem linha (inclusive AR, que não tem a camada) mostra "Sem dado de crescimento para este município.".
 
