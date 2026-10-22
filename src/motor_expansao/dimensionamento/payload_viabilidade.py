@@ -938,7 +938,13 @@ def montar_payload_para_pdf(
     foi usada. Antes a falha era engolida e o slide saia sem aviso nenhum.
     """
     from motor_expansao.dashboard.viabilidade_charts import montar_payload_pdf_viabilidade
-    from motor_expansao.dimensionamento.viabilidade_v2 import TokenV2Invalido, V2Indisponivel
+
+    # Uma classe por linha: com as duas na mesma linha, a regra generic-api-key do gitleaks
+    # lia o nome com "Token" e o seguinte como chave e segredo (falso positivo).
+    from motor_expansao.dimensionamento.viabilidade_v2 import (
+        TokenV2Invalido,
+        V2Indisponivel,
+    )
 
     aviso_v2: str | None = None
     try:
