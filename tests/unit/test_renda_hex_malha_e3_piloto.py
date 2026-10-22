@@ -34,11 +34,12 @@ from motor_expansao.renda import (  # noqa: E402
     fator,
 )
 from motor_expansao.renda import hex as renda_hex  # noqa: E402
-from tests.unit.test_piloto_web_endpoints import (  # noqa: E402
+from tests.unit.test_piloto_web_endpoints import (  # noqa: E402, F401
     _clear_caches,
     _montar_base_nacional,
     _nacional_duas_ufs,
     _point_app_at,
+    sem_regua,
 )
 
 CALIBRADA = "renda_per_capita_setor_2022_calibrada"
@@ -88,6 +89,8 @@ def test_as_listas_de_colunas_pedem_a_malha() -> None:
     # Barato e direto: a lista e o ponto onde a coluna se perde sem erro.
     assert set(COLS_RENDA_MALHA) <= set(pilot._COLS_DESEJADAS)
     assert set(COLS_RENDA_MALHA) <= set(pilot._COLS_NACIONAL)
+    # Recorte BRASIL da recomendacao unica (DEC-077): a renda da vaga tambem le a malha.
+    assert set(COLS_RENDA_MALHA) <= set(pilot._COLS_RECOMENDACAO)
 
 
 def test_tooltip_e_ficha_via_carregar_uf(base_e3: Path) -> None:
@@ -100,7 +103,11 @@ def test_tooltip_e_ficha_via_carregar_uf(base_e3: Path) -> None:
         assert pilot._renda_per_capita_hex(linha) == pc
 
 
-def test_ranking_nacional_usa_a_malha_e_cai_na_municipal_sem_ela(base_e3: Path) -> None:
+def test_ranking_nacional_usa_a_malha_e_cai_na_municipal_sem_ela(
+    base_e3: Path, sem_regua: None  # noqa: F811
+) -> None:
+    # O ranking nacional LEGADO (instancia sem regua): com a regua BR, `/api/hexagonos` devolve
+    # o Top 10 da recomendacao unica (DEC-077), testado em `test_piloto_web_recomendacao_top10`.
     itens = pilot.hexagonos(limite=500)["itens"]
     esperado = _esperado_sp()
     vistos = {i["hex_id"]: i for i in itens}
@@ -121,7 +128,10 @@ def test_oportunidades_usa_a_malha(base_e3: Path) -> None:
         assert saida[idx] == esperado[hid][1]
 
 
-def test_mesmo_hexagono_mesmo_numero_entre_superficies(base_e3: Path) -> None:
+def test_mesmo_hexagono_mesmo_numero_entre_superficies(
+    base_e3: Path, sem_regua: None  # noqa: F811
+) -> None:
+    # Ranking nacional LEGADO (instancia sem regua); ver o comentario do teste acima.
     df = pilot.carregar_uf("SP").set_index("hex_id", drop=False)
     nacional = {i["hex_id"]: i["renda"] for i in pilot.hexagonos(limite=500)["itens"]}
     ids = sorted(_esperado_sp())

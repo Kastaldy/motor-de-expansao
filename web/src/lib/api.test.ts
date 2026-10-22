@@ -222,14 +222,16 @@ describe('baixar', () => {
 })
 
 /**
- * `api.hexagonos` — a chamada do ranking NACIONAL do Modo 3.
+ * `api.hexagonos` — o Top 10 do recorte (recomendação única, DEC-077).
  *
  * O que estes testes protegem: a rota entrega o Brasil inteiro quando NENHUM filtro é
  * passado. Mandar `uf=` ou `municipio=` vazios na query faria o servidor receber
  * strings vazias e — dependendo de como o filtro fosse escrito lá — recortar a lista
- * para nada. O contrato é: filtro ausente não vai na URL.
+ * para nada. O contrato é: filtro ausente não vai na URL. E `limite`/`por_municipio`
+ * NUNCA vão: o Top 10 tem tamanho fixo pela régua, e "um por cidade" contradiria a regra
+ * (vizinhos podem ocupar várias vagas).
  */
-describe('hexagonos — o ranking nacional', () => {
+describe('hexagonos — o Top 10 do recorte', () => {
   function capturarGet(): { url: () => string } {
     let capturada = ''
     vi.stubGlobal(
@@ -238,7 +240,7 @@ describe('hexagonos — o ranking nacional', () => {
         capturada = url
         return {
           ok: true,
-          json: async () => ({ reguas: {}, cobertura: {}, itens: [] }),
+          json: async () => ({ recomendacao: {}, cobertura: {} }),
         } as unknown as Response
       }),
     )
@@ -253,26 +255,35 @@ describe('hexagonos — o ranking nacional', () => {
 
   it('filtro vazio NÃO vira parâmetro vazio na URL', async () => {
     const cap = capturarGet()
-    await api.hexagonos({ uf: '', municipio: '', porMunicipio: false })
+    await api.hexagonos({ uf: '', municipio: '' })
     expect(cap.url()).toBe('/api/hexagonos')
   })
 
-  it('leva só os filtros realmente preenchidos', async () => {
+  it('com só a UF, leva só a UF', async () => {
     const cap = capturarGet()
-    await api.hexagonos({ uf: 'GO', limite: 25 })
+    await api.hexagonos({ uf: 'GO' })
     const query = new URLSearchParams(cap.url().split('?')[1] ?? '')
     expect(query.get('uf')).toBe('GO')
-    expect(query.get('limite')).toBe('25')
     expect(query.has('municipio')).toBe(false)
-    expect(query.has('por_municipio')).toBe(false)
+    expect([...query.keys()]).toEqual(['uf'])
   })
 
-  it('escapa o nome do município em vez de quebrar a URL', async () => {
+  it('UF + município, com o nome escapado em vez de quebrar a URL', async () => {
     const cap = capturarGet()
-    await api.hexagonos({ municipio: 'Santa Bárbara d’Oeste', porMunicipio: true })
+    await api.hexagonos({ uf: 'SP', municipio: 'Santa Bárbara d’Oeste' })
     const query = new URLSearchParams(cap.url().split('?')[1] ?? '')
+    expect(query.get('uf')).toBe('SP')
     expect(query.get('municipio')).toBe('Santa Bárbara d’Oeste')
-    expect(query.get('por_municipio')).toBe('true')
+    expect([...query.keys()]).toEqual(['uf', 'municipio'])
+  })
+
+  it('nunca manda `limite` nem `por_municipio`, nem se um chamador antigo os passar', async () => {
+    const cap = capturarGet()
+    await api.hexagonos({ uf: 'GO', limite: 25, porMunicipio: true } as never)
+    const query = new URLSearchParams(cap.url().split('?')[1] ?? '')
+    expect(query.has('limite')).toBe(false)
+    expect(query.has('por_municipio')).toBe(false)
+    expect(query.get('uf')).toBe('GO')
   })
 })
 

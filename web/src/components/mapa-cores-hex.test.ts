@@ -9,7 +9,10 @@ import { fileURLToPath } from 'node:url'
 
 import { describe, expect, it } from 'vitest'
 
-const ler = (rel: string) => readFileSync(fileURLToPath(new URL(rel, import.meta.url)), 'utf-8')
+// `\r\n -> \n`: os recortes abaixo procuram `\n`, e o checkout Windows (core.autocrlf) traz
+// o fonte em CRLF — sem isto o teste reprovava só na máquina local, nunca no CI.
+const ler = (rel: string) =>
+  readFileSync(fileURLToPath(new URL(rel, import.meta.url)), 'utf-8').replace(/\r\n/g, '\n')
 const hexMap = ler('./HexMap.tsx')
 const barra = ler('./BarraCamadas.tsx')
 const mapScreen = ler('../screens/MapScreen.tsx')
@@ -22,9 +25,21 @@ describe('cores dos hexágonos', () => {
 
   it('a coropleta recortada do raio sai junto, e a chave entra nos gatilhos e nas deps', () => {
     expect(hexMap).toContain('...(coresHex && raio1km && PASSOS_DA_PRESSAO.has(passo.n) && cobertura1k?.pecas?.length')
-    expect(hexMap).toContain('getFillColor: [passo.n, raio1km, hexesCobertos, tema, coresHex]')
+    // O Top 10 da camada 5 (recomendação única) também entra no gatilho do preenchimento:
+    // sem ele, trocar de município manteria a cor de segmento dos hexágonos antigos.
+    expect(hexMap).toContain('getFillColor: [passo.n, raio1km, hexesCobertos, tema, coresHex, top10Chave]')
     const deps = hexMap.slice(hexMap.indexOf('    return base\n  }, ['))
     expect(deps.slice(0, deps.indexOf('])'))).toContain('coresHex,')
+  })
+
+  it('na camada 5, a cor do segmento do Top 10 vem ANTES do corte de < 5k hab', () => {
+    /* O Top 10 lê o recorte inteiro com régua própria: um Premium ou Mata Virgem nunca
+       pode sair cinza "descartado" no mapa enquanto o painel o lista. */
+    const fonte = hexMap.replace(/\r\n/g, '\n')
+    const corpo = fonte.slice(fonte.indexOf('function fillDoHex('), fonte.indexOf('/* --- Numeros do ranking'))
+    expect(corpo).toContain('corTop10(')
+    expect(corpo.indexOf('corTop10(')).toBeGreaterThan(-1)
+    expect(corpo.indexOf('corTop10(')).toBeLessThan(corpo.indexOf('h.pop < POP_MIN_ACIONAVEL'))
   })
 
   it('a chave mora no painel de camadas, ligada por padrão, e a legenda some sem cor', () => {

@@ -5,20 +5,23 @@ import { nomeDasUnidades } from '../lib/rodape-base'
 import { Aviso, Chip, Eyebrow, Spinner } from './primitives'
 import { api, ApiError } from '../lib/api'
 import { alunos, num } from '../lib/format'
-import type { EstadoRanking } from '../lib/types'
+import type { EstadoRanking, EstadosPayload } from '../lib/types'
 
 /**
- * Por qual ESTADO comecar — a pergunta que o piloto nunca respondeu.
+ * Residual somado por ESTADO — uma LEITURA de tamanho, e o seletor de UF da tela.
  *
  * ELE E' O SELETOR, e nao um enfeite ao lado dele. Antes o operador escolhia a UF num
- * dropdown que nao dizia nada: 27 siglas em ordem alfabetica, e ele que descobrisse
- * qual valia a pena. Aqui a escolha e' a propria resposta — a lista ja vem ordenada
- * por quanto residual cada estado tem ONDE ainda cabe abrir.
+ * dropdown que nao dizia nada: 27 siglas em ordem alfabetica. Aqui a lista vem ordenada
+ * pela soma dos alunos nao atendidos de cada estado, e clicar num estado FILTRA a tela —
+ * inclusive o Top 10 acima.
  *
- * MESMA CASCATA DO FUNIL, aplicada nacionalmente (potencial >= 70, populacao >= 5.000,
- * white space). Nada de criterio novo: e' a leitura do funil somada por UF, e o
- * numero que ordena e' o residual em ALUNOS, nao um score — score satura em 100 e
- * empataria os estados grandes.
+ * NAO E' RECOMENDACAO (recomendacao unica, DEC-077). A recomendacao e' o Top 10 por
+ * hexagono; esta soma e' grandeza de TAMANHO, e estado grande cheio de hexagono mediano
+ * vence estado pequeno dono do melhor hexagono do pais — por isso ela se apresenta como
+ * leitura. A conta e' a de sempre (`/api/estados`): soma do residual nos hexagonos com
+ * score censitario >= `reguas.score_minimo` e populacao >= `reguas.pop_minima`, sem
+ * saturacao de concorrencia. O numero que ordena e' o residual em ALUNOS, nao um score —
+ * score satura em 100 e empataria os estados grandes.
  */
 export default function RankingEstados({
   ufSelecionada,
@@ -29,6 +32,7 @@ export default function RankingEstados({
 }) {
   const ufs = useUfsDaBase()
   const [estados, setEstados] = useState<EstadoRanking[] | null>(null)
+  const [reguas, setReguas] = useState<EstadosPayload['reguas'] | null>(null)
   const [erro, setErro] = useState<string | null>(null)
   const [tudo, setTudo] = useState(false)
 
@@ -36,7 +40,11 @@ export default function RankingEstados({
     let vivo = true
     api
       .estados()
-      .then((r) => vivo && setEstados(r.estados))
+      .then((r) => {
+        if (!vivo) return
+        setEstados(r.estados)
+        setReguas(r.reguas ?? null)
+      })
       .catch((e: ApiError) => vivo && setErro(e.message))
     return () => {
       vivo = false
@@ -67,15 +75,18 @@ export default function RankingEstados({
   return (
     <div style={{ display: 'grid', gap: 12 }}>
       <div style={{ display: 'grid', gap: 6 }}>
-        <Eyebrow dot>Por onde começar</Eyebrow>
+        <Eyebrow dot>Leitura por estado</Eyebrow>
         <span style={{ font: '400 21px/1.25 var(--f-story)', color: 'var(--tx-max)' }}>
-          Qual estado tem mais espaço para a Ultra
+          Residual somado por estado
         </span>
         <p style={{ font: '400 11.5px/1.5 var(--f-ui)', color: 'var(--tx-sub)', margin: 0 }}>
-          Ordenado por <strong style={{ color: 'var(--tx-soft)' }}>alunos não atendidos onde
-          ainda cabe abrir</strong> — o mesmo funil de sempre (potencial e população acima do
-          corte, sem saturação de concorrência), somado por estado. Os cortes exatos estão no
-          painel de Metodologia. Clique num estado para abrir as camadas dele.
+          Soma dos <strong style={{ color: 'var(--tx-soft)' }}>alunos não atendidos</strong> nos
+          hexágonos com{' '}
+          {reguas
+            ? `score censitário a partir de ${num(reguas.score_minimo)} e população a partir de ${num(reguas.pop_minima)} habitantes`
+            : 'potencial e população acima do corte'}
+          , sem saturação de concorrência. É uma leitura de tamanho, não uma recomendação — a
+          recomendação é o Top 10 acima. Clique num estado para filtrar.
         </p>
       </div>
 
@@ -189,7 +200,8 @@ export default function RankingEstados({
 
       {ufSelecionada && (
         <Chip>
-          {ufSelecionada} é o {estados.find((e) => e.uf === ufSelecionada)?.rank ?? '—'}º do país
+          {ufSelecionada} é o {estados.find((e) => e.uf === ufSelecionada)?.rank ?? '—'}º em
+          residual somado
         </Chip>
       )}
     </div>

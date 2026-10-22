@@ -175,7 +175,14 @@ def test_aviso_sucesso_diz_o_que_mudou():
             "hexes": 41135,
             "colunas_municipal": 33,
             "vereditos_antes": {"acima": 100},
-            "vereditos_depois": {"acima": 120},
+            "vereditos_depois": {
+                "entrar": 120,
+                "acompanhar": 30,
+                "evitar": 10,
+                "observar": 5,
+                "estavel": 50,
+                "acima": 1,
+            },
             "publicado": True,
         }
     )
@@ -184,6 +191,20 @@ def test_aviso_sucesso_diz_o_que_mudou():
     assert "5571" in texto and "41135" in texto
     # honestidade da idade por dimensao: o trimestre atualiza o EMPREGO
     assert "safras anuais" in texto
+    # A MESMA contagem, na mesma ordem (maior primeiro), com rotulo NEUTRO (DEC-077): o
+    # identificador do artefato nao vira texto de recomendacao. Classe fora da tabela sai crua.
+    assert (
+        "Classes de crescimento: alta com porte de mercado: 120, perto da mediana: 50, "
+        "alta sem porte de mercado: 30, abaixo da mediana: 10, alta em duas dimensões: 5, "
+        "acima: 1 (inalteradas"
+    ) in texto
+    for proibida in ("entrar", "evitar", "acompanhar", "Vereditos", "veredito"):
+        assert proibida not in texto, proibida
+
+
+def test_aviso_sem_contagem_de_classes_diz_sem_leitura():
+    texto = aviso.montar_sucesso({"vereditos_depois": {}})
+    assert "Classes de crescimento: sem leitura" in texto
 
 
 def test_aviso_falha_carrega_a_etapa_e_o_log():

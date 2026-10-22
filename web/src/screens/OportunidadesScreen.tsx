@@ -1,60 +1,41 @@
-import { useMemo, useState } from 'react'
+import { useMemo } from 'react'
 
 import BotaoInicio from '../components/BotaoInicio'
+import HeroTop10 from '../components/HeroTop10'
 import type { SearchPin } from '../components/HexMap'
 import RankingEstados from '../components/RankingEstados'
-import RankingHexagonosBrasil from '../components/RankingHexagonosBrasil'
 import Select from '../components/Select'
-import { Aviso, Chip, Eyebrow, Glass, Spinner } from '../components/primitives'
+import { Aviso, Glass, Spinner } from '../components/primitives'
 import { camadaCor } from '../lib/colors'
-import {
-  TOP_POR_CAMADA,
-  consolidar,
-  fraseConsolidada,
-  topPorCamada,
-  type CidadeConsolidada,
-} from '../lib/consolidado'
 import { alunos, num } from '../lib/format'
 import {
   lerCrescimento,
   temCoberturaSatelite,
   type CrescimentoMunicipio,
 } from '../lib/oportunidades'
+import { leiturasDoRecorte, temTop10 } from '../lib/top10'
 import type { MunicipioItem, MunicipioPayload, Passo, RankItem } from '../lib/types'
 
 /**
- * Modo 3 — as melhores oportunidades. ENTRA PELO BRASIL, não por um estado.
+ * Modo 3 — o Top 10 por hexágono. ENTRA PELO BRASIL, não por um estado.
  *
- * O QUE MUDOU E POR QUE. Esta tela abria pedindo um estado: o `RankingEstados`
- * ordenava as 27 UFs, o operador escolhia uma, e só então via cidades — e hexágonos
- * apenas se descesse mais um degrau, até um município. Perguntado "quais são os
- * melhores hexágonos do Brasil?", o piloto respondia numa escala diferente da
- * pergunta: o ranking de UF ordena por residual SOMADO por estado, que é grandeza de
- * tamanho, então estado grande cheio de hexágono mediano vencia estado pequeno dono do
- * melhor hexágono do país. Agora a tela abre com `RankingHexagonosBrasil` — a base
- * inteira, ordenada por hexágono — e estado/município passam a ser FILTROS sobre essa
- * lista, aplicados depois da ordenação. Nunca antes: filtrar por região primeiro é
- * exatamente o defeito que isto corrige.
+ * A RESPOSTA É UMA SÓ (recomendação única, DEC-077): o Top 10 do recorte — 5 Mata Virgem
+ * + 5 Premium por hexágono —, montado no servidor pela MESMA função que monta o passo 5 do
+ * mapa (`HeroTop10` -> `/api/hexagonos`). Estado e município são FILTROS do cabeçalho: sem
+ * filtro, o Top 10 do Brasil; com a UF, o do estado; com o município, o do município. Como
+ * as réguas são absolutas, um hexágono do Top 10 do Brasil está também no Top 10 da UF e do
+ * município dele, no mesmo segmento.
  *
- * O QUE FICOU IGUAL. Escolhido um estado, tudo o que vem abaixo é o que já existia —
- * o ranking de UF, o consolidado por camada e as camadas do funil. Elas não são mais a
- * porta de entrada; são a evidência de quem já escolheu um recorte.
+ * O QUE SAIU. A tela tinha DUAS "respostas": o ranking nacional por índice de praça e um
+ * "Top 5 cidades/bairros" que CONTAVA em quantas camadas cada nome aparecia, desempatando
+ * pela fila do passo 5. Os dois eram outras definições de "onde expandir" — exatamente o que
+ * a recomendação única existe para eliminar. Saíram junto com `lib/consolidado.ts`.
  *
- * ---
- *
- * O bloco por CAMADA (abaixo do ranking nacional), preservado como estava:
- *
- * POR QUE NAO E' UMA LISTA SO'. A fila do passo 5 e' a recomendacao do motor, mas
- * sozinha ela esconde ONDE cada cidade se destaca: uma pode estar ali por residual
- * bruto e outra por crescimento, e as duas aparecem iguais. Separando por camada, o
- * operador ve o top 5 de cada leitura — potencial, demanda, concorrencia, crescimento
- * e a fila — e entende o que cada cidade tem de melhor.
- *
- * O CONSOLIDADO NO FIM NAO E' UM SCORE. Somar ou ponderar as cinco camadas criaria uma
- * sexta definicao de prioridade sobre o M1 — criticidade Alta pela regua do
- * CLAUDE.md §2, e o piloto e' "sem recalculo de score em runtime". O que ele faz e'
- * CONTAR em quantas camadas a cidade aparece no topo, desempatando pela fila oficial.
- * Contagem o operador confere a olho, somando os cartoes acima.
+ * O QUE FICOU, COMO LEITURA. O ranking de estados ("residual somado por estado") continua
+ * sendo o seletor de UF, mas declarado como leitura de tamanho. E as camadas 1 a 4 do
+ * recorte aparecem abaixo como "Leituras do recorte — não entram na recomendação": o topo
+ * de cada uma, com o número que ordena aquela leitura. A camada 5 não se repete aqui — ela
+ * é o hero.
  */
 export default function OportunidadesScreen({
   ufs,
@@ -82,20 +63,17 @@ export default function OportunidadesScreen({
   onInicio: () => void
   onVerNoMapa: (municipio: string) => void
   /**
-   * Um item da lista NACIONAL leva UF e HEXÁGONO junto: sem a UF o mapa abriria o
-   * município certo no estado em que o operador já estava — que pode não ser nenhum —,
-   * e sem o pin ele pararia na cidade inteira, deixando o operador reencontrar a olho
-   * o hexágono que acabou de escolher.
+   * Um item do Top 10 leva UF e HEXÁGONO junto: sem a UF o mapa abriria o município certo
+   * no estado em que o operador já estava — que pode não ser nenhum —, e sem o pin ele
+   * pararia na cidade inteira, deixando o operador reencontrar a olho o hexágono que acabou
+   * de escolher.
    */
   onVerHexNoMapa: (uf: string, municipio: string, pin: SearchPin) => void
 }) {
-  const [verTudo, setVerTudo] = useState(false)
-
   const passos = dados?.passos ?? []
   const cres = dados?.cres_mun ?? null
 
-  const camadas = useMemo(() => topPorCamada(passos), [passos])
-  const consolidado = useMemo(() => consolidar(passos), [passos])
+  const leituras = useMemo(() => leiturasDoRecorte(passos), [passos])
 
   return (
     <div style={{ position: 'absolute', inset: 0, display: 'flex', flexDirection: 'column' }}>
@@ -131,12 +109,11 @@ export default function OportunidadesScreen({
             margin: 0,
           }}
         >
-          Melhores oportunidades
+          Top 10 por hexágono
         </h1>
-        {/* Rótulo e placeholder dizem que a UF virou FILTRO: a tela já respondeu a
-            pergunta antes de o operador tocar aqui. A opção vazia é o que permite
-            desfazer o recorte e voltar ao Brasil — sem ela, escolher um estado seria
-            um caminho sem volta. */}
+        {/* Rótulo e placeholder dizem que a UF é FILTRO: a tela já respondeu a pergunta
+            antes de o operador tocar aqui. A opção vazia é o que permite desfazer o recorte
+            e voltar ao Brasil — sem ela, escolher um estado seria um caminho sem volta. */}
         <Select
           label="Filtrar estado"
           value={uf}
@@ -149,9 +126,8 @@ export default function OportunidadesScreen({
             ...ufs.map((u) => ({ value: u, label: u })),
           ]}
         />
-        {/* O drill-down para MUNICIPIO e' o que responde "quais bairros": no nivel de
-            municipio os itens do funil deixam de ser cidades e passam a ser bairros
-            (ex.: "U.T.P. Jardim Novo Mundo"). */}
+        {/* O drill-down para MUNICÍPIO recorta o Top 10 ao município (e, nas leituras
+            abaixo, os itens deixam de ser cidades e passam a ser bairros). */}
         {uf && (
           <Select
             label="Município"
@@ -166,24 +142,17 @@ export default function OportunidadesScreen({
             ]}
           />
         )}
-        {passos.length > 0 && (
-          <Chip>
-            top {TOP_POR_CAMADA} · {municipio ? 'bairros' : 'cidades'}
-          </Chip>
-        )}
       </header>
 
       <div style={{ flex: 1, overflowY: 'auto', padding: 16 }}>
         <div style={{ maxWidth: 1000, margin: '0 auto', display: 'grid', gap: 18 }}>
-          {/* A RESPOSTA vem primeiro, e ela e' nacional e por hexagono. Tudo o que
-              vem depois — ranking de estados, consolidado, camadas — e' evidencia e
-              recorte de quem quer descer, nao pre-requisito para ver a resposta. */}
+          {/* A RESPOSTA vem primeiro: o Top 10 do recorte. Tudo o que vem depois — o
+              residual por estado e as camadas de leitura — é contexto, não recomendação. */}
           <Glass style={{ padding: 18 }}>
-            <RankingHexagonosBrasil uf={uf} municipio={municipio} onVerNoMapa={onVerHexNoMapa} />
+            <HeroTop10 uf={uf} municipio={municipio} onVerNoMapa={onVerHexNoMapa} />
           </Glass>
 
-          {/* O ranking de estados continua sendo o seletor de UF — mas agora ele
-              FILTRA a lista acima em vez de destrava-la. */}
+          {/* O ranking de estados continua sendo o seletor de UF — e filtra o Top 10 acima. */}
           <Glass style={{ padding: 18 }}>
             <RankingEstados ufSelecionada={uf} onEscolher={onUf} />
           </Glass>
@@ -204,93 +173,25 @@ export default function OportunidadesScreen({
 
           {erro && <Aviso titulo="Não deu para carregar" corpo={erro} />}
 
-          {passos.length > 0 && !carregando && (
+          {leituras.length > 0 && !carregando && (
             <>
-              {/* ---- Consolidado ---- */}
-              <Glass style={{ padding: 18, display: 'grid', gap: 14 }}>
-                <div style={{ display: 'grid', gap: 6 }}>
-                  <Eyebrow dot>A resposta</Eyebrow>
-                  <span
-                    style={{
-                      font: '400 24px/1.2 var(--f-story)',
-                      color: 'var(--tx-max)',
-                    }}
-                  >
-                    Top {Math.min(TOP_RESPOSTA, consolidado.length)}{' '}
-                    {municipio ? 'bairros' : 'cidades'} de {dados?.uf ?? 'estado'}
-                  </span>
-                  <p
-                    style={{
-                      font: '400 11.5px/1.5 var(--f-ui)',
-                      color: 'var(--tx-sub)',
-                      margin: 0,
-                    }}
-                  >
-                    Isto é uma <strong style={{ color: 'var(--tx-soft)' }}>contagem</strong>, não
-                    um score: quantas das {passos.length} camadas trazem{' '}
-                    {municipio ? 'o bairro' : 'a cidade'} no top {TOP_POR_CAMADA}. Somar ou ponderar as camadas criaria uma definição nova de
-                    prioridade em cima do M1 — e elas medem coisas diferentes. Empate é desfeito
-                    pela posição na fila de recomendação.
-                  </p>
-                </div>
-
-                {consolidado.length === 0 ? (
-                  <Aviso
-                    titulo="Nenhuma cidade se repete entre as camadas"
-                    corpo="Cada camada destaca cidades diferentes neste estado. Sem repetição não há leitura consolidada — vale ler camada a camada acima."
-                  />
-                ) : (
-                  <div style={{ display: 'grid', gap: 10 }}>
-                    {consolidado.slice(0, verTudo ? consolidado.length : TOP_RESPOSTA).map((c, i) => (
-                      <LinhaConsolidada
-                        key={c.nome}
-                        posicao={i + 1}
-                        cidade={c}
-                        totalCamadas={passos.length}
-                        onVerNoMapa={onVerNoMapa}
-                      />
-                    ))}
-                    {consolidado.length > TOP_RESPOSTA && (
-                      <button
-                        type="button"
-                        onClick={() => setVerTudo((v) => !v)}
-                        style={{
-                          justifySelf: 'start',
-                          padding: '6px 10px',
-                          borderRadius: 8,
-                          border: '1px solid var(--line-soft)',
-                          background: 'var(--surf-raised)',
-                          color: 'var(--tx-soft)',
-                          font: '600 11px/1 var(--f-ui)',
-                        }}
-                      >
-                        {verTudo
-                          ? `Mostrar só o top ${TOP_RESPOSTA}`
-                          : `Ver as ${consolidado.length} que se repetem`}
-                      </button>
-                    )}
-                  </div>
-                )}
-              </Glass>
-
-              {/* As camadas viram EVIDENCIA da resposta acima, e nao mais a resposta
-                  em si: o operador confere de onde cada nome saiu. */}
               <div style={{ display: 'grid', gap: 4, marginTop: 2 }}>
                 <span style={{ font: '600 12px/1 var(--f-ui)', color: 'var(--tx-soft)' }}>
-                  De onde essa leitura sai
+                  Leituras do recorte — não entram na recomendação
                 </span>
                 <span style={{ font: '400 11.5px/1.5 var(--f-ui)', color: 'var(--tx-sub)' }}>
-                  O topo de cada camada do funil, com o número que ordena aquela leitura.
+                  O topo de cada camada de leitura, com o número que ordena aquela leitura.
                 </span>
               </div>
 
-              {camadas.map(({ passo, itens }) => (
+              {leituras.map(({ passo, itens }) => (
                 <BlocoCamada
                   key={passo.n}
                   passo={passo}
                   itens={itens}
                   cres={cres}
                   nivelMunicipio={Boolean(municipio)}
+                  leitura={temTop10(dados)}
                   onVerNoMapa={onVerNoMapa}
                 />
               ))}
@@ -310,21 +211,13 @@ export default function OportunidadesScreen({
   )
 }
 
-/**
- * Quantas linhas a RESPOSTA mostra por padrao.
- *
- * Cinco porque e' o que cabe numa decisao — e o mesmo corte das camadas, para o
- * operador comparar a resposta com a evidencia sem converter numero de cabeca. Quem
- * quiser a lista inteira abre; quem so' quer saber para onde ir, le cinco linhas.
- */
-const TOP_RESPOSTA = 5
-
-/** Uma camada: o topo dela, com a identidade de cor que o funil já usa. */
+/** Uma camada de leitura: o topo dela, com a identidade de cor que o funil já usa. */
 function BlocoCamada({
   passo,
   itens,
   cres,
   nivelMunicipio,
+  leitura,
   onVerNoMapa,
 }: {
   passo: Passo
@@ -332,6 +225,9 @@ function BlocoCamada({
   cres: Record<string, CrescimentoMunicipio> | null
   /** Dentro de um município os itens são BAIRROS, não cidades. */
   nivelMunicipio: boolean
+  /** Payload com o Top 10 (bloco `recomendacao`): a camada é LEITURA, e o vazio não é
+   *  "ninguém passou". Sem o bloco (instância sem régua), o texto de sempre. */
+  leitura: boolean
   onVerNoMapa: (municipio: string) => void
 }) {
   const cor = camadaCor(passo.n)
@@ -368,8 +264,12 @@ function BlocoCamada({
           {nivelMunicipio && passo.n === 4
             ? 'O crescimento é medido por município — dentro de uma cidade não há o que comparar entre bairros. Volte ao estado inteiro para ver esta camada.'
             : nivelMunicipio
-              ? 'Nenhum bairro passou nesta camada.'
-              : 'Nenhuma cidade passou nesta camada.'}
+              ? leitura
+                ? 'Nenhum bairro aparece nesta leitura.'
+                : 'Nenhum bairro passou nesta camada.'
+              : leitura
+                ? 'Nenhuma cidade aparece nesta leitura.'
+                : 'Nenhuma cidade passou nesta camada.'}
         </p>
       ) : (
         <div style={{ display: 'grid', gap: 4 }}>
@@ -462,82 +362,5 @@ function BlocoCamada({
         </div>
       )}
     </Glass>
-  )
-}
-
-function LinhaConsolidada({
-  posicao,
-  cidade,
-  totalCamadas,
-  onVerNoMapa,
-}: {
-  posicao: number
-  cidade: CidadeConsolidada
-  totalCamadas: number
-  onVerNoMapa: (municipio: string) => void
-}) {
-  return (
-    <div
-      style={{
-        display: 'grid',
-        gap: 8,
-        padding: '12px 14px',
-        borderRadius: 'var(--r-md)',
-        background: 'var(--surf-raised)',
-        border: '1px solid var(--line-soft)',
-      }}
-    >
-      <div style={{ display: 'flex', alignItems: 'baseline', gap: 10, flexWrap: 'wrap' }}>
-        <span
-          className="num"
-          style={{ font: '700 14px/1 var(--f-num)', color: 'var(--ac-text)', width: 26 }}
-        >
-          {posicao}º
-        </span>
-        <span style={{ flex: 1, minWidth: 0, font: '600 16px/1.2 var(--f-ui)', color: 'var(--tx-max)' }}>
-          {cidade.nome}
-        </span>
-        {/* As bolinhas dizem QUAIS camadas, na cor de cada uma: a evidencia da contagem
-            fica visivel sem o operador ter de rolar para cima e conferir. */}
-        <span style={{ display: 'inline-flex', gap: 4 }} aria-hidden>
-          {Array.from({ length: totalCamadas }, (_, i) => i + 1).map((n) => {
-            const presente = cidade.presencas.some((p) => p.n === n)
-            return (
-              <span
-                key={n}
-                title={`camada ${n}`}
-                style={{
-                  width: 9,
-                  height: 9,
-                  borderRadius: '50%',
-                  background: presente ? camadaCor(n).fg : 'transparent',
-                  border: `1px solid ${presente ? camadaCor(n).fg : 'var(--line-strong)'}`,
-                }}
-              />
-            )
-          })}
-        </span>
-        <span className="num" style={{ font: '700 14px/1 var(--f-num)', color: 'var(--tx-max)' }}>
-          {cidade.presencas.length}/{totalCamadas}
-        </span>
-        <button
-          type="button"
-          onClick={() => onVerNoMapa(cidade.nome)}
-          style={{
-            padding: '6px 10px',
-            borderRadius: 8,
-            border: '1px solid var(--ac-a25)',
-            background: 'var(--ac-a12)',
-            color: 'var(--ac-chip)',
-            font: '600 11px/1 var(--f-ui)',
-          }}
-        >
-          Ver no mapa →
-        </button>
-      </div>
-      <p style={{ font: '400 11.5px/1.5 var(--f-ui)', color: 'var(--tx-narrative)', margin: 0 }}>
-        {fraseConsolidada(cidade, totalCamadas)}
-      </p>
-    </div>
   )
 }
