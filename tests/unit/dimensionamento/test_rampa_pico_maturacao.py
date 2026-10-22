@@ -39,6 +39,7 @@ from __future__ import annotations
 import hashlib
 import io
 import json
+import re
 import tempfile
 import zipfile
 from io import BytesIO
@@ -462,17 +463,29 @@ def test_xlsx_pico_10_e_a_planilha_da_curva_de_hoje() -> None:
 # ---------------------------------------------------------------------------
 
 
-def _texto_pdf(payload: dict) -> str:
-    import pypdf
+_LITERAL_TJ = re.compile(rb"\(((?:\\.|[^\\)])*)\)\s*Tj")
+_ESCAPES_PDF = {b"n": b"\n", b"r": b"\r", b"t": b"\t", b"(": b"(", b")": b")", b"\\": b"\\"}
 
+
+def texto_cru_do_pdf(pdf: bytes) -> str:
+    """Texto do PDF SEM extrator: `pypdf` nao esta no [dev] e o CI nao o instala (a mesma
+    tecnica de `test_relatorio_pontual_aviso_rodape.py`). O `_UltraPDF` grava o texto das
+    paginas sem compressao (so' as imagens vao em FlateDecode), entao cada `cell()` e' um
+    literal `(texto) Tj` nos bytes, em latin-1. Os trechos saem na ordem do arquivo, unidos
+    por espaco, com espacos normalizados."""
+    trechos = [
+        re.sub(rb"\\(.)", lambda m: _ESCAPES_PDF.get(m.group(1), m.group(1)), m.group(1))
+        for m in _LITERAL_TJ.finditer(pdf)
+    ]
+    return " ".join(b" ".join(trechos).decode("latin-1").split())
+
+
+def _texto_pdf(payload: dict) -> str:
     from motor_expansao.dashboard.censo_report import gerar_pdf_relatorio_pontual_classico
 
     resultado = {"lat": -23.33, "lng": -51.16, "nome_municipio": "LONDRINA", "uf": "PR",
                  "raio_km": 1.0}
-    pdf = gerar_pdf_relatorio_pontual_classico(resultado, None, viabilidade=payload)
-    return " ".join(
-        " ".join((p.extract_text() or "").split()) for p in pypdf.PdfReader(io.BytesIO(pdf)).pages
-    )
+    return texto_cru_do_pdf(gerar_pdf_relatorio_pontual_classico(resultado, None, viabilidade=payload))
 
 
 def test_pdf_diz_o_pico_na_curva_e_nada_na_reta(tmp_path: Path) -> None:

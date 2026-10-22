@@ -5,7 +5,6 @@ Coeficientes FICTICIOS (os mesmos de `test_viabilidade_v2.py`), num `tmp_path`.
 
 from __future__ import annotations
 
-import io
 import json
 import re
 import sys
@@ -273,13 +272,13 @@ def test_planilha_densidade_nao_tem_nada_da_v2():
 
 # --------------------------------------------------------------------------- PDF
 def _texto_pdf(payload) -> str:
-    import pypdf
-
+    # Sem `pypdf` (fora do [dev], o CI nao o tem): o mesmo leitor de bytes crus do teste
+    # do pico de maturacao.
     from motor_expansao.dashboard.censo_report import gerar_pdf_relatorio_pontual_classico
+    from tests.unit.dimensionamento.test_rampa_pico_maturacao import texto_cru_do_pdf
 
     resultado = {"lat": -23.33, "lng": -51.16, "nome_municipio": "LONDRINA", "uf": "PR", "raio_km": 1.0}
-    pdf = gerar_pdf_relatorio_pontual_classico(resultado, None, viabilidade=payload)
-    return "\n".join(p.extract_text() for p in pypdf.PdfReader(io.BytesIO(pdf)).pages)
+    return texto_cru_do_pdf(gerar_pdf_relatorio_pontual_classico(resultado, None, viabilidade=payload))
 
 
 def test_pdf_v2_carimba_a_origem_da_demanda(coef, tmp_path):

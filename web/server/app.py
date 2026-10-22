@@ -9163,10 +9163,12 @@ def _entradas_c10_do_ponto(lat: float, lng: float) -> tuple[Any, dict[str, Any]]
         _uf, _cod, setores = _resolver_e_carregar(lat, lng, cfg, geometria=iso.geometria)
         entradas = agregar_entradas_c10(setores, iso.geometria, lat, lng)
     except APIError as exc:
+        _LOG_FALHA.warning("sugestao de demanda: malha de setores ausente", exc_info=True)
         raise HTTPException(
             503, _MOTIVO_SUGESTAO_INDISPONIVEL + "malha de setores ausente para este ponto."
         ) from exc
     except EntradasC10Indisponiveis as exc:
+        _LOG_FALHA.warning("sugestao de demanda: entradas da isocrona indisponiveis", exc_info=True)
         raise HTTPException(503, f"{_MOTIVO_SUGESTAO_INDISPONIVEL}{exc}") from exc
     recorte = {
         "minutos": int(V2_MINUTOS_ISOCRONA),
@@ -9192,6 +9194,7 @@ def demanda_v2(body: DemandaV2In) -> dict[str, Any]:
     try:
         coef = _viab_v2.carregar_coeficientes()
     except _viab_v2.V2Indisponivel as exc:
+        _LOG_FALHA.warning("sugestao de demanda: coeficientes indisponiveis", exc_info=True)
         raise HTTPException(503, str(exc)) from exc
     from motor_expansao.dashboard.alcance_ponto import rotas_configuradas
 
@@ -9209,6 +9212,7 @@ def demanda_v2(body: DemandaV2In) -> dict[str, Any]:
             extras={"recorte": recorte},
         )
     except _viab_v2.V2Indisponivel as exc:
+        _LOG_FALHA.warning("sugestao de demanda: modelo indisponivel", exc_info=True)
         raise HTTPException(503, str(exc)) from exc
 
 
@@ -9287,6 +9291,7 @@ def _payload_viabilidade(body: ViabilidadeIn) -> dict[str, Any]:
             setores_df=_setores_para_catchment(body.lat, body.lng),
         )
     except _viab_v2.V2Indisponivel as exc:  # so' no modo v2 (DEC-078 ampliada)
+        _LOG_FALHA.warning("viabilidade: demanda sugerida indisponivel", exc_info=True)
         raise HTTPException(503, str(exc)) from exc
     except _viab_v2.TokenV2Invalido as exc:
         raise HTTPException(422, str(exc)) from exc
@@ -13560,6 +13565,7 @@ def _gerar_simulador_xlsx_response(
         try:
             bloco_v2 = _viab_v2.conferir_demanda_v2(body, premissas).bloco
         except _viab_v2.V2Indisponivel as exc:
+            _LOG_FALHA.warning("planilha: demanda sugerida indisponivel", exc_info=True)
             raise HTTPException(503, str(exc)) from exc
         except _viab_v2.TokenV2Invalido as exc:
             raise HTTPException(422, str(exc)) from exc
