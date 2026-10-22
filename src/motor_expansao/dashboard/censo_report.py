@@ -1653,6 +1653,8 @@ def _viab_linha_demanda_v2(dados: Mapping[str, Any]) -> str | None:
 def _viab_linha_rampa(dados: Mapping[str, Any]) -> str | None:
     """Rampa de maturacao no rodape: so' na curva (o payload manda o pico so' nela)."""
     pico = dados.get("mes_pico_rampa")
+    if pico is None:  # na reta o payload manda None: sem linha de rampa
+        return None
     try:
         mes = int(pico)
     except (TypeError, ValueError):
