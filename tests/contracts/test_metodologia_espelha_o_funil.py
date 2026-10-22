@@ -12,10 +12,19 @@ O teste não valida a REDAÇÃO (isso é revisão humana); valida que toda etiqu
 publicada é uma etiqueta que o funil pode emitir, e vice-versa.
 
 READ-ONLY: só chama funções puras (`montar_metodologia`, `_etiqueta`), sem tocar dado.
+
+## Dois painéis (recomendação única, DEC-077)
+
+Com a régua da recomendação única (Brasil) a camada 5 é o Top 10 — 5 Mata Virgem + 5
+Premium — e as camadas 1 a 4 viram leitura; sem régua (Argentina) o painel é o legado,
+com a fila pelo índice de praça. A fixture `metodologia` roda os contratos comuns nos DOIS;
+`metodologia_legado` guarda o que é só da fila legada e `metodologia_br` o que é só do Top
+10, com os números LIDOS da régua carregada.
 """
 
 from __future__ import annotations
 
+import dataclasses
 import re
 import sys
 from pathlib import Path
@@ -41,9 +50,29 @@ from motor_expansao.dashboard.constants import (  # noqa: E402
 _EXTINTOS = {"Quente", "Sólido", "Polo", "Emergente", "Agora", "Próximo", "Espera"}
 
 
+@pytest.fixture(scope="module", params=["br", "legado"])
+def metodologia(request: pytest.FixtureRequest) -> dict:
+    """Os contratos comuns valem nos DOIS painéis: com régua (BR) e sem régua (legado)."""
+    return pilot.montar_metodologia() if request.param == "br" else pilot.montar_metodologia(None)
+
+
 @pytest.fixture(scope="module")
-def metodologia() -> dict:
-    return pilot.montar_metodologia()
+def metodologia_legado() -> dict:
+    """O painel da instância SEM régua (hoje, a Argentina): a fila pelo índice de praça."""
+    return pilot.montar_metodologia(regra=None)
+
+
+@pytest.fixture(scope="module")
+def regra_br():
+    regra = pilot.carregar_regra("BR")
+    assert regra is not None, "a régua BR sumiu do pacote: o painel do Top 10 não seria testado"
+    return regra
+
+
+@pytest.fixture(scope="module")
+def metodologia_br(regra_br) -> dict:
+    """O painel da instância COM a régua da recomendação única (Brasil)."""
+    return pilot.montar_metodologia(regra=regra_br)
 
 
 def _etiquetas(camada: dict, escopo: str) -> set[str]:
@@ -272,9 +301,9 @@ def test_camada_4_publica_as_etiquetas_que_o_ranking_emite(metodologia):
     )
 
 
-def test_camada_5_publica_as_faixas_de_oportunidade_do_m1(metodologia):
-    """A fila rotula pela faixa do M1 desde o BLK-MAPA-FAIXAS-01, nao por posicao."""
-    publicadas = _etiquetas(_camada(metodologia, 5), "municipio")
+def test_camada_5_publica_as_faixas_de_oportunidade_do_m1(metodologia_legado):
+    """SEM REGUA: a fila rotula pela faixa do M1 desde o BLK-MAPA-FAIXAS-01, nao por posicao."""
+    publicadas = _etiquetas(_camada(metodologia_legado, 5), "municipio")
     assert publicadas == set(FAIXA_LABELS.values())
 
     for bruto, rotulo in FAIXA_LABELS.items():
@@ -311,14 +340,18 @@ def test_cortes_publicados_batem_com_as_constantes_do_funil(metodologia):
     c2 = _camada(metodologia, 2)["corte"]
     assert f"{pilot.OFERTA_DESTAQUE_MIN:,.0f}".replace(",", ".") in c2
 
-    assert str(pilot.FILA_MAX) in _camada(metodologia, 5)["corte"]
+
+def test_o_corte_da_fila_legada_publica_o_tamanho_da_fila(metodologia_legado):
+    """SEM REGUA. So' no legado: no painel do Top 10 o "10" casaria por acaso dentro de
+    "10.000" (a populacao minima do Premium) e o teste nao provaria nada."""
+    assert str(pilot.FILA_MAX) in _camada(metodologia_legado, 5)["corte"]
 
 
-def test_a_fila_nao_promete_fallback_para_regiao_disputada(metodologia):
+def test_a_fila_nao_promete_fallback_para_regiao_disputada(metodologia_legado):
     """O #184 removeu o fallback por decisao do dono (2026-08-03); o painel dizia que
     ele existia. Municipio saturado mostra fila VAZIA — se o texto prometer recurso a
     hex disputado, o usuario conclui que a tela esta quebrada."""
-    regra = " ".join(m["regra"] for m in _camada(metodologia, 5)["metricas"])
+    regra = " ".join(m["regra"] for m in _camada(metodologia_legado, 5)["metricas"])
     assert "aceitando disputa" not in regra
     assert "recorre" not in regra
 
@@ -365,7 +398,7 @@ def test_o_corte_publicado_da_camada_3_e_o_corte_que_o_funil_aplica(metodologia)
     assert passos[4]["hexes"] == ["8a1"]
 
 
-def test_a_camada_5_publica_a_ordenacao_que_de_fato_aplica(metodologia):
+def test_a_camada_5_publica_a_ordenacao_que_de_fato_aplica(metodologia_legado):
     """A ordenação da fila é POLÍTICA declarada — e o painel tem de declarar a mesma
     que o código roda, com os mesmos pesos e âncoras.
 
@@ -376,7 +409,7 @@ def test_a_camada_5_publica_a_ordenacao_que_de_fato_aplica(metodologia):
     """
     import praca_indice
 
-    c5 = _camada(metodologia, 5)
+    c5 = _camada(metodologia_legado, 5)
     regra = " ".join(m["regra"] for m in c5["metricas"])
     ressalva = " ".join(m.get("ressalva", "") for m in c5["metricas"])
 
@@ -391,3 +424,200 @@ def test_a_camada_5_publica_a_ordenacao_que_de_fato_aplica(metodologia):
 
     # A coluna publicada é a que o funil ordena.
     assert any(m["coluna"] == pilot.COL_INDICE_PRACA for m in c5["metricas"])
+
+
+# --------------------------------------------- camada 5 com régua: o Top 10 (DEC-077)
+def _texto_do_painel(painel: dict) -> str:
+    """Todo texto de usuário do painel numa string só (para procurar frase proibida)."""
+    partes: list[str] = [painel["intro"]]
+    partes += [f["detalhe"] for f in painel["fontes"]]
+    for c in painel["camadas"]:
+        partes += [c["titulo"], c["pergunta"], c["corte"], c.get("nota", "")]
+        for m in c["metricas"]:
+            partes += [m["nome"], m["resumo"], m["regra"], m.get("ressalva", "")]
+        partes += [f"{f['etiqueta']} {f['condicao']}" for f in _faixas_publicadas(c)]
+    partes += [f"{p['nome']} {p['valor']}" for p in painel["parametros"]]
+    return " ".join(partes)
+
+
+def _tons_do_front() -> set[str]:
+    tipos = Path(__file__).resolve().parents[2] / "web" / "src" / "lib" / "types.ts"
+    linha = re.search(r"export type Tom =([^\n]+)", tipos.read_text(encoding="utf-8"))
+    assert linha, "types.ts deixou de declarar `export type Tom` numa linha so"
+    return set(re.findall(r"'(\w+)'", linha.group(1)))
+
+
+def test_camada_5_publica_os_segmentos_e_a_vaga_vazia(metodologia_br):
+    """As faixas da camada 5 sao os DOIS segmentos e a vaga vazia — o que a tela desenha."""
+    c5 = _camada(metodologia_br, 5)
+    assert {f["etiqueta"] for f in c5["faixas"]} == {"Mata Virgem", "Premium", "Vaga vazia"}
+    assert {f["tom"] for f in c5["faixas"]} <= _tons_do_front()
+    assert c5["titulo"] == "Top 10: 5 Mata Virgem + 5 Premium"
+    # As metricas publicadas sao as colunas que o modulo da recomendacao le.
+    assert {m["coluna"] for m in c5["metricas"]} == {
+        "renda_domiciliar",
+        "oferta_efetiva_disponivel",
+        "score_setor_2022_calibrado",
+        "pop_total_setor_2022",
+    }
+
+
+def test_camada_5_publica_as_reguas_lidas_da_regua(metodologia_br, regra_br):
+    """Os cortes da camada 5 sao os da regua CARREGADA, formatados como a tela formata."""
+    corte = _camada(metodologia_br, 5)["corte"]
+    mv, pr = regra_br.mata_virgem, regra_br.premium
+    assert pilot._moeda_renda(mv.renda_domiciliar_min) in corte
+    assert f"{pilot._mil(mv.residual_min)} alunos" in corte
+    assert f"score censitário ≥ {pr.score_min:.0f}" in corte
+    assert f"{pilot._mil(pr.populacao_min)} habitantes" in corte
+    assert "residual medido" in corte, "a regua BR v1 exige residual medido"
+
+
+def test_trocar_a_regua_muda_o_texto(regra_br):
+    """Nenhum numero da regua e' escrito a mao: outra versao muda o painel inteiro junto."""
+    outra = dataclasses.replace(
+        regra_br,
+        vagas_por_segmento=4,
+        mata_virgem=dataclasses.replace(
+            regra_br.mata_virgem, residual_min=3000.0, renda_domiciliar_min=6000.0
+        ),
+        premium=dataclasses.replace(regra_br.premium, score_min=55.0, populacao_min=12000.0),
+    )
+    painel = pilot.montar_metodologia(regra=outra)
+    c5 = _camada(painel, 5)
+    assert c5["titulo"] == "Top 8: 4 Mata Virgem + 4 Premium"
+    assert "3.000 alunos" in c5["corte"] and "score censitário ≥ 55" in c5["corte"]
+    # Os quatro numeros da regua, nao so' dois: a renda da Mata Virgem e a populacao do
+    # Premium tambem seguem a regua passada (um literal da v1 nesses campos coincidiria com a
+    # regua vigente e passaria em todo teste que so' le a v1).
+    assert pilot._moeda_renda(6000.0) in c5["corte"]
+    assert "12.000 habitantes" in c5["corte"]
+    parametros = {p["nome"]: p["valor"] for p in painel["parametros"]}
+    assert parametros["Vagas por segmento"] == "4"
+    assert parametros["Mata Virgem — residual medido mínimo"] == "3.000 alunos"
+    assert parametros["Mata Virgem — renda domiciliar mínima"] == pilot._moeda_renda(6000.0)
+    assert parametros["Premium — score censitário mínimo"] == "55"
+    assert parametros["Premium — população mínima"] == "12.000 habitantes"
+    assert "Top 8" in painel["intro"]
+    # A regua vigente nao vaza para o painel da outra -- em nenhum dos quatro numeros.
+    texto = _texto_do_painel(painel)
+    assert "2.000 alunos" not in c5["corte"]
+    assert pilot._moeda_renda(4500.0) not in texto
+    assert "10.000 habitantes" not in texto
+    # E a versao/DEC publicadas sao as da regua passada: pelo rotulo de negocio no painel, e
+    # crua (com a decisao) so' no detalhe tecnico do fim da lista.
+    assert parametros["Régua do Top 8"] == pilot._rotulo_versao_regua(outra.versao)
+    assert parametros["Referência técnica da régua"] == f"{outra.versao} · {outra.dec}"
+
+
+def test_camada_5_declara_o_que_fica_fora(metodologia_br):
+    """O que a recomendacao NAO olha tem de estar escrito — senao o leitor supoe que olha."""
+    c5 = _camada(metodologia_br, 5)
+    nota = c5["nota"]
+    for fora in ("concorrência", "viabilidade", "aluguel", "proximidade da Ultra"):
+        assert fora in nota, f"a camada 5 nao declara que {fora!r} fica fora da conta"
+    assert "maior número absoluto" in nota
+    assert "exclusivos" in nota
+    # Vaga vazia e' resposta, e um segmento nao empresta candidato ao outro.
+    assert "nunca completa" in " ".join(f["condicao"] for f in c5["faixas"])
+    assert "Não é previsão de faturamento" in nota
+
+
+def test_metodologia_br_sem_frases_de_veredito(metodologia_br):
+    """O painel com regua descreve as camadas 1 a 4 como LEITURA; a fila legada nao volta."""
+    intro = metodologia_br["intro"]
+    for proibida in ("cada camada recebe", "recebe apenas o que", "entrar agora", "ficar de olho"):
+        assert proibida not in intro, f"a intro do painel BR diz {proibida!r}"
+    texto = _texto_do_painel(metodologia_br)
+    for proibida in (
+        "índice de praça",
+        "Tamanho máximo da fila",
+        "fila de aberturas",
+        "Em que ordem abrir",
+        "canibalizar",
+        "comportam uma entrada",
+    ):
+        assert proibida not in texto, f"o painel BR ainda publica {proibida!r}"
+    c3 = _camada(metodologia_br, 3)
+    assert "1 km" in c3["corte"] and "2 km" not in c3["corte"]
+    assert any("1 km" in f["condicao"] for f in c3["faixas"] if f["escopo"] == "municipio")
+    parametros = {p["nome"]: p["valor"] for p in metodologia_br["parametros"]}
+    assert parametros["Raio de concorrência"] == "1 km"
+    # As camadas continuam as 5 (o front indexa por `n`).
+    assert [c["n"] for c in metodologia_br["camadas"]] == [1, 2, 3, 4, 5]
+
+
+def test_o_legado_segue_com_a_fila_e_o_indice(metodologia_legado):
+    """Anti-vacuidade do teste acima: o painel SEM regua ainda publica a fila legada."""
+    texto = _texto_do_painel(metodologia_legado)
+    assert "índice de praça" in texto.lower() or "Índice de praça" in texto
+    assert "Tamanho máximo da fila" in texto
+
+
+def test_camada_3_br_descreve_a_contagem_de_1_km_e_nao_a_capacidade(
+    metodologia_br, metodologia_legado
+):
+    """Desde a DEC-057 a contagem da camada 3 e' de unidades com o disco de 1 km cruzando o
+    hexagono: a capacidade nao muda essa contagem. O painel com regua nao pode republicar a
+    metrica legada que diz o contrario ("subir esse valor faz o modelo enxergar MENOS
+    concorrentes"), nem chamar a contagem de estimativa nas faixas."""
+    c3 = _camada(metodologia_br, 3)
+    assert "Capacidade média por academia" not in {m["nome"] for m in c3["metricas"]}
+    assert "converte oferta em número de concorrentes" not in _texto_do_painel(metodologia_br)
+    condicoes = [f["condicao"] for f in c3["faixas"] if f["escopo"] == "municipio"]
+    assert not any("estimad" in c for c in condicoes), condicoes
+    assert f"até {pilot.CONC_ADENSAR_MAX} concorrentes no raio de 1 km" in condicoes
+    # A capacidade continua descrita onde ela age: no residual (camada 2) e nos parametros.
+    assert "Capacidade média por academia" in {p["nome"] for p in metodologia_br["parametros"]}
+    # Anti-vacuidade: o painel SEM regua segue com a metrica e o texto legados.
+    c3_legado = _camada(metodologia_legado, 3)
+    assert "Capacidade média por academia" in {m["nome"] for m in c3_legado["metricas"]}
+    assert any("estimados" in f["condicao"] for f in c3_legado["faixas"])
+
+
+def test_metodologia_br_fala_a_lingua_do_negocio(metodologia_br, regra_br):
+    """Sem jargao de implementacao no painel: o "k da malha", o carimbo, a versao crua e o
+    numero da decisao ficam SO' no detalhe tecnico do fim dos parametros."""
+    tecnico = "Referência técnica da régua"
+    parametros = {p["nome"]: p["valor"] for p in metodologia_br["parametros"]}
+    assert parametros[tecnico] == f"{regra_br.versao} · {regra_br.dec}"
+    assert metodologia_br["parametros"][-1]["nome"] == tecnico, "o detalhe tecnico fecha a lista"
+    assert parametros["Régua do Top 10"] == pilot._rotulo_versao_regua(regra_br.versao)
+    sem_tecnico = dict(metodologia_br, parametros=metodologia_br["parametros"][:-1])
+    texto = _texto_do_painel(sem_tecnico)
+    for jargao in ("k da malha", "carimbo k", "tolerados", regra_br.versao, regra_br.dec):
+        assert jargao not in texto, f"o painel BR ainda publica {jargao!r}"
+    assert "Teto de concorrentes da leitura (camada 3)" in parametros
+
+
+@pytest.mark.parametrize(
+    ("versao", "rotulo"),
+    [
+        ("2026-10_v1", "outubro de 2026, versão 1"),
+        ("2027-03_v12", "março de 2027, versão 12"),
+        # Fora do padrao `<ano>-<mes>_v<n>`: a versao crua, sem inventar data.
+        ("2026-13_v1", "2026-13_v1"),
+        ("piloto", "piloto"),
+    ],
+)
+def test_rotulo_de_negocio_da_versao_da_regua(versao: str, rotulo: str) -> None:
+    assert pilot._rotulo_versao_regua(versao) == rotulo
+
+
+def test_as_clausulas_condicionais_seguem_as_flags_da_regua(regra_br):
+    """Piso de populacao na Mata Virgem e residual estimado aceito no Premium: o texto acompanha
+    as flags da regua (nenhuma clausula fixa sobrevive a uma versao que as mude)."""
+    outra = dataclasses.replace(
+        regra_br,
+        mata_virgem=dataclasses.replace(regra_br.mata_virgem, populacao_min=8000.0),
+        premium=dataclasses.replace(
+            regra_br.premium, populacao_min=None, exige_residual_medido=False
+        ),
+    )
+    c5 = _camada(pilot.montar_metodologia(regra=outra), 5)
+    corte_mv, corte_pr = c5["corte"].split(" · ")
+    assert "população ≥ 8.000 habitantes" in corte_mv and "residual medido" in corte_mv
+    assert "residual medido" not in corte_pr and "habitantes" not in corte_pr
+    residual = next(m for m in c5["metricas"] if m["coluna"] == "oferta_efetiva_disponivel")
+    assert "na Mata Virgem" in residual["regra"]
+    assert "nunca entra no Top" not in residual["regra"]

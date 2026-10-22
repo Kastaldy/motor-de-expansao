@@ -7,8 +7,9 @@ requests embute a URL, e stderr de cron vai para log em disco).
 
 O texto e' voltado ao usuario, logo ACENTUADO (CLAUDE.md §2), e e' HONESTO sobre o
 que a rodada move: a SERIE de Emprego (CAGED, mensal), o rotulo de periodo e
-`cres_salario`/`cres_salario_var`. O percentual da dimensao e o veredito
-(`dim_emprego_pct` -> `pos_emprego` -> `v_classe`) vem do CSV anual do projeto TEC
+`cres_salario`/`cres_salario_var`. O percentual da dimensao e a classe de crescimento
+(`dim_emprego_pct` -> `pos_emprego` -> `v_classe`; rotulo NEUTRO na mensagem,
+`_ROTULO_CLASSE_CRESCIMENTO`) vem do CSV anual do projeto TEC
 — raiz externa LIDA, nunca regenerada pelo job — e ficam parados ate' aquela safra
 avancar; renda, PIB, empresas e populacao seguem anuais e o satelite e' 2016-2023
 estatico. Fingir que tudo atualizou seria o "documento com numero que envelhece
@@ -28,11 +29,26 @@ import sys
 from pathlib import Path
 from typing import Any
 
+#: Camada de ROTULO das classes de crescimento (`v_classe` do artefato e' identificador, sem
+#: acento -- CLAUDE.md §2). Rotulo NEUTRO de proposito (DEC-077): "entrar/evitar" soava como
+#: recomendacao de onde abrir, e quem responde isso agora e' o Top 10 da recomendacao unica.
+#: A contagem e a ordem sao as de sempre; classe fora da tabela sai com o identificador cru.
+_ROTULO_CLASSE_CRESCIMENTO: dict[str, str] = {
+    "entrar": "alta com porte de mercado",
+    "acompanhar": "alta sem porte de mercado",
+    "observar": "alta em duas dimensões",
+    "estavel": "perto da mediana",
+    "evitar": "abaixo da mediana",
+}
 
-def _linha_vereditos(contagem: dict[str, int]) -> str:
+
+def _linha_classes(contagem: dict[str, int]) -> str:
     if not contagem:
         return "sem leitura"
-    partes = [f"{k}: {v}" for k, v in sorted(contagem.items(), key=lambda kv: -kv[1])]
+    partes = [
+        f"{_ROTULO_CLASSE_CRESCIMENTO.get(k, k)}: {v}"
+        for k, v in sorted(contagem.items(), key=lambda kv: -kv[1])
+    ]
     return ", ".join(partes)
 
 
@@ -53,12 +69,13 @@ def montar_sucesso(resumo: dict[str, Any]) -> str:
             f"{resumo.get('hexes', '?')} hexágonos."
         ),
         (
-            f"Vereditos: {_linha_vereditos(resumo.get('vereditos_depois') or {})} "
-            "(inalterados por construção numa rodada só-CAGED: derivam do CSV "
+            "Classes de crescimento: "
+            f"{_linha_classes(resumo.get('vereditos_depois') or {})} "
+            "(inalteradas por construção numa rodada só-CAGED: derivam do CSV "
             "anual do TEC)."
         ),
         (
-            "Lembrete de idade por dimensão: o percentual e o veredito de Emprego "
+            "Lembrete de idade por dimensão: o percentual e a classe de Emprego "
             "só avançam com a safra do TEC; renda, população e empresas seguem "
             "nas safras anuais; prédios (satélite) cobre 2016-2023."
         ),
