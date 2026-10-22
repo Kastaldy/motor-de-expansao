@@ -43,7 +43,7 @@ onde expandir: a do "Onde crescer", que é o Top 10 do módulo único
 |---|---|
 | Capa | Subtítulo "Mapeamento competitivo por região - Ultra, concorrência e capacidade não atendida" (sem "espaço disponível para novas academias"). |
 | Bairros Oficiais | Município sem bairro na base: a nota não promete mais "as zonas geométricas" das páginas seguintes, que saíram. |
-| Visão Geral do Município | Só o mapa da cidade, centralizado: sem verde de aprovado, sem a tabela "BAIRROS APROVADOS" e sem contagem. |
+| Visão Geral do Município | **Fora** (Juan, 22/10/2026). Sem o verde de aprovado e sem a tabela "BAIRROS APROVADOS" ela ficou neutra e repetia o mapa do Resumo; o mapa `cobertura` nem é desenhado no Brasil. |
 | Resumo da Região | Mapa neutro com Ultra e as maiores redes, no enquadramento de Score e Residual (sem foco em escolhidos). Painel com os números da cidade; "Como calculamos o espaço" fala em "regiões com 2.000 ou mais". |
 | Como chegamos ao Espaço | Fica, com os números por hexágono em laranja (não no verde do aprovado) e sem o quadro "ONDE CABEM MAIS" (Felipe, 22/10); o texto diz "regiões com residual a partir de 2.000 alunos (capacidade não atendida)" em vez de "aprovadas". |
 | Expansão de Domínio e Bairros por Zona | Fora, até chegarem os dados do gestor. |
@@ -155,6 +155,8 @@ Base: o bot/API lê a partição enriquecida da UF (a da tela), com a coluna `uf
   - Nota de método: "Pop. elegível − alunos com academia cadastrada".
 
 ### Página 5 — Visão Geral do Município
+- **Só fora do Brasil desde 2026-10-22** (Juan): no PDF com a resposta única (DEC-077) a página
+  não sai — ver a tabela "No Brasil" acima.
 - Inserida pelo **BLK-RELMUN-01-FU1** (2026-06-23), logo após a capa — é o slide que faltava
   neste doc até 2026-07-27.
 - Título da banda: **"Visão Geral do Município - Cidade - UF"**.

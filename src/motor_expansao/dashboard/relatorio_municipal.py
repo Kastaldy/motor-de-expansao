@@ -128,8 +128,9 @@ def _rotulo_espaco_leitura() -> str:
 
 # Cabecalhos canonicos das 11 paginas fixas, iguais nas duas unidades (desde 2026-10-20 com "Como
 # chegamos ao Espaco para academias"). Fora daqui: uma pagina por parte dos Bairros Oficiais em
-# municipio grande e as 4 da praca. No Brasil (DEC-077) Expansao de Dominio e Bairros por Zona nao
-# saem: 9 fixas, 13 com a praca. Renderizam em latin-1 (core font Helvetica do fpdf2),
+# municipio grande e as 4 da praca. No Brasil (DEC-077) Expansao de Dominio, Bairros por Zona e,
+# desde 2026-10-22, a Visao Geral nao saem: 8 fixas, 12 com a praca. Renderizam em latin-1 (core
+# font Helvetica do fpdf2),
 # que cobre integralmente os acentos portugueses -- o que e PROIBIDO e tipografia fora de
 # latin-1 (travessao/bullet/seta/reticencias/aspas curvas/(c)), que vira "?" silenciosamente
 # via _ascii(..., errors="replace"). Cada string aparece nos bytes crus do PDF (compressao OFF).
@@ -3116,28 +3117,31 @@ def render_mapas_municipio(
     # Camada "cobertura", sem pins (leitura limpa). O quadro fecha nos hexagonos APROVADOS em
     # verde (Juan, 2026-10-20): zoom maximo sem cortar nenhum. O aprovado por fallback municipal
     # sai cinza no mapa, entao nao entra no enquadramento. Sem verde, o municipio inteiro.
-    verdes = (
-        df_muni.loc[_hex_destacado_mask(df_muni) & _fonte_propria_mask(df_muni), "hex_id"]
-        if "hex_id" in df_muni.columns else pd.Series(dtype=object)
-    )
-    mapas["cobertura"] = _render_mapa_municipio(
-        df_muni,
-        camada="cobertura",
-        municipio_result=municipio_result,
-        competitors_df=None,
-        ultra_df=None,
-        basemap=basemap,
-        width=width,
-        height=height,
-        focus_bounds=(
-            _focus_bounds_mercator(
-                df_muni, hexes_foco={str(h) for h in verdes.dropna()},
-                pad_frac=_FOCUS_PAD_FRAC_COBERTURA,
-            )
-            if not verdes.dropna().empty and not resposta_unica else None
-        ),
-        hexes_rotulados=hexes_rotulados,
-    )
+    # No Brasil (resposta unica) a pagina da Visao Geral saiu (Juan, 2026-10-22): o mapa nao e'
+    # desenhado -- seria um fundo de ruas baixado a toa.
+    if not resposta_unica:
+        verdes = (
+            df_muni.loc[_hex_destacado_mask(df_muni) & _fonte_propria_mask(df_muni), "hex_id"]
+            if "hex_id" in df_muni.columns else pd.Series(dtype=object)
+        )
+        mapas["cobertura"] = _render_mapa_municipio(
+            df_muni,
+            camada="cobertura",
+            municipio_result=municipio_result,
+            competitors_df=None,
+            ultra_df=None,
+            basemap=basemap,
+            width=width,
+            height=height,
+            focus_bounds=(
+                _focus_bounds_mercator(
+                    df_muni, hexes_foco={str(h) for h in verdes.dropna()},
+                    pad_frac=_FOCUS_PAD_FRAC_COBERTURA,
+                )
+                if not verdes.dropna().empty else None
+            ),
+            hexes_rotulados=hexes_rotulados,
+        )
 
     # Camada "espaco" (2026-10-20): por HEXAGONO de proposito, nos dois modos -- e' o grao em que
     # o espaco e' calculado; repartir por bairro perdia 19 academias em Sao Paulo (hexagono de
@@ -3262,7 +3266,8 @@ def render_mapas_municipio(
             ("cobertura", "Visão geral do município por bairro", False),
             ("dominio", "Expansão de domínio por bairro", True),
         ):
-            if resposta_unica and camada == "dominio":
+            if resposta_unica and camada in ("dominio", "cobertura"):
+                # Brasil: as paginas de Dominio e da Visao Geral nao saem.
                 continue
             mapas[camada] = _render_mapa_bairros(
                 bairros_geo,
@@ -5480,8 +5485,8 @@ def gerar_pdf_relatorio_municipal(
 
     `unidade` decide a leitura dos mapas (bairro ou hexagono), nao o numero de paginas: 11 nas
     duas (as de `PDF_SECTION_HEADERS`), mais uma por parte dos Bairros Oficiais em municipio
-    grande. No Brasil (`resposta_unica`, DEC-077) Expansao de Dominio e Bairros por Zona nao
-    saem: 9.
+    grande. No Brasil (`resposta_unica`, DEC-077) Expansao de Dominio, Bairros por Zona e a
+    Visao Geral do Municipio nao saem: 8.
 
     `mapas` = dict `{"cobertura","bairros","resumo","score","residual","dominio"}` (camadas PNG);
     ausente -> paginas com "Mapa indisponivel". `ultra_dir` aponta os assets de branding (fallback
@@ -5541,7 +5546,11 @@ def gerar_pdf_relatorio_municipal(
         _praca_pressao_page(pdf, municipio_result, praca, assets, primary=p13, secondary=s13)
         p15, s15 = _tema_bicolor(15)
         _praca_crescimento_page(pdf, municipio_result, praca, assets, primary=p15, secondary=s15)
-    _cobertura_page(pdf, municipio_result, mapas.get("cobertura"), assets, primary=p1, secondary=s1)
+    if not _resposta_unica(municipio_result):
+        # Brasil (Juan, 2026-10-22): a Visao Geral saiu. Com a resposta unica ela ficou neutra --
+        # sem o verde de aprovado e sem a tabela -- e repetia o mapa do Resumo. A Argentina, sem
+        # regua, segue com ela (a tabela BAIRROS APROVADOS mora nela).
+        _cobertura_page(pdf, municipio_result, mapas.get("cobertura"), assets, primary=p1, secondary=s1)
     _resumo_page(pdf, municipio_result, mapas.get("resumo"), assets, primary=p5, secondary=s5)
     _espaco_explicado_page(pdf, municipio_result, mapas.get("espaco"), assets, primary=s5)
     if not _resposta_unica(municipio_result):

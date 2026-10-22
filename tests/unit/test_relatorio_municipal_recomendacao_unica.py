@@ -590,8 +590,8 @@ def test_resposta_unica_tira_as_outras_listas_de_onde_expandir():
     assert "REGIÕES CONSIDERADAS" not in texto
     assert "Síntese - Diagnóstico" in titulos and "Recomendação" not in " ".join(titulos)
     assert "aprovad" not in texto.casefold()
-    # As paginas neutras continuam (Juan, 2026-10-22).
-    assert any(t.startswith("Visão Geral do Município") for t in titulos)
+    # A Visao Geral saiu do Brasil (Juan, 2026-10-22): neutra, repetia o mapa do Resumo.
+    assert not any(t.startswith("Visão Geral do Município") for t in titulos)
     assert any(t.startswith("Resumo da Região") for t in titulos)
     # Espaco so' como leitura, com o rotulo do Felipe -- tambem na capa.
     assert "capacidade não atendida nas regiões com residual a partir de 2.000 alunos" in texto
@@ -627,6 +627,7 @@ def test_sem_regua_o_pdf_segue_como_antes():
     texto = " ".join(paginas)
     assert any(t.startswith("Expansão de Domínio") for t in titulos)
     assert any(t.startswith("Bairros por Zona") for t in titulos)
+    assert any(t.startswith("Visão Geral do Município") for t in titulos)
     assert "Síntese - Diagnóstico & Recomendação" in titulos
     assert "zonas de atuação" in texto
     assert "Ultra e espaço disponível para novas academias" in paginas[0]
@@ -676,6 +677,8 @@ def test_visao_geral_e_resumo_sem_o_verde_de_aprovado(monkeypatch):
                                     unidade=rm.UNIDADE_HEXAGONO)
     assert not any(c in _VERDES_DE_APROVADO for c in cores)
     assert "dominio" not in depois
+    # A Visao Geral nao sai no Brasil: o mapa dela nem e' desenhado.
+    assert "cobertura" in antes and "cobertura" not in depois
 
 
 def test_mapa_do_espaco_sem_o_verde_de_aprovado_no_brasil(monkeypatch):
@@ -693,20 +696,25 @@ def test_mapa_do_espaco_sem_o_verde_de_aprovado_no_brasil(monkeypatch):
     assert verde_espaco not in cores and rm._HEX_ESPACO_RGBA in cores
 
 
-def test_visao_geral_por_bairro_sem_verde_e_sem_tabela(monkeypatch):
+def test_por_bairro_no_brasil_sem_verde_e_sem_a_visao_geral(monkeypatch):
     df = _sample_df()
     geo = _bairros_geo_sample()
     hexes = list(df["hex_id"])
     geo["bairros"][0]["pesos_hex"] = {hexes[0]: 1.0, hexes[1]: 1.0}
     geo["bairros"][1]["pesos_hex"] = {hexes[2]: 1.0, hexes[3]: 1.0}
-    res = {**agregar_municipio(df, nome_municipio="SAO PAULO", uf="SP", bairros_geo=geo),
-           CHAVE_RESPOSTA_UNICA: True}
+    base = agregar_municipio(df, nome_municipio="SAO PAULO", uf="SP", bairros_geo=geo)
+    res = {**base, CHAVE_RESPOSTA_UNICA: True}
     cores = _cores_de_preenchimento(monkeypatch)
     mapas = render_mapas_municipio(df, res, basemap=False)
     assert not any(c in _VERDES_DE_APROVADO for c in cores)
+    assert "cobertura" not in mapas
     paginas = _paginas_do_pdf(gerar_pdf_relatorio_municipal(res, mapas))
-    visao = _pagina(paginas, "Visão Geral do Município")
-    assert "BAIRROS APROVADOS" not in visao and "aprovad" not in visao.casefold()
+    titulos = [p.splitlines()[0] for p in paginas if p]
+    assert not any(t.startswith("Visão Geral do Município") for t in titulos)
+    assert "BAIRROS APROVADOS" not in " ".join(paginas)
+    # Sem a chave (Argentina), a Visao Geral por bairro segue, com a tabela.
+    ar = _paginas_do_pdf(gerar_pdf_relatorio_municipal(base, render_mapas_municipio(df, base, basemap=False)))
+    assert "BAIRROS APROVADOS" in _pagina(ar, "Visão Geral do Município")
 
 
 def test_ajuda_do_bot_nao_anuncia_o_dominio():
