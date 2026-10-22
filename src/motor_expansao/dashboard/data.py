@@ -40,6 +40,7 @@ from motor_expansao.pipelines.pop_corte import (
 from motor_expansao.pipelines.pop_corte import (
     normalized_join_quality as _normalized_join_quality_impl,
 )
+from motor_expansao.renda.hex import COLS_RENDA_MALHA
 
 _LOG = logging.getLogger("piloto.dados")
 
@@ -463,6 +464,10 @@ def enrich_dashboard_data(
         #   (BLK-ORFAOS-01), com vocabulario fechado de dois valores.
         "fonte_renda_censo_hex",
         "motivo_sem_censo",
+        # Renda EXIBIDA do hexagono agregada da malha com moradores e uplift DO SETOR (E3 do
+        # plano da renda): 2022, sem fator -- o fator entra so na exibicao (`renda.hex`).
+        # Sem elas no artefato, a exibicao cai sozinha na formula municipal de antes.
+        *COLS_RENDA_MALHA,
     ]
     if not censo_df.empty:
         censo_subset = censo_df[[column for column in censo_extra_cols if column in censo_df.columns]]

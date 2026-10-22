@@ -59,10 +59,12 @@ PALETA_RENDA = [tuple(b[2][:3]) for b in RENDA_MEDIA_DOMICILIAR_BANDS]
 PALETA_DENSIDADE = [tuple(b[2][:3]) for b in DENSIDADE_POP_BANDS]
 _ALPHA_CALOR = 185
 
-# Discos da pressao: cadeia em magenta, independente em ambar, Ultra em turquesa.
-_COR_CADEIA = (194, 60, 142)
-_COR_INDEPENDENTE = (217, 119, 6)
-_COR_ULTRA = (0, 167, 157)
+# Discos da pressao em cores de leitura COMUM (Juan, 2026-10-20), nao as da marca: concorrencia
+# em vermelho (rede) e laranja (independente, tambem concorre), a Ultra em azul. Magenta e
+# turquesa da marca nao diziam "concorrente" nem "nos" para quem le o mapa.
+_COR_CADEIA = (220, 38, 38)
+_COR_INDEPENDENTE = (245, 158, 11)
+_COR_ULTRA = (6, 182, 212)  # ciano (Juan, 2026-10-20)
 _ALPHA_DISCO = 38
 _ALPHA_BORDA = 150
 
@@ -130,6 +132,14 @@ class _Quadro:
         x, y = self._to_3857.transform(float(lng), float(lat))
         return self.xy(x, y)
 
+    def metros_de_chao_por_px(self) -> float:
+        """Metros NO CHAO por pixel, no centro do quadro. A unidade do 3857 nao e' metro: a 23 graus
+        de latitude, 1.000 unidades sao ~920 m. A barra de escala usava `1 / scale` cru e o "1 km"
+        dela media ~9% menos que o disco de 1 km desenhado ao lado (Sao Paulo, 2026-10-20)."""
+        _minx, miny, _maxx, maxy = self.bounds
+        lat = math.degrees(math.atan(math.sinh(((miny + maxy) / 2.0) / 6_378_137.0)))
+        return math.cos(math.radians(lat)) / self.scale
+
     def metros_em_px(self, metros: float, lat: float) -> float:
         # Em 3857 a escala cresce com 1/cos(lat): um metro no chao ocupa mais unidades do mapa.
         return metros / max(math.cos(math.radians(lat)), 0.01) * self.scale
@@ -186,9 +196,9 @@ def _fechar(
 ) -> bytes:
     draw.rectangle(quadro.caixa, outline=_TINTA_SUAVE, width=2)
     if escala_candidatos_m is None:
-        _draw_scale_bar(draw, quadro.caixa, 1.0 / quadro.scale)
+        _draw_scale_bar(draw, quadro.caixa, quadro.metros_de_chao_por_px())
     else:
-        _draw_scale_bar(draw, quadro.caixa, 1.0 / quadro.scale, candidates=escala_candidatos_m)
+        _draw_scale_bar(draw, quadro.caixa, quadro.metros_de_chao_por_px(), candidates=escala_candidatos_m)
     rodape = f"EPSG:3857 - {_atribuicao_tiles() if desenhou else 'fundo de ruas offline'}"
     _draw_text(draw, (_MARGEM, _H - 40), rodape, font=_font(20), fill=_TINTA_SUAVE)
     return _png(image.convert("RGB"))
@@ -212,6 +222,33 @@ def _desenhar_hex(draw: ImageDraw.ImageDraw, quadro: _Quadro, hex_id: str, fill:
     if outline is not None:
         draw.line(pts + [pts[0]], fill=outline, width=width)
     return (sum(p[0] for p in pts) / len(pts), sum(p[1] for p in pts) / len(pts))
+
+
+def _desenhar_hex_dividido(
+    camada: Image.Image, quadro: _Quadro, hex_id: str,
+    cor_esq: tuple[int, int, int], cor_dir: tuple[int, int, int],
+) -> tuple[float, float, float] | None:
+    """Hexagono cortado ao meio na vertical: metade esquerda `cor_esq`, direita `cor_dir`.
+
+    Para o hexagono que esta' nas DUAS listas do "Onde crescer" (Juan, 2026-10-21): verde com
+    contorno azul nao dizia que ele era tambem da lista azul. Devolve (cx, cy, meia_largura) para
+    o rotulo de cada metade, ou None sem geometria.
+    """
+    borda = _poligono_hex(hex_id)
+    if not borda:
+        return None
+    pts = [quadro.lnglat(lng, lat) for lat, lng in borda]
+    cx = sum(p[0] for p in pts) / len(pts)
+    cy = sum(p[1] for p in pts) / len(pts)
+    ImageDraw.Draw(camada, "RGBA").polygon(pts, fill=(*cor_esq, 255))
+    metade = Image.new("RGBA", camada.size, (0, 0, 0, 0))
+    ImageDraw.Draw(metade, "RGBA").polygon(pts, fill=(*cor_dir, 255))
+    mascara = Image.new("L", camada.size, 0)
+    ImageDraw.Draw(mascara).rectangle([int(round(cx)), 0, camada.size[0], camada.size[1]], fill=255)
+    camada.paste(metade, (0, 0), Image.composite(metade.getchannel("A"), mascara, mascara))
+    ImageDraw.Draw(camada, "RGBA").line([(cx, min(p[1] for p in pts)), (cx, max(p[1] for p in pts))],
+                                        fill=(255, 255, 255, 255), width=3)
+    return cx, cy, (max(p[0] for p in pts) - min(p[0] for p in pts)) / 2.0
 
 
 def _legenda(draw: ImageDraw.ImageDraw, titulo: str, itens: Sequence[tuple[str, tuple[int, ...]]], *, y: int = _MAP_TOP) -> int:
@@ -392,14 +429,38 @@ def render_pressao_cidade(
     lats, lngs = _centroides(hexes_cidade)
     if not lats:
         return None
-    quadro = _Quadro(_bounds_de_pontos(lats, lngs), _W, _H)
-    raio_txt = rotulo_raio(raio_m)
-    image, draw, desenhou = _base(
-        quadro, "Pressao concorrencial", f"Area de influencia de {raio_txt} por academia, cidade inteira",
-        basemap=basemap,
-    )
     conc = _com_coordenada(concorrentes)
     ult = _com_coordenada(ultra)
+    raio_txt = rotulo_raio(raio_m)
+    # Zoom nas ACADEMIAS (Juan, 2026-10-20: "com mais zoom"): o quadro fecha nos pontos mais o
+    # raio de influencia, em vez da cidade inteira -- em Sao Paulo o sul rural, sem academia,
+    # ocupava metade do quadro e espremia onde a disputa acontece. Sem academia, a cidade.
+    pts_lat = [float(v) for df in (conc, ult) if df is not None for v in pd.to_numeric(df["lat"])]
+    pts_lng = [float(v) for df in (conc, ult) if df is not None for v in pd.to_numeric(df["lng"])]
+    if pts_lat:
+        # 1% a 99% das academias: meia duzia isolada na borda nao pode desfazer o zoom. As que
+        # ficam fora sao contadas no subtitulo -- nunca somem em silencio.
+        if len(pts_lat) >= 20:
+            lat_lo, lat_hi = (float(v) for v in np.quantile(pts_lat, [0.01, 0.99]))
+            lng_lo, lng_hi = (float(v) for v in np.quantile(pts_lng, [0.01, 0.99]))
+        else:
+            lat_lo, lat_hi, lng_lo, lng_hi = min(pts_lat), max(pts_lat), min(pts_lng), max(pts_lng)
+        fora = sum(
+            1 for la, lo in zip(pts_lat, pts_lng, strict=True)
+            if not (lat_lo <= la <= lat_hi and lng_lo <= lo <= lng_hi)
+        )
+        folga_lat = raio_m / 111_320.0
+        folga_lng = raio_m / (111_320.0 * max(math.cos(math.radians((lat_lo + lat_hi) / 2.0)), 0.2))
+        quadro = _Quadro(_bounds_de_pontos(
+            [lat_lo - folga_lat, lat_hi + folga_lat], [lng_lo - folga_lng, lng_hi + folga_lng], margem=0.01,
+        ), _W, _H)
+        subtitulo = f"Area de influencia de {raio_txt} por academia" + (
+            f" - {fora} academias isoladas ficam fora do quadro" if fora else ""
+        )
+    else:
+        quadro = _Quadro(_bounds_de_pontos(lats, lngs), _W, _H)
+        subtitulo = f"Area de influencia de {raio_txt} por academia, cidade inteira"
+    image, draw, desenhou = _base(quadro, "Pressao concorrencial", subtitulo, basemap=basemap)
     n = (0 if conc is None else len(conc)) + (0 if ult is None else len(ult))
     draw = _discos_sobre(
         image, quadro, conc, ult, raio_m=raio_m, lat_ref=float(np.nanmean(lats)), logos=n <= LOGOS_MAX_CIDADE,
@@ -484,7 +545,8 @@ def _legenda_discos(draw: ImageDraw.ImageDraw) -> int:
         ],
     )
     _draw_text(draw, (_W - _LEGEND_W + 24, yy + 8), "Cor mais forte =", font=_font(22), fill=_TINTA_SUAVE)
-    _draw_text(draw, (_W - _LEGEND_W + 24, yy + 36), "mais raios sobrepostos", font=_font(22), fill=_TINTA_SUAVE)
+    _draw_text(draw, (_W - _LEGEND_W + 24, yy + 36), "mais academias", font=_font(22), fill=_TINTA_SUAVE)
+    _draw_text(draw, (_W - _LEGEND_W + 24, yy + 64), "disputando o publico", font=_font(22), fill=_TINTA_SUAVE)
     return yy
 
 
@@ -515,6 +577,91 @@ def quadro_onde_crescer(
         )
     base = hexes_cidade if hexes_cidade is not None and not hexes_cidade.empty else top
     return _quadro_da_cidade(base, lat, lng) if base is not None and len(base) else None
+
+
+_COR_TOP_SOCIO = (37, 99, 235)
+_COR_TOP_SOCIO_BORDA = (30, 64, 175)
+
+
+def render_onde_crescer_duas_listas(
+    hexes_cidade: pd.DataFrame | None,
+    top_residual: pd.DataFrame,
+    top_socio: pd.DataFrame,
+    *,
+    basemap: bool = True,
+    rotulos_listas: tuple[str, str] = ("Maior residual", "Maior socioeconomico"),
+    subtitulo: str = "Top 5 por residual e top 5 por socioeconomico",
+) -> bytes | None:
+    """A cidade em cinza com as DUAS listas da pagina: maior residual em verde e maior score
+    socioeconomico em azul, cada uma numerada na ordem da sua tabela (2026-10-20).
+
+    No Brasil as duas listas sao a recomendacao unica (DEC-077): Mata Virgem no verde e Premium
+    no azul, com `rotulos_listas`/`subtitulo` dizendo isso. Ali os segmentos sao exclusivos e o
+    hexagono cortado ao meio nao acontece; ele segue para as listas por coluna (Argentina)."""
+    listas = [df for df in (top_residual, top_socio) if df is not None and not df.empty and "hex_id" in df.columns]
+    if not listas:
+        return None
+    juntos = pd.concat(listas, ignore_index=True)
+    # Zoom FECHADO nos 10 hexagonos (Juan, 2026-10-20: "dar um zoom maior"): a margem de 0,6 do
+    # mapa de uma lista so' sobrava demais com as duas listas espalhadas pela cidade. Folga fixa de
+    # ~1 hexagono (0,015 grau) para o escolhido da borda nao encostar na moldura.
+    lats, lngs = _centroides(juntos)
+    if not lats:
+        return None
+    folga = 0.015
+    quadro = _Quadro(_bounds_de_pontos(
+        [min(lats) - folga, max(lats) + folga], [min(lngs) - folga, max(lngs) + folga], margem=0.02,
+    ), _W, _H)
+    image, draw, desenhou = _base(quadro, "Onde crescer", subtitulo, basemap=basemap)
+    # Tudo numa camada RECORTADA na caixa do mapa: com o zoom fechado, os hexagonos da cidade
+    # que caem fora do quadro invadiam a legenda e a moldura.
+    camada = Image.new("RGBA", (_W, _H), (0, 0, 0, 0))
+    dc = ImageDraw.Draw(camada, "RGBA")
+    if hexes_cidade is not None and not hexes_cidade.empty:
+        for h in hexes_cidade["hex_id"].astype(str):
+            _desenhar_hex(dc, quadro, h, _COR_CIDADE)
+
+    # Numero DENTRO do hexagono (Juan, 2026-10-20), em branco sobre a cor da lista. Hexagono nas
+    # duas listas (2026-10-21): cortado ao meio, verde a esquerda com a posicao no residual e azul
+    # a direita com a posicao no socioeconomico.
+    pos_res = ({str(h): int(p) for h, p in zip(top_residual["hex_id"], top_residual["posicao"], strict=True)}
+               if top_residual is not None and not top_residual.empty else {})
+    pos_soc = ({str(h): int(p) for h, p in zip(top_socio["hex_id"], top_socio["posicao"], strict=True)}
+               if top_socio is not None and not top_socio.empty else {})
+    rotulos: list[tuple[float, float, str, int]] = []
+    for h in dict.fromkeys([*pos_res, *pos_soc]):
+        em_res, em_soc = h in pos_res, h in pos_soc
+        if em_res and em_soc:
+            d = _desenhar_hex_dividido(camada, quadro, h, _COR_TOP, _COR_TOP_SOCIO)
+            if d is None:
+                continue
+            cx, cy, meia = d
+            rotulos.append((cx - meia / 2.0, cy, str(pos_res[h]), 26))
+            rotulos.append((cx + meia / 2.0, cy, str(pos_soc[h]), 26))
+            continue
+        cor = _COR_TOP if em_res else _COR_TOP_SOCIO
+        c = _desenhar_hex(dc, quadro, h, (*cor, 255), outline=(*cor, 255), width=6)
+        if c is None:
+            continue
+        rotulos.append((c[0], c[1], str(pos_res.get(h) or pos_soc[h]), 30))
+    mascara = Image.new("L", (_W, _H), 0)
+    ImageDraw.Draw(mascara).rectangle(quadro.caixa, fill=255)
+    recorte = Image.new("RGBA", (_W, _H), (0, 0, 0, 0))
+    recorte.paste(camada, (0, 0), mascara)
+    image.alpha_composite(recorte)
+    draw = ImageDraw.Draw(image, "RGBA")
+    for px, py, txt, tam in rotulos:
+        fonte = _font(tam)
+        _draw_text(draw, (int(px - _text_width(draw, txt, fonte) / 2), int(py - tam / 2)), txt, font=fonte,
+                   fill=(255, 255, 255))
+
+    _legenda(
+        draw,
+        "Legenda",
+        [(rotulos_listas[0], (*_COR_TOP, 255)), (rotulos_listas[1], (*_COR_TOP_SOCIO, 255)),
+         ("Demais da cidade", _COR_CIDADE)],
+    )
+    return _fechar(image, draw, quadro, desenhou)
 
 
 def render_onde_crescer(

@@ -19,6 +19,7 @@ import pytest
 from tests.unit.test_piloto_web_endpoints import (  # noqa: F401
     empty_data,
     pilot,
+    sem_regua,
     synth_data,
 )
 
@@ -141,16 +142,39 @@ def test_todo_passo_tem_os_campos_do_contrato(com_crescimento: Path) -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_veredito_aparece_mesmo_sem_tendencia(com_crescimento: Path) -> None:
-    """Campinas tem confiabilidade muito baixa (tendencia nula) e veredito presente.
+def test_camada4_da_tela_nao_traz_o_veredito_e_aponta_para_os_detalhes(
+    com_crescimento: Path,
+) -> None:
+    """COM a regua da recomendacao unica (DEC-077), a TELA nao le o veredito.
 
-    Testar a tendencia primeiro escondia o veredito em 39% dos municipios do pais.
+    "E praca para entrar" disputaria com o Top 10 a resposta de onde expandir. Campinas tem
+    confiabilidade muito baixa (tendencia nula) e veredito presente: o texto vira leitura
+    neutra que aponta para os Detalhes do passo (as cinco dimensoes continuam la), e nao o
+    "Sem leitura" que fazia o municipio parecer sem dado.
     """
-    passos = _muni("Campinas")["passos"]
-    narrativa = passos[3]["narrativa"]
+    narrativa = _muni("Campinas")["passos"][3]["narrativa"]
+    assert "Campinas cresceu em renda." not in narrativa
+    assert "Detalhes" in narrativa
+    assert "Sem leitura" not in narrativa
+    assert "vínculos formais" in narrativa, "o motivo da tendencia nula sumiu"
+    # Com tendencia, a leitura descritiva de sempre -- sem o veredito na frente.
+    sp = _muni("Sao Paulo")["passos"][3]["narrativa"]
+    assert "São Paulo cresceu em empresas e emprego." not in sp
+    assert "O emprego formal em Sao Paulo está estável" in sp
+    assert "mediana de SP" in sp
+
+
+def test_narrativa_crescimento_legado_mantem_o_veredito(com_crescimento: Path) -> None:
+    """SEM `leitura` (instancia sem regua e o PDF Pontual, via `_praca_para_pdf`), o veredito
+    segue la: testar a tendencia primeiro escondia o veredito em 39% dos municipios do pais.
+    """
+    df = pilot.carregar_uf("SP")
+    campinas = df[df["nome_municipio"] == "Campinas"]
+    narrativa = pilot._narrativa_crescimento(campinas, "Campinas")
     assert "Campinas cresceu em renda." in narrativa
     assert "Sem leitura de crescimento" not in narrativa
     assert "Confiabilidade baixa" in narrativa
+    assert "v_frase" in pilot._COLS_CRESCIMENTO, "o PDF ainda le o veredito"
 
 
 def test_degrada_sem_artefato(synth_data: Path) -> None:  # noqa: F811
@@ -360,3 +384,59 @@ def test_payload_e_json_valido_sem_nan(com_crescimento: Path) -> None:
 
     for payload in (_muni(), _uf()):
         json.dumps(payload, allow_nan=False)
+
+
+# ---------------------------------------------------------------------------
+# PDF Pontual: a frase-veredito sai junto com a da tela (DEC-077)
+# ---------------------------------------------------------------------------
+
+
+def _frase_do_pdf_pontual(monkeypatch: pytest.MonkeyPatch, municipio: str) -> tuple[str | None, dict]:
+    """Chama `_praca_para_pdf` e devolve a frase e a linha que chegam ao `resumir_crescimento`.
+
+    Os dois mapas e a pressao do ponto sao trocados por stubs: aqui so' importa o texto da
+    pagina "Como a cidade esta indo", e nao o desenho.
+    """
+    from motor_expansao.dashboard import relatorio_praca as rp
+    from motor_expansao.dashboard import relatorio_praca_mapas as rpm
+
+    capturado: dict = {}
+    original = rp.resumir_crescimento
+
+    def _espiao(linha, **kw):
+        capturado["linha"] = dict(linha or {})
+        capturado["frase"] = kw.get("frase")
+        return original(linha, **kw)
+
+    monkeypatch.setattr(rp, "resumir_crescimento", _espiao)
+    monkeypatch.setattr(rpm, "render_pressao_raios", lambda *a, **k: b"")
+    monkeypatch.setattr(rp, "pressao_sobre_ponto", lambda *a, **k: None)
+    df = pilot.carregar_uf("SP")
+    linha = df[df["nome_municipio"] == municipio].iloc[0]
+    pilot._praca_para_pdf(
+        float(linha["lat"]), float(linha["lng"]), "SP", None, municipio, None, None, basemap=False
+    )
+    return capturado.get("frase"), capturado.get("linha", {})
+
+
+def test_pdf_pontual_sem_veredito_com_regua(com_crescimento: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Com a regua da recomendacao unica, o PDF Pontual perde a frase-veredito como a tela:
+    "E' praca para entrar" (e variantes) disputaria com o Top 10 a resposta de onde expandir.
+    Fica a leitura descritiva, inclusive no municipio sem tendencia (39% do pais)."""
+    for municipio, veredito in (("Campinas", "Campinas cresceu em renda."),
+                                ("Sao Paulo", "São Paulo cresceu em empresas e emprego.")):
+        frase, linha = _frase_do_pdf_pontual(monkeypatch, municipio)
+        assert frase, f"{municipio}: a pagina perdeu a leitura de crescimento"
+        assert veredito not in frase
+        assert "v_frase" not in linha, "o veredito chegaria ao PDF pelo fallback do resumir_crescimento"
+    frase_campinas, _ = _frase_do_pdf_pontual(monkeypatch, "Campinas")
+    assert "Detalhes" in frase_campinas
+
+
+def test_pdf_pontual_sem_regua_mantem_o_legado(
+    com_crescimento: Path, sem_regua: None, monkeypatch: pytest.MonkeyPatch  # noqa: F811
+) -> None:
+    """Sem regua (Argentina), o PDF Pontual segue com o texto de sempre."""
+    frase, linha = _frase_do_pdf_pontual(monkeypatch, "Campinas")
+    assert frase and "Campinas cresceu em renda." in frase
+    assert linha.get("v_frase") == "Campinas cresceu em renda."

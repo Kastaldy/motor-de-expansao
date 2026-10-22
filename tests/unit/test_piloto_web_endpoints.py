@@ -134,6 +134,9 @@ def _synthetic_enriched() -> pd.DataFrame:
                     "populacao_corte_hex": 8000.0 + 100 * h,  # >=5000
                     "pop_total": 8000.0 + 100 * h,
                     "pop_total_setor_2022": 8000.0 + 100 * h,
+                    # Insumo obrigatorio da recomendacao unica (DEC-077): com a regua BR no
+                    # processo de teste, toda rota de municipio/UF passa pelo modulo.
+                    "fonte_pop_hex_base": "censo_2022_setor",
                     "renda_per_capita": 2500.0 + 10 * h,
                     "renda_per_capita_setor_2022_calibrada": 2600.0 + 10 * h,
                     "faixa_oportunidade": "alta",
@@ -1158,9 +1161,13 @@ def test_passo3_ranqueia_os_hexes_que_o_mapa_destaca() -> None:
     assert passo3["funil_big"] == len(destacados)
 
 
-def test_passo5_recomenda_disputado_mas_nunca_saturado() -> None:
-    """A fila do passo 5 sai da MESMA base do passo 3 — que na DEC-041 deixou de ser
-    "zero concorrente" e passou a ser "ate' `CONC_ADENSAR_MAX`".
+def test_passo5_recomenda_disputado_mas_nunca_saturado_legado() -> None:
+    """PERFIL SEM REGUA (AR): a fila do passo 5 sai da MESMA base do passo 3 — que na
+    DEC-041 deixou de ser "zero concorrente" e passou a ser "ate' `CONC_ADENSAR_MAX`".
+
+    Com a regua da recomendacao unica (BR, DEC-077) o passo 5 e' o Top 10 do municipio
+    inteiro e nao olha concorrencia: o par deste teste e'
+    `test_passo5_top10_le_o_municipio_inteiro_e_ignora_a_concorrencia`.
 
     Duas afirmacoes num teste so', porque sao os dois lados da mesma decisao:
 
@@ -1172,7 +1179,7 @@ def test_passo5_recomenda_disputado_mas_nunca_saturado() -> None:
         invariante do PR #184 e ele sobrevive inteiro — so' mudou onde fica a linha.
     """
     df, bairros = _funil_muni([0, 1, 2, 3])
-    passos = pilot.montar_funil(df, "Sao Paulo", bairros)
+    passos = pilot.montar_funil(df, "Sao Paulo", bairros, recomendacao=None)
     passo3, passo5 = passos[2], passos[4]
 
     viaveis = set(passo3["hexes"])
@@ -1196,8 +1203,10 @@ def test_passo5_recomenda_disputado_mas_nunca_saturado() -> None:
     assert passo5["funil_big"] == len(passo5["hexes"]) == 3
 
 
-def test_sem_regiao_que_comporte_entrada_os_passos_3_e_5_ficam_vazios() -> None:
-    """Com TUDO saturado, os passos 3 e 5 nao tem NENHUM item — e isso e o correto.
+def test_sem_regiao_que_comporte_entrada_os_passos_3_e_5_ficam_vazios_legado() -> None:
+    """PERFIL SEM REGUA (AR): com TUDO saturado, os passos 3 e 5 nao tem NENHUM item — e
+    isso e o correto. (Com regua o Top 10 continua: ver
+    `test_tudo_saturado_o_top10_continua_e_nao_manda_trocar_de_municipio`.)
 
     O invariante e' o do PR #184 e sobrevive a DEC-041: a fila NUNCA cai num fallback
     para o residual inteiro. O fallback produzia a incoerencia que o dono rejeitou —
@@ -1210,7 +1219,7 @@ def test_sem_regiao_que_comporte_entrada_os_passos_3_e_5_ficam_vazios() -> None:
     exercitar o caso cheio. Aqui todos os hexes estao acima do teto.
     """
     df, bairros = _funil_muni([3, 4, 5, 6])
-    passos = pilot.montar_funil(df, "Sao Paulo", bairros)
+    passos = pilot.montar_funil(df, "Sao Paulo", bairros, recomendacao=None)
     passo3, passo5 = passos[2], passos[4]
 
     # Fixture com residual de sobra: o funil so morre no filtro de SATURACAO.
@@ -1238,9 +1247,10 @@ def test_sem_regiao_que_comporte_entrada_os_passos_3_e_5_ficam_vazios() -> None:
     )
 
 
-def test_regiao_com_concorrente_volta_a_ser_recomendavel() -> None:
-    """O coracao da DEC-041, no nivel do funil: a fixture que ANTES zerava os passos 3-5
-    agora produz fila.
+def test_regiao_com_concorrente_volta_a_ser_recomendavel_legado() -> None:
+    """PERFIL SEM REGUA (AR) — o coracao da DEC-041, no nivel do funil: a fixture que ANTES
+    zerava os passos 3-5 agora produz fila. (Com regua o passo 5 nao usa o indice de praca:
+    ver `test_passo5_br_sem_indice_de_praca`.)
 
     Com [1, 2, 3, 4] concorrentes, a regra antiga ("so' hexagono livre") deixava os tres
     ultimos passos VAZIOS — nenhum hex tinha zero concorrente. Pela regra nova, os dois
@@ -1249,7 +1259,7 @@ def test_regiao_com_concorrente_volta_a_ser_recomendavel() -> None:
     periferias", porque as pracas boas o bastante para atrair concorrente eram cortadas.
     """
     df, bairros = _funil_muni([1, 2, 3, 4])
-    passos = pilot.montar_funil(df, "Sao Paulo", bairros)
+    passos = pilot.montar_funil(df, "Sao Paulo", bairros, recomendacao=None)
     passo3, passo5 = passos[2], passos[4]
 
     assert passo3["funil_big"] == 2, (
@@ -1277,13 +1287,15 @@ def _uf_saturada() -> pd.DataFrame:
     return df
 
 
-def test_uf_sem_regiao_viavel_tambem_fica_com_os_passos_3_4_e_5_vazios() -> None:
-    """Mesma regra no funil de UF — deixar um nivel com fallback so muda a incoerencia de lugar.
+def test_uf_sem_regiao_viavel_tambem_fica_com_os_passos_3_4_e_5_vazios_legado() -> None:
+    """PERFIL SEM REGUA (AR): mesma regra no funil de UF — deixar um nivel com fallback so
+    muda a incoerencia de lugar. (Com regua o passo 5 da UF e' o Top 10 de hexagonos: ver
+    `test_uf_saturada_top10_de_hexagonos_continua`.)
 
     A visao de estado ranqueia MUNICIPIOS; sem base viavel na UF inteira ela recomendava
     municipios que o proprio passo acabara de excluir (numerao 0, mapa apagado).
     """
-    passos = pilot.montar_funil_uf(_uf_saturada(), "SP")
+    passos = pilot.montar_funil_uf(_uf_saturada(), "SP", recomendacao=None)
     passo3, passo5 = passos[2], passos[4]
 
     assert passos[1]["funil_big"] == 8, "a fixture perdeu o residual; o teste seria vago"
@@ -1543,6 +1555,7 @@ def _nacional_duas_ufs() -> dict[str, pd.DataFrame]:
             "populacao_corte_hex": 9000.0,  # >= POP_MIN_ACIONAVEL
             "pop_total_setor_2022": 9000.0,
             "pop_total": 9000.0,
+            "fonte_pop_hex_base": "censo_2022_setor",  # insumo da recomendacao unica
             "renda_per_capita_setor_2022_calibrada": 2600.0,
             "renda_per_capita": 2500.0,
         }
@@ -1572,13 +1585,27 @@ def nacional_data(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     _clear_caches()
 
 
+@pytest.fixture
+def sem_regua(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Instancia SEM regua da recomendacao unica (hoje, a Argentina): o caminho LEGADO.
+
+    Com a regua BR no processo de teste, `/api/hexagonos` devolve o Top 10 (DEC-077). Os
+    testes do ranking nacional legado abaixo continuam guardando o ramo sem regua -- que
+    segue vivo para o pais que nao tem recomendacao unica. O Top 10 tem os testes dele em
+    `test_piloto_web_recomendacao_top10.py`.
+    """
+    monkeypatch.setattr(pilot, "_regra_recomendacao", lambda: None)
+
+
 def test_hexagonos_sem_base_levanta_500(empty_data: Path) -> None:
     with pytest.raises(HTTPException) as e:
         pilot.hexagonos()
     assert e.value.status_code == 500
 
 
-def test_o_primeiro_do_brasil_nao_vem_da_uf_que_lidera_por_soma(nacional_data: Path) -> None:
+def test_o_primeiro_do_brasil_nao_vem_da_uf_que_lidera_por_soma(
+    nacional_data: Path, sem_regua: None
+) -> None:
     """O teste que DEFINE a rota: o campeao nacional esta na UF perdedora do ranking
     por estado. Se a lista fosse montada a partir do topo de `/api/estados`, ou com
     cota por UF, este hexagono nao apareceria em primeiro — viria depois de todo o
@@ -1593,7 +1620,7 @@ def test_o_primeiro_do_brasil_nao_vem_da_uf_que_lidera_por_soma(nacional_data: P
 
 
 def test_renda_do_ranking_nacional_e_a_per_capita_canonica_do_tooltip(
-    nacional_data: Path,
+    nacional_data: Path, sem_regua: None
 ) -> None:
     """E1: `renda` do ranking nacional e a MESMA per capita do tooltip do hexagono (modulo da
     renda), e nao mais a `renda_leitura` crua (a calibrada na escala do score, 2.600 aqui)."""
@@ -1608,7 +1635,7 @@ def test_renda_do_ranking_nacional_e_a_per_capita_canonica_do_tooltip(
         assert item["renda"] != pytest.approx(2600.0, abs=1)
 
 
-def test_ranking_nacional_nao_agrupa_por_uf(nacional_data: Path) -> None:
+def test_ranking_nacional_nao_agrupa_por_uf(nacional_data: Path, sem_regua: None) -> None:
     """`/api/estados` faz `groupby('uf')`; esta rota NAO pode fazer. A lista e' de
     hexagonos, e mais de uma UF convive nela, ordenada por residual."""
     itens = pilot.hexagonos()["itens"]
@@ -1619,7 +1646,7 @@ def test_ranking_nacional_nao_agrupa_por_uf(nacional_data: Path) -> None:
 
 
 def test_filtro_de_uf_recorta_a_lista_nacional_em_vez_de_preceder_a(
-    nacional_data: Path,
+    nacional_data: Path, sem_regua: None
 ) -> None:
     """UF e municipio sao FILTROS sobre a lista do pais, aplicados depois da
     ordenacao — nao voltam a ser pre-requisito dela, que era o defeito do Modo 3."""
@@ -1634,7 +1661,9 @@ def test_filtro_de_uf_recorta_a_lista_nacional_em_vez_de_preceder_a(
     assert {i["municipio"] for i in so_campinas} == {"Campinas"}
 
 
-def test_por_municipio_deixa_o_melhor_hexagono_de_cada_cidade(nacional_data: Path) -> None:
+def test_por_municipio_deixa_o_melhor_hexagono_de_cada_cidade(
+    nacional_data: Path, sem_regua: None
+) -> None:
     """Sem isto, num recorte nacional o topo vira uma sequencia de hexagonos vizinhos
     da mesma regiao metropolitana. E' OPCIONAL: o pedido foi "os melhores hexagonos",
     e o default entrega hexagono, nao cidade."""
@@ -1647,7 +1676,9 @@ def test_por_municipio_deixa_o_melhor_hexagono_de_cada_cidade(nacional_data: Pat
     assert residual_sp == 4000
 
 
-def test_hexagonos_publica_as_reguas_e_o_denominador(nacional_data: Path) -> None:
+def test_hexagonos_publica_as_reguas_e_o_denominador(
+    nacional_data: Path, sem_regua: None
+) -> None:
     """A lista declara com que regua cortou e sobre quantos hexagonos — sem isso o
     operador nao tem como saber se esta vendo o pais ou um pedaco dele."""
     body = pilot.hexagonos()
@@ -1669,7 +1700,7 @@ def test_hexagonos_publica_as_reguas_e_o_denominador(nacional_data: Path) -> Non
 
 
 def test_consumo_ausente_e_contado_em_vez_de_virar_white_space_silencioso(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, sem_regua: None
 ) -> None:
     """A armadilha desta rota. `_sem_concorrente` faz `fillna(0)`: consumo AUSENTE
     entra como "sem concorrente". Numa UF isso e' ruido; num ranking NACIONAL as UFs
@@ -1696,7 +1727,7 @@ def test_consumo_ausente_e_contado_em_vez_de_virar_white_space_silencioso(
 
 
 def test_ranking_nacional_e_funil_municipal_concordam_sobre_o_elegivel(
-    nacional_data: Path,
+    nacional_data: Path, sem_regua: None
 ) -> None:
     """A prova de que a regra foi unificada, e nao copiada.
 
@@ -1831,7 +1862,9 @@ def test_motivo_de_zona_morta_chega_traduzido_para_a_tela() -> None:
     assert "motivo_zona_morta_texto" in pilot._payload_viabilidade(body)
 
 
-def test_ranking_nacional_etiqueta_pelo_criterio_que_o_ordenou(nacional_data: Path) -> None:
+def test_ranking_nacional_etiqueta_pelo_criterio_que_o_ordenou(
+    nacional_data: Path, sem_regua: None
+) -> None:
     """O chip do item tem de explicar a POSIÇÃO dele (DEC-041/DEC-044).
 
     Achado da revisão automática, e estava certo: a rota passou a ordenar por

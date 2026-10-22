@@ -199,7 +199,8 @@ def test_crescimento_monta_linhas_e_troca_travessao():
     assert c.disponivel
     rotulos = dict(c.linhas)
     assert rotulos["Variação do emprego desde dez/2022"] == "+4,2% (mediana PE: +2,0%)"
-    assert rotulos["Saldo de empresas abertas"] == "1.234"
+    # "Saldo de empresas" (2026-10-20): e' aberturas MENOS fechamentos; "abertas" lia como so' aberturas.
+    assert rotulos["Saldo de empresas"] == "1.234"
     assert "—" not in c.frase and " - " in c.frase
 
 

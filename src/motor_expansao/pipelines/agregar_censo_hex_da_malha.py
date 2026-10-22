@@ -41,6 +41,21 @@ O que este pipeline NAO faz
   ficam intactos (a renda do M1 e a SIDRA municipal, outra coluna).
 - NAO muda a regua da DEC-040. `calcular_score_calibrado` e chamada como esta.
 
+Renda EXIBIDA do hexagono (E3 do plano de correcao da renda)
+------------------------------------------------------------
+Alem da renda do SCORE (`renda_malha`, a calibrada, intocada), o artefato carrega a renda de
+2022 do hexagono na escala de EXIBICAO, agregada pela MESMA regra de fracao de area:
+
+- `renda_domiciliar_2022_malha` = soma(dom_2022_s x domicilios_s) / soma(domicilios_s), com
+  `domicilios_s` os domicilios particulares ocupados do PEDACO do setor;
+- `renda_per_capita_domiciliar_2022_malha` = soma(pc_2022_s x pop_s) / soma(pop_s).
+
+`dom_2022_s` e `pc_2022_s` vem de `motor_expansao.renda.rendas_2022_setores` (V06004 x uplift
+DO SETOR; a per capita dividida pelos moradores DO SETOR) -- antes o hexagono usava moradores e
+uplift do MUNICIPIO. SEM fator temporal: ele so entra na exibicao (`renda.hex`), uma vez, com o
+tipo certo. Os denominadores contam so setores com a renda respectiva. Nenhuma coluna existente
+muda, e o score nao le estas duas.
+
 READ-ONLY sobre o M1.
 """
 
@@ -54,6 +69,16 @@ from pathlib import Path
 
 import numpy as np
 import pandas as pd
+
+from motor_expansao.renda import (
+    COL_RENDA_DOM_MALHA,
+    COL_RENDA_PC_MALHA,
+    COLS_RENDA_MALHA,
+    configurar_staging,
+    rendas_2022_setores,
+)
+from motor_expansao.renda.insumos import UPLIFT_MUNICIPIO_ARQUIVO, UPLIFT_SETOR_ARQUIVO
+from motor_expansao.renda.setor import COL_DOMICILIOS
 
 try:
     from motor_expansao.pipelines.calibrar_renda_setor_2022 import calcular_score_calibrado
@@ -76,6 +101,12 @@ COLUNAS_SETOR = (
     "cod_municipio",
     "pop_total_setor_2022",
     "renda_per_capita_setor_2022_calibrada",
+    # Insumos da renda EXIBIDA do hexagono (E3): V06004, per capita bruta (fallback da V06004),
+    # moradores e domicilios do setor.
+    "renda_responsavel_media_setor_2022",
+    "renda_per_capita_setor_2022",
+    "avg_moradores_domicilio_setor_2022",
+    "domicilios_particulares_ocupados_setor_2022",
     "geometry_wkb",
     "bbox_minx",
     "bbox_miny",
@@ -116,10 +147,18 @@ def _candidatos(geom, bbox: tuple[float, float, float, float], h3mod) -> set[str
     return cells
 
 
+#: Colunas da renda EXIBIDA (E3) e os pesos delas, no artefato da malha.
+COL_DOM_2022 = COL_RENDA_DOM_MALHA
+COL_PC_2022 = COL_RENDA_PC_MALHA
+COL_PESO_DOM = "domicilios_renda_dom_malha"
+COL_PESO_PC = "pop_renda_pc_malha"
+
+
 def agregar_setores(df: pd.DataFrame) -> pd.DataFrame:
     """Agrega um DataFrame de setores (com `geometry_wkb`) para o grao do hexagono.
 
-    Pura: nao muta `df`, nao le nem escreve disco.
+    Nao muta `df` e nao escreve disco. Le so os insumos do uplift do setor
+    (`motor_expansao.renda`, staging configurado), e so quando ha renda de 2022 no frame.
 
     A fracao de area de cada setor e NORMALIZADA para somar 1 antes de distribuir a
     populacao. Sem isso, erro de projecao/topologia nas bordas faria a soma das fracoes
@@ -139,8 +178,18 @@ def agregar_setores(df: pd.DataFrame) -> pd.DataFrame:
             cache[cell] = pol
         return pol
 
+    # Renda de 2022 do setor na escala de exibicao (E3), calculada pelo modulo da renda --
+    # o pipeline nao multiplica uplift nem divide por moradores (ponto unico, E0).
+    dom_2022, pc_2022 = rendas_2022_setores(df)
+    domicilios = (
+        pd.to_numeric(df[COL_DOMICILIOS], errors="coerce").astype("float64")
+        if COL_DOMICILIOS in df.columns
+        else pd.Series(np.nan, index=df.index, dtype="float64")
+    )
+    extras = zip(dom_2022.to_numpy(), pc_2022.to_numpy(), domicilios.to_numpy(), strict=True)
+
     acumulado: dict[str, list[float]] = {}
-    for linha in df.itertuples(index=False):
+    for linha, (dom_s, pc_s, domic_s) in zip(df.itertuples(index=False), extras, strict=True):
         pop = getattr(linha, "pop_total_setor_2022", np.nan)
         renda = getattr(linha, "renda_per_capita_setor_2022_calibrada", np.nan)
         if not np.isfinite(pop) or pop <= 0:
@@ -173,19 +222,30 @@ def agregar_setores(df: pd.DataFrame) -> pd.DataFrame:
             continue
 
         tem_renda = bool(np.isfinite(renda))
+        tem_dom = bool(np.isfinite(dom_s) and np.isfinite(domic_s) and domic_s > 0)
+        tem_pc = bool(np.isfinite(pc_s))
         for cell, fracao in pedacos:
-            pop_pedaco = pop * (fracao / soma)
-            alvo = acumulado.setdefault(cell, [0.0, 0.0, 0.0, 0.0])
+            parte = fracao / soma
+            pop_pedaco = pop * parte
+            alvo = acumulado.setdefault(cell, [0.0] * 8)
             alvo[0] += pop_pedaco                      # populacao atribuida
             alvo[3] += 1.0                             # setores contribuintes
             if tem_renda:
                 alvo[1] += renda * pop_pedaco          # numerador da renda
                 alvo[2] += pop_pedaco                  # populacao COM renda
+            if tem_dom:                                # E3: domiciliar por domicilios
+                domic_pedaco = domic_s * parte
+                alvo[4] += dom_s * domic_pedaco
+                alvo[5] += domic_pedaco
+            if tem_pc:                                 # E3: per capita por populacao
+                alvo[6] += pc_s * pop_pedaco
+                alvo[7] += pop_pedaco
 
     if not acumulado:
         return pd.DataFrame(
             columns=["hex_id", "pop_malha", "renda_malha", "pop_com_renda_malha",
-                     "n_setores_malha", "cobertura_renda_malha"]
+                     "n_setores_malha", "cobertura_renda_malha",
+                     COL_DOM_2022, COL_PESO_DOM, COL_PC_2022, COL_PESO_PC]
         )
 
     out = pd.DataFrame(
@@ -200,6 +260,10 @@ def agregar_setores(df: pd.DataFrame) -> pd.DataFrame:
                 "pop_com_renda_malha": v[2],
                 "n_setores_malha": int(v[3]),
                 "cobertura_renda_malha": (v[2] / v[0]) if v[0] > 0 else np.nan,
+                COL_DOM_2022: (v[4] / v[5]) if v[5] > 0 else np.nan,
+                COL_PESO_DOM: v[5],
+                COL_PC_2022: (v[6] / v[7]) if v[7] > 0 else np.nan,
+                COL_PESO_PC: v[7],
             }
             for cell, v in acumulado.items()
         ]
@@ -252,19 +316,33 @@ def agregar_particoes(
     # diferentes na divisa). Reagregar por hex_id, e nao concatenar, e o que impede o
     # mesmo hexagono de aparecer duas vezes com metade da populacao cada.
     todos["num"] = todos.renda_malha * todos.pop_com_renda_malha
+    # E3: mesmos numeradores por peso; `fillna(0)` porque um pedaco sem a renda tem peso 0.
+    todos["num_dom"] = (todos[COL_DOM_2022] * todos[COL_PESO_DOM]).fillna(0.0)
+    todos["num_pc"] = (todos[COL_PC_2022] * todos[COL_PESO_PC]).fillna(0.0)
     agg = todos.groupby("hex_id", as_index=False).agg(
         pop_malha=("pop_malha", "sum"),
         pop_com_renda_malha=("pop_com_renda_malha", "sum"),
         num=("num", "sum"),
         n_setores_malha=("n_setores_malha", "sum"),
         uf=("uf", "first"),
+        num_dom=("num_dom", "sum"),
+        peso_dom=(COL_PESO_DOM, "sum"),
+        num_pc=("num_pc", "sum"),
+        peso_pc=(COL_PESO_PC, "sum"),
     )
     agg["renda_malha"] = np.where(agg.pop_com_renda_malha > 0, agg.num / agg.pop_com_renda_malha, np.nan)
     agg["cobertura_renda_malha"] = np.where(
         agg.pop_malha > 0, agg.pop_com_renda_malha / agg.pop_malha, np.nan
     )
     agg["densidade_malha_hab_km2"] = agg.pop_malha / AREA_HEX_KM2
-    return agg.drop(columns=["num"]).sort_values("hex_id").reset_index(drop=True)
+    agg[COL_DOM_2022] = np.where(agg.peso_dom > 0, agg.num_dom / agg.peso_dom, np.nan)
+    agg[COL_PC_2022] = np.where(agg.peso_pc > 0, agg.num_pc / agg.peso_pc, np.nan)
+    agg = agg.rename(columns={"peso_dom": COL_PESO_DOM, "peso_pc": COL_PESO_PC})
+    return (
+        agg.drop(columns=["num", "num_dom", "num_pc"])
+        .sort_values("hex_id")
+        .reset_index(drop=True)
+    )
 
 
 def anexar_score(agg: pd.DataFrame, pop_hex: pd.DataFrame | None = None) -> pd.DataFrame:
@@ -458,13 +536,19 @@ def sobrepor_renda_da_malha(
       defeito de 2026-08-14 (renda do tooltip 17% abaixo do IBGE).
     - Carimba `fonte_renda_censo_hex` linha a linha, para a auditoria distinguir o que
       veio da malha do que so' foi reescalado.
+    - Carrega as colunas da renda EXIBIDA (E3, `COLS_RENDA_MALHA`) quando a malha as tem;
+      onde a malha nao alcanca elas ficam nulas e a exibicao cai na formula municipal.
+      Malha anterior a E3 (sem as colunas) -> o frame sai sem elas, como antes.
 
     Pura: nao muta `censo`. Sem o parquet da malha, devolve `censo` intacto.
     """
     if not Path(malha_path).exists() or censo.empty or "hex_id" not in censo.columns:
         return censo
 
-    malha = pd.read_parquet(malha_path, columns=["hex_id", "renda_malha", "score_malha", "k_malha"])
+    extras = _colunas_e3_presentes(malha_path)
+    malha = pd.read_parquet(
+        malha_path, columns=["hex_id", "renda_malha", "score_malha", "k_malha", *extras]
+    )
     k_malha = float(pd.to_numeric(malha["k_malha"], errors="coerce").dropna().median())
 
     # IDEMPOTENCIA. `calcular_colunas_mercado` le o proprio artefato como entrada, entao
@@ -474,7 +558,10 @@ def sobrepor_renda_da_malha(
     # 1,2047 de novo (+45% acumulado), e nada quebraria: os numeros continuariam plausiveis.
     k_antigo = _k_do_carimbo(censo.get(COL_CARIMBO)) or k_exato_do_censo_hex()
 
-    out = censo.merge(malha, on="hex_id", how="left")
+    # Reprocessar um frame que ja tem as colunas E3 (idempotencia): a malha e a fonte delas.
+    out = censo.drop(columns=[c for c in extras if c in censo.columns]).merge(
+        malha, on="hex_id", how="left"
+    )
     tem_malha = out["renda_malha"].notna()
 
     fator = k_malha / k_antigo
@@ -486,6 +573,14 @@ def sobrepor_renda_da_malha(
     out[COL_FONTE] = np.where(tem_malha, FONTE_MALHA, FONTE_REESCALADA)
     out[COL_CARIMBO] = f"multiplicativo_global_k={k_malha}"
     return out.drop(columns=["renda_malha", "score_malha", "k_malha"])
+
+
+def _colunas_e3_presentes(malha_path: Path) -> list[str]:
+    """As colunas da renda exibida (E3) que o artefato da malha tem (vazio se anterior a E3)."""
+    import pyarrow.parquet as pq
+
+    nomes = set(pq.read_schema(malha_path).names)
+    return [c for c in COLS_RENDA_MALHA if c in nomes]
 
 
 #: Procedencia dos hexagonos ADMITIDOS (nao apenas revalorados) pela malha.
@@ -520,8 +615,9 @@ def admitir_orfaos_da_malha(
     if not Path(malha_path).exists() or "hex_id" not in censo.columns:
         return censo
 
+    extras = _colunas_e3_presentes(malha_path)
     malha = pd.read_parquet(
-        malha_path, columns=["hex_id", "uf", "pop_malha", "renda_malha", "score_malha"]
+        malha_path, columns=["hex_id", "uf", "pop_malha", "renda_malha", "score_malha", *extras]
     )
     faltantes = malha[~malha["hex_id"].isin(set(censo["hex_id"]))]
     # So' entra quem a malha realmente mede: sem score nao ha sinal censitario, e admitir
@@ -540,6 +636,7 @@ def admitir_orfaos_da_malha(
                 faltantes["pop_malha"], errors="coerce"
             ).to_numpy(),
             COL_FONTE: FONTE_ORFAO_ADMITIDO,
+            **{c: pd.to_numeric(faltantes[c], errors="coerce").to_numpy() for c in extras},
         }
     )
     if COL_CARIMBO in censo.columns:
@@ -637,6 +734,12 @@ def main() -> None:
     parser.add_argument("--output", type=Path, default=DEFAULT_OUTPUT_PATH)
     parser.add_argument("--uf", action="append", default=None, help="limita a UFs (repetivel)")
     parser.add_argument(
+        "--staging",
+        type=Path,
+        default=Path("data/staging"),
+        help="staging com os uplifts de composicao (setor e municipio) da renda exibida (E3)",
+    )
+    parser.add_argument(
         "--pop-hex",
         type=Path,
         default=Path("data/staging/hexagonos_mercado_mapeado.parquet"),
@@ -647,6 +750,16 @@ def main() -> None:
     caminhos = listar_particoes(args.geo_root, tuple(args.uf) if args.uf else None)
     if not caminhos:
         raise SystemExit(f"nenhuma particao em {args.geo_root}")
+    # A renda EXIBIDA do hexagono (E3) usa o uplift DO SETOR. Sem os insumos o modulo cairia
+    # na cascata nacional com um WARNING, e o artefato sairia com o uplift do PAIS em todo
+    # setor -- plausivel e errado. Aqui e producao de artefato: falha fechado.
+    faltam = [
+        n for n in (UPLIFT_SETOR_ARQUIVO, UPLIFT_MUNICIPIO_ARQUIVO)
+        if not (args.staging / n).is_file()
+    ]
+    if faltam:
+        raise SystemExit(f"insumos do uplift ausentes em {args.staging}: {faltam}")
+    configurar_staging(args.staging)
     print(f"particoes: {len(caminhos)}", flush=True)
 
     ilegiveis: list[Path] = []
@@ -673,6 +786,8 @@ def main() -> None:
     print(json.dumps({
         "hexagonos": int(len(resultado)),
         "com_renda": int(resultado.renda_malha.notna().sum()),
+        "com_renda_domiciliar_2022": int(resultado[COL_DOM_2022].notna().sum()),
+        "com_renda_per_capita_2022": int(resultado[COL_PC_2022].notna().sum()),
         "populacao_total": float(resultado.pop_malha.sum()),
         "ufs": int(resultado.uf.nunique()),
     }, indent=2))

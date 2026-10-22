@@ -83,6 +83,10 @@ def _praca(df: pd.DataFrame, **kw) -> PracaDaCidade:
         crescimento=rp.resumir_crescimento({"cres_tendencia": "Em alta", "v_frase": "Cidade em alta."}, uf="SP"),
         mapas={k: _png() for k in ("calor_cidade_renda_domiciliar", "calor_cidade_densidade", "pressao_cidade", "onde_crescer")},
         n_hexagonos_cidade=len(hexes),
+        top_residual=rp.top_por_coluna(hexes, rp.COL_RESIDUAL),
+        top_socio=rp.top_por_coluna(
+            rp.com_socio_sem_teto(hexes), rp.COL_SCORE_SOCIO, desempate=rp.COL_SOCIO_SEM_TETO,
+        ),
     )
     base.update(kw)
     return PracaDaCidade(**base)
@@ -243,11 +247,12 @@ def test_pdf_municipal_ganha_as_quatro_paginas():
         # condicionais: fora da tupla canonica
         assert titulo not in PDF_SECTION_HEADERS
 
-    # mesma ordem das paginas que o docstring promete: cada titulo aparece DEPOIS do anterior
-    # (busca encadeada -- "Score Censitário" tambem e' citado antes da propria pagina)
+    # Ordem das paginas desde 2026-10-20 (Juan): os mapas do territorio (score, residual, calor,
+    # pressao, como a cidade esta' indo) antes da estrategia (dominio, onde crescer) e da sintese.
+    # Busca encadeada: cada titulo aparece DEPOIS do anterior.
     pos = 0
-    for t in ("Score Censitário", TITULO_MAPAS_CALOR_CIDADE, "Residual Fitness", TITULO_PRESSAO_CONCORRENCIAL,
-              "Expansão de Domínio", TITULO_ONDE_CRESCER, TITULO_COMO_A_CIDADE_ESTA_INDO, "Síntese"):
+    for t in ("Score Censitário", "Residual Fitness", TITULO_MAPAS_CALOR_CIDADE, TITULO_PRESSAO_CONCORRENCIAL,
+              TITULO_COMO_A_CIDADE_ESTA_INDO, "Expansão de Domínio", TITULO_ONDE_CRESCER, "Síntese"):
         pos = com.index(t.encode("latin-1"), pos) + 1
 
 
@@ -261,11 +266,12 @@ def test_pdf_onde_crescer_mostra_bairro_criterio_e_rede_pelo_rotulo():
     df = _df_cidade(2)
     res = _resultado(df)
     praca = _praca(df)
-    primeiro = praca.onde_crescer.hexagonos["hex_id"].iloc[0]
+    primeiro = praca.top_residual["hex_id"].iloc[0]
     res = {**res, "bairros_por_hex": {primeiro: "Pinheiros"}}
     pdf = gerar_pdf_relatorio_municipal(res, None, praca=praca)
     assert b"Pinheiros" in pdf
-    assert "índice de praça".encode("latin-1") in pdf
+    # Duas listas desde 2026-10-20: maior residual e maior socioeconomico.
+    assert b"Maior residual" in pdf and "Maior socioeconômico".encode("latin-1") in pdf
     assert b"Smart Fit" in pdf  # a pagina de pressao lista a rede pelo rotulo, nao pelo slug
 
 
@@ -279,11 +285,13 @@ def test_pdf_municipal_sem_crescimento_e_sem_elegivel_explica():
         onde_crescer=sel_vazia,
         crescimento=rp.resumir_crescimento(None),
         mapas={},
+        top_residual=pd.DataFrame(),
+        top_socio=pd.DataFrame(),
     )
     pdf = gerar_pdf_relatorio_municipal(_resultado(df), None, praca=praca)
     assert rp.TEXTO_SEM_CRESCIMENTO.encode("latin-1") in pdf
-    # sem elegivel, quem explica e' o aviso da selecao (a frase da tabela seria redundante)
-    assert praca.onde_crescer.aviso and "Nenhum hexágono do município".encode("latin-1") in pdf
+    # Lista vazia diz isso na propria tabela (2026-10-20: as duas listas nao dependem de renda).
+    assert b"Sem dado para esta lista." in pdf
     assert "Mapa indisponível".encode("latin-1") in pdf
 
 

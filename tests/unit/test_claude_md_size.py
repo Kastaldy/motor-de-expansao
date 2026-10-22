@@ -44,8 +44,9 @@ _ROOT = Path(__file__).resolve().parents[2]
 #: 241 -> 242 na DEC-074 (2026-10-19), idem: 1 linha-índice, corpo em docs/decisions/DEC-074.md.
 #: 242 -> 243 na DEC-076 (2026-10-20), idem: 1 linha-índice, corpo em docs/decisions/DEC-076.md.
 #: 243 -> 244 na DEC-075 (2026-10-20, E2 da renda), idem: 1 linha-índice, corpo em docs/decisions/DEC-075.md.
-#: 244 -> 245 na DEC-078 (2026-10-20; renumerada de DEC-075 em 2026-10-21), idem: 1 linha-índice, corpo em docs/decisions/DEC-078.md.
-_TETO_LINHAS = 245
+#: 244 -> 245 na DEC-077 (2026-10-21), idem: 1 linha-índice, corpo em docs/decisions/DEC-077.md.
+#: 245 -> 246 na DEC-078 (2026-10-20; renumerada de DEC-075 em 2026-10-21 e de DEC-077 em 2026-10-22), idem: 1 linha-índice, corpo em docs/decisions/DEC-078.md.
+_TETO_LINHAS = 246
 
 
 def _linhas(p: Path) -> int:

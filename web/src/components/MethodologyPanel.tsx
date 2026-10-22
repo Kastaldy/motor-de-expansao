@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 
 import { api } from '../lib/api'
+import { corDaEtiquetaTop10, textosTop10 } from '../lib/top10'
 import type { CamadaMetodologia, MetodologiaPayload, MetricaMetodologia } from '../lib/types'
 import { Chip, Eyebrow, Spinner } from './primitives'
 
@@ -135,6 +136,20 @@ function Camada({
   ativa: boolean
 }) {
   const faixas = faixasDoEscopo(camada, escopo)
+  /* Onde há a recomendação única (tabela de textos por país), as camadas 1 a 4 são LEITURA:
+     o corte delas é a régua que a leitura acende, não um filtro que "passa" para a
+     seguinte. A 5 é a régua do Top 10. Fora da tabela (AR), o rótulo de sempre. */
+  const textos = textosTop10()
+  const rotuloCorte = textos
+    ? camada.n === 5
+      ? textos.metodologiaCorteTop10
+      : textos.metodologiaCorteLeitura
+    : 'passa no corte'
+  /* Chip dos SEGMENTOS do Top 10 na cor do token que pinta o mapa, o selo MV1/P1 e a
+     legenda (o `tom` publicado é o do tipo `Tom`, cujo azul é a identidade de outra camada:
+     o Premium sairia azul aqui e violeta no mapa). */
+  const corDaFaixa = (etiqueta: string, cor?: string | null) =>
+    (textos && camada.n === 5 ? corDaEtiquetaTop10(etiqueta) : null) ?? cor
   return (
     <section
       style={{
@@ -188,7 +203,7 @@ function Camada({
             color: 'var(--tx-muted)',
           }}
         >
-          passa no corte
+          {rotuloCorte}
         </span>
         <div
           className="num"
@@ -221,7 +236,7 @@ function Camada({
                 key={f.etiqueta + f.condicao}
                 style={{ display: 'flex', alignItems: 'center', gap: 8 }}
               >
-                <Chip tom={f.tom} cor={f.cor}>
+                <Chip tom={f.tom} cor={corDaFaixa(f.etiqueta, f.cor)}>
                   {f.etiqueta}
                 </Chip>
                 <span
@@ -381,7 +396,10 @@ export default function MethodologyPanel({
               color: 'var(--tx-max)',
             }}
           >
-            Como cada camada decide
+            {/* As camadas 1 a 4 viraram LEITURA e só a 5 (o Top 10) recomenda: onde há a
+                recomendação única o título diz isso. O conteúdo vem do servidor; fora da
+                tabela de textos por país (AR), o título de sempre. */}
+            {textosTop10()?.metodologiaTitulo ?? 'Como cada camada decide'}
           </h2>
         </div>
         <button

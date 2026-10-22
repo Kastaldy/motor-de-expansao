@@ -23,7 +23,7 @@ import type {
   OportunidadesPayload,
   Cobertura1k,
   EstadosPayload,
-  HexagonosPayload,
+  HexagonosResposta,
   MunicipioPayload,
   PontoPayload,
   PontoResolvido,
@@ -572,23 +572,26 @@ export const api = {
   estados: () => pedir<EstadosPayload>('/api/estados', {}, 120_000),
 
   /**
-   * Ranking NACIONAL por HEXÁGONO — os melhores do Brasil, sem escolher estado.
+   * O Top 10 do RECORTE (recomendação única, DEC-077): sem filtro = Brasil; `uf` = o
+   * estado; `uf` + `municipio` = o município. O servidor devolve o bloco `recomendacao`
+   * (o MESMO de `/api/uf` e `/api/municipio` para o mesmo recorte) e, numa instância sem
+   * régua, o ranking legado — por isso a resposta é uma união, discriminada por
+   * `temTop10` (`lib/top10.ts`).
    *
-   * `uf`/`municipio` são filtros SOBRE a lista nacional, aplicados no servidor depois
-   * da ordenação: nunca antes dela. Mesma varredura das 27 partições de `estados()`,
-   * e por isso o mesmo timeout longo na primeira chamada.
+   * Sem `limite` e sem `por_municipio`: o Top 10 tem tamanho fixo pela régua e vizinhos
+   * podem ocupar várias vagas — "um por cidade" contradiria a regra. Filtro vazio não vai
+   * na URL. Timeout longo: a primeira leitura do Brasil varre as 27 partições.
    */
-  hexagonos: (opts: { limite?: number; uf?: string; municipio?: string; porMunicipio?: boolean } = {}) => {
+  hexagonos: (opts: { uf?: string; municipio?: string } = {}) => {
     const q = new URLSearchParams()
-    if (opts.limite) q.set('limite', String(opts.limite))
     if (opts.uf) q.set('uf', opts.uf)
     if (opts.municipio) q.set('municipio', opts.municipio)
-    if (opts.porMunicipio) q.set('por_municipio', 'true')
     const texto = q.toString()
-    return pedir<HexagonosPayload>(`/api/hexagonos${texto ? `?${texto}` : ''}`, {}, 120_000)
+    return pedir<HexagonosResposta>(`/api/hexagonos${texto ? `?${texto}` : ''}`, {}, 120_000)
   },
 
-  /** Visão de UF inteira: funil por UF + recomendação de municípios. */
+  /** Visão de UF inteira: as camadas de leitura por município e, onde há a régua, o Top 10
+   *  de hexágonos da UF (bloco `recomendacao`); sem a régua, a fila legada de municípios. */
   ufView: (uf: string) => pedir<MunicipioPayload>(`/api/uf/${encodeURIComponent(uf)}`),
 
   /* ---- Modo de PONTO ---- */
