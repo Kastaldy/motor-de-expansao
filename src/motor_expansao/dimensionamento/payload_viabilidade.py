@@ -128,8 +128,9 @@ class ViabilidadeInputs(BaseModel):
     # IGNORADO — o payload devolve `mes_maturidade_rampa`, o fim da rampa que valeu.
     forma_rampa: str | None = None
     # PICO de maturacao (emenda da DEC-077): o mes em que a curva chega a 100% da demanda.
-    # None = o observado (`SIM_MES_PICO_RAMPA_PADRAO`, mes 10). So' as opcoes de
-    # `SIM_MESES_PICO_RAMPA` (fora delas -> 422). Na reta e' aceito e IGNORADO.
+    # None = o observado (`SIM_MES_PICO_RAMPA_PADRAO`, mes 10). Qualquer mes de
+    # `SIM_MES_PICO_RAMPA_MIN` a `SIM_MES_PICO_RAMPA_MAX` (1 a 36; fora -> 422). Na reta e'
+    # aceito e IGNORADO.
     mes_pico_rampa: int | None = None
 
     # --- Premissas explicitas (FIN-VIAB-01) ---------------------------------
@@ -175,14 +176,16 @@ class ViabilidadeInputs(BaseModel):
 
     @field_validator("mes_pico_rampa")
     @classmethod
-    def _pico_nas_opcoes(cls, v: int | None) -> int | None:
-        from motor_expansao.dimensionamento.config import SIM_MESES_PICO_RAMPA
+    def _pico_no_intervalo(cls, v: int | None) -> int | None:
+        from motor_expansao.dimensionamento.config import (
+            SIM_MES_PICO_RAMPA_MAX,
+            SIM_MES_PICO_RAMPA_MIN,
+        )
 
-        if v is not None and v not in SIM_MESES_PICO_RAMPA:
-            opcoes = ", ".join(str(m) for m in SIM_MESES_PICO_RAMPA[:-1])
+        if v is not None and not SIM_MES_PICO_RAMPA_MIN <= v <= SIM_MES_PICO_RAMPA_MAX:
             raise ValueError(
-                f"mes_pico_rampa fora das opções: {v!r}. Use {opcoes} ou "
-                f"{SIM_MESES_PICO_RAMPA[-1]} meses"
+                f"mes_pico_rampa fora do intervalo: {v!r}. Use um mês de "
+                f"{SIM_MES_PICO_RAMPA_MIN} a {SIM_MES_PICO_RAMPA_MAX}"
             )
         return v
 

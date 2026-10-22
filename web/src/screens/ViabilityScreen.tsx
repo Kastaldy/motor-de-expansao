@@ -45,9 +45,9 @@ import {
   v2Disponivel,
 } from '../lib/viabilidade-demanda-v2'
 import {
-  MESES_PICO_RAMPA,
   ajudaDaRampa,
   mesFimDaRampa,
+  passoPico,
   picoExibido,
   picoParaEnviar,
   rotuloPico,
@@ -288,7 +288,7 @@ export default function ViabilityScreen({
   const [estadoV2, setEstadoV2] = useState<EstadoDemandaV2 | null>(null)
   const [sugestaoV2, setSugestaoV2] = useState<DemandaV2Out | null>(null)
   const [erroV2, setErroV2] = useState<string | null>(null)
-  // Rampa de maturação (DEC-077, emenda de 21/10/2026): só a curva observada, com o PICO
+  // Rampa de maturação (DEC-077, emendas de 21 e 22/10/2026): só a curva observada, com o PICO
   // DE MATURAÇÃO escolhido pelo operador; `null` = sem escolha, e então o pedido vai sem
   // `mes_pico_rampa` e vale o pico observado (padrão do SERVIDOR). A forma não é mais
   // escolha da tela: o pedido não manda `forma_rampa`.
@@ -1395,7 +1395,7 @@ export default function ViabilityScreen({
             </div>
           </div>
 
-          {/* ---- Rampa de maturação: curva observada, com o PICO escolhido ---- */}
+          {/* ---- Rampa de maturação: curva observada, com o PICO no contador "−/+" ---- */}
           <div
             style={{
               marginTop: 14,
@@ -1405,53 +1405,42 @@ export default function ViabilityScreen({
               borderRadius: 'var(--r-lg)',
             }}
           >
-            <div
-              style={{
-                display: 'flex',
-                justifyContent: 'space-between',
-                alignItems: 'baseline',
-                marginBottom: 8,
-              }}
-            >
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
               <span style={{ font: '500 11px/1 var(--f-ui)', color: 'var(--tx-label)' }}>
-                Pico de maturação da rampa
+                Pico de maturação
               </span>
-              <span
-                className="num"
-                style={{ font: '700 14px/1 var(--f-num)', color: 'var(--tx-max)' }}
-              >
-                {picoMostrado != null ? rotuloPico(picoMostrado) : ''}
-              </span>
-            </div>
-            <div
-              role="radiogroup"
-              aria-label="Pico de maturação, em meses"
-              style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}
-            >
-              {MESES_PICO_RAMPA.map((m) => {
-                const ativo = picoMostrado === m
-                return (
-                  <button
-                    key={m}
-                    type="button"
-                    role="radio"
-                    aria-checked={ativo}
-                    aria-label={`Pico de maturação no mês ${m}`}
-                    onClick={() => setPicoRampa(m)}
-                    style={{
-                      flex: '1 0 34px',
-                      padding: '7px 0',
-                      borderRadius: 'var(--r-md)',
-                      border: `1px solid ${ativo ? 'var(--ac)' : 'var(--line-soft)'}`,
-                      background: ativo ? 'var(--surf-raised)' : 'transparent',
-                      color: ativo ? 'var(--tx-max)' : 'var(--tx-sub)',
-                      font: `${ativo ? 600 : 500} 12px/1 var(--f-num)`,
-                    }}
-                  >
-                    {m}
-                  </button>
-                )
-              })}
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                <button
+                  type="button"
+                  aria-label="Diminuir o pico de maturação"
+                  disabled={picoMostrado == null}
+                  onClick={() => picoMostrado != null && setPicoRampa(passoPico(picoMostrado, -1))}
+                  style={stepper}
+                >
+                  −
+                </button>
+                <span
+                  className="num"
+                  aria-live="polite"
+                  style={{
+                    font: '700 14px/1 var(--f-num)',
+                    color: 'var(--tx-max)',
+                    minWidth: 58,
+                    textAlign: 'center',
+                  }}
+                >
+                  {picoMostrado != null ? rotuloPico(picoMostrado) : '—'}
+                </span>
+                <button
+                  type="button"
+                  aria-label="Aumentar o pico de maturação"
+                  disabled={picoMostrado == null}
+                  onClick={() => picoMostrado != null && setPicoRampa(passoPico(picoMostrado, 1))}
+                  style={stepper}
+                >
+                  +
+                </button>
+              </div>
             </div>
             <div style={{ font: '400 10.5px/1.4 var(--f-ui)', color: 'var(--tx-sub)', marginTop: 8 }}>
               {ajudaDaRampa(premissas)}

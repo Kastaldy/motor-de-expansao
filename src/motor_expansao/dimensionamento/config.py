@@ -160,14 +160,15 @@ SIM_CURVA_RAMPA_UNI03 = (
 # ancorados (mes 1 = a abertura observada, 68%; mes `pico` = 100%):
 #   fracao(t) = curva_obs(1 + (t - 1) x 9 / (pico - 1)), interpolando linearmente entre
 #   meses observados; >= 10 -> 100%.
-# Pico 10 devolve a curva acima INTACTA (byte a byte). Opcoes: 6 e 8 (abertura mais
-# rapida que a rede; 8 e' a maturacao historica da planilha), 10 (o observado), 12 (um
-# ano), 15, 18 e 24 (praca que demora; 24 = dois anos). Conjunto pequeno de proposito:
-# o pico e' premissa de cenario, nao parametro fino. Fora dele -> 422.
+# Pico 10 devolve a curva acima INTACTA (byte a byte). Intervalo: qualquer mes de 1 a 36,
+# de mes em mes (o mesmo do contador "-/+" da rampa antiga, `rampa_meses`; pedido de
+# Vinicius em 22/10/2026, que trocou as 7 opcoes fixas pelo contador). Pico 1 = a rampa ja'
+# abre cheia. Fora do intervalo -> 422.
 SIM_MES_PICO_RAMPA_OBSERVADO = next(
     i for i, f in enumerate(SIM_CURVA_RAMPA_UNI03, start=1) if f >= 1.0
 )
-SIM_MESES_PICO_RAMPA = (6, 8, 10, 12, 15, 18, 24)
+SIM_MES_PICO_RAMPA_MIN = 1
+SIM_MES_PICO_RAMPA_MAX = 36
 SIM_MES_PICO_RAMPA_PADRAO = SIM_MES_PICO_RAMPA_OBSERVADO
 
 # Drivers financeiros (Simulador — celulas J9, N9, N11, R9)

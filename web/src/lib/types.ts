@@ -591,7 +591,7 @@ export interface ViabilidadeIn {
    *  produto e' so' a curva; o campo segue no contrato pela API publica. */
   forma_rampa?: 'curva_uni03' | 'reta'
   /** Pico de maturacao da curva (emenda da DEC-077): o mes em que a rampa chega a 100%
-   *  da demanda. Ausente = o observado (mes 10). So' as opcoes de `MESES_PICO_RAMPA`. */
+   *  da demanda. Ausente = o observado (mes 10). Qualquer mes de 1 a 36 (`PICO_RAMPA_MIN/MAX`). */
   mes_pico_rampa?: number
   /** Fonte da demanda (DEC-077 ampliada). Ausente/`densidade` = o de sempre. `v2` exige
    *  `demanda_v2` (o token devolvido por `/api/demanda-v2`); a `demanda` continua a do

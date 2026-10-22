@@ -9,15 +9,26 @@
 
    QUAL é o padrão NÃO mora aqui: a forma (`SIM_FORMA_RAMPA_PADRAO`) e o pico observado
    (`SIM_MES_PICO_RAMPA_PADRAO`) são do servidor. Esta tela só manda `mes_pico_rampa`
-   quando o operador escolhe; sem escolha, o seletor mostra o pico que o payload devolveu.
-   As OPÇÕES do seletor espelham `SIM_MESES_PICO_RAMPA` (o servidor recusa outras com 422).
+   quando o operador escolhe; sem escolha, o contador mostra o pico que o payload devolveu.
+   O contador "−/+" anda de mês em mês, no intervalo de `SIM_MES_PICO_RAMPA_MIN/MAX` (o
+   servidor recusa fora dele com 422) — o mesmo controle da rampa antiga (22/10/2026).
 
    Os identificadores são os do contrato (sem acento); os rótulos são texto de usuário.
    --------------------------------------------------------------------------- */
 
-/** Opções do pico de maturação, em meses (espelho de `SIM_MESES_PICO_RAMPA`). */
-export const MESES_PICO_RAMPA = [6, 8, 10, 12, 15, 18, 24] as const
-export type MesPicoRampa = (typeof MESES_PICO_RAMPA)[number]
+/** Intervalo do contador, em meses (espelho de `SIM_MES_PICO_RAMPA_MIN/MAX`). */
+export const PICO_RAMPA_MIN = 1
+export const PICO_RAMPA_MAX = 36
+/** Pico observado na rede (espelho de `SIM_MES_PICO_RAMPA_OBSERVADO`, travado por teste
+ *  contra o `config.py`). Só serve para o contador ter de onde partir ANTES do 1º cálculo;
+ *  o pedido segue sem `mes_pico_rampa` enquanto o operador não mexe. */
+export const PICO_RAMPA_OBSERVADO = 10
+export type MesPicoRampa = number
+
+/** Um passo do contador (−1 ou +1), preso ao intervalo do servidor. */
+export function passoPico(atual: number, delta: -1 | 1): number {
+  return Math.min(PICO_RAMPA_MAX, Math.max(PICO_RAMPA_MIN, atual + delta))
+}
 
 /** Campos do payload que esta lib lê (subconjunto de `PremissasViabilidade`). */
 export interface PremissasRampa {
@@ -34,22 +45,23 @@ export function formaDoPayload(p: PremissasRampa | null | undefined): 'curva_uni
   return p?.forma_rampa === 'curva_uni03' ? 'curva_uni03' : 'reta'
 }
 
-/** Rótulo de uma opção do seletor. */
+/** Rótulo do contador. */
 export function rotuloPico(meses: number): string {
-  return `${meses} meses`
+  return `${meses} ${meses === 1 ? 'mês' : 'meses'}`
 }
 
 /**
- * Pico que o seletor marca: o ESCOLHIDO pelo operador ou, sem escolha, o que o servidor
- * usou no último cálculo. Antes de qualquer cálculo (ou com o servidor na rampa linear),
- * `null`: a tela não adivinha o padrão do servidor.
+ * Pico que o contador mostra: o ESCOLHIDO pelo operador ou, sem escolha, o que o servidor
+ * usou no último cálculo. Antes de qualquer cálculo, o observado na rede (é o que o
+ * servidor aplica a um pedido sem pico). Com o servidor na rampa linear, `null`.
  */
 export function picoExibido(
   escolhido: MesPicoRampa | null,
   p: PremissasRampa | null | undefined,
 ): number | null {
   if (escolhido != null) return escolhido
-  if (!p || formaDoPayload(p) !== 'curva_uni03') return null
+  if (!p) return PICO_RAMPA_OBSERVADO
+  if (formaDoPayload(p) !== 'curva_uni03') return null
   const m = p.mes_pico_rampa ?? p.mes_maturidade_rampa
   return m != null && Number.isFinite(m) && m > 0 ? Math.round(m) : null
 }
@@ -65,35 +77,15 @@ export function picoParaEnviar(escolhido: MesPicoRampa | null): MesPicoRampa | u
 const RECALCULE = 'Recalcule para atualizar o payback.'
 
 /**
- * Texto de ajuda sob o seletor. Escolher o pico NÃO recalcula sozinho (como os outros
- * campos da barra lateral): o texto diz isso. Os percentuais saem de `curva_rampa` do
- * payload (quando já houve cálculo) — a tela não crava número do motor.
+ * Ajuda sob o contador: UMA linha (pedido de 22/10/2026 — o texto longo ocupava a barra
+ * lateral). O detalhe (abertura medida, amarra do agregador) mora na nota metodológica
+ * (`notaDaRampa`). Escolher o pico NÃO recalcula sozinho, e a linha diz isso.
  */
-export function ajudaDaRampa(
-  p: (PremissasRampa & { curva_rampa?: readonly number[] | null }) | null | undefined,
-): string {
-  const base =
-    'Curva observada nas unidades da rede. O pico de maturação é o mês em que a unidade ' +
-    'chega à demanda madura: o padrão é o pico observado; outro pico estica ou encurta a ' +
-    'mesma curva no tempo, com a mesma abertura no mês 1.'
+export function ajudaDaRampa(p: PremissasRampa | null | undefined): string {
   if (p && formaDoPayload(p) !== 'curva_uni03') {
-    return (
-      `O servidor está usando a rampa linear de ${p.maturacao_meses} meses, e o pico de ` +
-      `maturação só vale na curva observada. ${RECALCULE}`
-    )
+    return `O servidor usou a rampa linear de ${p.maturacao_meses} meses. ${RECALCULE}`
   }
-  const curva = p?.curva_rampa
-  let numeros = ''
-  if (curva && curva.length > 0) {
-    const fim = curva.findIndex((f) => f >= 1)
-    numeros =
-      ` No último cálculo: ${Math.round(curva[0] * 100)}% da demanda no mês 1` +
-      (fim >= 0 ? ` e 100% a partir do mês ${fim + 1}.` : '.')
-  }
-  return (
-    `${base}${numeros} Foi medida em unidades que abriram com agregador: sem agregador, ` +
-    `tende a ser otimista. ${RECALCULE}`
-  )
+  return `Mês em que a unidade atinge a demanda madura. ${RECALCULE}`
 }
 
 /**
@@ -128,14 +120,23 @@ export function efeitoDaRampaNoSteady(p: PremissasRampa): string {
   return 'Afeta o caixa e o payback, não a margem de steady-state.'
 }
 
-/** Frase da nota metodológica sobre a rampa. */
-export function notaDaRampa(p: PremissasRampa): string {
+/** Frase da nota metodológica sobre a rampa — onde mora o detalhe que saiu da ajuda. */
+export function notaDaRampa(
+  p: PremissasRampa & { curva_rampa?: readonly number[] | null },
+): string {
   const fim = mesFimDaRampa(p)
   if (formaDoPayload(p) === 'curva_uni03') {
+    // Percentual do mês 1 sai da curva SERVIDA; a tela não crava número do motor.
+    const abertura =
+      p.curva_rampa && p.curva_rampa.length > 0
+        ? ` A unidade abre com ${Math.round(p.curva_rampa[0] * 100)}% da demanda no mês 1.`
+        : ''
     return (
       'Curva observada nas unidades da rede: cada mês tem uma fração da demanda madura, ' +
-      `até a demanda cheia no pico de maturação, mês ${fim ?? '?'}. Outro pico reescala a ` +
-      'mesma curva no tempo. O faturamento segue alunos × ticket: o ticket menor dos ' +
+      `até a demanda cheia no pico de maturação, mês ${fim ?? '?'}.${abertura} Outro ` +
+      'pico estica ou encurta a mesma curva no tempo, com a mesma abertura. A curva foi ' +
+      'medida em unidades que abriram com agregador: sem agregador, tende a ser otimista. ' +
+      'O faturamento segue alunos × ticket: o ticket menor dos ' +
       'primeiros meses (promoções) não é modelado, e por isso o caixa do 1º ano tende a ' +
       `sair otimista. ${efeitoDaRampaNoSteady(p)}`
     )

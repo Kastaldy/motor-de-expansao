@@ -5,13 +5,16 @@ import { describe, expect, it } from 'vitest'
 
 import * as rampa from './viabilidade-rampa'
 import {
-  MESES_PICO_RAMPA,
+  PICO_RAMPA_MAX,
+  PICO_RAMPA_MIN,
+  PICO_RAMPA_OBSERVADO,
   ajudaDaRampa,
   casaNoMes1,
   ebitdaDosPrimeirosMeses,
   formaDoPayload,
   mesFimDaRampa,
   notaDaRampa,
+  passoPico,
   picoExibido,
   picoParaEnviar,
   rotuloPico,
@@ -37,9 +40,27 @@ const CURVA_PICO_6 = {
 const LINEAR = { maturacao_meses: 8, forma_rampa: 'reta', mes_maturidade_rampa: 8, mes_pico_rampa: null }
 
 describe('pico de maturação (emenda de 21/10/2026 da DEC-077)', () => {
-  it('as opções espelham SIM_MESES_PICO_RAMPA do servidor', () => {
-    expect([...MESES_PICO_RAMPA]).toEqual([6, 8, 10, 12, 15, 18, 24])
+  it('o intervalo e o pico observado espelham o config.py do servidor', () => {
+    const config = readFileSync(
+      fileURLToPath(new URL('../../../src/motor_expansao/dimensionamento/config.py', import.meta.url)),
+      'utf-8',
+    )
+    expect(config).toContain(`SIM_MES_PICO_RAMPA_MIN = ${PICO_RAMPA_MIN}\n`)
+    expect(config).toContain(`SIM_MES_PICO_RAMPA_MAX = ${PICO_RAMPA_MAX}\n`)
+    // o observado é DERIVADO da curva no servidor: o 1º mês com 100%
+    const curva = /SIM_CURVA_RAMPA_UNI03 = \(([^)]*)\)/.exec(config)
+    expect(curva).not.toBeNull()
+    const fracoes = curva![1].split(',').map((s) => s.trim()).filter(Boolean).map(Number)
+    expect(fracoes.findIndex((f) => f >= 1) + 1).toBe(PICO_RAMPA_OBSERVADO)
     expect(rotuloPico(12)).toBe('12 meses')
+    expect(rotuloPico(1)).toBe('1 mês')
+  })
+
+  it('o contador anda de mês em mês e para nas pontas do intervalo', () => {
+    expect(passoPico(10, 1)).toBe(11)
+    expect(passoPico(10, -1)).toBe(9)
+    expect(passoPico(PICO_RAMPA_MIN, -1)).toBe(PICO_RAMPA_MIN)
+    expect(passoPico(PICO_RAMPA_MAX, 1)).toBe(PICO_RAMPA_MAX)
   })
 
   it('a tela não crava padrão nem oferece a forma: ambos são do servidor', () => {
@@ -55,7 +76,7 @@ describe('pico de maturação (emenda de 21/10/2026 da DEC-077)', () => {
   })
 
   it('o pico escolhido vai no pedido como mes_pico_rampa', () => {
-    for (const m of MESES_PICO_RAMPA) {
+    for (const m of [1, 7, 36]) {
       expect(JSON.parse(JSON.stringify({ mes_pico_rampa: picoParaEnviar(m) }))).toEqual({
         mes_pico_rampa: m,
       })
@@ -69,8 +90,8 @@ describe('pico de maturação (emenda de 21/10/2026 da DEC-077)', () => {
     expect(picoExibido(null, { ...CURVA, mes_pico_rampa: undefined })).toBe(10)
   })
 
-  it('antes do primeiro cálculo, ou na rampa linear, nenhum pico é marcado', () => {
-    expect(picoExibido(null, null)).toBeNull()
+  it('antes do primeiro cálculo o contador parte do observado; na rampa linear, nenhum pico', () => {
+    expect(picoExibido(null, null)).toBe(PICO_RAMPA_OBSERVADO)
     expect(picoExibido(null, LINEAR)).toBeNull()
   })
 
@@ -80,20 +101,12 @@ describe('pico de maturação (emenda de 21/10/2026 da DEC-077)', () => {
 })
 
 describe('ajuda do controle', () => {
-  it('declara a amarra do agregador e que é preciso recalcular', () => {
+  it('é curta (uma linha) e diz que é preciso recalcular', () => {
     for (const p of [null, CURVA, CURVA_PICO_6, LINEAR]) {
       expect(ajudaDaRampa(p).toLowerCase()).toContain('recalcule para atualizar o payback')
+      // pedido de 22/10/2026: o detalhe vai para as notas metodológicas
+      expect(ajudaDaRampa(p).length).toBeLessThanOrEqual(90)
     }
-    expect(ajudaDaRampa(CURVA)).toContain('agregador')
-  })
-
-  it('os percentuais saem da curva servida, não de número cravado', () => {
-    expect(ajudaDaRampa(CURVA)).toContain('68% da demanda no mês 1')
-    expect(ajudaDaRampa(CURVA)).toContain('100% a partir do mês 10')
-    expect(ajudaDaRampa(CURVA_PICO_6)).toContain('68% da demanda no mês 1')
-    expect(ajudaDaRampa(CURVA_PICO_6)).toContain('100% a partir do mês 6')
-    // antes do primeiro cálculo não há curva: a ajuda não inventa percentual
-    expect(ajudaDaRampa(null)).not.toMatch(/\d+%/)
   })
 
   it('nenhum texto da rampa fala em "reta"', () => {
@@ -133,6 +146,14 @@ describe('nota metodológica', () => {
     expect(notaDaRampa(CURVA)).toContain('mês 10')
     expect(notaDaRampa(CURVA_PICO_6)).toContain('pico de maturação, mês 6')
     expect(notaDaRampa(CURVA)).toContain('não é modelado')
+  })
+
+  it('carrega o detalhe que saiu da ajuda: abertura servida e amarra do agregador', () => {
+    expect(notaDaRampa(CURVA)).toContain('68% da demanda no mês 1')
+    expect(notaDaRampa(CURVA_PICO_6)).toContain('68% da demanda no mês 1')
+    expect(notaDaRampa(CURVA)).toContain('agregador')
+    // sem curva servida, não inventa percentual
+    expect(notaDaRampa({ ...CURVA, curva_rampa: undefined })).not.toMatch(/\d+% da demanda/)
   })
 
   it('pico até o mês 12: a rampa não mexe na margem de steady-state', () => {
@@ -227,10 +248,12 @@ describe('a tela trata a Viabilidade como produto único', () => {
     expect(TELA).not.toContain('forma_rampa:')
   })
 
-  it('o seletor de pico percorre as opções e manda mes_pico_rampa no pedido', () => {
-    expect(TELA).toContain('MESES_PICO_RAMPA.map(')
-    expect(TELA).toContain('onClick={() => setPicoRampa(m)}')
+  it('o pico é um contador "−/+" de mês em mês e vai no pedido como mes_pico_rampa', () => {
+    expect(TELA).toContain('setPicoRampa(passoPico(picoMostrado, -1))')
+    expect(TELA).toContain('setPicoRampa(passoPico(picoMostrado, 1))')
+    expect(TELA).toContain('aria-label="Diminuir o pico de maturação"')
+    expect(TELA).toContain('aria-label="Aumentar o pico de maturação"')
     expect(TELA).toContain('mes_pico_rampa: picoParaEnviar(picoRampa)')
-    expect(TELA).toContain('aria-label="Pico de maturação, em meses"')
+    expect(TELA).not.toContain('Pico de maturação, em meses')
   })
 })

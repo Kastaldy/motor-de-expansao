@@ -20,7 +20,7 @@ O QUE ESTE ARQUIVO TRAVA
 2. Pico 6 e 18 conferidos a mao em meses escolhidos (a conta esta no comentario).
 3. Para TODA opcao: monotonica, (0, 1], o fim da rampa (primeiro mes com 100%) e' o pico,
    e o mes de steady e' max(pico, mes da anuidade).
-4. Contrato: `mes_pico_rampa` fora das opcoes -> 422 em portugues (piloto e API publica);
+4. Contrato: `mes_pico_rampa` fora de 1..36 -> 422 em portugues (piloto e API publica);
    eco em `premissas`; na reta e' aceito e ignorado (eco null).
 5. Planilha com pico != 10: a tabela e o "Mes em que a rampa termina" refletem o pico, e
    recalculada (pacote `formulas`) bate com o motor nos 64 meses.
@@ -46,9 +46,10 @@ from pydantic import ValidationError
 from motor_expansao.dimensionamento.config import (
     SIM_CURVA_RAMPA_UNI03,
     SIM_FORMA_RAMPA_CURVA_UNI03,
+    SIM_MES_PICO_RAMPA_MAX,
+    SIM_MES_PICO_RAMPA_MIN,
     SIM_MES_PICO_RAMPA_OBSERVADO,
     SIM_MES_PICO_RAMPA_PADRAO,
-    SIM_MESES_PICO_RAMPA,
 )
 from motor_expansao.dimensionamento.payload_viabilidade import (
     ViabilidadeIn,
@@ -127,12 +128,17 @@ def _premissas_pico(pico: int, **over: object) -> Premissas:
 # ---------------------------------------------------------------------------
 
 
-def test_opcoes_e_padrao_do_pico() -> None:
-    assert SIM_MESES_PICO_RAMPA == (6, 8, 10, 12, 15, 18, 24)
+# Todo mes do intervalo do contador "-/+" (22/10/2026): 1..36.
+PICOS = tuple(range(SIM_MES_PICO_RAMPA_MIN, SIM_MES_PICO_RAMPA_MAX + 1))
+
+
+def test_intervalo_e_padrao_do_pico() -> None:
+    # o mesmo intervalo do contador da rampa antiga (`rampa_meses`, 1..36)
+    assert (SIM_MES_PICO_RAMPA_MIN, SIM_MES_PICO_RAMPA_MAX) == (1, 36)
     # o observado e' DERIVADO da curva (primeiro mes com 100%), nao cravado
     assert SIM_MES_PICO_RAMPA_OBSERVADO == 10
     assert SIM_MES_PICO_RAMPA_PADRAO == SIM_MES_PICO_RAMPA_OBSERVADO
-    assert SIM_MES_PICO_RAMPA_PADRAO in SIM_MESES_PICO_RAMPA
+    assert SIM_MES_PICO_RAMPA_MIN <= SIM_MES_PICO_RAMPA_PADRAO <= SIM_MES_PICO_RAMPA_MAX
 
 
 def test_pico_observado_devolve_a_curva_intacta() -> None:
@@ -205,16 +211,21 @@ def test_pico_18_conferido_a_mao() -> None:
     assert len(c) == 20
 
 
-@pytest.mark.parametrize("pico", SIM_MESES_PICO_RAMPA)
+@pytest.mark.parametrize("pico", PICOS[1:])
 def test_toda_opcao_abre_no_nivel_observado(pico: int) -> None:
     """O mes 1 e' DADO MEDIDO (a abertura da rede): o pico so' move o tempo ate' 100%, e
-    nenhum mes fica parado na abertura (o mes 2 ja' sobe)."""
+    nenhum mes fica parado na abertura (o mes 2 ja' sobe). Pico 1 fica de fora: e' a rampa
+    que ja' abre cheia (`test_pico_1_abre_cheio`)."""
     c = curva_rampa_com_pico(pico)
     assert c[0] == SIM_CURVA_RAMPA_UNI03[0]
     assert c[1] > SIM_CURVA_RAMPA_UNI03[0]
 
 
-@pytest.mark.parametrize("pico", SIM_MESES_PICO_RAMPA)
+def test_pico_1_abre_cheio() -> None:
+    assert set(curva_rampa_com_pico(1)) == {1.0}
+
+
+@pytest.mark.parametrize("pico", PICOS)
 def test_toda_opcao_e_monotonica_e_fecha_no_pico(pico: int) -> None:
     c = curva_rampa_com_pico(pico)
     assert all(0.0 < f <= 1.0 for f in c)
@@ -237,7 +248,7 @@ def test_pico_mais_lento_paga_mais_tarde() -> None:
     igual ou maior. Nao e' numero da DEC; e' a direcao que o operador espera."""
     paybacks = [
         simular(DEMANDA, _premissas_pico(m), **INVEST).payback_meses  # type: ignore[arg-type]
-        for m in SIM_MESES_PICO_RAMPA
+        for m in PICOS
     ]
     assert paybacks == sorted(paybacks)
 
@@ -296,8 +307,8 @@ def test_pico_invalido_no_nucleo() -> None:
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.parametrize("pico", [0, 7, 9, 36])
-def test_pico_fora_das_opcoes_e_recusado_em_portugues(pico: int) -> None:
+@pytest.mark.parametrize("pico", [-1, 0, 37, 99])
+def test_pico_fora_do_intervalo_e_recusado_em_portugues(pico: int) -> None:
     for modelo in (ViabilidadeInputs, ViabilidadeIn):
         kw: dict[str, object] = {"m2": 1500, "aluguel": 30000, "demanda": 1600}
         if modelo is ViabilidadeIn:
@@ -305,11 +316,17 @@ def test_pico_fora_das_opcoes_e_recusado_em_portugues(pico: int) -> None:
         with pytest.raises(ValidationError) as exc:
             modelo(**kw, mes_pico_rampa=pico)
         msg = str(exc.value)
-        assert "mes_pico_rampa fora das opções" in msg
-        assert "6, 8, 10, 12, 15, 18 ou 24 meses" in msg
+        assert "mes_pico_rampa fora do intervalo" in msg
+        assert "Use um mês de 1 a 36" in msg
 
 
-def test_api_publica_devolve_422_com_pico_fora_das_opcoes() -> None:
+@pytest.mark.parametrize("pico", [1, 7, 9, 36])
+def test_todo_mes_do_intervalo_e_aceito(pico: int) -> None:
+    """O contador anda de mes em mes: 7 e 9 (fora das antigas 7 opcoes) valem."""
+    assert ViabilidadeInputs(m2=1500, aluguel=30000, demanda=1600, mes_pico_rampa=pico).mes_pico_rampa == pico
+
+
+def test_api_publica_devolve_422_com_pico_fora_do_intervalo() -> None:
     pytest.importorskip("httpx")
     from fastapi.testclient import TestClient
 
@@ -318,13 +335,13 @@ def test_api_publica_devolve_422_com_pico_fora_das_opcoes() -> None:
     corpo = {
         "lat": -23.55,
         "lng": -46.63,
-        "viabilidade": {"m2": 1500, "aluguel": 30000, "demanda": 1600, "mes_pico_rampa": 7},
+        "viabilidade": {"m2": 1500, "aluguel": 30000, "demanda": 1600, "mes_pico_rampa": 37},
     }
     resp = TestClient(create_app()).post(
         "/api/v1/analisar", json=corpo, headers={"Authorization": "Bearer dev-token"}
     )
     assert resp.status_code == 422
-    assert "mes_pico_rampa fora das opções" in resp.text
+    assert "mes_pico_rampa fora do intervalo" in resp.text
 
 
 def test_payload_ecoa_o_pico_e_a_curva_reescalada() -> None:
