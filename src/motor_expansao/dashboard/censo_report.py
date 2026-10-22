@@ -1585,12 +1585,12 @@ def _viab_normalizado(viabilidade: Mapping[str, Any]) -> dict[str, Any]:
         "flag_fora_envelope": viabilidade.get("flag_fora_envelope"),
         "flag_zona_morta": viabilidade.get("flag_zona_morta"),
         "motivo_zona_morta": viabilidade.get("motivo_zona_morta"),
-        # Viabilidade v2 (DEC-077 ampliada): so' existe no payload do modo v2. Ausente, o
+        # Viabilidade v2 (DEC-078 ampliada): so' existe no payload do modo v2. Ausente, o
         # rodape e' o de sempre, byte a byte.
         "demanda_v2": viabilidade.get("demanda_v2"),
         "demanda_fonte": viabilidade.get("demanda_fonte"),
         "demanda_v2_aviso": viabilidade.get("demanda_v2_aviso"),
-        # Pico de maturacao da curva (emenda da DEC-077, 21/10/2026): so' existe na curva
+        # Pico de maturacao da curva (emenda da DEC-078, 21/10/2026): so' existe na curva
         # (na reta o payload o manda null). LEITURA do payload, como o resto do slide.
         "mes_pico_rampa": _viab_campo(viabilidade, "mes_pico_rampa", "premissas", "mes_pico_rampa"),
         # Reguas do veredito, servidas pelo proprio payload (`premissas.*`). A pagina de
@@ -1615,7 +1615,7 @@ def _viab_normalizado(viabilidade: Mapping[str, Any]) -> dict[str, Any]:
 def _viab_linha_demanda_v2(dados: Mapping[str, Any]) -> str | None:
     """Linha da origem da demanda quando ela vem do modelo de praça; `None` sem ele.
 
-    Produto UNICO (emenda da DEC-077, 21/10/2026): o texto fala do "modelo de praça",
+    Produto UNICO (emenda da DEC-078, 21/10/2026): o texto fala do "modelo de praça",
     nunca de versao, e nao carimba a faixa como provisoria (o registro metodologico fica
     na DEC). Pontuacao ASCII de proposito (fonte core do fpdf2, latin-1): sem travessao,
     seta, reticencias nem sinal de menos tipografico. Acento portugues e' latin-1.

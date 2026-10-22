@@ -11,7 +11,6 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
-from types import SimpleNamespace
 
 import pandas as pd
 import pytest
@@ -102,7 +101,7 @@ def test_sem_populacao_na_base_cai_na_simples():
     assert sel.populacao_na_base is False
 
 
-# --- cobertura do peso e o texto do PDF ------------------------------------------------------
+# --- cobertura do peso e o texto da regua ---------------------------------------------------
 
 
 def test_cobertura_conta_os_hexagonos_com_renda_fora_do_peso():
@@ -142,49 +141,11 @@ def test_populacao_so_fora_dos_hexagonos_com_renda_nao_diz_que_a_base_nao_tem():
     assert "não traz população por hexágono" not in nota
 
 
-def _texto_da_pagina(sel) -> str:
-    """Renderiza `_praca_onde_crescer_page` de verdade e devolve o texto extraido do PDF."""
-    import io
-    import re
-
-    from motor_expansao.dashboard import relatorio_municipal as rm
-
-    pdf = rm._UltraPDF()
-    praca = SimpleNamespace(onde_crescer=sel, mapas={})
-    rm._praca_onde_crescer_page(
-        pdf, {}, praca, {}, primary=rm.ULTRA_TURQUESA, secondary=rm.ULTRA_TURQUESA
-    )
-    # A conta de folhas vem do proprio fpdf2 e roda em qualquer ambiente; so a extracao do
-    # texto precisa do pypdf, que o CI nao instala (mesmo molde do `pypdfium2` no export).
-    assert pdf.pages_count == 1, "a nota do criterio empurrou a pagina para uma segunda folha"
-    pypdf = pytest.importorskip("pypdf", reason="sem extrator de PDF no ambiente (o CI nao instala o pypdf)")
-    paginas = pypdf.PdfReader(io.BytesIO(bytes(pdf.output()))).pages
-    assert len(paginas) == 1, "a nota do criterio empurrou a pagina para uma segunda folha"
-    return re.sub(r"\s+", " ", paginas[0].extract_text())
-
-
-def test_pdf_ponderada_declara_a_regua_e_a_cobertura():
-    df = _cidade_com_borda_rural()
-    df.loc[df["hex_id"].isin(["r0", "r1"]), "pop_leitura"] = None
-    texto = _texto_da_pagina(rp.selecionar_onde_crescer(df))
-    assert "igual ou acima da mediana da cidade ponderada pela população (R$" in texto
-    assert "2 dos 10 hexágonos com renda ficam fora do peso" in texto
-    assert "simples" not in texto
-    assert "elegíve" not in texto.split("fora do peso", 1)[1]  # nao promete o que a base real nega
-
-
-def test_pdf_sem_populacao_na_base_diz_simples_e_por_que():
-    texto = _texto_da_pagina(rp.selecionar_onde_crescer(_cidade_com_borda_rural().drop(columns=["pop_leitura"])))
-    assert "igual ou acima da mediana simples da cidade (R$" in texto
-    assert "A base não traz população por hexágono" in texto
-    assert "ponderada pela população" not in texto
-
-
-def test_pdf_sem_renda_nao_tem_qualificador_nem_parenteses_vazios():
-    texto = _texto_da_pagina(rp.selecionar_onde_crescer(_cidade_com_borda_rural().assign(renda_domiciliar=None)))
-    assert "igual ou acima da mediana da cidade. Entre eles" in texto
-    assert "população por hexágono" not in texto
-    assert "Não disponível)" not in texto
+# O texto da regua na pagina "Onde crescer" saiu do PDF com o #477: no Brasil a pagina e' o
+# Top 10 da DEC-077 (`_onde_crescer_recomendacao`) e, sem regua (Argentina), as duas listas por
+# coluna -- nenhum dos dois imprime a mediana. Os tres testes de texto que estavam aqui so'
+# rodavam com o pypdf instalado (a CI os pulava) e falhavam fora dela. A selecao e o texto da
+# regua seguem travados nos testes acima.
 
 
 # --- regressao com dado real -----------------------------------------------------------------

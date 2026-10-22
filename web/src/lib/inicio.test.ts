@@ -11,6 +11,7 @@ import {
   dimensaoPorId,
   entradaDaExecutiva,
   entradaValida,
+  linhaDoModo,
   modoPorId,
   modosDaTrilha,
   passoAlvoDoModo,
@@ -59,8 +60,8 @@ describe('MODOS', () => {
   it('o segundo passo vale nas DUAS trilhas, com o passo de cada card', () => {
     /* Em 2026-09-22 (2a rodada) a expansao ganhou passo tambem: o card pergunta o que a
        tela de destino perguntaria no primeiro gesto. Os DOIS `null` sao deliberados — o
-       panorama e' a rede inteira por definicao, e a fila nacional promete no proprio
-       texto "sem escolher estado antes". */
+       panorama e' a rede inteira por definicao, e o Top 10 de oportunidades abre pelo
+       Brasil ("do Brasil ao municipio"), com estado e municipio como filtros da tela. */
     expect(MODOS.map((m) => [m.id, m.segundoPasso])).toEqual([
       ['oportunidades', null],
       ['regiao', 'uf'],
@@ -152,6 +153,38 @@ describe('trilhasDisponiveis', () => {
   it('sem card nenhum nao ha trilha — a tela mostra a explicacao, nao uma pilula vazia', () => {
     expect(trilhasDisponiveis([])).toEqual([])
     expect(trilhaInicial([])).toBeNull()
+  })
+})
+
+describe('linhaDoModo — texto do card pelo país da instância (tabela, DEC-047)', () => {
+  const regiao = modoPorId('regiao')!
+
+  it('no Brasil, o card de região fala de camadas de leitura e do Top 10', () => {
+    expect(linhaDoModo(regiao, 'BR')).toBe(
+      'Camadas de leitura e o Top 10 por hexágono, do estado ao município.',
+    )
+  })
+
+  it('na Argentina (sem régua) e em país desconhecido, o texto de sempre', () => {
+    expect(linhaDoModo(regiao, 'AR')).toBe('O funil de 5 camadas até os municípios com espaço.')
+    expect(linhaDoModo(regiao, 'XX')).toBe(regiao.linha)
+  })
+
+  it('os outros cards devolvem a própria linha em qualquer país', () => {
+    for (const m of MODOS.filter((x) => x.id !== 'regiao')) {
+      expect(linhaDoModo(m, 'BR')).toBe(m.linha)
+      expect(linhaDoModo(m, 'AR')).toBe(m.linha)
+    }
+  })
+
+  it('o card de oportunidades promete o Top 10, do Brasil ao município', () => {
+    const op = modoPorId('oportunidades')!
+    expect(op.titulo).toBe('Ver o Top 10 de oportunidades')
+    expect(op.linha).toBe('Mata Virgem e Premium por hexágono, do Brasil ao município.')
+  })
+
+  it('sem país explícito, lê o perfil da instância (Brasil no default compilado)', () => {
+    expect(linhaDoModo(regiao)).toBe(linhaDoModo(regiao, 'BR'))
   })
 })
 

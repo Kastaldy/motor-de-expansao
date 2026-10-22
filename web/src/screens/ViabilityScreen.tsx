@@ -282,13 +282,13 @@ export default function ViabilityScreen({
   // A busca da faixa já respondeu (com ou sem p50)? Só depois disso a tela pode
   // afirmar "sem comparáveis" e trocar o número pelo campo de digitação.
   const [faixaBuscada, setFaixaBuscada] = useState(false)
-  // Viabilidade v2 (DEC-077 ampliada): o SERVIDOR diz se ela está disponível; só então a
+  // Viabilidade v2 (DEC-078 ampliada): o SERVIDOR diz se ela está disponível; só então a
   // demanda é semeada pelo p50 dela (editável, mesma `demandaTocada`). Indisponível ou
   // com erro -> o modo densidade de sempre, com o motivo discreto.
   const [estadoV2, setEstadoV2] = useState<EstadoDemandaV2 | null>(null)
   const [sugestaoV2, setSugestaoV2] = useState<DemandaV2Out | null>(null)
   const [erroV2, setErroV2] = useState<string | null>(null)
-  // Rampa de maturação (DEC-077, emendas de 21 e 22/10/2026): só a curva observada, com o PICO
+  // Rampa de maturação (DEC-078, emendas de 21 e 22/10/2026): só a curva observada, com o PICO
   // DE MATURAÇÃO escolhido pelo operador; `null` = sem escolha, e então o pedido vai sem
   // `mes_pico_rampa` e vale o pico observado (padrão do SERVIDOR). A forma não é mais
   // escolha da tela: o pedido não manda `forma_rampa`.

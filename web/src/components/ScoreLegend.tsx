@@ -13,6 +13,7 @@ import {
   fundoDoSwatch,
   tituloDaLegenda,
 } from '../lib/faixas'
+import type { LegendaTop10 } from '../lib/top10'
 
 /* Legenda das faixas do mapa (BLK-MAPA-FAIXAS-01).
 
@@ -175,19 +176,28 @@ function LegendaCrescimento({ comAlunos }: { comAlunos?: boolean }) {
 export default function ScoreLegend({
   passoN,
   comAlunos,
+  top10 = null,
 }: {
   passoN: number
   /** Há pino com número de alunos no recorte? Vem do payload, não de config. */
   comAlunos?: boolean
+  /**
+   * Legenda do Top 10 da recomendação única (`lib/top10.legendaTop10`). Só vale na camada
+   * 5: Mata Virgem / Premium no lugar das faixas M1, e "fora do Top 10" no lugar do
+   * "< 5k hab" — o mapa pinta o Top 10 ANTES do corte de população. Ausente (AR, payload
+   * sem o bloco) = a legenda legada da faixa M1.
+   */
+  top10?: LegendaTop10 | null
 }) {
   // O passo 4 tem escala propria e categorica; os demais seguem pela rampa.
   // O aro de alunos atravessa TODOS os passos, porque os pinos atravessam.
   if (passoN === 4) return <LegendaCrescimento comAlunos={comAlunos} />
   const faixas = faixasDoPasso(passoN)
+  const legTop10 = passoN === 5 ? top10 : null
 
   return (
     <div style={CAIXA}>
-      <div style={TITULO}>{tituloDaLegenda(passoN)}</div>
+      <div style={TITULO}>{legTop10 ? legTop10.titulo : tituloDaLegenda(passoN)}</div>
 
       <div style={LINHA}>
         {faixas
@@ -201,13 +211,19 @@ export default function ScoreLegend({
                 sub={passoN === 1 ? undefined : alunosDaFaixa(f)}
               />
             ))
-          : // Camada 5: a faixa do M1 e' CATEGORICA e o mapa pinta a cor cheia
-            // (`faixaM1ToColor`), entao aqui o swatch e' cor unica mesmo.
-            FAIXA_M1_ORDEM.map((nome) => (
-              <Bloco key={nome} fundo={FAIXA_M1_HEX[nome]} nome={nome} />
-            ))}
+          : legTop10
+            ? // Camada 5 com o Top 10: um bloco por SEGMENTO, na cor do token de tema
+              // (o mesmo par que o mapa espelha na `PELE` do HexMap).
+              legTop10.itens.map((it) => <Bloco key={it.nome} fundo={it.cor} nome={it.nome} />)
+            : // Camada 5: a faixa do M1 e' CATEGORICA e o mapa pinta a cor cheia
+              // (`faixaM1ToColor`), entao aqui o swatch e' cor unica mesmo.
+              FAIXA_M1_ORDEM.map((nome) => (
+                <Bloco key={nome} fundo={FAIXA_M1_HEX[nome]} nome={nome} />
+              ))}
 
-        {/* Corte operacional do dashboard (POP_MIN_ACIONAVEL): vale em toda camada. */}
+        {/* Corte operacional do dashboard (POP_MIN_ACIONAVEL): vale em toda camada —
+            menos na 5 com o Top 10, onde o que nao e' Top 10 sai esmaecido ("fora do Top
+            10") e as 10 regioes vem antes do corte. Mesmo lugar, mesmo filete. */}
         <span
           style={{
             display: 'flex',
@@ -216,8 +232,15 @@ export default function ScoreLegend({
             ...SEPARADOR,
           }}
         >
-          <span style={{ width: 14, height: 9, borderRadius: 2, background: 'rgb(150,150,170)' }} />
-          <span style={NOME}>&lt; 5k hab</span>
+          <span
+            style={{
+              width: 14,
+              height: 9,
+              borderRadius: 2,
+              background: legTop10 ? legTop10.fora.cor : 'rgb(150,150,170)',
+            }}
+          />
+          <span style={NOME}>{legTop10 ? legTop10.fora.nome : '< 5k hab'}</span>
         </span>
 
         {comAlunos ? <MarcaAlunos /> : null}

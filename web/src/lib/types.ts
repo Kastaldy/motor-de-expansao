@@ -217,6 +217,22 @@ export interface RankItem {
   residual?: number | null
   /** Concorrentes estimados num raio de 2 km. */
   conc?: number | null
+
+  /* --- Espelho do Top 10 (recomendação única, DEC-077) -----------------------
+   * Só o passo 5 de um payload COM o bloco `recomendacao` os emite. São um ESPELHO
+   * para consumidores antigos (ex.: `analisar()` do mapa, que acha o rótulo do hexágono
+   * pelos itens): a fonte de render do Top 10 é o bloco `MunicipioPayload.recomendacao`,
+   * nunca esta lista. */
+  /** Discriminador explícito: o item é um HEXÁGONO, mesmo na visão de UF (onde
+   *  `municipio` vem preenchido para o drill-down e não significa "item = município"). */
+  tipo_item?: 'hex'
+  segmento?: SegmentoTop10
+  /** Posição dentro do segmento (1..vagas_por_segmento), na ordem do servidor. */
+  posicao_segmento?: number
+  renda_domiciliar?: number | null
+  populacao?: number | null
+  score_censitario?: number | null
+  cod_municipio?: string | null
 }
 
 export interface Passo {
@@ -510,7 +526,13 @@ export interface Independentes {
 }
 
 export interface MunicipioPayload {
-  /** "uf" = visão de estado inteiro (recomenda municípios); "municipio" = drill-down. */
+  /**
+   * Top 10 do recorte (recomendação única, DEC-077) — 5 Mata Virgem + 5 Premium por
+   * hexágono. OPCIONAL de propósito: ausente = instância sem régua (AR), e o front segue o
+   * caminho legado byte a byte. A PRESENÇA da chave é o discriminador; nunca vem `null`.
+   */
+  recomendacao?: RecomendacaoTop10
+  /** "uf" = visão de estado inteiro; "municipio" = drill-down. */
   nivel: 'uf' | 'municipio'
   /** Só na visão de UF: crescimento do estado inteiro (ver `CrescimentoEstado`). */
   crescimento_estado?: CrescimentoEstado | null
@@ -586,14 +608,14 @@ export interface ViabilidadeIn {
   /** Meses de rampa de maturacao do balcao (Simulador E13; default do motor = 8). So'
    *  vale na forma `reta`; na curva o motor o aceita e ignora. */
   rampa_meses?: number
-  /** Forma da rampa (DEC-077): `curva_uni03` (curva observada) ou `reta`. Ausente = o
+  /** Forma da rampa (DEC-078): `curva_uni03` (curva observada) ou `reta`. Ausente = o
    *  padrao do SERVIDOR (a curva, desde a emenda de 21/10/2026). A tela NAO manda: o
    *  produto e' so' a curva; o campo segue no contrato pela API publica. */
   forma_rampa?: 'curva_uni03' | 'reta'
-  /** Pico de maturacao da curva (emenda da DEC-077): o mes em que a rampa chega a 100%
+  /** Pico de maturacao da curva (emenda da DEC-078): o mes em que a rampa chega a 100%
    *  da demanda. Ausente = o observado (mes 10). Qualquer mes de 1 a 36 (`PICO_RAMPA_MIN/MAX`). */
   mes_pico_rampa?: number
-  /** Fonte da demanda (DEC-077 ampliada). Ausente/`densidade` = o de sempre. `v2` exige
+  /** Fonte da demanda (DEC-078 ampliada). Ausente/`densidade` = o de sempre. `v2` exige
    *  `demanda_v2` (o token devolvido por `/api/demanda-v2`); a `demanda` continua a do
    *  corpo — o servidor só confere se ela é a sugerida ou foi editada. */
   modelo_demanda?: 'densidade' | 'v2'
@@ -870,13 +892,13 @@ export interface PremissasViabilidade {
   /** Parametro da RETA (ecoado mesmo na curva, onde nao vale). O fim da rampa que de
    *  fato valeu e' `mes_maturidade_rampa`. */
   maturacao_meses: number
-  /** Forma da rampa usada (DEC-077). Ausente = backend anterior, que era sempre a reta. */
+  /** Forma da rampa usada (DEC-078). Ausente = backend anterior, que era sempre a reta. */
   forma_rampa?: 'curva_uni03' | 'reta'
   /** Primeiro mes de operacao com a demanda cheia, na forma usada. */
   mes_maturidade_rampa?: number
   /** Na curva: fracao da demanda nos meses 1..N (depois, 1,0). Na reta: null. */
   curva_rampa?: number[] | null
-  /** Pico de maturacao pedido (emenda da DEC-077). Na reta: null. */
+  /** Pico de maturacao pedido (emenda da DEC-078). Na reta: null. */
   mes_pico_rampa?: number | null
   horizonte_meses: number
   /* --- Anuidade (Simulador J10/J12) -----------------------------------------
@@ -1121,7 +1143,7 @@ export interface ViabilidadeOut {
   /** "premissa_explicita" (DEC-009) no modo densidade; no modo v2, "modelo_v2" (a
    *  sugestão da v2) ou "premissa_editada" (o operador mudou a sugestão). */
   demanda_fonte: string
-  /** Só no modo v2 (DEC-077 ampliada): a sugestão conferida pelo servidor. */
+  /** Só no modo v2 (DEC-078 ampliada): a sugestão conferida pelo servidor. */
   demanda_v2?: DemandaV2Out
   /** Alunos assumidos por canal. `studios` traz um valor por studio, na ordem dos
    *  tickets (vazio ou ausente sem studio). */
@@ -2305,6 +2327,110 @@ export interface HexagonosPayload {
   }
   itens: HexagonoNacional[]
 }
+
+/* --- Recomendação única (DEC-077): Top 10 = 5 Mata Virgem + 5 Premium por hexágono ----------
+   Espelho EXATO de `Recomendacao.para_payload` (src/motor_expansao/recomendacao/nucleo.py).
+   Floats crus. Ausente no payload = instância sem régua (AR): o front segue o caminho legado.
+   Nomes com o sufixo `Top10` para não colidir com `lib/recomendacao.ts` (a ficha do ponto,
+   "Serve este imóvel?", que NÃO é esta regra). */
+export type SegmentoTop10 = 'mata_virgem' | 'premium'
+export type StatusSegmentoTop10 = 'completo' | 'incompleto' | 'indisponivel'
+export type MotivoVagaTop10 = 'renda_indisponivel' | 'candidatos_insuficientes'
+
+export interface ReguaTop10 {
+  versao: string
+  pais: string
+  dec: string
+  aprovado_por: string
+  fixada_por_env: boolean
+  vagas_por_segmento: number
+  mata_virgem: {
+    renda_domiciliar_min: number
+    residual_min: number
+    populacao_min: number | null
+    exige_residual_medido: boolean
+  }
+  premium: {
+    score_min: number
+    populacao_min: number | null
+    exige_residual_medido: boolean
+  }
+}
+
+export interface RecorteTop10 {
+  nivel: 'brasil' | 'uf' | 'municipio'
+  uf: string | null
+  cod_municipio: string | null
+  nome: string | null
+}
+
+export interface RendaTop10 {
+  disponivel: boolean
+  k: number | null
+  carimbo: string | null
+  fatores_versao: string | null
+  pais: string | null
+}
+
+/** Uma vaga do Top 10. Preenchida e vazia têm o MESMO conjunto de chaves. */
+export interface VagaTop10 {
+  segmento: SegmentoTop10
+  posicao: number
+  vazia: boolean
+  motivo: MotivoVagaTop10 | null
+  rotulo_motivo: string | null
+  hex_id: string | null
+  /** Bairro dominante (ou "A / B" quando o nome repete no Top 10). `null` = mostrar o município. */
+  nome_regiao: string | null
+  renda_domiciliar: number | null
+  renda_municipal: boolean
+  populacao: number | null
+  /** `null` numa vaga preenchida = residual estimado (não medido) — o número estimado nunca sai. */
+  residual: number | null
+  residual_medido: boolean
+  score_censitario: number | null
+  uf: string | null
+  cod_municipio: string | null
+  nome_municipio: string | null
+  lat: number | null
+  lng: number | null
+}
+
+export interface SegmentoTop10Payload {
+  segmento: SegmentoTop10
+  rotulo: string
+  status: StatusSegmentoTop10
+  rotulo_status: string
+  /** Candidatos do segmento no recorte (quem passou na régua), não as vagas preenchidas. */
+  n_elegiveis: number
+  sem_dado: Record<string, number>
+  /** SEMPRE `vagas_por_segmento` posições, na ordem do servidor. */
+  vagas: VagaTop10[]
+}
+
+export interface RecomendacaoTop10 {
+  versao_payload: number
+  regra: ReguaTop10
+  recorte: RecorteTop10
+  n_hexes_recorte: number
+  renda: RendaTop10
+  mata_virgem: SegmentoTop10Payload
+  premium: SegmentoTop10Payload
+  rotulos: {
+    segmento: Record<string, string>
+    status: Record<string, string>
+    motivo: Record<string, string>
+    sem_dado: Record<string, string>
+  }
+}
+
+/** `/api/hexagonos` com régua. */
+export interface HexagonosTop10Payload {
+  recomendacao: RecomendacaoTop10
+  cobertura: { hexes_no_recorte: number; ufs_no_recorte: number }
+}
+/** O que `/api/hexagonos` devolve: com régua o bloco; sem régua o ranking legado. */
+export type HexagonosResposta = HexagonosTop10Payload | HexagonosPayload
 
 /* ------------------------------------------------------------------------- *
  * Aba Acessos — analytics da trilha (emenda DEC-027; GET /api/acessos/*)    *

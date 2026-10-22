@@ -1,4 +1,4 @@
-"""Viabilidade v2 — a COLA entre o modelo puro, os coeficientes e o contrato (DEC-077).
+"""Viabilidade v2 — a COLA entre o modelo puro, os coeficientes e o contrato (DEC-078).
 
 - Carregador dos coeficientes (`v2_coeficientes.json`, exportado pelo Felipe): schema
   estrito; ausente ou invalido -> v2 INDISPONIVEL com motivo, nunca erro 500.
@@ -41,7 +41,7 @@ from motor_expansao.dimensionamento.demanda_v2 import (
     validar_coeficientes,
 )
 
-# Motivos (texto de usuario: acentuado). A Viabilidade e' UM produto (emenda da DEC-077,
+# Motivos (texto de usuario: acentuado). A Viabilidade e' UM produto (emenda da DEC-078,
 # 21/10/2026): o texto fala do "modelo de praça" que sugere a demanda, nunca de versao.
 MOTIVO_DESLIGADA = "A sugestão de demanda pelo modelo de praça está desligada neste servidor."
 MOTIVO_SEM_COEFICIENTES = (

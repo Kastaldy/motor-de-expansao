@@ -2,6 +2,7 @@ import { useState } from 'react'
 
 import ComparadorCidades from './ComparadorCidades'
 import CrescimentoDoEstado from './CrescimentoDoEstado'
+import Top10Regioes from './Top10Regioes'
 import { camadaCor } from '../lib/colors'
 import {
   type Linha,
@@ -19,7 +20,8 @@ import {
   temCoberturaSatelite,
   type CrescimentoMunicipio,
 } from '../lib/oportunidades'
-import type { CrescimentoEstado, Hex, Passo } from '../lib/types'
+import { textoLeituraVazia } from '../lib/top10'
+import type { CrescimentoEstado, Hex, Passo, RecomendacaoTop10 } from '../lib/types'
 import { Chip, Eyebrow } from './primitives'
 
 /* ---------------------------------------------------------------------------
@@ -72,6 +74,12 @@ export interface NarrativePanelProps {
   nivel?: 'uf' | 'municipio'
   /** Crescimento do estado inteiro — bloco próprio, não uma camada do funil. */
   crescimentoEstado?: CrescimentoEstado | null
+  /**
+   * O Top 10 da recomendação única (`MunicipioPayload.recomendacao`, DEC-077). Presente, o
+   * passo 5 deixa de ser a fila legada e passa a ser o `Top10Regioes` — no município e na
+   * UF. Ausente (AR, payload sem o bloco), o passo 5 segue o caminho legado intacto.
+   */
+  recomendacao?: RecomendacaoTop10 | null
 }
 
 /* ---------------------------------------------------------------------------
@@ -392,22 +400,27 @@ export default function NarrativePanel({
   passos,
   nivel,
   crescimentoEstado,
+  recomendacao = null,
 }: NarrativePanelProps) {
-  /** Filtro OPCIONAL do passo 5. Começa desligado: a fila que o motor entregou é a
+  /** Filtro OPCIONAL do passo 5 LEGADO. Começa desligado: a fila que o motor entregou é a
    *  resposta padrão, e esconder itens por default seria decidir pelo operador. */
   const [soCrescendo, setSoCrescendo] = useState(false)
+  /* Passo 5 com o bloco `recomendacao`: o Top 10 da recomendação única. O front NÃO
+     reordena e NÃO filtra esse caminho — a ordem e o desempate são do servidor, e um
+     filtro esconderia vagas contra a regra de vaga vazia sinalizada. */
+  const modoTop10 = passo.n === 5 && recomendacao != null
+  const filaLegada = passo.n === 5 && !modoTop10
   // Vem UMA vez no passo, nao repetido em cada hexagono (o payload de uma UF
   // triplicava). Na visao de UF cada item do ranking traz o seu.
-  /* Só o passo 5 passa por aqui. Nos outros a lista é a do servidor, intocada.
+  /* Só o passo 5 LEGADO passa por aqui. Nos outros a lista é a do servidor, intocada.
      `ordenarComDesempate` NÃO reordena por crescimento: a chave primária é `valor`,
      que desde a DEC-041 é o ÍNDICE DE PRAÇA (0-100) e não mais o residual, e o
      crescimento só decide entre empates — que o servidor evita mandando o índice com
      uma casa decimal. */
-  const itens =
-    passo.n === 5
-      ? filtrarPorCrescimento(ordenarComDesempate(passo.itens, cresMun), cresMun, soCrescendo)
-      : passo.itens
-  const escondidos = passo.n === 5 ? passo.itens.length - itens.length : 0
+  const itens = filaLegada
+    ? filtrarPorCrescimento(ordenarComDesempate(passo.itens, cresMun), cresMun, soCrescendo)
+    : passo.itens
+  const escondidos = filaLegada ? passo.itens.length - itens.length : 0
 
   const series = passo.series ?? null
   const dims = passo.dims ?? null
@@ -488,7 +501,9 @@ export default function NarrativePanel({
               width: '100%',
             }}
           >
-            filtrados de {passo.funil_from}
+            {/* O Top 10 não é um filtro da camada anterior: ele lê o recorte INTEIRO com
+                régua própria. "filtrados de" afirmaria a cascata que a regra nova tirou. */}
+            {modoTop10 ? 'sobre' : 'filtrados de'} {passo.funil_from}
           </span>
         </div>
 
@@ -523,10 +538,17 @@ export default function NarrativePanel({
         {/* So' no nivel de UF: la os itens do funil SAO cidades. No municipio a
             lista e' de hexagonos, e a comparacao deles ja vive no painel do mapa. */}
         {nivel === 'uf' && passos && passos.length > 0 && (
-          <ComparadorCidades passos={passos} cresMun={cresMun} />
+          <ComparadorCidades
+            passos={passos}
+            cresMun={cresMun}
+            /* Com o Top 10, o passo 5 deixou de ser por município: o comparador vira
+               leitura descritiva das camadas 1 a 4, sem vencedor. Sem o bloco (AR), o de
+               sempre. */
+            modoLeitura={recomendacao != null}
+          />
         )}
 
-        {passo.n === 5 && passo.itens.length > 0 && (
+        {filaLegada && passo.itens.length > 0 && (
           <div style={{ display: 'grid', gap: 8, margin: '0 0 12px' }}>
             <label
               style={{
@@ -575,22 +597,56 @@ export default function NarrativePanel({
           </p>
         )}
 
-        {itens.length === 0 ? (
-          <p
-            style={{
-              font: '400 12.5px/1.6 var(--f-ui)',
-              color: 'var(--tx-muted)',
-              padding: '18px 6px',
-              margin: 0,
-            }}
-          >
-            {/* O botão "← Camada anterior" só existe a partir do passo 2 (StepperBar
-                o esconde quando `atual === 1`); na camada 1 mandar o usuário clicar
-                nele apontaria para um controle que não está na tela. */}
-            {passo.n > 1
-              ? 'Nenhuma região passou neste filtro. Use "← Camada anterior", na barra de passos abaixo, para ver o que foi descartado — ou escolha outro município.'
-              : 'Nenhuma região passou neste filtro. Escolha outro município ou outro estado na barra de busca.'}
-          </p>
+        {modoTop10 && recomendacao ? (
+          /* O passo 5 com a recomendação única: os dois blocos fixos (Mata Virgem e
+             Premium), na ordem do servidor. Na UF o item é um HEXÁGONO — clique seleciona
+             e voa até ele; "Abrir {município}" é que desce ao município. */
+          <Top10Regioes
+            bloco={recomendacao}
+            variante="painel"
+            mostrarRegua={false}
+            selecionado={selecionado}
+            onSelecionar={onSelecionarHex}
+            onComparar={onComparar}
+            comparados={comparados}
+            maxComparados={maxComparados}
+            onAbrirMunicipio={nivel === 'uf' ? onDrillMunicipio : undefined}
+          />
+        ) : itens.length === 0 ? (
+          recomendacao ? (
+            /* Com o Top 10 as camadas 1 a 4 são LEITURA: lista vazia não é "nada passou no
+               filtro", nem motivo para trocar de município — o Top 10 lê o recorte inteiro,
+               com régua própria. A camada 4 do município não tem lista nunca (a leitura dela
+               vive na narrativa e nos Detalhes, acima): ali o estado vazio só repetiria isso. */
+            passo.n === 4 && nivel !== 'uf' ? null : (
+              <p
+                style={{
+                  font: '400 12.5px/1.6 var(--f-ui)',
+                  color: 'var(--tx-muted)',
+                  padding: '18px 6px',
+                  margin: 0,
+                }}
+              >
+                {textoLeituraVazia(nivel, recomendacao)}
+              </p>
+            )
+          ) : (
+            <p
+              style={{
+                font: '400 12.5px/1.6 var(--f-ui)',
+                color: 'var(--tx-muted)',
+                padding: '18px 6px',
+                margin: 0,
+              }}
+            >
+              {/* O botão "← Camada anterior" só existe a partir do passo 2 (StepperBar
+                  o esconde quando `atual === 1`); na camada 1 mandar o usuário clicar
+                  nele apontaria para um controle que não está na tela. */}
+              {passo.n > 1
+                ? 'Nenhuma região passou neste filtro. Use "← Camada anterior", na barra de passos abaixo, para ver o que foi descartado — ou escolha outro município.'
+                : 'Nenhuma região passou neste filtro. Escolha outro município ou outro estado na barra de busca.'}
+            </p>
+          )
         ) : (
           itens.map((it) => {
             const ativo = it.hex_id === selecionado

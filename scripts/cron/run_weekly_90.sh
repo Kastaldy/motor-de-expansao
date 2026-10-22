@@ -365,6 +365,7 @@ print(draw, int(round(100 * chaves.isin(vistas).mean())) if len(chaves) else 0)
         if [ "${COER:--1}" -lt 0 ]; then
           echo "[$(date -u)] AVISO: serie ilegivel -- a coerencia de chave ABSTEVE (DEC-061); so' a desenhabilidade decide"
         fi
+        REDES_ANTES=$(md5sum "$SD/vulnerabilidade_ma_redes.parquet" 2>/dev/null | cut -c1-32)
         if [ -f "$SD/vulnerabilidade_ma_nomeadas_novo.parquet" ] \
            && [ "$(stat -c%s "$SD/vulnerabilidade_ma_nomeadas_novo.parquet")" -gt 500000 ] \
            && [ -f "$SD/vulnerabilidade_ma_redes_novo.parquet" ] \
@@ -376,6 +377,22 @@ print(draw, int(round(100 * chaves.isin(vistas).mean())) if len(chaves) else 0)
           mv -f "$SD/vulnerabilidade_ma_academias_novo.parquet" "$SD/vulnerabilidade_ma_academias.parquet" 2>/dev/null || true
           mv -f "$OD/alvos_ma_priorizados_novo.csv" "$OD/alvos_ma_priorizados.csv" 2>/dev/null || true
           echo "[$(date -u)] pins M&A promovidos (${DRAW} desenhaveis)"
+          # 4.6) SEGUNDO regen quando a oferta de cadeia do agregador MUDOU (2026-10-21).
+          #      Ha' um CICLO entre os dois passos: o regen (passo 3) gera
+          #      `concorrentes_mapeados` E le `vulnerabilidade_ma_redes` (DEC-048); o passo 4.5
+          #      le esse `concorrentes_mapeados` e GERA `vulnerabilidade_ma_redes`. Rodando uma
+          #      vez so', o regen de domingo sempre usava as redes da semana ANTERIOR -- medido em
+          #      2026-10-18: regen 09:47-09:52, redes regravadas as 09:53, e a mudanca so' chegou
+          #      ao piloto no regen manual de 21/10 (6.821 hexagonos com residual alterado).
+          #      A 2a passada converge: o cadastro nao muda entre as duas, entao o
+          #      `concorrentes_mapeados` dela e' o mesmo que o 4.5 acabou de ler. So' roda se o
+          #      arquivo PROMOVIDO difere do anterior; falha AVISA e nao derruba o lote (o
+          #      wrapper da DEC-059 nao publica nada quando reprova).
+          if [ "$(md5sum "$SD/vulnerabilidade_ma_redes.parquet" | cut -c1-32)" != "${REDES_ANTES:-}" ]; then
+            echo "[$(date -u)] redes do agregador mudaram; 2o regen mercado/residual..."
+            /opt/motor-expansao-infra/run_regen_mercado.sh \
+              || _avisar_ops "o 2º regen do domingo (redes do agregador novas) falhou; o piloto segue com o mercado do 1º regen, com as redes da semana anterior — ver $LOG"
+          fi
         else
           echo "[$(date -u)] AVISO: pins M&A reprovados (desenhaveis=${DRAW:-0}, chaves na serie=${COER:--1}%); mantendo os anteriores"
           # O SILENCIO era a outra metade do incidente: de 30/08 a 17/09 a guarda barrou artefato

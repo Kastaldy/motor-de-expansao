@@ -1,4 +1,4 @@
-"""Pico de maturacao da rampa (emenda de 21/10/2026 da DEC-077).
+"""Pico de maturacao da rampa (emenda de 21/10/2026 da DEC-078).
 
 Pedido do Vinicius (21/10/2026): "A rampa de maturacao fica exclusivamente como curva
 observada, mas deve receber a opcao de selecionar um pico de maturacao". O pico e' o MES
@@ -91,7 +91,7 @@ GOLDEN_BODY = dict(
 )
 
 # Tabela P1 do estudo (BLK-UNI-03, alunos, mediana), meses de VIDA 0..12, com as regras da
-# DEC-077 escritas A MAO (nao lidas do config): mes 8 = maximo acumulado (97%), teto 100%.
+# DEC-078 escritas A MAO (nao lidas do config): mes 8 = maximo acumulado (97%), teto 100%.
 TABELA_P1_DESDE_O_MES_0 = (0.80, 0.68, 0.77, 0.84, 0.88, 0.90, 0.92, 0.97, 0.97, 0.99, 1.0, 1.0, 1.0)
 # A curva de 21/10/2026 (sem o mes 0; o mes de operacao t lia o mes de vida t), escrita a mao.
 CURVA_SEM_MES_0 = (0.68, 0.77, 0.84, 0.88, 0.90, 0.92, 0.97, 0.97, 0.99, 1.0, 1.0, 1.0)
@@ -275,7 +275,7 @@ def test_pico_mais_lento_paga_mais_tarde() -> None:
     assert paybacks == sorted(paybacks)
 
 
-# Numeros da tabela da emenda na DEC-077 (golden de Londrina), medidos rodando o motor:
+# Numeros da tabela da emenda na DEC-078 (golden de Londrina), medidos rodando o motor:
 # pico -> (alunos no 1o mes de operacao, payback, TIR do socio a.a., mes de steady).
 # Remedidos com o MES 0 (22/10/2026): o 1o mes e' 80% (o mes 0 do estudo) em todo pico.
 EMENDA_PICO: dict[int, tuple[float, float, float, int]] = {
@@ -306,7 +306,7 @@ def test_pico_tardio_mede_o_steady_no_2o_ano_com_reajuste() -> None:
     fim da rampa e' o pico + 1: a partir do pico 12 o steady sai a precos do 2o ano. O DRE
     de steady sobe so' pelo reajuste (os alunos sao os mesmos). A nota da tela deixa de dizer
     "nao a margem de steady-state" nesse caso (`efeitoDaRampaNoSteady`). Se um dia o steady
-    passar a precos do ano 1 (decisao pendente do dono, DEC-077), este teste muda junto."""
+    passar a precos do ano 1 (decisao pendente do dono, DEC-078), este teste muda junto."""
     r11 = simular(DEMANDA, _premissas_pico(11), **INVEST)  # type: ignore[arg-type]
     r15 = simular(DEMANDA, _premissas_pico(15), **INVEST)  # type: ignore[arg-type]
     assert (r11.mes_referencia_steady, r15.mes_referencia_steady) == (12, 16)

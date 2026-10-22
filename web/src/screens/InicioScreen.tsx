@@ -11,6 +11,7 @@ import {
   MODOS,
   SUBTITULO_AMBAS,
   TRILHAS,
+  linhaDoModo,
   modosDaTrilha,
   trilhaInicial,
   trilhasDisponiveis,
@@ -502,7 +503,9 @@ function CardModo({
         </span>
 
         <span style={{ font: '400 15px/1.5 var(--f-ui)', color: 'var(--tx-narrative)' }}>
-          {modo.linha}
+          {/* Resolvida pelo país da instância (`linhaDoModo`): o card de região fala do
+              Top 10 onde há a recomendação única e mantém o texto de sempre na AR. */}
+          {linhaDoModo(modo)}
         </span>
       </span>
     </>

@@ -277,7 +277,7 @@ def test_viabilidade_contrato_e_coerencia() -> None:
     assert len({linha["folha"] for linha in ano1}) == 1, "a folha voltou a escalar"
     assert ano1[0]["folha"] == pytest.approx(dre["folha"], abs=0.01)
     # Com a folha cheia e os alunos ainda na rampa, o mes 1 rende MENOS que o regime. Era
-    # "< 0" com a reta; desde a emenda de 21/10/2026 da DEC-077 o padrao e' a curva
+    # "< 0" com a reta; desde a emenda de 21/10/2026 da DEC-078 o padrao e' a curva
     # observada (68% da demanda no mes 1), em que o mes 1 pode ja' sair positivo.
     assert ano1[0]["ebitda_mensal"] < ano1[11]["ebitda_mensal"]
     assert operacao[12]["folha"] > ano1[0]["folha"]  # reajuste anual so no mes 13

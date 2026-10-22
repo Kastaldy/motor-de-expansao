@@ -1,5 +1,5 @@
 /* ---------------------------------------------------------------------------
-   Viabilidade: a rampa de alunos (DEC-077, emenda de 21/10/2026).
+   Viabilidade: a rampa de alunos (DEC-078, emenda de 21/10/2026).
 
    A tela tem UMA forma de rampa: a curva OBSERVADA nas unidades da rede (BLK-UNI-03) —
    o mês t tem uma fração da demanda madura, até 100% no PICO DE MATURAÇÃO. O operador
@@ -40,7 +40,7 @@ export interface PremissasRampa {
   mes_referencia_steady?: number | null
 }
 
-/** Forma servida pelo payload; ausente (backend anterior à DEC-077) = a rampa linear. */
+/** Forma servida pelo payload; ausente (backend anterior à DEC-078) = a rampa linear. */
 export function formaDoPayload(p: PremissasRampa | null | undefined): 'curva_uni03' | 'reta' {
   return p?.forma_rampa === 'curva_uni03' ? 'curva_uni03' : 'reta'
 }
@@ -90,7 +90,7 @@ export function ajudaDaRampa(p: PremissasRampa | null | undefined): string {
 
 /**
  * Mês em que a rampa de fato termina. Lê `mes_maturidade_rampa` (servido pelo motor);
- * backend anterior à DEC-077 não o manda, e lá a rampa era sempre a linear de
+ * backend anterior à DEC-078 não o manda, e lá a rampa era sempre a linear de
  * `maturacao_meses` — o fallback reproduz exatamente aquilo.
  */
 export function mesFimDaRampa(p: PremissasRampa | null | undefined): number | null {

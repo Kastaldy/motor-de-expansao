@@ -1,4 +1,4 @@
-"""Rampa pela CURVA OBSERVADA na rede (DEC-077, BLK-UNI-03).
+"""Rampa pela CURVA OBSERVADA na rede (DEC-078, BLK-UNI-03).
 
 O QUE ESTE ARQUIVO TRAVA
 ------------------------
@@ -9,7 +9,7 @@ O QUE ESTE ARQUIVO TRAVA
    codigo da `origin/main` ANTERIOR a esta mudanca (git archive) e reproduzidos aqui.
    Se um campo novo entrar na serie mensal, refaca o digest contra a main de ANTES da
    mudanca — nunca contra o proprio codigo novo, que tornaria o teste circular.
-4. Os NUMEROS da DEC-077 (caso golden Boulevard Londrina, reta x curva) — medidos
+4. Os NUMEROS da DEC-078 (caso golden Boulevard Londrina, reta x curva) — medidos
    rodando o motor; a DEC cita estes valores e nao outros.
 5. O contrato do payload (`forma_rampa`): default CURVA desde a emenda de 21/10/2026
    (Vinicius: "A rampa de maturacao fica exclusivamente como curva observada"; antes era
@@ -19,7 +19,7 @@ O QUE ESTE ARQUIVO TRAVA
 6. A planilha .xlsx com a curva: recalculada, bate com o motor nos 64 meses; e trocar a
    celula "Forma da rampa" para "reta" reproduz o motor na reta. A planilha da RETA nao
    tem nada da curva (e' a de antes da DEC).
-7. As sensibilidades e cenarios de fronteira citados na DEC-077.
+7. As sensibilidades e cenarios de fronteira citados na DEC-078.
 
 READ-ONLY sobre o M1.
 """
@@ -266,13 +266,13 @@ def test_premissas_recusa_rampa_que_o_modelo_nao_representa(over: dict, trecho: 
 
 
 # ---------------------------------------------------------------------------
-# 5. Os numeros da DEC-077 (golden Boulevard Londrina, reta x curva)
+# 5. Os numeros da DEC-078 (golden Boulevard Londrina, reta x curva)
 # ---------------------------------------------------------------------------
 
 # forma -> (payback, TIR socio a.a., TIR negocio a.a., VPL socio, VPL negocio,
 #           cheque total, mes do cheque, 1o mes de caixa operacional positivo,
 #           acumulado M60, faturamento do ano 1, EBITDA do ano 1, EBITDA do mes 1)
-DEC077: dict[str, tuple[float, ...]] = {
+DEC078: dict[str, tuple[float, ...]] = {
     SIM_FORMA_RAMPA_RETA: (
         31.0, 0.38980333133523914, 0.31739237238430995, 276103.238284283,
         312177.17579961044, 1142112.6247071032, 5, 6, 1645454.5567363773,
@@ -287,14 +287,14 @@ DEC077: dict[str, tuple[float, ...]] = {
     ),
 }
 # alunos totais nos meses de OPERACAO 1/3/6/8/10/12 (na curva, meses de vida 0/2/5/7/9/11)
-DEC077_ALUNOS = {
+DEC078_ALUNOS = {
     SIM_FORMA_RAMPA_RETA: (725.5, 1176.5, 1853.0, 2304.0, 2304.0, 2304.0),
     SIM_FORMA_RAMPA_CURVA_UNI03: (1843.2, 1774.08, 2073.6, 2234.88, 2280.96, 2304.0),
 }
 
 
-@pytest.mark.parametrize("forma", sorted(DEC077))
-def test_numeros_da_dec_075_no_golden(forma: str) -> None:
+@pytest.mark.parametrize("forma", sorted(DEC078))
+def test_numeros_da_dec_078_no_golden(forma: str) -> None:
     r = _rodar(forma)
     op = _operacao(r)
     obtido = (
@@ -303,7 +303,7 @@ def test_numeros_da_dec_075_no_golden(forma: str) -> None:
         r.acumulado_mes_final, sum(x["faturamento_mensal"] for x in op[:12]),
         sum(x["ebitda_mensal"] for x in op[:12]), op[0]["ebitda_mensal"],
     )
-    esperado = DEC077[forma]
+    esperado = DEC078[forma]
     assert obtido[0] == esperado[0]
     assert obtido[1] == pytest.approx(esperado[1], abs=RATE)
     assert obtido[2] == pytest.approx(esperado[2], abs=RATE)
@@ -311,7 +311,7 @@ def test_numeros_da_dec_075_no_golden(forma: str) -> None:
         assert obtido[i] == pytest.approx(esperado[i], abs=CENTAVO), i
     assert (obtido[6], obtido[7]) == (esperado[6], esperado[7])
     assert tuple(op[m - 1]["alunos_total"] for m in (1, 3, 6, 8, 10, 12)) == pytest.approx(
-        DEC077_ALUNOS[forma], abs=1e-9
+        DEC078_ALUNOS[forma], abs=1e-9
     )
 
 
@@ -350,7 +350,7 @@ def test_payload_default_e_a_curva_e_ainda_aceita_a_reta() -> None:
 def test_payload_sem_forma_e_a_curva_de_hoje_e_a_reta_explicita_e_a_de_antes() -> None:
     """Sem `forma_rampa` o corpo vira EXATAMENTE as Premissas da curva escolhida (pico
     observado, a curva UNI-03 intacta). Com a reta explicita, as Premissas que o codigo
-    anterior a DEC-077 montava (o default do nucleo)."""
+    anterior a DEC-078 montava (o default do nucleo)."""
     antes = Premissas(ticket_cheio=177.0, aluguel_mes=30_000.0, tickets_studios=())
     assert premissas_do_body(ViabilidadeIn(**_BODY, forma_rampa="reta")) == antes
     curva = premissas_do_body(ViabilidadeIn(**_BODY, forma_rampa="curva_uni03"))
@@ -487,7 +487,7 @@ def _rotulos(ws) -> list[str]:
 
 
 def test_xlsx_da_reta_nao_tem_nada_da_curva() -> None:
-    """A planilha de quem nao pediu a curva e' a de antes da DEC-077: sem a premissa
+    """A planilha de quem nao pediu a curva e' a de antes da DEC-078: sem a premissa
     "Forma da rampa", sem o bloco da curva, sem a validacao de lista e sem os nomes novos.
     (O snapshot contra a `origin/main` confirmou o arquivo inteiro igual membro a membro.)"""
     wb = openpyxl.load_workbook(BytesIO(gerar_simulador_xlsx(DEMANDA, _premissas(), **INVEST)))
@@ -602,7 +602,7 @@ def test_xlsx_trocar_a_celula_para_reta_reproduz_o_motor_na_reta(
 
 
 # ---------------------------------------------------------------------------
-# 8. Sensibilidades e cenarios de fronteira citados na DEC-077 (golden)
+# 8. Sensibilidades e cenarios de fronteira citados na DEC-078 (golden)
 # ---------------------------------------------------------------------------
 
 # cenario -> (overrides das Premissas, overrides do investimento, forma -> (payback,))
@@ -623,7 +623,7 @@ _DEMANDA_FRONTEIRA = {"p10": 1189.0, "p90": 3034.0}
 
 @pytest.mark.parametrize("forma", [SIM_FORMA_RAMPA_RETA, SIM_FORMA_RAMPA_CURVA_UNI03])
 @pytest.mark.parametrize("cenario", sorted(_FRONTEIRA))
-def test_cenarios_de_fronteira_da_dec_075(cenario: str, forma: str) -> None:
+def test_cenarios_de_fronteira_da_dec_078(cenario: str, forma: str) -> None:
     over_p, over_inv, esperado = _FRONTEIRA[cenario]
     r = simular(
         _DEMANDA_FRONTEIRA.get(cenario, DEMANDA),
