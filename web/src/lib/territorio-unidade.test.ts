@@ -130,6 +130,13 @@ const mapa = readFileSync(fileURLToPath(new URL('../screens/MapScreen.tsx', impo
 const app = readFileSync(fileURLToPath(new URL('../App.tsx', import.meta.url)), 'utf-8')
 
 describe('a fiação no MapScreen', () => {
+  it('o "×" da busca cancela a viagem pendente (senão o pin recem-limpo voltava)', () => {
+    const inicio = mapa.indexOf('aria-label="Limpar busca"')
+    expect(inicio).toBeGreaterThan(0)
+    const clique = mapa.slice(inicio, mapa.indexOf('setPin(null)', inicio))
+    expect(clique).toContain('viagem.cancelar()')
+  })
+
   it('abrirUnidade (porta do seletor E do pin) leva o mapa ao território da unidade', () => {
     const inicio = mapa.indexOf('const abrirUnidade = useCallback(')
     const corpo = mapa.slice(inicio, mapa.indexOf('[onSoltarPonto, levarAoTerritorioDaUnidade]', inicio))

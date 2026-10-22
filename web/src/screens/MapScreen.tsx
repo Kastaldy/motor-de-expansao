@@ -1987,8 +1987,11 @@ export default function MapScreen({
               type="button"
               aria-label="Limpar busca"
               /* Limpa a CAIXA (e o pin local de unidade/imovel). O ponto que a busca gerou
-                 continua na comparacao: quem o tira de la' e' o painel dela. */
+                 continua na comparacao: quem o tira de la' e' o painel dela. Cancela a
+                 viagem pendente da unidade: sem isso, a resposta atrasada do municipio
+                 chegava depois e o efeito de contexto devolvia o pin recem-limpo. */
               onClick={() => {
+                viagem.cancelar()
                 setPin(null)
                 setBusca('')
                 setBuscaErro(null)

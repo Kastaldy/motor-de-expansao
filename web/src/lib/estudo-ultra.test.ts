@@ -115,6 +115,19 @@ describe('ofertaDeEstudoUltra — detecção da Ultra próxima', () => {
     expect(ofertaDeEstudoUltra(ficha(mercadoPonto(), { geometria: [[[0, 0]]] }))).toBeNull()
     expect(ofertaDeEstudoUltra(ficha(mercadoPonto({ disponivel: false })))).toBeNull()
   })
+
+  it('modo ligado com o mercado indisponível: a chave fica, para DESLIGAR (não prende o modo)', () => {
+    // O ramo de falha do servidor: disponivel=false, modo unidade, unidade estudada nula.
+    const falha = mercadoUnidade({ disponivel: false, unidade_ultra_estudada: null, ultra_proxima: null })
+    const o = ofertaDeEstudoUltra(ficha(falha))
+    expect(o).not.toBeNull()
+    expect(o!.ligado).toBe(true)
+    expect(o!.pergunta).toContain('Voltar ao estudo de ponto')
+    // com a unidade ainda conhecida, a pergunta de sempre, com o nome
+    const comNome = ofertaDeEstudoUltra(ficha(mercadoUnidade({ disponivel: false })))
+    expect(comNome!.ligado).toBe(true)
+    expect(comNome!.nome).not.toBe('')
+  })
 })
 
 describe('o modo se declara', () => {
