@@ -143,29 +143,33 @@ V2_SHARE_BALCAO_SEM_AGREGADOR = 0.999
 SIM_CURVA_UNI03_ALUNOS_P1 = (
     0.80, 0.68, 0.77, 0.84, 0.88, 0.90, 0.92, 0.97, 0.95, 0.99, 1.00, 1.01, 1.01,
 )
-# O que o MOTOR usa: fracao da demanda nos meses de OPERACAO 1..12 (mes 13 em diante = 1,0).
-# Tres regras sobre a tabela bruta, todas declaradas na DEC-077:
-#   1. o mes 0 (inauguracao parcial + pre-venda, 80%) SAI: o simulador nao tem mes de
-#      operacao parcial — os meses de pre-abertura sao de obra, sem aluno nem receita;
-#   2. maximo acumulado (a rampa nunca decresce): o mes 8 bruto (95%) vira 97% do mes 7;
+# O que o MOTOR usa: fracao da demanda por MES DE VIDA 0..12 da unidade, como no estudo
+# (0 = o mes da inauguracao); o mes de vida k e' o mes de OPERACAO k + 1 do simulador, e
+# do mes de vida 13 em diante vale 1,0. Regras sobre a tabela bruta (DEC-077):
+#   1. o mes 0 (inauguracao + pre-venda, 80%) ENTRA como o 1o mes de operacao, com o valor
+#      do estudo, e a queda para os 68% do mes 1 fica (emenda de 22/10/2026: "a rampa de
+#      alunos deve seguir o padrao do estudo, comecando a valer desde o mes 0"). Ate' ali o
+#      mes 0 saia e o mes de operacao t lia o mes de vida t;
+#   2. maximo acumulado A PARTIR DO MES 1 (dali em diante a rampa nunca decresce): o mes 8
+#      bruto (95%) vira 97% do mes 7. O mes 0 fica fora dessa regra;
 #   3. teto de 100%: a demanda assumida E' o nivel maduro; os 101% dos meses 11-12 sao
 #      ruido da propria definicao (o nivel e' a media dos meses 11-13).
 SIM_CURVA_RAMPA_UNI03 = (
-    0.68, 0.77, 0.84, 0.88, 0.90, 0.92, 0.97, 0.97, 0.99, 1.00, 1.00, 1.00,
+    0.80, 0.68, 0.77, 0.84, 0.88, 0.90, 0.92, 0.97, 0.97, 0.99, 1.00, 1.00, 1.00,
 )
-# PICO DE MATURACAO (emenda da DEC-077, 21/10/2026): o MES em que a rampa atinge 100% da
-# demanda madura. O observado e' o primeiro mes da curva acima com 100% (mes 10). O
-# operador escolhe outro pico entre as opcoes abaixo e a MESMA forma observada e'
-# reescalada no tempo (`simulador.curva_rampa_com_pico`), com os DOIS extremos medidos
-# ancorados (mes 1 = a abertura observada, 68%; mes `pico` = 100%):
-#   fracao(t) = curva_obs(1 + (t - 1) x 9 / (pico - 1)), interpolando linearmente entre
-#   meses observados; >= 10 -> 100%.
+# PICO DE MATURACAO (emenda da DEC-077, 21/10/2026): o MES DE VIDA em que a rampa atinge
+# 100% da demanda madura. O observado e' o primeiro mes da curva acima com 100% (mes 10).
+# O operador escolhe outro pico e a MESMA forma observada e' reescalada no tempo
+# (`simulador.curva_rampa_com_pico`): o mes 0 (80%) e o mes 1 (68%) ficam os medidos, e o
+# mes `pico` fecha em 100%:
+#   fracao(k) = curva_obs(1 + (k - 1) x 9 / (pico - 1)) para k >= 1, interpolando
+#   linearmente entre meses observados; >= 10 -> 100%.
 # Pico 10 devolve a curva acima INTACTA (byte a byte). Intervalo: qualquer mes de 1 a 36,
 # de mes em mes (o mesmo do contador "-/+" da rampa antiga, `rampa_meses`; pedido de
-# Vinicius em 22/10/2026, que trocou as 7 opcoes fixas pelo contador). Pico 1 = a rampa ja'
-# abre cheia. Fora do intervalo -> 422.
+# Vinicius em 22/10/2026, que trocou as 7 opcoes fixas pelo contador). Pico 1 = o mes 0 do
+# estudo e, do mes 1 em diante, a demanda cheia. Fora do intervalo -> 422.
 SIM_MES_PICO_RAMPA_OBSERVADO = next(
-    i for i, f in enumerate(SIM_CURVA_RAMPA_UNI03, start=1) if f >= 1.0
+    k for k, f in enumerate(SIM_CURVA_RAMPA_UNI03) if f >= 1.0
 )
 SIM_MES_PICO_RAMPA_MIN = 1
 SIM_MES_PICO_RAMPA_MAX = 36

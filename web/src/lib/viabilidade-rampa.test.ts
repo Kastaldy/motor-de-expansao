@@ -20,21 +20,23 @@ import {
   rotuloPico,
 } from './viabilidade-rampa'
 
-const CURVA_OBS = [0.68, 0.77, 0.84, 0.88, 0.9, 0.92, 0.97, 0.97, 0.99, 1, 1, 1]
+// Por MÊS DE VIDA, como no estudo: o índice 0 é a inauguração (o 1º mês de operação), e
+// o fim da rampa servido (`mes_maturidade_rampa`) é em mês de OPERAÇÃO = pico + 1.
+const CURVA_OBS = [0.8, 0.68, 0.77, 0.84, 0.88, 0.9, 0.92, 0.97, 0.97, 0.99, 1, 1, 1]
 const CURVA = {
   maturacao_meses: 8,
   forma_rampa: 'curva_uni03',
-  mes_maturidade_rampa: 10,
+  mes_maturidade_rampa: 11,
   mes_pico_rampa: 10,
   curva_rampa: CURVA_OBS,
 }
 const CURVA_PICO_6 = {
   maturacao_meses: 8,
   forma_rampa: 'curva_uni03',
-  mes_maturidade_rampa: 6,
+  mes_maturidade_rampa: 7,
   mes_pico_rampa: 6,
-  // `curva_rampa_com_pico(6)` do motor: a abertura do mês 1 fica a observada (68%).
-  curva_rampa: [0.68, 0.826, 0.892, 0.94, 0.974, 1, 1, 1],
+  // `curva_rampa_com_pico(6)` do motor: os meses 0 e 1 ficam os observados (80% e 68%).
+  curva_rampa: [0.8, 0.68, 0.826, 0.892, 0.94, 0.974, 1, 1, 1],
 }
 // Rampa linear: só chega da API pública ou com a constante do servidor revertida.
 const LINEAR = { maturacao_meses: 8, forma_rampa: 'reta', mes_maturidade_rampa: 8, mes_pico_rampa: null }
@@ -47,11 +49,12 @@ describe('pico de maturação (emenda de 21/10/2026 da DEC-077)', () => {
     )
     expect(config).toContain(`SIM_MES_PICO_RAMPA_MIN = ${PICO_RAMPA_MIN}\n`)
     expect(config).toContain(`SIM_MES_PICO_RAMPA_MAX = ${PICO_RAMPA_MAX}\n`)
-    // o observado é DERIVADO da curva no servidor: o 1º mês com 100%
+    // o observado é DERIVADO da curva no servidor: o 1º mês DE VIDA (base 0) com 100%
     const curva = /SIM_CURVA_RAMPA_UNI03 = \(([^)]*)\)/.exec(config)
     expect(curva).not.toBeNull()
     const fracoes = curva![1].split(',').map((s) => s.trim()).filter(Boolean).map(Number)
-    expect(fracoes.findIndex((f) => f >= 1) + 1).toBe(PICO_RAMPA_OBSERVADO)
+    expect(fracoes[0]).toBe(0.8) // o mês 0 do estudo entra (emenda de 22/10/2026)
+    expect(fracoes.findIndex((f) => f >= 1)).toBe(PICO_RAMPA_OBSERVADO)
     expect(rotuloPico(12)).toBe('12 meses')
     expect(rotuloPico(1)).toBe('1 mês')
   })
@@ -86,8 +89,8 @@ describe('pico de maturação (emenda de 21/10/2026 da DEC-077)', () => {
   it('sem escolha, o seletor marca o pico que o servidor usou', () => {
     expect(picoExibido(null, CURVA)).toBe(10)
     expect(picoExibido(null, CURVA_PICO_6)).toBe(6)
-    // backend sem o eco do pico: cai no fim da rampa servido
-    expect(picoExibido(null, { ...CURVA, mes_pico_rampa: undefined })).toBe(10)
+    // backend sem o eco do pico (anterior ao mês 0): cai no fim da rampa servido
+    expect(picoExibido(null, { ...CURVA, mes_pico_rampa: undefined })).toBe(11)
   })
 
   it('antes do primeiro cálculo o contador parte do observado; na rampa linear, nenhum pico', () => {
@@ -105,7 +108,7 @@ describe('ajuda do controle', () => {
     for (const p of [null, CURVA, CURVA_PICO_6, LINEAR]) {
       expect(ajudaDaRampa(p).toLowerCase()).toContain('recalcule para atualizar o payback')
       // pedido de 22/10/2026: o detalhe vai para as notas metodológicas
-      expect(ajudaDaRampa(p).length).toBeLessThanOrEqual(90)
+      expect(ajudaDaRampa(p).length).toBeLessThanOrEqual(95)
     }
   })
 
@@ -122,9 +125,9 @@ describe('ajuda do controle', () => {
 })
 
 describe('fim da rampa lido do payload', () => {
-  it('lê o mês servido pelo motor (o pico), não o parâmetro da rampa linear', () => {
-    expect(mesFimDaRampa(CURVA)).toBe(10)
-    expect(mesFimDaRampa(CURVA_PICO_6)).toBe(6)
+  it('lê o mês servido pelo motor (mês de operação = pico + 1), não o parâmetro da reta', () => {
+    expect(mesFimDaRampa(CURVA)).toBe(11)
+    expect(mesFimDaRampa(CURVA_PICO_6)).toBe(7)
   })
 
   it('backend anterior à DEC-077 (sem o campo) cai na rampa de maturacao_meses', () => {
@@ -149,11 +152,13 @@ describe('nota metodológica', () => {
   })
 
   it('carrega o detalhe que saiu da ajuda: abertura servida e amarra do agregador', () => {
-    expect(notaDaRampa(CURVA)).toContain('68% da demanda no mês 1')
-    expect(notaDaRampa(CURVA_PICO_6)).toContain('68% da demanda no mês 1')
+    for (const p of [CURVA, CURVA_PICO_6]) {
+      expect(notaDaRampa(p)).toContain('(mês 0, o 1º mês de operação) com 80% da demanda')
+      expect(notaDaRampa(p)).toContain('mês 1 com 68%')
+    }
     expect(notaDaRampa(CURVA)).toContain('agregador')
     // sem curva servida, não inventa percentual
-    expect(notaDaRampa({ ...CURVA, curva_rampa: undefined })).not.toMatch(/\d+% da demanda/)
+    expect(notaDaRampa({ ...CURVA, curva_rampa: undefined })).not.toMatch(/\d+%/)
   })
 
   it('pico até o mês 12: a rampa não mexe na margem de steady-state', () => {
@@ -165,10 +170,11 @@ describe('nota metodológica', () => {
   })
 
   it('pico depois do mês 12: a nota NÃO diz que o steady-state fica igual (reajuste do 2º ano)', () => {
-    const tardio = { ...CURVA, mes_maturidade_rampa: 18, mes_pico_rampa: 18, mes_referencia_steady: 18 }
+    const tardio = { ...CURVA, mes_maturidade_rampa: 19, mes_pico_rampa: 18, mes_referencia_steady: 19 }
     const nota = notaDaRampa(tardio)
     expect(nota).not.toContain('não a margem de steady-state')
-    expect(nota).toContain('mês 18')
+    expect(nota).toContain('pico de maturação, mês 18')
+    expect(nota).toContain('mês 19')
     expect(nota).toContain('reajuste anual')
     expect(nota).toContain('2º ano')
     // a rampa linear da API, com maturação longa, tem o mesmo efeito

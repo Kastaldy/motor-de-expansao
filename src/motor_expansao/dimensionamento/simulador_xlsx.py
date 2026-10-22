@@ -729,8 +729,9 @@ def _pico_reescalado(p: Premissas) -> int | None:
     a de antes da emenda, byte a byte."""
     if not p.usa_curva or tuple(p.curva_rampa) == tuple(SIM_CURVA_RAMPA_UNI03):
         return None
-    pico = int(p.mes_maturidade_rampa)
-    return pico if tuple(p.curva_rampa) == curva_rampa_com_pico(pico) else None
+    # o fim da rampa e' o mes de OPERACAO; o pico e' o mes de VIDA (operacao - 1)
+    pico = int(p.mes_maturidade_rampa) - 1
+    return pico if pico >= 1 and tuple(p.curva_rampa) == curva_rampa_com_pico(pico) else None
 
 
 def _bloco_curva_rampa(p: Premissas) -> list[dict[str, Any]]:
@@ -743,13 +744,16 @@ def _bloco_curva_rampa(p: Premissas) -> list[dict[str, Any]]:
     fonte = "BLK-UNI-03, tabela P1 (alunos, mediana), DEC-077" + (
         f"; forma observada reescalada para o pico no mês {pico}" if pico else ""
     )
+    # Identificador por mes de OPERACAO (`curva_m1` = 1o mes aberto, as formulas da serie
+    # leem por ele); rotulo por mes de VIDA, como no estudo (mes 0 = a inauguracao).
     linhas = [
-        _e(f"curva_m{i}", f"Curva observada — mês {i}", valor=float(f), unidade="% da demanda",
-           fonte=fonte, fmt=_FMT_PCT2)
+        _e(f"curva_m{i}",
+           f"Curva observada — mês {i - 1}" + (" (inauguração)" if i == 1 else ""),
+           valor=float(f), unidade="% da demanda", fonte=fonte, fmt=_FMT_PCT2)
         for i, f in enumerate(p.curva_rampa, start=1)
     ]
     linhas.append(
-        _e("mes_mat_rampa", "Mês em que a rampa termina",
+        _e("mes_mat_rampa", "Mês de operação em que a rampa termina",
            formula=(
                f'=IF(OR({{forma_rampa}}="{_FORMA_RAMPA_RETA_XLSX}",'
                '{modo_rampa}="apenas balcão"),'
@@ -758,8 +762,10 @@ def _bloco_curva_rampa(p: Premissas) -> list[dict[str, Any]]:
            unidade="mês",
            fonte="Derivado: o primeiro mês da curva com 100%",
            quem=_QUEM_DERIVADO, kind=_DERIV, fmt=_FMT_INT,
-           nota="Na curva, é o PRIMEIRO mês da tabela com 100% (a mesma regra do motor); "
-                "sem nenhum, o mês seguinte ao último. O motor recusa curva que decresce."),
+           nota="Na curva, é o PRIMEIRO mês da tabela com 100% (a mesma regra do motor), "
+                "contado em mês de operação: o mês 0 da curva é o mês de operação 1. Sem "
+                "nenhum, o mês seguinte ao último. Do mês 1 em diante, o motor recusa curva "
+                "que decresce."),
     )
     return linhas
 

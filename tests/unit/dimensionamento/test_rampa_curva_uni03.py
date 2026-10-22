@@ -130,15 +130,18 @@ def test_tabela_p1_no_disco_bate_com_a_transcricao() -> None:
 
 
 def test_curva_do_motor_e_derivada_da_p1_pelas_tres_regras() -> None:
-    """Sem o mes 0, maximo acumulado (nunca decresce) e teto de 100%."""
-    derivada, maximo = [], 0.0
+    """O mes 0 entra como medido (emenda de 22/10/2026); do mes 1 em diante, maximo
+    acumulado (nunca decresce) e teto de 100%. Indice = mes de VIDA."""
+    derivada, maximo = [min(SIM_CURVA_UNI03_ALUNOS_P1[0], 1.0)], 0.0
     for f in SIM_CURVA_UNI03_ALUNOS_P1[1:]:
         maximo = max(maximo, f)
         derivada.append(min(maximo, 1.0))
     assert tuple(derivada) == SIM_CURVA_RAMPA_UNI03
+    # O mes 0 (inauguracao + pre-venda) fica ACIMA do mes 1, como no estudo:
+    assert SIM_CURVA_RAMPA_UNI03[:2] == (0.80, 0.68)
     # As duas correcoes que a regra faz de fato (o resto e' a tabela crua):
-    assert SIM_CURVA_RAMPA_UNI03[7] == 0.97  # mes 8: 95% bruto -> 97% do mes 7
-    assert SIM_CURVA_RAMPA_UNI03[10:] == (1.00, 1.00)  # meses 11-12: 101% -> 100%
+    assert SIM_CURVA_RAMPA_UNI03[8] == 0.97  # mes 8: 95% bruto -> 97% do mes 7
+    assert SIM_CURVA_RAMPA_UNI03[11:] == (1.00, 1.00)  # meses 11-12: 101% -> 100%
 
 
 # ---------------------------------------------------------------------------
@@ -168,19 +171,21 @@ def test_studios_rampam_junto_com_a_curva() -> None:
     p = _premissas(forma_rampa=SIM_FORMA_RAMPA_CURVA_UNI03, tickets_studios=(120.0, 90.0))
     op = _operacao(simular(DEMANDA, p, **INVEST))  # type: ignore[arg-type]
     m1 = op[0]
-    assert m1["alunos_total"] == pytest.approx(DEMANDA * 0.68)
-    assert m1["alunos_studios"] == pytest.approx(DEMANDA * 0.68 * p.share_studios_total)
+    # o 1o mes de operacao e' o mes 0 do estudo (80%)
+    assert m1["alunos_total"] == pytest.approx(DEMANDA * 0.80)
+    assert m1["alunos_studios"] == pytest.approx(DEMANDA * 0.80 * p.share_studios_total)
 
 
 def test_mes_de_maturidade_nas_duas_formas() -> None:
-    assert _premissas(forma_rampa=SIM_FORMA_RAMPA_CURVA_UNI03).mes_maturidade_rampa == 10
+    # curva: o mes de OPERACAO 11 = o mes de vida 10 (o pico observado)
+    assert _premissas(forma_rampa=SIM_FORMA_RAMPA_CURVA_UNI03).mes_maturidade_rampa == 11
     assert _premissas(forma_rampa=SIM_FORMA_RAMPA_RETA).mes_maturidade_rampa == 8
     nunca_cheia = _premissas(forma_rampa=SIM_FORMA_RAMPA_CURVA_UNI03, curva_rampa=(0.5, 0.9))
     assert nunca_cheia.mes_maturidade_rampa == 3  # o mes seguinte ao ultimo da tabela
 
 
 def test_steady_da_curva_e_o_mesmo_mes_e_o_mesmo_numero_da_reta() -> None:
-    """Com a anuidade no mes 12, o regime pleno e' o mes 12 nas duas formas (max(10, 12) e
+    """Com a anuidade no mes 12, o regime pleno e' o mes 12 nas duas formas (max(11, 12) e
     max(8, 12)) e la' a demanda e' cheia: margem, EBITDA e faturamento maduros NAO mudam."""
     reta, curva = _rodar(SIM_FORMA_RAMPA_RETA), _rodar(SIM_FORMA_RAMPA_CURVA_UNI03)
     assert curva.mes_referencia_steady == reta.mes_referencia_steady == 12
@@ -189,7 +194,7 @@ def test_steady_da_curva_e_o_mesmo_mes_e_o_mesmo_numero_da_reta() -> None:
     assert curva.margem_ebitda_pct == reta.margem_ebitda_pct
     # sem anuidade o steady e' o fim da rampa de cada forma
     sem = {"anuidade_valor": 0.0}
-    assert _rodar(SIM_FORMA_RAMPA_CURVA_UNI03, **sem).mes_referencia_steady == 10
+    assert _rodar(SIM_FORMA_RAMPA_CURVA_UNI03, **sem).mes_referencia_steady == 11
     assert _rodar(SIM_FORMA_RAMPA_RETA, **sem).mes_referencia_steady == 8
 
 
@@ -273,16 +278,18 @@ DEC077: dict[str, tuple[float, ...]] = {
         312177.17579961044, 1142112.6247071032, 5, 6, 1645454.5567363773,
         2631281.5853913524, 696509.0805967503, -43464.46942978802,
     ),
+    # Remedido com o MES 0 (emenda de 22/10/2026): o 1o mes de operacao e' o mes 0 do
+    # estudo (80%). Antes: payback 25, TIR socio 56,30%, EBITDA do mes 1 R$ 37.346.
     SIM_FORMA_RAMPA_CURVA_UNI03: (
-        25.0, 0.563040601998507, 0.3914006573354487, 557920.6631000271,
-        596304.9065311713, 902874.7867824477, 2, 3, 1962919.6267281913,
-        3091252.5641750325, 1064018.993080229, 37346.44224587534,
+        25.0, 0.5411899347245155, 0.38257900431266045, 526240.8295748833,
+        564211.2734843439, 899972.7780034468, 3, 4, 1924681.2209409254,
+        3035849.4392342325, 1019752.7272994039, 63906.2017143704,
     ),
 }
-# alunos totais nos meses 1/3/6/8/10/12
+# alunos totais nos meses de OPERACAO 1/3/6/8/10/12 (na curva, meses de vida 0/2/5/7/9/11)
 DEC077_ALUNOS = {
     SIM_FORMA_RAMPA_RETA: (725.5, 1176.5, 1853.0, 2304.0, 2304.0, 2304.0),
-    SIM_FORMA_RAMPA_CURVA_UNI03: (1566.72, 1935.36, 2119.68, 2234.88, 2304.0, 2304.0),
+    SIM_FORMA_RAMPA_CURVA_UNI03: (1843.2, 1774.08, 2073.6, 2234.88, 2280.96, 2304.0),
 }
 
 
@@ -310,11 +317,12 @@ def test_numeros_da_dec_075_no_golden(forma: str) -> None:
 
 @pytest.mark.parametrize(
     ("forma", "menor_viavel"),
-    [(SIM_FORMA_RAMPA_RETA, 2164), (SIM_FORMA_RAMPA_CURVA_UNI03, 2037)],
+    [(SIM_FORMA_RAMPA_RETA, 2164), (SIM_FORMA_RAMPA_CURVA_UNI03, 2052)],
 )
 def test_menor_demanda_viavel_no_golden(forma: str, menor_viavel: int) -> None:
-    """A curva baixa em 127 alunos a menor demanda que passa no veredito (payback <= 36 e
-    margem >= 30%) — e' a medida da amarra do BLK-UNI-05 (mais aprovacoes)."""
+    """A curva baixa em 112 alunos a menor demanda que passa no veredito (payback <= 36 e
+    margem >= 30%) — e' a medida da amarra do BLK-UNI-05 (mais aprovacoes). Era 127 antes
+    do mes 0 (2037): a curva inteira passou a acontecer um mes mais tarde."""
     assert _rodar(forma, float(menor_viavel)).flag_viavel
     assert not _rodar(forma, float(menor_viavel - 1)).flag_viavel
 
@@ -418,8 +426,8 @@ def pilot_app():
 def test_payload_ecoa_a_forma_e_o_fim_da_rampa(pilot_app) -> None:
     padrao = pilot_app.viabilidade(pilot_app.ViabilidadeIn(**_BODY))["premissas"]
     assert padrao["forma_rampa"] == "curva_uni03"  # a curva desde a emenda de 21/10/2026
-    assert padrao["mes_maturidade_rampa"] == 10
-    assert padrao["mes_pico_rampa"] == 10
+    assert padrao["mes_maturidade_rampa"] == 11  # mes de OPERACAO = pico + 1
+    assert padrao["mes_pico_rampa"] == 10  # mes de VIDA
     assert padrao["curva_rampa"] == list(SIM_CURVA_RAMPA_UNI03)
 
     curva = pilot_app.viabilidade(
@@ -459,10 +467,12 @@ def _linha_premissa(ws, rotulo: str) -> int:
 def test_xlsx_traz_a_forma_e_a_tabela_da_curva(blob_curva: bytes) -> None:
     ws = openpyxl.load_workbook(BytesIO(blob_curva))[ABA_PREMISSAS]
     assert ws.cell(row=_linha_premissa(ws, "Forma da rampa"), column=2).value == "curva observada"
-    for i, f in enumerate(SIM_CURVA_RAMPA_UNI03, start=1):
-        row = _linha_premissa(ws, f"Curva observada — mês {i}")
+    for k, f in enumerate(SIM_CURVA_RAMPA_UNI03):  # rotulo por mes de VIDA, como no estudo
+        row = _linha_premissa(ws, f"Curva observada — mês {k}" + (" (inauguração)" if k == 0 else ""))
         assert ws.cell(row=row, column=2).value == f
-    mes_mat = ws.cell(row=_linha_premissa(ws, "Mês em que a rampa termina"), column=2).value
+    mes_mat = ws.cell(
+        row=_linha_premissa(ws, "Mês de operação em que a rampa termina"), column=2
+    ).value
     # a regra do motor (PRIMEIRO mes com 100%), nao a contagem de meses abaixo de 100%
     assert isinstance(mes_mat, str) and "COUNTIF" not in mes_mat and ">=1" in mes_mat
 
@@ -563,18 +573,20 @@ def test_xlsx_curva_recalculada_bate_com_o_motor(blob_curva: bytes, tmp_path: Pa
 def test_xlsx_fim_da_rampa_e_o_primeiro_mes_cheio_como_no_motor(
     blob_curva: bytes, tmp_path: Path
 ) -> None:
-    """Achado 5 do revisor: a celula da curva e' editavel. Com o mes 11 digitado abaixo de
-    100% DEPOIS do mes 10 cheio, a contagem antiga (`COUNTIF(<1)+1`) dava 11; a regra do
-    motor (primeiro mes com 100%) da 10. A planilha usa a regra do motor."""
+    """Achado 5 do revisor: a celula da curva e' editavel. Com o mes de vida 11 digitado
+    abaixo de 100% DEPOIS do mes 10 cheio, a contagem antiga (`COUNTIF(<1)+1`) daria 12; a
+    regra do motor (primeiro mes com 100%) da o mes de operacao 11 (= mes de vida 10). A
+    planilha usa a regra do motor. A contagem tambem erraria pelo mes 0 (80%), que conta
+    como abaixo de 100% sem ser o fim da rampa."""
     wb = openpyxl.load_workbook(BytesIO(blob_curva))
     ws = wb[ABA_PREMISSAS]
     ws.cell(row=_linha_premissa(ws, "Curva observada — mês 11"), column=2).value = 0.95
     buf = BytesIO()
     wb.save(buf)
     ler = _recalcular(buf.getvalue(), tmp_path)
-    linha = _linha_premissa(ws, "Mês em que a rampa termina")
-    assert ler(ABA_PREMISSAS, f"B{linha}") == 10.0
-    assert _premissas(forma_rampa=SIM_FORMA_RAMPA_CURVA_UNI03).mes_maturidade_rampa == 10
+    linha = _linha_premissa(ws, "Mês de operação em que a rampa termina")
+    assert ler(ABA_PREMISSAS, f"B{linha}") == 11.0
+    assert _premissas(forma_rampa=SIM_FORMA_RAMPA_CURVA_UNI03).mes_maturidade_rampa == 11
 
 
 def test_xlsx_trocar_a_celula_para_reta_reproduz_o_motor_na_reta(
@@ -598,11 +610,11 @@ _FRONTEIRA: dict[str, tuple[dict[str, object], dict[str, object], dict[str, tupl
     "p10": ({}, {}, {SIM_FORMA_RAMPA_RETA: (float("inf"),), SIM_FORMA_RAMPA_CURVA_UNI03: (float("inf"),)}),
     "p90": ({}, {}, {SIM_FORMA_RAMPA_RETA: (18.0,), SIM_FORMA_RAMPA_CURVA_UNI03: (14.0,)}),
     "carencia_4": ({"carencia_aluguel_meses": 4}, {},
-                   {SIM_FORMA_RAMPA_RETA: (28.0,), SIM_FORMA_RAMPA_CURVA_UNI03: (22.0,)}),
+                   {SIM_FORMA_RAMPA_RETA: (28.0,), SIM_FORMA_RAMPA_CURVA_UNI03: (23.0,)}),
     "equipamento_a_vista": ({}, {"prazo_equipamentos": 0},
                             {SIM_FORMA_RAMPA_RETA: (33.0,), SIM_FORMA_RAMPA_CURVA_UNI03: (30.0,)}),
     "sem_anuidade": ({"anuidade_valor": 0.0}, {},
-                     {SIM_FORMA_RAMPA_RETA: (32.0,), SIM_FORMA_RAMPA_CURVA_UNI03: (25.0,)}),
+                     {SIM_FORMA_RAMPA_RETA: (32.0,), SIM_FORMA_RAMPA_CURVA_UNI03: (26.0,)}),
     "franquia_a_vista": ({}, {"parcelas_franquia": 1},
                          {SIM_FORMA_RAMPA_RETA: (31.0,), SIM_FORMA_RAMPA_CURVA_UNI03: (25.0,)}),
 }

@@ -19,8 +19,8 @@
 /** Intervalo do contador, em meses (espelho de `SIM_MES_PICO_RAMPA_MIN/MAX`). */
 export const PICO_RAMPA_MIN = 1
 export const PICO_RAMPA_MAX = 36
-/** Pico observado na rede (espelho de `SIM_MES_PICO_RAMPA_OBSERVADO`, travado por teste
- *  contra o `config.py`). Só serve para o contador ter de onde partir ANTES do 1º cálculo;
+/** Pico observado na rede, em mês de vida (0 = inauguração; espelho de
+ *  `SIM_MES_PICO_RAMPA_OBSERVADO`, travado por teste contra o `config.py`). Só serve para o contador ter de onde partir ANTES do 1º cálculo;
  *  o pedido segue sem `mes_pico_rampa` enquanto o operador não mexe. */
 export const PICO_RAMPA_OBSERVADO = 10
 export type MesPicoRampa = number
@@ -85,7 +85,7 @@ export function ajudaDaRampa(p: PremissasRampa | null | undefined): string {
   if (p && formaDoPayload(p) !== 'curva_uni03') {
     return `O servidor usou a rampa linear de ${p.maturacao_meses} meses. ${RECALCULE}`
   }
-  return `Mês em que a unidade atinge a demanda madura. ${RECALCULE}`
+  return `Meses desde a inauguração até a demanda madura. ${RECALCULE}`
 }
 
 /**
@@ -111,10 +111,11 @@ export function efeitoDaRampaNoSteady(p: PremissasRampa): string {
   if (ref != null && Number.isFinite(ref) && ref > 12) {
     const ano = Math.floor((Math.round(ref) - 1) / 12) + 1
     return (
-      `Afeta o caixa e o payback. Como a demanda cheia só chega no mês ${Math.round(ref)}, ` +
+      `Afeta o caixa e o payback. Como a demanda cheia só chega no mês ${Math.round(ref)} ` +
+      'de operação, ' +
       `o steady-state é medido nesse mês, já com o reajuste anual de preços (preços do ` +
       `${ano}º ano): por isso o faturamento e o EBITDA de steady-state ficam acima dos de ` +
-      'um pico até o mês 12.'
+      'um pico até o mês 11 (o regime pleno no mês 12 de operação).'
     )
   }
   return 'Afeta o caixa e o payback, não a margem de steady-state.'
@@ -126,15 +127,20 @@ export function notaDaRampa(
 ): string {
   const fim = mesFimDaRampa(p)
   if (formaDoPayload(p) === 'curva_uni03') {
-    // Percentual do mês 1 sai da curva SERVIDA; a tela não crava número do motor.
+    // Percentuais dos meses 0 e 1 saem da curva SERVIDA; a tela não crava número do motor.
+    const c = p.curva_rampa
     const abertura =
-      p.curva_rampa && p.curva_rampa.length > 0
-        ? ` A unidade abre com ${Math.round(p.curva_rampa[0] * 100)}% da demanda no mês 1.`
+      c && c.length > 1
+        ? ` A unidade fecha o mês da inauguração (mês 0, o 1º mês de operação) com ` +
+          `${Math.round(c[0] * 100)}% da demanda, com a pré-venda, e o mês 1 com ` +
+          `${Math.round(c[1] * 100)}%, como no estudo.`
         : ''
+    const pico = p.mes_pico_rampa ?? (fim != null ? fim - 1 : null)
     return (
-      'Curva observada nas unidades da rede: cada mês tem uma fração da demanda madura, ' +
-      `até a demanda cheia no pico de maturação, mês ${fim ?? '?'}.${abertura} Outro ` +
-      'pico estica ou encurta a mesma curva no tempo, com a mesma abertura. A curva foi ' +
+      'Curva observada nas unidades da rede, contada em meses desde a inauguração: cada ' +
+      'mês tem uma fração da demanda madura, até a demanda cheia no pico de maturação, ' +
+      `mês ${pico ?? '?'}.${abertura} Outro pico estica ou encurta a mesma curva no ` +
+      'tempo, com os mesmos meses 0 e 1. A curva foi ' +
       'medida em unidades que abriram com agregador: sem agregador, tende a ser otimista. ' +
       'O faturamento segue alunos × ticket: o ticket menor dos ' +
       'primeiros meses (promoções) não é modelado, e por isso o caixa do 1º ano tende a ' +

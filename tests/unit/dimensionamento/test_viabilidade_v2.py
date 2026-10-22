@@ -401,8 +401,8 @@ def _sem_chave_nova(p):
 def test_modo_densidade_e_byte_a_byte_o_de_antes(modelo):
     """MUDANCA DA EMENDA de 21/10/2026: o corpo SEM forma deixou de ser a reta e passou a
     ser a curva com o pico observado. O que continua byte a byte (fora a chave nova
-    `mes_pico_rampa`): a reta EXPLICITA e' o payload do antigo padrao, e o corpo sem forma
-    e' o payload da curva escolhida de antes."""
+    `mes_pico_rampa`): a reta EXPLICITA e' o payload do antigo padrao. O corpo sem forma e'
+    o MESMO payload da curva escolhida e do pico 10 (a curva em si mudou em 22/10/2026)."""
     extra = {} if modelo is None else {"modelo_demanda": modelo}
     reta = _payload(ViabilidadeIn(**GOLDEN, forma_rampa="reta", **extra))
     assert reta["premissas"]["mes_pico_rampa"] is None
@@ -413,7 +413,10 @@ def test_modo_densidade_e_byte_a_byte_o_de_antes(modelo):
     )
     padrao = _payload(ViabilidadeIn(**GOLDEN, **extra))
     assert padrao["premissas"]["mes_pico_rampa"] == 10
-    assert _digest(_sem_chave_nova(padrao)) == DIGEST_ANTES_DA_EMENDA["curva"]
+    # A curva deixou de ser a de antes na emenda de 22/10/2026 (o MES 0 do estudo entra:
+    # 80% no 1o mes de operacao); o digest "curva" fica so' como registro historico.
+    assert _digest(_sem_chave_nova(padrao)) != DIGEST_ANTES_DA_EMENDA["curva"]
+    assert padrao["premissas"]["curva_rampa"][:2] == [0.8, 0.68]
     assert padrao == _payload(ViabilidadeIn(**GOLDEN, forma_rampa="curva_uni03", **extra))
     assert padrao == _payload(ViabilidadeIn(**GOLDEN, mes_pico_rampa=10, **extra))
 
@@ -534,8 +537,8 @@ def test_sem_agregador_usa_o_pico_escolhido(coef):
     sug = _sugestao(coef, share_balcao=1.0)
     p = _payload(_corpo_v2(sug, share_balcao=1.0, mes_pico_rampa=15))
     assert p["premissas"]["forma_rampa"] == SIM_FORMA_RAMPA_CURVA_UNI03
-    assert p["premissas"]["mes_pico_rampa"] == 15
-    assert p["premissas"]["mes_maturidade_rampa"] == 15
+    assert p["premissas"]["mes_pico_rampa"] == 15  # mes de VIDA
+    assert p["premissas"]["mes_maturidade_rampa"] == 16  # mes de OPERACAO = pico + 1
 
 
 def test_densidade_sem_agregador_nao_e_forcada():

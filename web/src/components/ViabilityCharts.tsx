@@ -624,10 +624,15 @@ export function RampaAlunos({
   maturacaoMeses: number | null
   formaRampa?: string | null
 }) {
+  // Na curva observada o eixo é o MÊS DE VIDA do estudo (0 = a inauguração = o 1º mês de
+  // operação do motor) e a linha já começa com alunos no mês 0 (emenda de 22/10/2026). Na
+  // rampa linear (só pela API) o eixo segue o mês de operação e a linha parte de zero.
+  const curva = formaRampa === 'curva_uni03'
+  const desloc = curva ? 1 : 0
   const pts = pontos(
     serie.filter((l) => l.fase === 'operacao'),
     (l) => (Number.isFinite(l.alunos_total) ? l.alunos_total : null),
-  )
+  ).map((p) => ({ ...p, mes: p.mes - desloc }))
 
   if (pts.length < 2) {
     return (
@@ -649,7 +654,8 @@ export function RampaAlunos({
   }
 
   // Horizonte curto: a rampa se lê nos primeiros meses; o platô já aparece plano.
-  const mat = maturacaoMeses != null && maturacaoMeses > 0 ? Math.round(maturacaoMeses) : null
+  const mat =
+    maturacaoMeses != null && maturacaoMeses > 0 ? Math.round(maturacaoMeses) - desloc : null
   const limite = Math.min(pts[pts.length - 1].mes, Math.max((mat ?? 8) + 6, 18))
   const visiveis = pts.filter((p) => p.mes <= limite)
   const plateau = Math.max(...visiveis.map((p) => p.v))
@@ -659,8 +665,8 @@ export function RampaAlunos({
   const y = (v: number) => H - (v / Math.max(1, plateau)) * (H * 0.88) - 8
   const x = (mes: number) => (mes / limite) * W
 
-  // A curva parte do mês 0 (unidade fechada) e sobe até o platô do motor.
-  const linha = [`0,${y(0).toFixed(1)}`]
+  // Rampa linear: parte do mês 0 com a unidade fechada. Curva: o mês 0 já é um ponto da série.
+  const linha = (curva ? [] : [`0,${y(0).toFixed(1)}`])
     .concat(visiveis.map((p) => `${x(p.mes).toFixed(1)},${y(p.v).toFixed(1)}`))
     .join(' ')
   const area = `0,${H} ${linha} ${W},${H}`
