@@ -24,6 +24,7 @@ from __future__ import annotations
 import asyncio
 import base64
 import contextlib
+import copy
 import functools
 import hashlib
 import inspect
@@ -40,6 +41,7 @@ import unicodedata
 from collections.abc import Callable, Collection, Iterator, Sequence
 from dataclasses import dataclass
 from pathlib import Path
+from types import EllipsisType
 from typing import Annotated, Any, Literal
 
 import anyio
@@ -107,6 +109,25 @@ from motor_expansao.dimensionamento.payload_viabilidade import (  # noqa: E402
     base_calibracao,
     montar_payload_para_pdf,
     montar_payload_viabilidade,
+)
+from motor_expansao.recomendacao import (  # noqa: E402  (recomendação única, DEC-077)
+    COLUNAS_OBRIGATORIAS as _REC_COLUNAS_OBRIGATORIAS,
+)
+from motor_expansao.recomendacao import (  # noqa: E402
+    ROTULO_SEGMENTO as _REC_ROTULO_SEGMENTO,
+)
+from motor_expansao.recomendacao import (  # noqa: E402
+    ItemRecomendado,
+    Recomendacao,
+    Recorte,
+    Regra,
+    bairros_ordenados_por_hex,
+    carregar_regra,
+    montar_recomendacao,
+    rotulos_das_regioes,
+)
+from motor_expansao.recomendacao import (  # noqa: E402
+    validar_na_subida as _validar_recomendacao_na_subida,
 )
 from motor_expansao.renda import hex as _renda_hex  # noqa: E402
 from motor_expansao.renda import setor as _renda_setor  # noqa: E402
@@ -1188,8 +1209,17 @@ _COLS_DESEJADAS = [
     "fonte_populacao_corte",
     "pop_total",
     "pop_total_setor_2022",
+    # Insumo OBRIGATORIO da recomendacao unica (DEC-077): diz se o residual do hexagono foi
+    # MEDIDO (populacao do setor) ou ESTIMADO (rateio do municipio). Sem ele o modulo levanta
+    # `ValueError` nomeando a coluna -- e e de proposito: projecao que perde insumo e a
+    # familia de defeito da DEC-038, e "residual sem procedencia" nao pode virar Top 10.
+    "fonte_pop_hex_base",
     "renda_per_capita",
     "renda_per_capita_setor_2022_calibrada",
+    # Renda de 2022 do hexagono agregada da malha com moradores e uplift DO SETOR (E3).
+    # Ausentes no artefato antigo: a leitura por intersecao as descarta e a renda do
+    # hexagono cai, linha a linha, na formula municipal de antes.
+    *_renda_hex.COLS_RENDA_MALHA,
     "densidade_pop_setor_hab_km2",
     "faixa_oportunidade",
     "n_unidades_ultra_performance_hex",
@@ -1237,6 +1267,7 @@ def carregar_uf(uf: str) -> pd.DataFrame:
     df = pd.read_parquet(part, columns=cols)
     df["uf"] = uf.upper()
     df = _completar_unidades_ultra_2km(df)
+    df = _completar_colunas_malha(df)
     cres = carregar_crescimento()
     if cres is not None:
         df = _juntar_crescimento(df, cres, uf.upper())
@@ -1292,6 +1323,50 @@ def _completar_unidades_ultra_2km(df: pd.DataFrame) -> pd.DataFrame:
     df["n_unidades_ultra_2km"] = (
         df["hex_id"].astype(str).map(mapa).fillna(0).astype("int32")
     )
+    return df
+
+
+def _completar_colunas_malha(df: pd.DataFrame) -> pd.DataFrame:
+    """Anexa as colunas da renda da MALHA (E3) do staging quando o frame nao as traz.
+
+    E' a MESMA politica de `renda.hex._com_colunas_malha`, que o Relatorio Municipal e o Top
+    10 da recomendacao unica (DEC-077) usam pelo modulo, e da ficha da rede
+    (`_rede_territorio`): o artefato manda quando traz as colunas; quando nao traz
+    (enriquecido anterior a E3, ou ainda nao remontado depois da troca da malha no staging),
+    elas vem do artefato da malha. Sem isto o card, o tooltip e a ficha caiam na formula
+    municipal enquanto o Top 10, o PDF e a ficha da rede liam a malha: duas rendas para o
+    MESMO hexagono -- medido com o snapshot de producao e o staging da VPS, as 74 vagas de 8
+    capitais, e Mata Virgem acima do piso de renda cuja ficha mostrava menos que o piso.
+
+    Malha ausente, sem as colunas (anterior a E3) ou ilegivel -> frame intacto, e a renda cai
+    linha a linha na formula municipal, como antes. Ilegivel registra no stderr e NUNCA vira
+    500: sem malha legivel o Top 10 ja' fica indisponivel, e o mapa tem de seguir.
+
+    Escreve no proprio frame, como `_completar_unidades_ultra_2km`: quem chama passa o frame
+    recem-lido da particao, antes de qualquer cache.
+    """
+    faltam = [c for c in _renda_hex.COLS_RENDA_MALHA if c not in df.columns]
+    if not faltam or df.empty or "hex_id" not in df.columns:
+        return df
+    malha_path = STAGING_DIR / _renda_hex.CENSO_MALHA_PARQUET
+    try:
+        if not malha_path.is_file():
+            return df
+        import pyarrow.parquet as pq
+
+        # Checagem barata ANTES de montar a lista de hexagonos: a malha anterior a E3 (sem as
+        # colunas) e' o caso comum ate o deploy de dado da E3, e ali nao ha o que anexar.
+        if not set(_renda_hex.COLS_RENDA_MALHA) <= set(pq.read_schema(malha_path).names):
+            return df
+        malha = _renda_hex.colunas_malha_por_hex(df["hex_id"].astype(str).tolist(), STAGING_DIR)
+    except Exception as erro:  # noqa: BLE001 -- sem a malha, a renda cai na formula de antes
+        print(f"[mapa] renda da malha ilegível ({erro})", file=sys.stderr)
+        return df
+    if malha.empty:
+        return df
+    ids = df["hex_id"].astype(str)
+    for coluna in faltam:
+        df[coluna] = ids.map(malha[coluna]).to_numpy()
     return df
 
 
@@ -1846,7 +1921,9 @@ def _renda_domiciliar_hex(r: pd.Series) -> float | None:
     base, uf, cod = _base_renda_hex(r)
     if base is None:
         return None
-    return _num(_renda_hex.renda_domiciliar_hex(base, uf, cod))
+    return _num(
+        _renda_hex.renda_domiciliar_hex(base, uf, cod, linha=r, origem=r.get("renda_origem"))
+    )
 
 
 def _renda_per_capita_hex(r: pd.Series) -> float | None:
@@ -1860,7 +1937,9 @@ def _renda_per_capita_hex(r: pd.Series) -> float | None:
     base, uf, cod = _base_renda_hex(r)
     if base is None:
         return None
-    return _num(_renda_hex.renda_per_capita_hex(base, uf, cod))
+    return _num(
+        _renda_hex.renda_per_capita_hex(base, uf, cod, linha=r, origem=r.get("renda_origem"))
+    )
 
 
 @functools.lru_cache(maxsize=1)
@@ -1936,6 +2015,35 @@ def _init_renda_paths_no_boot() -> None:
         logging.WARNING if fatores.fixada_por_env else logging.INFO,
         "renda: fatores versao=%s pais=%s fixada_por_env=%s staging=%s",
         fatores.versao, fatores.pais, fatores.fixada_por_env, STAGING_DIR,
+    )
+
+
+@app.on_event("startup")
+def _init_recomendacao_no_boot() -> None:
+    """Regua da recomendacao unica (DEC-077) e carimbo k: a falha aparece na SUBIDA, uma
+    vez, e nao como um Top 10 indisponivel em cada tela.
+
+    Registrado LOGO depois de `_init_renda_paths_no_boot` (o FastAPI roda os handlers na
+    ordem de registro), e separado dele para nao mexer nos testes de boot da renda.
+    `validar_na_subida`: regua invalida -> `RegraRecomendacaoInvalida` sempre; com regua e
+    `MOTOR_DATA_DIR` (producao) sem o carimbo k da malha -> `InsumoRendaInvalido` derruba a
+    subida; dev/teste -> so' WARNING. Pais sem regua (AR): nada a checar, so' o log.
+    """
+    _renda_staging_configurado()
+    # O MESMO discriminador das rotas (`PERFIL.pais`) decide se ha o que validar; o
+    # `validar_na_subida` resolve o pais pelo perfil do ambiente, que em producao e' o mesmo.
+    regra = (
+        _validar_recomendacao_na_subida(STAGING_DIR)
+        if _regra_recomendacao() is not None
+        else None
+    )
+    if regra is None:
+        _LOG_REC.info("recomendacao: pais %s sem regua -- caminho legado", PERFIL.pais)
+        return
+    _LOG_REC.log(
+        logging.WARNING if regra.fixada_por_env else logging.INFO,
+        "recomendacao: regua versao=%s pais=%s dec=%s fixada_por_env=%s staging=%s",
+        regra.versao, regra.pais, regra.dec, regra.fixada_por_env, STAGING_DIR,
     )
 
 
@@ -2877,8 +2985,70 @@ def _rank_items(
     return itens
 
 
-def _narrativa_concorrencia(n_residual: int, n_livre: int, n_adensar: int, n_disputa: int) -> str:
+def _concorrentes(n: int) -> str:
+    """'1 concorrente' / 'N concorrentes' (o teto `CONC_ADENSAR_MAX` aparece nas frases)."""
+    return f"{_fmt(n)} {_unidade(n, 'concorrente', 'concorrentes')}"
+
+
+def _narrativa_concorrencia_leitura(
+    n_residual: int, n_livre: int, n_adensar: int, n_disputa: int
+) -> str:
+    """Passo 3 como LEITURA (instancia com regua da recomendacao unica, DEC-077).
+
+    Os MESMOS numeros do texto legado, sem o tom de decisao ("comporta entrada", "sai
+    daqui"): a recomendacao e o Top 10 da camada 5, que nao olha concorrencia. O raio e o
+    de 1 km -- desde a DEC-051 a oferta concorrente vem do disco de 1 km, e a contagem
+    (`n_concorrentes_influencia_1km`, DEC-057) e de quantas unidades tem o disco cruzando o
+    hexagono. O legado ainda diz "2 km" por heranca e fica como esta (instancia sem regua).
+    """
+    teto = _concorrentes(CONC_ADENSAR_MAX)
+    if n_residual == 0:
+        return (
+            "Nenhuma região chegou com residual até aqui, então não há pressão "
+            "concorrencial a ler neste recorte."
+        )
+    cauda = "Ter concorrente não desqualifica uma região — mercado disputado é mercado que existe."
+    if n_livre + n_adensar == 0:
+        if n_residual == 1:
+            return (
+                f"A única região com residual tem mais de {teto} no raio de 1 km: ali a "
+                f"oferta instalada passa desse ponto. {cauda}"
+            )
+        return (
+            f"Nenhuma das {_fmt(n_residual)} regiões com residual tem até {teto} no raio "
+            f"de 1 km: em todas a oferta instalada passa desse ponto. {cauda}"
+        )
+    grupos = (
+        (
+            n_livre,
+            "não tem cadeia concorrente mapeada no raio de 1 km",
+            "não têm cadeia concorrente mapeada no raio de 1 km",
+        ),
+        (n_adensar, f"tem até {teto}", f"têm até {teto}"),
+        (n_disputa, f"passa de {teto} (saturação)", f"passam de {teto} (saturação)"),
+    )
+    # Grupo com contagem zero nao entra na frase, como no texto legado.
+    presentes = [(n, _unidade(n, singular, plural)) for n, singular, plural in grupos if n]
+    if n_residual == 1:
+        abertura = f"A única região com residual {presentes[0][1]}"
+    else:
+        itens = [f"{_fmt(n)} {frase}" for n, frase in presentes]
+        lista = itens[0] if len(itens) == 1 else ", ".join(itens[:-1]) + " e " + itens[-1]
+        abertura = f"Das {_fmt(n_residual)} regiões com residual, {lista}"
+    return (
+        f"{abertura}. A oferta já instalada foi descontada do residual na camada anterior; "
+        "ter concorrente não desqualifica uma região."
+    )
+
+
+def _narrativa_concorrencia(
+    n_residual: int, n_livre: int, n_adensar: int, n_disputa: int, *, leitura: bool = False
+) -> str:
     """Texto do passo 3: a COMPOSICAO da pressao, nao mais um corte de sobrevivencia.
+
+    `leitura=True` (instancia com a regua da recomendacao unica, DEC-077): os mesmos numeros
+    em texto de leitura (`_narrativa_concorrencia_leitura`). `leitura=False`: o texto legado,
+    intocado (instancia sem regua -- o golden da AR trava os bytes).
 
     Compartilhada pelos dois niveis (municipio e UF) porque a regra e a mesma.
 
@@ -2902,6 +3072,8 @@ def _narrativa_concorrencia(n_residual: int, n_livre: int, n_adensar: int, n_dis
     pratica, e por isso vale corrigir: quem le este bloco para saber onde mexer numa
     exclusao de universo iria ao arquivo errado.
     """
+    if leitura:
+        return _narrativa_concorrencia_leitura(n_residual, n_livre, n_adensar, n_disputa)
     if n_residual == 0:
         return (
             "Nenhuma região chegou com residual até aqui, então não há pressão "
@@ -2943,7 +3115,20 @@ def _mun_val(df_muni: pd.DataFrame, col: str) -> Any:
     return s.iloc[0] if len(s) else None
 
 
-def _narrativa_crescimento(df_muni: pd.DataFrame, municipio: str) -> str:
+def _pct_sinal(v: Any) -> str:
+    """Percentual com sinal explicito e virgula decimal: "+12,0%", "-3,5%".
+
+    O `+.1f` da prosa legada, com o separador pt-BR de `_fmt` -- o mesmo que o tooltip e o
+    PDF usam para o mesmo numero ("variou +12.0%" ao lado de um tooltip com "+12,0%" eram
+    duas grafias na mesma tela).
+    """
+    texto = _fmt(v, 1)
+    if _num(v, 1) is None:  # ausente: o texto de "sem dado", sem sinal nem "%"
+        return texto
+    return f"{texto}%" if texto.startswith("-") else f"+{texto}%"
+
+
+def _narrativa_crescimento(df_muni: pd.DataFrame, municipio: str, *, leitura: bool = False) -> str:
     """Passo 4. Como a cidade esta indo.
 
     So repassa o que o projeto Crescimento Regional TEC ja apura: a tendencia do
@@ -2955,10 +3140,39 @@ def _narrativa_crescimento(df_muni: pd.DataFrame, municipio: str) -> str:
     (esta cidade merece atencao?) e nao escolhe nem ordena PONTO — quem faz isso e' o
     passo 5, pelo residual, sem olhar para o crescimento. Nada aqui promete
     desempenho de unidade.
+
+    `leitura=True` (TELA da instancia com a regua da recomendacao unica, DEC-077): o
+    veredito sai -- "e praca para entrar" disputaria com o Top 10 a resposta de onde
+    expandir --, e fica so' a leitura descritiva (emprego contra a mediana da UF, setor,
+    salario, fontes, confiabilidade). Sem tendencia, o texto aponta para os Detalhes do
+    passo, onde as cinco dimensoes seguem visiveis. `leitura=False` e o texto legado,
+    intocado: e' o que o PDF Pontual le (`_praca_para_pdf`) e o que a instancia sem regua
+    mostra -- por isso `v_frase` continua em `_COLS_CRESCIMENTO`.
     """
     tend = _mun_val(df_muni, "cres_tendencia")
     conf = _mun_val(df_muni, "cres_confiab")
-    veredito = _mun_val(df_muni, "v_frase")
+    if leitura:
+        if tend is None:
+            tem_detalhes = bool(
+                _texto(_mun_val(df_muni, "cres_dims")) or _texto(_mun_val(df_muni, "cres_series"))
+            )
+            if not tem_detalhes:
+                return f"A leitura de crescimento de {municipio} não está disponível."
+            motivo = (
+                " — poucos vínculos formais para a medição se sustentar" if conf else ""
+            )
+            return (
+                f"O emprego formal de {municipio} não tem tendência confiável no CAGED"
+                f"{motivo}. As cinco leituras de crescimento do município (renda, população, "
+                "empresas, prédios e emprego) estão em Detalhes, abaixo."
+            )
+        veredito = None
+    else:
+        veredito = _mun_val(df_muni, "v_frase")
+    # Percentual da prosa. Na TELA com regua sai com virgula decimal ("+12,0%"), como o
+    # tooltip e o PDF escrevem; o legado segue com o `+.1f` de sempre (o golden da AR e o
+    # texto que o PDF Pontual le travam esses bytes).
+    pct = _pct_sinal if leitura else (lambda v: f"{v:+.1f}%")
     # `cres_tendencia` e nula de proposito onde a confiabilidade e muito baixa
     # (2.182 de 5.571 municipios), mas `v_frase` existe em TODOS. Testar a tendencia
     # primeiro escondia o veredito em 39% do pais — inclusive onde o painel mais
@@ -3002,18 +3216,18 @@ def _narrativa_crescimento(df_muni: pd.DataFrame, municipio: str) -> str:
     tend_txt = _ROTULO_TEND.get(str(tend), str(tend)).lower()
     partes = [f"O emprego formal em {municipio} está {tend_txt}"]
     if emp is not None:
-        partes[0] += f": variou {emp:+.1f}% desde dez/2022"
+        partes[0] += f": variou {pct(emp)} desde dez/2022"
         # Numero sozinho nao tem escala. A mediana da UF da a referencia em uma linha.
         if med is not None:
             comp = "acima" if emp > med else "abaixo" if emp < med else "na"
-            partes[0] += f", {comp} da mediana de {uf or 'estado'} ({med:+.1f}%)"
+            partes[0] += f", {comp} da mediana de {uf or 'estado'} ({pct(med)})"
     partes[0] += "."
     if setor:
         partes.append(f"O que mais puxa a abertura de empresas aqui é {str(setor).lower()}.")
     if sal is not None:
         frase = f"Quem é admitido entra ganhando R$ {_fmt(int(sal))}"
         if sal_var is not None:
-            frase += f", {sal_var:+.1f}% em relação ao ano anterior"
+            frase += f", {pct(sal_var)} em relação ao ano anterior"
         partes.append(frase + ".")
     partes.append("CAGED e Receita Federal, até junho de 2026 — contexto sobre a praça.")
     if conf and str(conf) in ("baixa", "muito_baixa"):
@@ -3254,13 +3468,24 @@ def _viaveis_para_entrada(df: pd.DataFrame) -> pd.DataFrame:
 
 
 def montar_funil(
-    df_muni: pd.DataFrame, municipio: str, bairros: dict[str, str] | None = None
+    df_muni: pd.DataFrame,
+    municipio: str,
+    bairros: dict[str, str] | None = None,
+    *,
+    recomendacao: dict[str, Any] | None = None,
 ) -> list[dict[str, Any]]:
     """Os 4 passos, com contagens REAIS do municipio.
 
     A narrativa e a mesma do template de referencia, mas os numeros saem do dado
     — nao sao mock. Cada passo declara de onde veio (funil) e o que sobrou.
+
+    `recomendacao` = o bloco PRONTO da recomendacao unica (`_bloco_recomendacao`, DEC-077),
+    calculado pela rota sobre TODOS os hexagonos do municipio. Com ele, o passo 5 e' o Top 10
+    do bloco (`_passo5_top10`) e os passos 1-4 viram LEITURA: mesmos numeros, frases sem tom
+    de recomendacao. `None` (instancia sem regua, ou quem chama direto) = o funil legado,
+    byte a byte. Esta funcao NUNCA calcula a recomendacao: a conta mora num lugar so'.
     """
+    leitura = recomendacao is not None
     total = len(df_muni)
 
     # Passo 1 — Potencial socioeconomico (censo). Corte de <5k habitantes: a
@@ -3310,25 +3535,14 @@ def montar_funil(
         else viavel.iloc[0:0]
     )
 
-    # Passo 5 — Recomendacao: fila de ate FILA_MAX aberturas, ordenada pelo INDICE DE
-    # PRACA (DEC-041), nao mais pelo residual puro.
-    #
-    # POR QUE MUDOU: `oferta_efetiva_disponivel` e' populacao quase pura (Spearman 0,995
-    # contra `pop_hex_base`). Ordenar por ela era ordenar por quantidade de gente — e
-    # dentro de uma cidade a maior quantidade de gente esta' na periferia densa. Medido
-    # nas 8 maiores capitais, `rho(residual, renda)` deu NEGATIVO em TODAS (-0,06 em Sao
-    # Paulo a -0,58 em Campo Grande), e a fila caia no percentil 20-49 de renda do
-    # proprio conjunto que ja' passara no gate. O dono descreveu a dor como
-    # "recomendacao apenas em periferias".
-    #
-    # O indice pondera os dois eixos em regua ABSOLUTA (`praca_indice`): 0,70 de nota
-    # socioeconomica e 0,30 de nota de demanda. A conjuncao ("boa nos DOIS") e' garantida
-    # pelo GATE, que ja' exige minimo em cada eixo; o indice ordena dentro do admissivel.
-    #
-    # NAO E' PREVISAO DE FATURAMENTO. O experimento E3 testou 4 preditores territoriais
-    # contra desempenho real de 267 unidades: todos os IC cruzam zero. Isto e' politica
-    # de expansao declarada, e a metodologia publica diz isso com estas palavras.
-    fila = viavel.nlargest(FILA_MAX, COL_INDICE_PRACA) if len(viavel) else viavel
+    # Passo 5. Com a regua da recomendacao unica (DEC-077) e' o Top 10 do bloco, calculado
+    # pela rota sobre o municipio INTEIRO -- nao sobre o passo 3 (`_passo5_top10`). Sem
+    # regua, a fila legada pelo indice de praca (`_passo5_legado`).
+    passo5 = (
+        _passo5_top10(recomendacao, nome=municipio, escopo="municipio")
+        if recomendacao is not None
+        else _passo5_legado(viavel, bairros, col_censo)
+    )
 
     # O tom passado a `_rank_items` e' o tom PADRAO do passo, e hoje ele NAO PINTA
     # em lugar nenhum: `RankItem.tag_cor` (a cor exata da faixa da legenda) tem
@@ -3359,9 +3573,22 @@ def montar_funil(
             "mode": "residual fitness",
             "titulo": "Demanda não atendida",
             "narrativa": (
-                "Alto potencial não basta: precisa ter espaço. Descontando a oferta já "
-                f"instalada, sobram {_fmt(len(residual))} regiões com residual fitness "
-                f"real — {_fmt(alunos_residual or 0)} alunos não atendidos."
+                (
+                    f"Descontando a oferta já instalada, {_fmt(len(residual))} "
+                    + _unidade(
+                        len(residual),
+                        "região de alto potencial tem",
+                        "regiões de alto potencial têm",
+                    )
+                    + f" residual fitness real — {_fmt(alunos_residual or 0)} alunos não "
+                    "atendidos."
+                )
+                if leitura
+                else (
+                    "Alto potencial não basta: precisa ter espaço. Descontando a oferta já "
+                    f"instalada, sobram {_fmt(len(residual))} regiões com residual fitness "
+                    f"real — {_fmt(alunos_residual or 0)} alunos não atendidos."
+                )
             ),
             "funil_big": len(residual),
             "funil_unit": _unidade(len(residual), "região com residual", "regiões com residual"),
@@ -3374,13 +3601,21 @@ def montar_funil(
             "n": 3,
             "mode": "competitivo",
             "titulo": "Pressão concorrencial",
-            "narrativa": _narrativa_concorrencia(len(residual), n_livre, n_adensar, n_disputa),
+            "narrativa": _narrativa_concorrencia(
+                len(residual), n_livre, n_adensar, n_disputa, leitura=leitura
+            ),
             "funil_big": len(viavel),
-            "funil_unit": _unidade(
-                len(viavel), "região que comporta entrada", "regiões que comportam entrada"
+            "funil_unit": (
+                _regioes_ate_o_teto(len(viavel))
+                if leitura
+                else _unidade(
+                    len(viavel), "região que comporta entrada", "regiões que comportam entrada"
+                )
             ),
             "funil_from": f"{_fmt(len(residual))} regiões",
-            "metrica": "conc. 2 km",
+            # Texto EXIBIDO ("ordenado por ..."). A chave do ramo da etiqueta e' outra coisa
+            # (`metrica_etiqueta`, abaixo) e continua "conc. 2 km": e' identificador.
+            "metrica": "conc. 1 km" if leitura else "conc. 2 km",
             # ORDEM PROPRIA (DEC-041): menos disputadas primeiro, e entre elas as de maior
             # residual. Sem `ordem_extra` esta lista sairia identica a do passo 2, so' com
             # outro chip -- medido nas 8 maiores capitais: os top-10 coincidiam 100% em
@@ -3401,7 +3636,7 @@ def montar_funil(
             "n": 4,
             "mode": "crescimento",
             "titulo": "Como a cidade está indo",
-            "narrativa": _narrativa_crescimento(df_muni, municipio),
+            "narrativa": _narrativa_crescimento(df_muni, municipio, leitura=leitura),
             # A caixa do funil e "N filtrados de M" em todos os passos. Um percentual
             # ali dentro virava "21 % de emprego formal filtrados de 0 areas", que nao
             # significa nada — e o `or 0` ainda afirmava "0%" quando o dado faltava.
@@ -3411,7 +3646,11 @@ def montar_funil(
             "funil_unit": _unidade(
                 len(medidos), "área com medição de satélite", "áreas com medição de satélite"
             ),
-            "funil_from": f"{_fmt(len(viavel))} regiões que comportam entrada",
+            "funil_from": (
+                f"{_fmt(len(viavel))} {_regioes_ate_o_teto(len(viavel))}"
+                if leitura
+                else f"{_fmt(len(viavel))} regiões que comportam entrada"
+            ),
             "metrica": "crescimento",
             # Sem lista propria: o passo 5 ja rankeia os mesmos hexes pela mesma
             # coluna (a lista saia identica, so mudando a etiqueta). A leitura deste
@@ -3421,53 +3660,88 @@ def montar_funil(
             "series": _texto(_mun_val(df_muni, "cres_series")),
             "hexes": medidos["hex_id"].tolist(),
         },
-        {
-            "n": 5,
-            "mode": "recomendação",
-            "titulo": "Para onde crescer",
-            "narrativa": (
-                f"A síntese das camadas vira ação: uma fila de {_fmt(len(fila))} aberturas, "
-                "ordenada por ser boa nos dois eixos ao mesmo tempo — perfil "
-                "socioeconômico da praça e demanda ainda não atendida. É a política de "
-                "expansão declarada, não uma previsão de faturamento."
-                if len(fila)
-                else "A síntese das camadas não gera fila aqui: nenhuma região passou nas "
-                "camadas anteriores com espaço para uma entrada. Avalie outro município."
-            ),
-            "funil_big": len(fila),
-            "funil_unit": _unidade(len(fila), "abertura na fila", "aberturas na fila"),
-            "funil_from": f"{_fmt(len(viavel))} regiões que comportam entrada",
-            "metrica": "índice de praça",
-            "itens": _rank_items(
-                fila.assign(_fila=True),
-                COL_INDICE_PRACA,
-                "índice de praça",
-                "blue",
-                # Uma casa decimal, e nao zero: o indice e' 0-100 e, arredondado a
-                # inteiro, dez posicoes empatariam com frequencia. O front reordena a
-                # fila por `valor` (`ordenarComDesempate`), entao empate ali devolve a
-                # decisao a um criterio de desempate que o servidor nao escolheu.
-                casas=1,
-                bairros=bairros,
-                metrica_etiqueta="índice de praça",
-                # SEM renda de proposito. `renda_leitura` e' a per capita CALIBRADA, e a
-                # tela nunca a mostra crua: `_base_renda_domiciliar` divide pelo `k` e
-                # depois aplica o uplift domiciliar. Publicar o valor bruto aqui poria
-                # dois numeros de renda diferentes na MESMA tela, para o mesmo hexagono
-                # — e replicar a formula de exibicao so' para a frase seria uma segunda
-                # implementacao dela. A renda ja' esta' correta no tooltip e na ficha.
-                extras={
-                    "quadrante": COL_QUADRANTE,
-                    "nota_socio": col_censo,
-                    "nota_demanda": COL_NOTA_DEMANDA,
-                    "residual": "oferta_efetiva_disponivel",
-                    "conc": "n_concorrentes_est",
-                },
-            ),
-            "hexes": fila["hex_id"].tolist(),
-        },
+        passo5,
     ]
     return passos
+
+
+def _regioes_ate_o_teto(n: int) -> str:
+    """'região com até 2 concorrentes' / 'regiões com até 2 concorrentes' (passos 3 e 4)."""
+    return _unidade(n, "região", "regiões") + f" com até {_concorrentes(CONC_ADENSAR_MAX)}"
+
+
+def _passo5_legado(
+    viavel: pd.DataFrame, bairros: dict[str, str] | None, col_censo: str
+) -> dict[str, Any]:
+    """Passo 5 da instancia SEM regua: a fila legada pelo indice de praca (DEC-041).
+
+    Movido de dentro de `montar_funil` sem mudar um byte (o golden da AR trava): e' o que a
+    Argentina continua vendo enquanto nao tiver regua da recomendacao unica.
+    """
+    # Passo 5 — Recomendacao: fila de ate FILA_MAX aberturas, ordenada pelo INDICE DE
+    # PRACA (DEC-041), nao mais pelo residual puro.
+    #
+    # POR QUE MUDOU: `oferta_efetiva_disponivel` e' populacao quase pura (Spearman 0,995
+    # contra `pop_hex_base`). Ordenar por ela era ordenar por quantidade de gente — e
+    # dentro de uma cidade a maior quantidade de gente esta' na periferia densa. Medido
+    # nas 8 maiores capitais, `rho(residual, renda)` deu NEGATIVO em TODAS (-0,06 em Sao
+    # Paulo a -0,58 em Campo Grande), e a fila caia no percentil 20-49 de renda do
+    # proprio conjunto que ja' passara no gate. O dono descreveu a dor como
+    # "recomendacao apenas em periferias".
+    #
+    # O indice pondera os dois eixos em regua ABSOLUTA (`praca_indice`): 0,70 de nota
+    # socioeconomica e 0,30 de nota de demanda. A conjuncao ("boa nos DOIS") e' garantida
+    # pelo GATE, que ja' exige minimo em cada eixo; o indice ordena dentro do admissivel.
+    #
+    # NAO E' PREVISAO DE FATURAMENTO. O experimento E3 testou 4 preditores territoriais
+    # contra desempenho real de 267 unidades: todos os IC cruzam zero. Isto e' politica
+    # de expansao declarada, e a metodologia publica diz isso com estas palavras.
+    fila = viavel.nlargest(FILA_MAX, COL_INDICE_PRACA) if len(viavel) else viavel
+    return {
+        "n": 5,
+        "mode": "recomendação",
+        "titulo": "Para onde crescer",
+        "narrativa": (
+            f"A síntese das camadas vira ação: uma fila de {_fmt(len(fila))} aberturas, "
+            "ordenada por ser boa nos dois eixos ao mesmo tempo — perfil "
+            "socioeconômico da praça e demanda ainda não atendida. É a política de "
+            "expansão declarada, não uma previsão de faturamento."
+            if len(fila)
+            else "A síntese das camadas não gera fila aqui: nenhuma região passou nas "
+            "camadas anteriores com espaço para uma entrada. Avalie outro município."
+        ),
+        "funil_big": len(fila),
+        "funil_unit": _unidade(len(fila), "abertura na fila", "aberturas na fila"),
+        "funil_from": f"{_fmt(len(viavel))} regiões que comportam entrada",
+        "metrica": "índice de praça",
+        "itens": _rank_items(
+            fila.assign(_fila=True),
+            COL_INDICE_PRACA,
+            "índice de praça",
+            "blue",
+            # Uma casa decimal, e nao zero: o indice e' 0-100 e, arredondado a
+            # inteiro, dez posicoes empatariam com frequencia. O front reordena a
+            # fila por `valor` (`ordenarComDesempate`), entao empate ali devolve a
+            # decisao a um criterio de desempate que o servidor nao escolheu.
+            casas=1,
+            bairros=bairros,
+            metrica_etiqueta="índice de praça",
+            # SEM renda de proposito. `renda_leitura` e' a per capita CALIBRADA, e a
+            # tela nunca a mostra crua: `_base_renda_domiciliar` divide pelo `k` e
+            # depois aplica o uplift domiciliar. Publicar o valor bruto aqui poria
+            # dois numeros de renda diferentes na MESMA tela, para o mesmo hexagono
+            # — e replicar a formula de exibicao so' para a frase seria uma segunda
+            # implementacao dela. A renda ja' esta' correta no tooltip e na ficha.
+            extras={
+                "quadrante": COL_QUADRANTE,
+                "nota_socio": col_censo,
+                "nota_demanda": COL_NOTA_DEMANDA,
+                "residual": "oferta_efetiva_disponivel",
+                "conc": "n_concorrentes_est",
+            },
+        ),
+        "hexes": fila["hex_id"].tolist(),
+    }
 
 
 # ============================================================================
@@ -3795,8 +4069,19 @@ def montar_crescimento_estado(df_uf: pd.DataFrame) -> dict[str, Any] | None:
     }
 
 
-def montar_funil_uf(df_uf: pd.DataFrame, uf: str) -> list[dict[str, Any]]:
-    """Os 4 passos no nível da UF inteira; o ranking recomenda MUNICÍPIOS."""
+def montar_funil_uf(
+    df_uf: pd.DataFrame, uf: str, *, recomendacao: dict[str, Any] | None = None
+) -> list[dict[str, Any]]:
+    """Os 5 passos no nível da UF inteira.
+
+    Sem regua (`recomendacao=None`, o legado byte a byte): o passo 5 e' a fila de
+    MUNICÍPIOS pelo melhor indice de praca. Com o bloco da recomendacao unica (DEC-077,
+    calculado pela rota sobre a UF inteira): o passo 5 e' o Top 10 de HEXÁGONOS da UF
+    (`_passo5_top10`), cada item com o municipio para o drill-down, e os passos 1-4 viram
+    LEITURA -- mesmos numeros, frases sem tom de recomendacao. Esta funcao nunca calcula
+    a recomendacao.
+    """
+    leitura = recomendacao is not None
     total = len(df_uf)
     n_munis = int(df_uf["nome_municipio"].nunique()) if "nome_municipio" in df_uf.columns else 0
 
@@ -3806,7 +4091,9 @@ def montar_funil_uf(df_uf: pd.DataFrame, uf: str) -> list[dict[str, Any]]:
 
     residual = quentes[_com_residual(quentes)]
     alunos_res = _num(residual["oferta_efetiva_disponivel"].sum()) if len(residual) else 0
-    residual = _anotar_indice_praca(residual, "score_setor_2022_calibrado")
+    # O indice de praca so' existe para a fila LEGADA (`_passo5_legado_uf`, que o anota): no
+    # caminho com regua nada aqui o le. Ao contrario do funil municipal, na UF nem a folga de
+    # concorrencia (`COL_FOLGA_CONC`) e' usada pelos passos 1 a 4.
     # Mesma cirurgia do funil municipal (DEC-041): o corte deixa de ser "zero
     # concorrente" e passa a ser so' saturacao extrema. Ver o comentario longo em
     # `montar_funil`, que registra a medicao que derrubou a regra anterior.
@@ -3826,13 +4113,59 @@ def montar_funil_uf(df_uf: pd.DataFrame, uf: str) -> list[dict[str, Any]]:
     cres_uf = viavel[viavel["cres_emp_pct"].notna()] if tem_cres else viavel.iloc[0:0]
     n_cidades_cres = int(cres_uf["nome_municipio"].nunique()) if len(cres_uf) else 0
     n_cidades_viavel = int(viavel["nome_municipio"].nunique()) if len(viavel) else 0
-    # Base dos passos 3, 4 e 5: as regioes que COMPORTAM ENTRADA (`viavel`), igual ao
-    # funil municipal. O passo 4 (crescimento) le a MESMA base: ele descreve as cidades
-    # que chegaram ate aqui, nao o estado inteiro — senao falaria de praca ja descartada.
-    n_reco = (
-        int(viavel.groupby("nome_municipio", observed=True)[COL_INDICE_PRACA].max().gt(0).sum())
-        if len(viavel)
-        else 0
+
+    # Narrativa do passo 4, nos dois modos. A da instancia com regua so troca a frase que
+    # apontava a "camada seguinte, pelo residual" como quem escolhe o ponto: quem escolhe
+    # agora e' o Top 10, e o crescimento nao entra nele.
+    # Ha medicao de emprego em ALGUMA cidade deste estado? Decide pelo VALOR no recorte da UF
+    # (nao pela base do passo 3, nem pelo artefato do pais inteiro): o join pode casar outras
+    # UFs e nenhuma cidade desta.
+    cres_no_estado = "cres_emp_pct" in df_uf.columns and bool(df_uf["cres_emp_pct"].notna().any())
+    if tem_cres:
+        narrativa_cres = (
+            "Uma leitura sobre a praça, não sobre o ponto: como anda o emprego "
+            "formal de cada cidade, medido pelo CAGED com defasagem de cerca de três "
+            "meses, e quantas empresas a mais do que fechou cada uma abriu segundo a "
+            "Receita Federal. É o dado mais recente da pilha — vai até junho de 2026, "
+            "enquanto o censo é de 2022. "
+            + (
+                # O total sai da regua carregada (2 x vagas por segmento), nunca escrito.
+                "Esta leitura não entra no Top "
+                f"{2 * int(recomendacao['regra']['vagas_por_segmento'])}."
+                if recomendacao is not None
+                else "Quem escolhe e ordena o ponto é a camada "
+                "seguinte, pelo residual — esta aqui não entra nessa conta."
+            )
+        )
+    elif leitura and not cres_no_estado:
+        narrativa_cres = "A leitura de crescimento não está disponível para este estado."
+    elif leitura and len(viavel) == 0:
+        # A medicao EXISTE no estado: o que falta e' cidade na base desta leitura (passo 3
+        # vazio). Dizer "nao disponivel" aqui seria afirmar uma falha que nao houve.
+        narrativa_cres = (
+            "Nenhuma cidade chegou a esta leitura: sem região com até "
+            f"{_concorrentes(CONC_ADENSAR_MAX)} no raio de 1 km, não há crescimento de cidade "
+            "a descrever neste estado."
+        )
+    elif leitura:
+        # Ha medicao no estado e ha cidade na leitura, mas nenhuma DESTAS tem emprego medido.
+        narrativa_cres = (
+            "A única cidade desta leitura não tem medição de emprego formal no CAGED."
+            if n_cidades_viavel == 1
+            else f"Nenhuma das {_fmt(n_cidades_viavel)} cidades desta leitura tem medição de "
+            "emprego formal no CAGED."
+        )
+    else:
+        narrativa_cres = (
+            "Sem leitura de crescimento para este estado — o artefato municipal não "
+            "está disponível. As regiões que comportam entrada seguem valendo."
+        )
+
+    # Passo 5: o Top 10 de hexagonos da UF (com regua) ou a fila legada de municipios.
+    passo5 = (
+        _passo5_top10(recomendacao, nome=uf, escopo="uf")
+        if recomendacao is not None
+        else _passo5_legado_uf(viavel)
     )
 
     return [
@@ -3857,8 +4190,22 @@ def montar_funil_uf(df_uf: pd.DataFrame, uf: str) -> list[dict[str, Any]]:
             "mode": "residual fitness",
             "titulo": "Demanda não atendida",
             "narrativa": (
-                f"Descontando a oferta já instalada, sobram {_fmt(len(residual))} regiões com "
-                f"residual real — {_fmt(alunos_res or 0)} alunos não atendidos."
+                # Com regua: a MESMA frase do passo 2 do municipio, com a concordancia de
+                # numero ("1 região ... tem"). Sem regua, o texto legado byte a byte.
+                (
+                    f"Descontando a oferta já instalada, {_fmt(len(residual))} "
+                    + _unidade(
+                        len(residual),
+                        "região de alto potencial tem",
+                        "regiões de alto potencial têm",
+                    )
+                    + f" residual fitness real — {_fmt(alunos_res or 0)} alunos não atendidos."
+                )
+                if leitura
+                else (
+                    f"Descontando a oferta já instalada, sobram {_fmt(len(residual))} regiões com "
+                    f"residual real — {_fmt(alunos_res or 0)} alunos não atendidos."
+                )
             ),
             "funil_big": len(residual),
             "funil_unit": _unidade(len(residual), "região com residual", "regiões com residual"),
@@ -3871,13 +4218,19 @@ def montar_funil_uf(df_uf: pd.DataFrame, uf: str) -> list[dict[str, Any]]:
             "n": 3,
             "mode": "competitivo",
             "titulo": "Pressão concorrencial",
-            "narrativa": _narrativa_concorrencia(len(residual), n_livre, n_adensar, n_disputa),
+            "narrativa": _narrativa_concorrencia(
+                len(residual), n_livre, n_adensar, n_disputa, leitura=leitura
+            ),
             "funil_big": len(viavel),
-            "funil_unit": _unidade(
-                len(viavel), "região que comporta entrada", "regiões que comportam entrada"
+            "funil_unit": (
+                _regioes_ate_o_teto(len(viavel))
+                if leitura
+                else _unidade(
+                    len(viavel), "região que comporta entrada", "regiões que comportam entrada"
+                )
             ),
             "funil_from": f"{_fmt(len(residual))} regiões",
-            "metrica": "conc. 2 km",
+            "metrica": "conc. 1 km" if leitura else "conc. 2 km",
             # Ao contrario do funil MUNICIPAL, aqui a lista sobrevive: ela ranqueia
             # MUNICIPIOS por residual somado, e a do passo 2 tambem — mas sobre bases
             # diferentes o bastante (a UF tem centenas de cidades, e as saturadas caem
@@ -3895,26 +4248,17 @@ def montar_funil_uf(df_uf: pd.DataFrame, uf: str) -> list[dict[str, Any]]:
             # Condicionada a mesma checagem do funil_big e dos itens logo abaixo:
             # sem o artefato, a prosa afirmava CAGED e Receita ao lado de um passo
             # com numero 0 e lista vazia.
-            "narrativa": (
-                (
-                    "Uma leitura sobre a praça, não sobre o ponto: como anda o emprego "
-                    "formal de cada cidade, medido pelo CAGED com defasagem de cerca de três "
-                    "meses, e quantas empresas a mais do que fechou cada uma abriu segundo a "
-                    "Receita Federal. É o dado mais recente da pilha — vai até junho de 2026, "
-                    "enquanto o censo é de 2022. Quem escolhe e ordena o ponto é a camada "
-                    "seguinte, pelo residual — esta aqui não entra nessa conta."
-                )
-                if tem_cres
-                else (
-                    "Sem leitura de crescimento para este estado — o artefato municipal não "
-                    "está disponível. As regiões que comportam entrada seguem valendo."
-                )
-            ),
+            "narrativa": narrativa_cres,
             "funil_big": n_cidades_cres,
             "funil_unit": _unidade(
                 n_cidades_cres, "cidade com leitura", "cidades com leitura"
             ),
-            "funil_from": f"{_fmt(n_cidades_viavel)} cidades com região viável",
+            "funil_from": (
+                f"{_fmt(n_cidades_viavel)} {_unidade(n_cidades_viavel, 'cidade', 'cidades')} "
+                f"com região de até {_concorrentes(CONC_ADENSAR_MAX)}"
+                if leitura
+                else f"{_fmt(n_cidades_viavel)} cidades com região viável"
+            ),
             "metrica": "% emprego",
             "itens": (
                 _rank_municipios(cres_uf, "cres_emp_pct", "crescimento", "% emprego", "green")
@@ -3923,39 +4267,465 @@ def montar_funil_uf(df_uf: pd.DataFrame, uf: str) -> list[dict[str, Any]]:
             ),
             "hexes": (cres_uf["hex_id"].tolist() if len(cres_uf) else []),
         },
-        {
-            "n": 5,
-            "mode": "recomendação",
-            "titulo": "Para onde crescer",
-            "narrativa": (
-                f"A fila de municípios para entrar: {_fmt(n_reco)}, ordenados pela melhor "
-                "praça que cada um oferece — boa nos dois eixos ao mesmo tempo, perfil "
-                "socioeconômico e demanda não atendida. Clique num município para "
-                "aprofundar."
-                if n_reco
-                else "Nenhum município deste estado tem região que comporte uma entrada: "
-                "a fila fica vazia. Amplie o recorte."
-            ),
-            "funil_big": n_reco,
-            "funil_unit": _unidade(n_reco, "município na fila", "municípios na fila"),
-            "funil_from": f"{_fmt(len(viavel))} regiões que comportam entrada",
-            "metrica": "índice de praça",
-            # `modo="max"` e nao `"sum"`: o indice e' 0-100 por hexagono e nao e' somavel
-            # (DEC-041). O municipio vale pelo seu melhor ponto.
-            "itens": _rank_municipios(
-                viavel,
-                COL_INDICE_PRACA,
-                "max",
-                "índice de praça",
-                "blue",
-                fila=True,
-                # Passo 4 = faixa de oportunidade do M1, igual a legenda desta camada.
-                # A ordem da fila continua legivel no rank (1º, 2º, 3º) do proprio item.
-                faixa_por="m1",
-            ),
-            "hexes": (viavel["hex_id"].tolist() if len(viavel) else []),
-        },
+        passo5,
     ]
+
+
+def _passo5_legado_uf(viavel: pd.DataFrame) -> dict[str, Any]:
+    """Passo 5 da UF na instancia SEM regua: a fila de municipios pelo melhor indice de praca.
+
+    Movido de dentro de `montar_funil_uf` sem mudar um byte do payload (o golden da AR trava).
+    O indice de praca e' anotado AQUI, e nao mais sobre o residual inteiro da UF: e' por
+    linha e de regua absoluta (`praca_indice`), entao sai o mesmo numero, e o caminho com a
+    regua da recomendacao unica deixa de calcular uma coluna que ninguem le.
+    """
+    viavel = _anotar_indice_praca(viavel, "score_setor_2022_calibrado")
+    # Base dos passos 3, 4 e 5: as regioes que COMPORTAM ENTRADA (`viavel`), igual ao
+    # funil municipal. O passo 4 (crescimento) le a MESMA base: ele descreve as cidades
+    # que chegaram ate aqui, nao o estado inteiro — senao falaria de praca ja descartada.
+    n_reco = (
+        int(viavel.groupby("nome_municipio", observed=True)[COL_INDICE_PRACA].max().gt(0).sum())
+        if len(viavel)
+        else 0
+    )
+    return {
+        "n": 5,
+        "mode": "recomendação",
+        "titulo": "Para onde crescer",
+        "narrativa": (
+            f"A fila de municípios para entrar: {_fmt(n_reco)}, ordenados pela melhor "
+            "praça que cada um oferece — boa nos dois eixos ao mesmo tempo, perfil "
+            "socioeconômico e demanda não atendida. Clique num município para "
+            "aprofundar."
+            if n_reco
+            else "Nenhum município deste estado tem região que comporte uma entrada: "
+            "a fila fica vazia. Amplie o recorte."
+        ),
+        "funil_big": n_reco,
+        "funil_unit": _unidade(n_reco, "município na fila", "municípios na fila"),
+        "funil_from": f"{_fmt(len(viavel))} regiões que comportam entrada",
+        "metrica": "índice de praça",
+        # `modo="max"` e nao `"sum"`: o indice e' 0-100 por hexagono e nao e' somavel
+        # (DEC-041). O municipio vale pelo seu melhor ponto.
+        "itens": _rank_municipios(
+            viavel,
+            COL_INDICE_PRACA,
+            "max",
+            "índice de praça",
+            "blue",
+            fila=True,
+            # Passo 4 = faixa de oportunidade do M1, igual a legenda desta camada.
+            # A ordem da fila continua legivel no rank (1º, 2º, 3º) do proprio item.
+            faixa_por="m1",
+        ),
+        "hexes": (viavel["hex_id"].tolist() if len(viavel) else []),
+    }
+
+
+# ============================================================================
+# Recomendacao unica (DEC-077) — Top 10 = 5 Mata Virgem + 5 Premium por hexagono
+#
+# A regua e o nucleo moram em `motor_expansao.recomendacao` (READ-ONLY sobre o M1: nao le
+# nem altera `score_priorizacao`, carteira, plano ou artefato oficial). Aqui fica so' o que e'
+# do piloto: escolher o recorte, nomear as regioes e montar o passo 5. A conta de "onde
+# expandir" e' UMA -- `_recomendacao_do_recorte`, a unica chamada ao modulo; bloco, passo 5
+# e `/api/hexagonos` consomem o dict de `Recomendacao.para_payload`, sem reprocessar numero.
+#
+# Discriminador do payload: a CHAVE `recomendacao` no topo. Pais sem regua (Argentina) nao a
+# recebe e segue byte a byte como antes (golden em `test_piloto_web_recomendacao_legado_ar`).
+# ============================================================================
+
+_LOG_REC = logging.getLogger("piloto.recomendacao")
+
+
+def _regra_recomendacao() -> Regra | None:
+    """Regua vigente do pais desta instancia; `None` = pais sem regua -> caminho legado.
+
+    Le `PERFIL.pais` a cada chamada (quem cacheia, por pais, e' o `carregar_regra`).
+    """
+    return carregar_regra(PERFIL.pais)
+
+
+def _recomendacao_do_recorte(
+    df_recorte: pd.DataFrame, recorte: Recorte, *, regra: Regra | None
+) -> Recomendacao | None:
+    """A UNICA conta de "onde expandir" do servidor: o modulo da recomendacao sobre o recorte.
+
+    A regua vem de quem chama (`_regra_recomendacao()`), e nao e' lida aqui DE PROPOSITO: o
+    Top 10 do Brasil e' cacheado e passa por esta funcao, e funcao cacheada que alcance
+    `PERFIL` vazaria o pais entre testes (`test_cache_de_perfil_nao_escapa.py`). Com a regua
+    na chave do cache, o pais ja' esta' nela.
+
+    NAO captura o `ValueError` do modulo: coluna obrigatoria faltando e' bug de PROJECAO
+    (familia DEC-038) e tem de falhar alto. "Sem k" (staging sem o carimbo da malha) volta
+    como `Recomendacao` com os dois segmentos indisponiveis, sem excecao.
+    """
+    if regra is None:
+        return None
+    _renda_staging_configurado()  # uplift/moradores do card apontados para o STAGING_DIR
+    df = df_recorte
+    if "uf" not in df.columns and recorte.uf:
+        df = df.assign(uf=recorte.uf)  # particao lida crua nao traz a chave hive
+    return montar_recomendacao(df, recorte=recorte, staging_dir=STAGING_DIR, regra=regra)
+
+
+@functools.lru_cache(maxsize=32)
+def _bairros_ordenados(uf: str, cod_municipio: str) -> dict[str, list[str]]:
+    """`hex_id` -> bairros do hexagono em ordem de populacao; o 1o e' o de `bairros_por_hex`.
+
+    A MESMA leitura de `relatorio_municipal._carregar_bairros_por_hex` (mesmas tentativas de
+    colunas, bairro do CNEFE pela DEC-076, mesmos `CENSO_GEO_DIR`/`STAGING_DIR`), so' que com a
+    lista INTEIRA de bairros: o 2o desempata duas regioes do Top 10 com o mesmo nome
+    (`rotulos_das_regioes`). Paridade do 1o nome travada em teste. Mesmo contrato de cache de
+    `bairros_por_hex`: trocar o artefato do CNEFE exige restart do `web`.
+    """
+    if not CENSO_GEO_DIR.exists():
+        return {}
+    try:
+        from motor_expansao.dashboard.bairro_cnefe import (
+            aplicar_bairro_cnefe,
+            bairro_cnefe_disponivel,
+        )
+        from motor_expansao.dashboard.relatorio_municipal import _ler_setores_em_tentativas
+
+        bbox_pop = ["bbox_minx", "bbox_miny", "bbox_maxx", "bbox_maxy", "pop_total_setor_2022"]
+        tentativas = [
+            ["nome_bairro", "nome_subdistrito", "nome_distrito", "nome_municipio", *bbox_pop],
+            ["nome_bairro", *bbox_pop],
+        ]
+        if bairro_cnefe_disponivel(CENSO_GEO_DIR, uf, staging_dir=STAGING_DIR):
+            tentativas = [[*cols, "cod_setor"] for cols in tentativas] + tentativas
+        setores = _ler_setores_em_tentativas(CENSO_GEO_DIR, uf, cod_municipio, tentativas)
+        if setores is None:
+            return {}
+        return bairros_ordenados_por_hex(
+            aplicar_bairro_cnefe(
+                setores, censo_geo_dir=CENSO_GEO_DIR, uf=uf, staging_dir=STAGING_DIR
+            )
+        )
+    except Exception:  # noqa: BLE001 — nome e' enriquecimento opcional, como em bairros_por_hex
+        return {}
+
+
+def _rotulos_do_top10(rec: Recomendacao) -> dict[str, str]:
+    """Rotulo de exibicao de cada regiao do Top 10; regiao sem nome fica fora (o front
+    mostra o municipio). Le so' os municipios das regioes recomendadas -- no recorte Brasil,
+    no maximo dez particoes geo, nunca o pais."""
+    bairros: dict[str, list[str]] = {}
+    for vaga in rec.top10:
+        if isinstance(vaga, ItemRecomendado) and vaga.uf and vaga.cod_municipio:
+            ordem = _bairros_ordenados(vaga.uf.upper(), vaga.cod_municipio)
+            if vaga.hex_id in ordem:
+                bairros[vaga.hex_id] = ordem[vaga.hex_id]
+    return rotulos_das_regioes(rec.hex_ids, bairros)
+
+
+def _bloco_recomendacao(
+    df_recorte: pd.DataFrame, recorte: Recorte, *, regra: Regra | None
+) -> dict[str, Any] | None:
+    """O bloco `recomendacao` do payload, ou `None` sem regua (a chave nem entra)."""
+    rec = _recomendacao_do_recorte(df_recorte, recorte, regra=regra)
+    if rec is None:
+        return None
+    return rec.para_payload(nomes=_rotulos_do_top10(rec))  # o UNICO serializador
+
+
+def _hex_ids_do_bloco(bloco: dict[str, Any] | None) -> list[str]:
+    """Os hexagonos do Top 10 (vagas preenchidas), na ordem MV1..MVn, P1..Pn."""
+    if not bloco:
+        return []
+    return [
+        str(v["hex_id"])
+        for segmento in ("mata_virgem", "premium")
+        for v in bloco[segmento]["vagas"]
+        if not v["vazia"]
+    ]
+
+
+#: (segmento, tom do chip, chave do numero principal, rotulo do numero) de cada item do Top
+#: 10 no passo 5. Os dois tons existem no tipo `Tom` do front. O numero principal e' a chave
+#: que ORDENA o segmento: residual na Mata Virgem, populacao no Premium.
+_TOP10_SEGMENTOS: tuple[tuple[str, str, str, str], ...] = (
+    ("mata_virgem", "green", "residual", "residual"),
+    ("premium", "blue", "populacao", "população"),
+)
+
+
+def _itens_do_top10(
+    bloco: dict[str, Any], *, escopo: Literal["municipio", "uf"]
+) -> list[dict[str, Any]]:
+    """As vagas PREENCHIDAS do bloco no formato `RankItem` do painel (espelho).
+
+    Para consumidores antigos do passo 5 (`analisar()` do mapa); a fonte de render do Top 10
+    e' o bloco. Le so' o dict -- nenhum numero e' recalculado, os da vaga vao crus. Na UF
+    cada item leva o municipio, para o drill-down.
+    """
+    from motor_expansao.dashboard.constants import TEXTO_SEM_DADO
+
+    itens: list[dict[str, Any]] = []
+    for segmento, tom, chave, rotulo_valor in _TOP10_SEGMENTOS:
+        seg = bloco[segmento]
+        for vaga in seg["vagas"]:
+            if vaga["vazia"]:
+                continue
+            hid = str(vaga["hex_id"])
+            municipio = vaga["nome_municipio"]
+            curto = f"hex {hid[:9]}…"
+            item: dict[str, Any] = {
+                "rank": len(itens) + 1,
+                "hex_id": hid,
+                "titulo": vaga["nome_regiao"] or municipio or TEXTO_SEM_DADO,
+                "sub": (
+                    curto if escopo == "municipio" else f"{municipio or TEXTO_SEM_DADO} · {curto}"
+                ),
+                "valor": _num(vaga[chave]),
+                "label": rotulo_valor,
+                "tag": seg["rotulo"],
+                "tom": tom,
+                "tag_cor": None,
+                "tipo_item": "hex",
+                "segmento": segmento,
+                "posicao_segmento": int(vaga["posicao"]),
+                "renda_domiciliar": vaga["renda_domiciliar"],
+                "populacao": vaga["populacao"],
+                "residual": vaga["residual"],
+                "score_censitario": vaga["score_censitario"],
+                "cod_municipio": vaga["cod_municipio"],
+            }
+            if escopo == "uf":
+                item["municipio"] = municipio
+            itens.append(item)
+    return itens
+
+
+def _numero_da_regua(valor: float) -> str:
+    """Score da regua: inteiro sem casa ("50"), fracionario com uma ("52,5")."""
+    return _fmt(valor, 0 if float(valor).is_integer() else 1)
+
+
+_MESES_DA_REGUA = (
+    "janeiro", "fevereiro", "março", "abril", "maio", "junho",
+    "julho", "agosto", "setembro", "outubro", "novembro", "dezembro",
+)  # fmt: skip
+#: Nome de versao no padrao dos arquivos da regua: `<ano>-<mes>_v<n>` (ex.: "2026-10_v1").
+_RE_VERSAO_DA_REGUA = re.compile(r"^(\d{4})-(\d{2})_v(\d+)$")
+
+
+def _rotulo_versao_regua(versao: str) -> str:
+    """Rotulo de NEGOCIO da versao da regua: "2026-10_v1" -> "outubro de 2026, versão 1".
+
+    O nome do arquivo ("2026-10_v1") e o numero da decisao sao detalhe tecnico; quem le o
+    painel precisa saber DE QUANDO e' a regua. Fora do padrao `<ano>-<mes>_v<n>` (o
+    carregador aceita outros nomes) devolve a versao crua, sem inventar data. Espelho do
+    `rotuloDaVersaoDaRegua` do front (`lib/top10.ts`).
+    """
+    achado = _RE_VERSAO_DA_REGUA.match(str(versao))
+    if achado is None or not 1 <= int(achado.group(2)) <= 12:
+        return str(versao)
+    ano, mes, n = achado.group(1), int(achado.group(2)), int(achado.group(3))
+    return f"{_MESES_DA_REGUA[mes - 1]} de {ano}, versão {n}"
+
+
+def _narrativa_top10(
+    bloco: dict[str, Any], *, nome: str, escopo: Literal["municipio", "uf"]
+) -> str:
+    """O texto do passo 5 com régua: todo numero sai de `bloco["regra"]`, nunca escrito aqui.
+
+    Rotulos dos segmentos vem do proprio bloco (camada de rotulo do modulo); renda por
+    `_moeda_renda`, milhar por `_mil`, score inteiro sem casa decimal.
+    """
+    regra = bloco["regra"]
+    vagas = int(regra["vagas_por_segmento"])
+    total = 2 * vagas
+    rotulo = bloco["rotulos"]["segmento"]
+    mv, pr = rotulo["mata_virgem"], rotulo["premium"]
+    if not bloco["renda"]["disponivel"]:
+        motivo = bloco["rotulos"]["motivo"]["renda_indisponivel"]
+        return (
+            f"O Top {total} de {nome} está indisponível. {motivo}. O mapa e as camadas 1 a 4 "
+            "seguem valendo."
+        )
+    r_mv, r_pr = regra["mata_virgem"], regra["premium"]
+    regioes = _unidade(vagas, "região", "regiões")
+    medido_mv = " medido" if r_mv["exige_residual_medido"] else ""
+    pop_mv = (
+        f" e {_mil(r_mv['populacao_min'])} habitantes ou mais"
+        if r_mv["populacao_min"] is not None
+        else ""
+    )
+    pop_pr = (
+        f" e {_mil(r_pr['populacao_min'])} habitantes ou mais"
+        if r_pr["populacao_min"] is not None
+        else ""
+    )
+    medido_pr = " e com residual medido" if r_pr["exige_residual_medido"] else ""
+    regua = (
+        f"Top {total} de {nome}: até {vagas} {regioes} {mv} — renda domiciliar de "
+        f"{_moeda_renda(r_mv['renda_domiciliar_min'])} ou mais e residual{medido_mv} de "
+        f"{_mil(r_mv['residual_min'])} alunos ou mais{pop_mv}, na ordem do residual — e até "
+        f"{vagas} {regioes} {pr} — score censitário de "
+        f"{_numero_da_regua(r_pr['score_min'])} ou mais{pop_pr}, fora da {mv}{medido_pr}, na "
+        "ordem da população."
+    )
+    preenchidas = {
+        segmento: sum(1 for v in bloco[segmento]["vagas"] if not v["vazia"])
+        for segmento in ("mata_virgem", "premium")
+    }
+    n = preenchidas["mata_virgem"] + preenchidas["premium"]
+    if n == 0:
+        onde = "do município" if escopo == "municipio" else "do estado"
+        vagas_txt = (
+            f"Nenhuma região {onde} atende à régua: as vagas ficam vazias — um segmento "
+            "nunca completa o outro."
+        )
+    else:
+        vagas_txt = (
+            f"{n} de {total} vagas preenchidas ({preenchidas['mata_virgem']} {mv}, "
+            f"{preenchidas['premium']} {pr})."
+        )
+        if n < total:
+            vagas_txt += " Vaga sem candidato fica vazia — um segmento nunca completa o outro."
+    partes = [
+        regua,
+        vagas_txt,
+        "Concorrência, viabilidade, aluguel e proximidade da Ultra não entram nesta conta.",
+    ]
+    if escopo == "uf":
+        partes.append(
+            "Clique numa região para vê-la no mapa, ou em “Abrir” para descer ao município."
+        )
+    return " ".join(partes)
+
+
+def _passo5_top10(
+    bloco: dict[str, Any], *, nome: str, escopo: Literal["municipio", "uf"]
+) -> dict[str, Any]:
+    """O passo 5 com régua: o Top 10 do bloco, com as MESMAS chaves do passo legado.
+
+    `funil_big` conta as vagas preenchidas, `hexes` sao os <= 10 hexagonos do Top 10 e
+    `itens` os espelha (`_itens_do_top10`). Le so' o dict do bloco -- nunca reabre o frame.
+    """
+    itens = _itens_do_top10(bloco, escopo=escopo)
+    n = len(itens)
+    n_hex = int(bloco["n_hexes_recorte"])
+    onde = "do município" if escopo == "municipio" else "do estado"
+    total = 2 * int(bloco["regra"]["vagas_por_segmento"])
+    # Sem calculo (staging sem o carimbo k): "0 vagas preenchidas" leria como "a regua rodou
+    # e ninguem passou". A caixa diz que a recomendacao esta suspensa, como a narrativa.
+    nada_calculado = all(bloco[s]["status"] == "indisponivel" for s in ("mata_virgem", "premium"))
+    return {
+        "n": 5,
+        "mode": "recomendação",
+        "titulo": "Para onde crescer",
+        "narrativa": _narrativa_top10(bloco, nome=nome, escopo=escopo),
+        "funil_big": n,
+        "funil_unit": (
+            f"vagas — Top {total} indisponível"
+            if nada_calculado
+            else _unidade(n, "vaga preenchida", "vagas preenchidas")
+        ),
+        "funil_from": f"{_fmt(n_hex)} {_unidade(n_hex, 'hexágono', 'hexágonos')} {onde}",
+        "metrica": f"top {total}",
+        "itens": itens,
+        "hexes": [item["hex_id"] for item in itens],
+    }
+
+
+def _recorte_do_municipio(
+    df: pd.DataFrame, uf: str, municipio: str
+) -> tuple[pd.DataFrame, str | None, str]:
+    """(linhas do municipio, `cod_municipio`, nome canonico do dado).
+
+    A MESMA selecao em `/api/municipio` e `/api/hexagonos` -- e e' isso que faz o Top 10 sair
+    igual nas duas rotas por construcao (mesmo recorte, mesmo `Recorte`). Casefold EXATO do
+    nome, 404 com sugestoes quando nao acha.
+    """
+    sel = df[df["nome_municipio"].str.casefold() == municipio.casefold()]
+    if sel.empty:
+        sugestoes = (
+            df["nome_municipio"].dropna().unique().tolist()[:8]
+            if "nome_municipio" in df.columns
+            else []
+        )
+        raise HTTPException(
+            404,
+            f"Municipio '{municipio}' nao encontrado na UF {uf}. Voce quis dizer: {sugestoes}",
+        )
+    cod = (
+        sel["cod_municipio"].dropna().astype(str).iloc[0]
+        if "cod_municipio" in sel.columns and sel["cod_municipio"].notna().any()
+        else None
+    )
+    nomes = sel["nome_municipio"].dropna()
+    return sel, cod, (str(nomes.iloc[0]) if len(nomes) else municipio)
+
+
+def _stat_ou_none(caminho: Path) -> tuple[str, int, int] | None:
+    try:
+        st = caminho.stat()
+    except OSError:
+        return None
+    return (str(caminho), st.st_mtime_ns, st.st_size)
+
+
+def _identidade_base_recomendacao() -> tuple[Any, ...]:
+    """Identidade do dado que o Top 10 do Brasil le: caminhos e `stat` das particoes
+    enriquecidas e dos insumos da renda (carimbo k da malha, uplift municipal).
+
+    Chave do cache de `_top10_brasil`: trocar um arquivo (nova safra, regeneracao) muda a
+    identidade e o Top 10 e' recalculado na proxima chamada, sem restart.
+    """
+    from motor_expansao.renda.insumos import UPLIFT_MUNICIPIO_ARQUIVO
+
+    try:
+        particoes = tuple(_stat_ou_none(p) for p in sorted(ENRICHED_DIR.glob("uf=*/*.parquet")))
+    except OSError:
+        particoes = ()
+    return (
+        str(ENRICHED_DIR),
+        particoes,
+        str(STAGING_DIR),
+        _stat_ou_none(STAGING_DIR / _renda_hex.CENSO_MALHA_PARQUET),
+        # `joinpath` e nao `/`: e' juncao de CAMINHO, e o fio de alarme da renda
+        # (`test_renda_ponto_unico`, R2) le `/` com operando "uplift" como conta de renda.
+        _stat_ou_none(STAGING_DIR.joinpath(UPLIFT_MUNICIPIO_ARQUIVO)),
+        str(CENSO_GEO_DIR),
+    )
+
+
+def _ler_base_recomendacao_brasil() -> pd.DataFrame:
+    """O recorte BRASIL: todas as particoes, so' as colunas de `_COLS_RECOMENDACAO`."""
+    import pyarrow.dataset as ds
+
+    if not ENRICHED_DIR.exists():
+        raise HTTPException(500, f"Base nao encontrada em {ENRICHED_DIR}.")
+    dset = ds.dataset(str(ENRICHED_DIR), partitioning="hive")
+    disp = set(dset.schema.names)
+    if not disp:
+        raise HTTPException(500, f"Base vazia em {ENRICHED_DIR}.")
+    return dset.to_table(columns=[c for c in _COLS_RECOMENDACAO if c in disp]).to_pandas()
+
+
+#: Serializa o calculo a frio do Top 10 do Brasil (ver `hexagonos`).
+_TOP10_BRASIL_LOCK = threading.Lock()
+
+
+@functools.lru_cache(maxsize=2)
+def _top10_brasil(regra: Regra, identidade: tuple[Any, ...], nome_pais: str) -> dict[str, Any]:
+    """Top 10 do Brasil: uma conta por versao da regua e por identidade do dado.
+
+    O recorte nacional custa ~2 s (1,54 milhao de hexagonos, ~370 MB transitorios; medido no
+    snapshot de producao), por isso o cache. So' o PAYLOAD fica guardado -- o frame morre no
+    fim desta funcao. `regra` (dataclass congelada, hashable) e `nome_pais` vem de quem chama:
+    nada aqui alcanca `PERFIL`, e o pais ja' esta' na chave.
+    """
+    base = _ler_base_recomendacao_brasil()
+    bloco = _bloco_recomendacao(base, Recorte(nivel="brasil", nome=nome_pais), regra=regra)
+    ufs = int(base["uf"].nunique()) if "uf" in base.columns and len(base) else 0
+    return {
+        "bloco": bloco,
+        "cobertura": {"hexes_no_recorte": int(len(base)), "ufs_no_recorte": ufs},
+    }
 
 
 def _hex_dict(r: pd.Series, bairro: str | None = None) -> dict[str, Any]:
@@ -5542,10 +6312,18 @@ def _faixas_residual() -> list[dict[str, Any]]:
     )
 
 
-def _faixas_competitivas() -> list[dict[str, Any]]:
+def _faixas_competitivas(
+    raio: str = "2 km", *, contagem: str = "concorrentes estimados"
+) -> list[dict[str, Any]]:
     """Camada 3. No municipio a etiqueta e' COMPETITIVA (`_etiqueta`, ramo "conc. 2 km");
     na UF a mesma camada rotula pela faixa de demanda do melhor hexagono. Sao bases
-    diferentes, e por isso os dois escopos aparecem lado a lado no painel."""
+    diferentes, e por isso os dois escopos aparecem lado a lado no painel.
+
+    `raio` entra no texto da faixa "Livre" e `contagem` no das faixas Adensar/Disputa: a
+    metodologia da instancia com a regua da recomendacao unica passa "1 km" (o disco da
+    DEC-051) e "concorrentes no raio de 1 km" -- desde a DEC-057 a contagem e' de unidades
+    com o disco cruzando o hexagono, nao mais uma estimativa pela capacidade. Os defaults sao
+    o texto legado."""
     from motor_expansao.dashboard.constants import FAIXAS_MAPA_DEMANDA
 
     # Rotulo E tom sao PERGUNTADOS a `_etiqueta` — a mesma funcao que pinta o chip na
@@ -5562,9 +6340,9 @@ def _faixas_competitivas() -> list[dict[str, Any]]:
         # Sem o qualificador, o mapa afirma "nenhum concorrente" no mesmo hexagono em que a
         # ficha do ponto passa a listar academias independentes -- duas verdades vizinhas.
         # Mudanca de ROTULO, nao de calculo.
-        faixa(0, "nenhuma cadeia mapeada em 2 km"),
-        faixa(CONC_ADENSAR_MAX, f"até {CONC_ADENSAR_MAX} concorrentes estimados"),
-        faixa(CONC_ADENSAR_MAX + 1, f"mais de {CONC_ADENSAR_MAX} concorrentes estimados"),
+        faixa(0, f"nenhuma cadeia mapeada em {raio}"),
+        faixa(CONC_ADENSAR_MAX, f"até {CONC_ADENSAR_MAX} {contagem}"),
+        faixa(CONC_ADENSAR_MAX + 1, f"mais de {CONC_ADENSAR_MAX} {contagem}"),
     ] + _faixas_da_rampa(FAIXAS_MAPA_DEMANDA, "uf", em_alunos=True)
 
 
@@ -5680,8 +6458,29 @@ def _faixas_m1() -> list[dict[str, Any]]:
     ]
 
 
-def montar_metodologia() -> dict[str, Any]:
+def montar_metodologia(regra: Regra | None | EllipsisType = ...) -> dict[str, Any]:
     """As camadas do funil explicadas para quem LE a tela, nao para quem escreveu.
+
+    `regra` default (`...`) = a regua da instancia (`_regra_recomendacao()`). Com regua
+    (Brasil): `_metodologia_top10` -- camadas 1 a 4 como LEITURA e a camada 5 como o Top 10
+    da recomendacao unica (DEC-077), com os numeros LIDOS da regua carregada. Sem regua
+    (Argentina): `_metodologia_legado`, o painel de antes, byte a byte. O parametro existe
+    para o teste trocar a regua e ver o texto acompanhar.
+    """
+    if isinstance(regra, EllipsisType):
+        regra = _regra_recomendacao()
+    if regra is None:
+        return _metodologia_legado()
+    return _metodologia_top10(regra)
+
+
+def _metodologia_legado() -> dict[str, Any]:
+    """O painel da instancia SEM regua da recomendacao unica (hoje, a Argentina).
+
+    Movido de `montar_metodologia` sem mudar um byte (o golden da AR trava). Docstring
+    original:
+
+    As camadas do funil explicadas para quem LE a tela, nao para quem escreveu.
 
     NAO cravar a quantidade aqui: o funil ja' passou de 4 para 5 camadas (entrou
     "Como a cidade esta indo") e o docstring ficou dizendo 4 por um tempo.
@@ -6090,6 +6889,373 @@ def montar_metodologia() -> dict[str, Any]:
     }
 
 
+def _trocar_fim(texto: str, fim_antigo: str, fim_novo: str) -> str:
+    """Troca a frase FINAL de um texto do painel legado; falha alto se ela mudou.
+
+    O painel com regua reaproveita a prosa do legado onde ela vale para os dois e troca so' a
+    frase que encadeava o funil ate a fila. Se alguem reescrever a frase legada, isto levanta
+    em vez de publicar um texto com as duas versoes coladas.
+    """
+    if not texto.endswith(fim_antigo):
+        raise RuntimeError(
+            f"metodologia: a frase final do painel legado mudou ({fim_antigo!r}); "
+            "atualize `_metodologia_top10` junto"
+        )
+    return texto[: len(texto) - len(fim_antigo)] + fim_novo
+
+
+def _metrica_do_legado(camada: dict[str, Any], nome: str) -> dict[str, Any]:
+    """Copia de uma metrica do painel legado, pelo nome (o legado nunca e' mutado)."""
+    return copy.deepcopy(next(m for m in camada["metricas"] if m["nome"] == nome))
+
+
+def _metodologia_top10(regra: Regra) -> dict[str, Any]:
+    """O painel da instancia COM a regua da recomendacao unica (DEC-077).
+
+    Camadas 1 a 4 sao LEITURA do recorte (mesmos cortes e mesmas faixas do funil, sem a
+    promessa de que uma camada entrega a seguinte uma fila); a 5 e' o Top 10, com TODO
+    numero LIDO da `regra` carregada -- trocar a regua (versao nova, fixacao por env) muda o
+    texto junto. O que vale igual para os dois paineis (fontes do perfil, metricas da camada
+    4, capacidade media) sai do painel legado, para nao existir uma segunda redacao.
+    """
+    legado = _metodologia_legado()
+    camada = {c["n"]: c for c in legado["camadas"]}
+    cap = _mil(CAPACIDADE_CONCORRENTE_PADRAO)
+    pop = _mil(POP_MIN_ACIONAVEL)
+    res = _mil(OFERTA_DESTAQUE_MIN)
+    score = f"{SCORE_CORTE_QUENTE:.0f}"
+    teto = _concorrentes(CONC_ADENSAR_MAX)
+    F_CENSO = PERFIL.fontes.censo.nome
+    F_CONC = "Mapeamento de concorrentes"
+    F_ULTRA = "Base de unidades Ultra"
+
+    # A regua: rotulos do modulo e numeros da versao carregada.
+    MV = _REC_ROTULO_SEGMENTO["mata_virgem"]
+    PR = _REC_ROTULO_SEGMENTO["premium"]
+    v = regra.vagas_por_segmento
+    total = 2 * v
+    mv, pr = regra.mata_virgem, regra.premium
+    renda_min = _moeda_renda(mv.renda_domiciliar_min)
+    residual_min = _mil(mv.residual_min)
+    score_min = _numero_da_regua(pr.score_min)
+    medido_mv = " medido" if mv.exige_residual_medido else ""
+    pop_mv = (
+        f" e população ≥ {_mil(mv.populacao_min)} habitantes"
+        if mv.populacao_min is not None
+        else ""
+    )
+    pop_pr = (
+        f" e população ≥ {_mil(pr.populacao_min)} habitantes"
+        if pr.populacao_min is not None
+        else ""
+    )
+    medido_pr = " e com residual medido" if pr.exige_residual_medido else ""
+    # Onde a regua exige residual MEDIDO quando so' um dos segmentos o exige (a BR v1 exige
+    # nos dois; uma versao nova pode afrouxar um deles).
+    onde_medido = f"na {MV}" if mv.exige_residual_medido else f"no {PR}"
+    if mv.exige_residual_medido and pr.exige_residual_medido:
+        so_medido = (
+            "Só conta residual MEDIDO — calculado sobre a população do Censo no próprio "
+            "hexágono. Onde a população veio do rateio do município o residual é estimado: "
+            f"nunca entra no Top {total}, e o número estimado não aparece."
+        )
+    elif mv.exige_residual_medido or pr.exige_residual_medido:
+        so_medido = (
+            f"Só conta residual MEDIDO {onde_medido} — calculado sobre a população do Censo "
+            "no próprio hexágono. O número estimado (população rateada do município) não "
+            "aparece na lista."
+        )
+    else:
+        so_medido = (
+            "O residual estimado (população rateada do município) conta, mas o número "
+            "estimado não aparece na lista."
+        )
+
+    condicoes_pr = [f"fora da {MV}", f"score censitário ≥ {score_min}"]
+    if pr.populacao_min is not None:
+        condicoes_pr.append(f"população ≥ {_mil(pr.populacao_min)} habitantes")
+    if pr.exige_residual_medido:
+        condicoes_pr.append("residual medido")
+    condicao_pr = ", ".join(condicoes_pr[:-1]) + " e " + condicoes_pr[-1]
+    if mv.exige_residual_medido and pr.exige_residual_medido:
+        estimado_nota = " Residual estimado não entra."
+    elif mv.exige_residual_medido or pr.exige_residual_medido:
+        estimado_nota = f" Residual estimado não entra {onde_medido}."
+    else:
+        estimado_nota = ""
+
+    fontes = [dict(f) for f in legado["fontes"]]
+    for fonte in fontes:
+        if fonte["nome"] == F_ULTRA:
+            fonte["detalhe"] = (
+                "As unidades próprias e, quando disponível, o número real de alunos de "
+                "cada uma. Entra como oferta já atendida no residual. Sai da base de "
+                "performance das unidades, atualizada por carga — não é leitura ao vivo: "
+                "uma unidade inaugurada depois da última carga ainda não desconta aqui."
+            )
+
+    score_socio = _metrica_do_legado(camada[1], "Score socioeconômico")
+    score_socio["regra"] = _trocar_fim(
+        score_socio["regra"],
+        f"Abaixo de {score} o hexágono não entra em nenhuma camada seguinte.",
+        f"Abaixo de {score} o hexágono fica fora das leituras das camadas 2 a 4 — o Top "
+        f"{total} lê o recorte inteiro, com régua própria.",
+    )
+    populacao_area = _metrica_do_legado(camada[1], "População da área")
+    populacao_area["regra"] = _trocar_fim(
+        populacao_area["regra"],
+        "abaixo disso o mapa já pinta a área em cinza e o funil descarta.",
+        "abaixo disso o mapa já pinta a área em cinza e as leituras seguintes não a "
+        "destacam.",
+    )
+    residual_alunos = _metrica_do_legado(camada[2], "Residual de alunos")
+    residual_alunos["regra"] = _trocar_fim(
+        residual_alunos["regra"],
+        f"Segue no funil quem tem {res} ou mais.",
+        f"A leitura destaca quem tem {res} ou mais.",
+    )
+    camada_4 = copy.deepcopy(camada[4])
+    camada_4["nota"] = _trocar_fim(
+        camada_4["nota"],
+        "não onde abrir: para isso existe a camada 5, que é a única que ordena a fila.",
+        f"não onde abrir. O crescimento não entra no Top {total}.",
+    )
+
+    parametros: list[dict[str, str]] = [
+        {"nome": "Score mínimo das leituras", "valor": score},
+        {"nome": "População mínima do hexágono", "valor": f"{pop} habitantes"},
+        {"nome": "Residual mínimo da camada 2", "valor": f"{res} alunos"},
+        {"nome": "Capacidade média por academia", "valor": f"{cap} alunos"},
+        {"nome": "Raio de concorrência", "valor": "1 km"},
+        {
+            # "Tolerados" era linguagem de decisao numa camada que agora e' leitura.
+            "nome": "Teto de concorrentes da leitura (camada 3)",
+            "valor": f"até {CONC_ADENSAR_MAX} em 1 km",
+        },
+        {"nome": f"Régua do Top {total}", "valor": _rotulo_versao_regua(regra.versao)},
+        {"nome": "Vagas por segmento", "valor": str(v)},
+        {"nome": f"{MV} — renda domiciliar mínima", "valor": renda_min},
+        {"nome": f"{MV} — residual{medido_mv} mínimo", "valor": f"{residual_min} alunos"},
+    ]
+    if mv.populacao_min is not None:
+        parametros.append(
+            {"nome": f"{MV} — população mínima", "valor": f"{_mil(mv.populacao_min)} habitantes"}
+        )
+    parametros.append({"nome": f"{PR} — score censitário mínimo", "valor": score_min})
+    if pr.populacao_min is not None:
+        parametros.append(
+            {"nome": f"{PR} — população mínima", "valor": f"{_mil(pr.populacao_min)} habitantes"}
+        )
+    # A versao crua e a decisao que a aprovou ficam SO' aqui, como detalhe tecnico no fim da
+    # lista: no resto do painel a regua aparece pelo rotulo de negocio.
+    parametros.append(
+        {"nome": "Referência técnica da régua", "valor": f"{regra.versao} · {regra.dec}"}
+    )
+
+    return {
+        "intro": (
+            "O mapa divide o território em hexágonos de cerca de 5 km² — mais ou menos o "
+            "tamanho de um bairro grande. As camadas 1 a 4 são leituras do recorte — "
+            "potencial socioeconômico, demanda não atendida, concorrência em volta e "
+            "crescimento: cada uma destaca no mapa o que a sua régua acende, e nenhuma "
+            f"escolhe ou ordena a recomendação. A camada 5 é o Top {total}: até {v} "
+            f"{_unidade(v, 'região', 'regiões')} {MV} e até {v} "
+            f"{_unidade(v, 'região', 'regiões')} {PR}, escolhidas sobre todos os hexágonos "
+            "do recorte por uma régua fixa e versionada. Um segmento nunca completa o outro: "
+            "sem candidato, a vaga fica vazia."
+        ),
+        "fontes": fontes,
+        "camadas": [
+            {
+                **{k: camada[1][k] for k in ("n", "titulo", "pergunta", "corte")},
+                "metricas": [score_socio, populacao_area],
+                "faixas": _faixas_potencial(),
+            },
+            {
+                **{k: camada[2][k] for k in ("n", "titulo", "pergunta", "corte")},
+                "metricas": [
+                    residual_alunos,
+                    {
+                        "nome": "Oferta já atendida",
+                        "coluna": "oferta_consumida_total_estimada",
+                        "fonte": f"{F_CONC} + {F_ULTRA}",
+                        "resumo": (
+                            "Quantos alunos a região já absorve hoje, somando concorrentes e "
+                            "unidades Ultra. É exatamente o que se subtrai do potencial."
+                        ),
+                        "regra": (
+                            "Cada academia concorrente mapeada atende um disco de 1 km em "
+                            "volta dela, e os alunos que ela absorve são repartidos entre os "
+                            "hexágonos que esse disco cruza, na proporção da área do disco que "
+                            "cai em cada um: com o disco inteiro dentro do hexágono, a academia "
+                            "desconta ali por inteiro; com metade dele no vizinho, desconta "
+                            "metade aqui e metade lá — a soma das partes é sempre a academia "
+                            "inteira. A capacidade de cada unidade é o número real de alunos "
+                            "quando a rede o informa; quando não informa, vale a média de "
+                            f"{cap} por unidade. Do lado da Ultra, quando existe o número real "
+                            "de alunos da unidade ele é usado no lugar da estimativa; quando "
+                            "não existe, vale a mesma média."
+                        ),
+                    },
+                ],
+                "faixas": _faixas_residual(),
+            },
+            {
+                "n": 3,
+                "titulo": camada[3]["titulo"],
+                "pergunta": "Quanta concorrência há em volta?",
+                "corte": (
+                    f"leitura: regiões com até {teto} no raio de 1 km seguem destacadas; "
+                    "acima disso, saturação"
+                ),
+                "metricas": [
+                    {
+                        "nome": "Concorrentes em 1 km",
+                        "coluna": "n_concorrentes_est",
+                        "fonte": F_CONC,
+                        "resumo": (
+                            "Quantas academias concorrentes alcançam a vizinhança imediata do "
+                            "hexágono. Ter concorrente NÃO desqualifica a região: mercado "
+                            "disputado é mercado que existe."
+                        ),
+                        "regra": (
+                            "Conta quantas unidades concorrentes têm o disco de 1 km cruzando "
+                            f"o hexágono. A leitura separa as regiões com até {teto} — Livre, "
+                            "quando não há nenhum, e Adensar — das que passam disso (Disputa, "
+                            f"saturação). É leitura do mapa: o Top {total} não olha a "
+                            "concorrência. Até agosto de 2026 esta camada eliminava QUALQUER "
+                            "região com pelo menos um concorrente, e a regra caiu por duas "
+                            "medições: ela derrubava 31% das regiões que tinham demanda real e, "
+                            "nas oito maiores capitais sem uma exceção, as derrubadas tinham "
+                            "perfil socioeconômico MELHOR que as mantidas. Além disso a "
+                            "concorrência já é descontada na camada anterior."
+                        ),
+                        "ressalva": (
+                            "Cobre apenas as redes monitoradas: uma academia de bairro sem "
+                            "presença digital pode não estar no mapeamento — então zero "
+                            "concorrentes quer dizer nenhum concorrente CONHECIDO."
+                        ),
+                    },
+                    # Sem a "Capacidade média por academia" do painel legado: o texto dela
+                    # ("a régua que converte oferta em número de concorrentes") descreve a
+                    # contagem antiga. Desde a DEC-057 a contagem é de unidades com o disco
+                    # cruzando o hexágono, e a capacidade só entra no residual — onde ela já
+                    # está descrita ("Oferta já atendida", camada 2) e nos parâmetros.
+                ],
+                "faixas": _faixas_competitivas(
+                    raio="1 km", contagem="concorrentes no raio de 1 km"
+                ),
+                "nota": camada[3]["nota"],
+            },
+            camada_4,
+            {
+                "n": 5,
+                "titulo": f"Top {total}: {v} {MV} + {v} {PR}",
+                "pergunta": f"Quais regiões do recorte entram no Top {total}?",
+                "corte": (
+                    f"{MV}: renda domiciliar ≥ {renda_min} e residual{medido_mv} ≥ "
+                    f"{residual_min} alunos{pop_mv} · {PR}: score censitário ≥ {score_min}"
+                    f"{pop_pr}, fora da {MV}{medido_pr}"
+                ),
+                "metricas": [
+                    {
+                        "nome": "Renda domiciliar",
+                        "coluna": "renda_domiciliar",
+                        "fonte": F_CENSO,
+                        "resumo": (
+                            "A renda média por domicílio do hexágono, por mês — a mesma do "
+                            "card do hexágono no mapa."
+                        ),
+                        "regra": (
+                            "A mesma conta da renda domiciliar do card: a renda do Censo no "
+                            "hexágono convertida em renda por domicílio e atualizada pelos "
+                            "fatores versionados, com o fator de calibração da renda da base "
+                            f"de setores. Decide a {MV}: entra quem tem {renda_min} ou mais."
+                        ),
+                        "ressalva": (
+                            "Sem o fator de calibração da renda gravado na base de setores, a "
+                            f"renda não é confiável, e o Top {total} inteiro fica indisponível "
+                            "— melhor não recomendar do que recomendar com a renda em outra "
+                            "escala. Onde o hexágono não tem renda do setor vale a do "
+                            "município, sinalizada como municipal."
+                        ),
+                    },
+                    {
+                        "nome": "Residual de alunos",
+                        "coluna": "oferta_efetiva_disponivel",
+                        "fonte": f"{F_CENSO} + {F_CONC} + {F_ULTRA}",
+                        "resumo": (
+                            "O mesmo residual da camada 2: quantos alunos cabem na região que "
+                            "hoje ninguém atende."
+                        ),
+                        "regra": (
+                            f"Decide e ordena a {MV}: entra quem tem {residual_min} alunos ou "
+                            f"mais, do maior para o menor. {so_medido}"
+                        ),
+                    },
+                    {
+                        "nome": "Score censitário",
+                        "coluna": "score_setor_2022_calibrado",
+                        "fonte": F_CENSO,
+                        "resumo": "A nota socioeconômica de 0 a 100 da camada 1.",
+                        "regra": (
+                            f"Só o {PR} usa: entra quem tem {score_min} ou mais. Desempata o "
+                            f"{PR} entre regiões de mesma população."
+                        ),
+                    },
+                    {
+                        "nome": "População do Censo",
+                        "coluna": "pop_total_setor_2022",
+                        "fonte": F_CENSO,
+                        "resumo": "Quantas pessoas moram no hexágono, pela contagem do Censo.",
+                        "regra": (
+                            f"Ordena o {PR}, do maior para o menor"
+                            + (
+                                f" (entra quem tem {_mil(pr.populacao_min)} habitantes ou "
+                                "mais)"
+                                if pr.populacao_min is not None
+                                else ""
+                            )
+                            + f", e desempata a {MV} entre regiões de mesmo residual. Região "
+                            "sem população do Censo não entra em nenhum segmento."
+                        ),
+                        "ressalva": (
+                            "É diferente do “Habitantes” do card do hexágono, que soma a área "
+                            "de captação com os vizinhos."
+                        ),
+                    },
+                ],
+                "faixas": [
+                    _fx(
+                        MV,
+                        f"renda domiciliar ≥ {renda_min} e residual{medido_mv} ≥ "
+                        f"{residual_min} alunos{pop_mv}; ordem pelo residual",
+                        "green",
+                    ),
+                    _fx(PR, f"{condicao_pr}; ordem pela população", "blue"),
+                    _fx(
+                        "Vaga vazia",
+                        "o recorte não tem candidatos suficientes no segmento; um segmento "
+                        "nunca completa o outro",
+                        "gray",
+                    ),
+                ],
+                "nota": (
+                    f"Os segmentos são exclusivos: quem passa na {MV} nunca vai ao {PR}, e a "
+                    f"região sem dado para descartar a {MV} também não vai. Empate se resolve "
+                    f"pelo maior número absoluto — na {MV}, residual e depois população; no "
+                    f"{PR}, população e depois score. Regiões vizinhas podem ocupar várias "
+                    f"vagas: não há regra de distância entre elas.{estimado_nota} Ficam fora "
+                    "da conta, de propósito: concorrência, viabilidade, aluguel e "
+                    "proximidade da Ultra. Não é previsão de faturamento: é a régua de "
+                    f"expansão declarada ({_rotulo_versao_regua(regra.versao)})."
+                ),
+            },
+        ],
+        "parametros": parametros,
+    }
+
+
 @app.get("/api/metodologia")
 def metodologia() -> dict[str, Any]:
     """Manual do funil: o que cada camada mede e com que régua corta."""
@@ -6320,7 +7486,12 @@ def _ranking_estados() -> list[dict[str, Any]]:
 
 @app.get("/api/estados")
 def estados() -> dict[str, Any]:
-    """Por qual estado começar. Cascata do funil, aplicada às 27 UFs."""
+    """Residual somado por estado: a cascata do funil, aplicada às 27 UFs.
+
+    É LEITURA de tamanho (alunos não atendidos onde a cascata acende, somados por UF), não
+    recomendação: onde expandir é o Top 10 da recomendação única (`/api/hexagonos`). A conta
+    e o payload não mudaram.
+    """
     ranking = _ranking_estados()
     return {
         "reguas": {
@@ -6367,6 +7538,28 @@ _COLS_NACIONAL: tuple[str, ...] = (
     "pop_total",
     "renda_per_capita_setor_2022_calibrada",
     "renda_per_capita",
+    *_renda_hex.COLS_RENDA_MALHA,  # E3: a renda do hexagono pela malha, quando existe
+)
+
+#: Projecao do recorte BRASIL da recomendacao unica (DEC-077): as colunas que a regua e a
+#: renda do card leem de cada linha, e nada mais (medido no snapshot de producao: 0,9 s e
+#: ~370 MB transitorios para 1,54 milhao de hexagonos). `uf` vem da CHAVE hive da particao;
+#: as colunas da malha (E3) so entram quando o artefato as traz. Faltar qualquer uma das
+#: obrigatorias faz o modulo levantar `ValueError` nomeando-a -- bug de projecao, nunca
+#: "sem recomendacao".
+_COLS_RECOMENDACAO: tuple[str, ...] = tuple(
+    dict.fromkeys(
+        (
+            "uf",
+            *_REC_COLUNAS_OBRIGATORIAS,
+            "cod_municipio",
+            "nome_municipio",
+            "lat",
+            "lng",
+            *_renda_hex.COLS_RENDA_LEITURA,
+            *_renda_hex.COLS_RENDA_MALHA,
+        )
+    )
 )
 
 
@@ -6552,15 +7745,44 @@ def hexagonos(
     municipio: str = "",
     por_municipio: bool = False,
 ) -> dict[str, Any]:
-    """Os melhores hexágonos do BRASIL, sem precisar escolher estado.
+    """Top 10 do recorte (Brasil | UF | município); sem régua, o ranking legado.
 
-    `uf` e `municipio` são filtros opcionais SOBRE a lista nacional, aplicados depois
-    da ordenação — nunca antes dela. `por_municipio=true` mantém só o melhor hexágono
-    de cada cidade, quando a leitura desejada é "quais cidades", não "quais pontos".
+    Com a régua da recomendação única (DEC-077): sem filtro = Brasil (cache por versão da
+    régua e identidade do dado), `uf` = a UF inteira (a MESMA partição de `/api/uf`),
+    `uf` + `municipio` = a MESMA seleção de `/api/municipio` — o Top 10 sai igual nas três
+    rotas por construção. `limite` e `por_municipio` seguem aceitos (o legado os usa) e são
+    ignorados; `municipio` sem `uf` é 400.
+
+    Sem régua (país sem recomendação única): o ranking nacional legado, em que `uf` e
+    `municipio` são filtros SOBRE a lista nacional, aplicados depois da ordenação, e
+    `por_municipio=true` mantém só o melhor hexágono de cada cidade.
     """
-    return _ranking_hexagonos(
-        limite=limite, uf=uf, municipio=municipio, por_municipio=por_municipio
-    )
+    regra = _regra_recomendacao()
+    if regra is None:
+        return _ranking_hexagonos(
+            limite=limite, uf=uf, municipio=municipio, por_municipio=por_municipio
+        )
+    uf_n, mun = uf.strip().upper(), municipio.strip()
+    if mun and not uf_n:
+        raise HTTPException(400, "Informe a UF junto com o município.")
+    if not uf_n:
+        # Uma conta por vez: o `lru_cache` nao segura a 2a requisicao enquanto a 1a calcula,
+        # e duas leituras do Brasil a frio seriam ~2 x 370 MB ao mesmo tempo no worker.
+        with _TOP10_BRASIL_LOCK:
+            cache = _top10_brasil(regra, _identidade_base_recomendacao(), PERFIL.nome)
+        # Copia: o payload vive no cache do processo e ninguem pode muta-lo por fora.
+        r = copy.deepcopy(cache)
+        return {"recomendacao": r["bloco"], "cobertura": r["cobertura"]}
+    df = carregar_uf(uf_n)
+    if mun:
+        sel, cod, nome = _recorte_do_municipio(df, uf_n, mun)
+        recorte = Recorte(nivel="municipio", uf=uf_n, cod_municipio=cod, nome=nome)
+    else:
+        sel, recorte = df, Recorte(nivel="uf", uf=uf_n, nome=uf_n)
+    return {
+        "recomendacao": _bloco_recomendacao(sel, recorte, regra=regra),
+        "cobertura": {"hexes_no_recorte": int(len(sel)), "ufs_no_recorte": 1},
+    }
 
 
 @app.get("/api/resolver-ponto")
@@ -7697,16 +8919,23 @@ def municipio_do_ponto(lat: float, lng: float) -> dict[str, Any]:
 
 @app.get("/api/uf/{uf}")
 def uf_view(uf: str, limite: int = 15000) -> dict[str, Any]:
-    """Visão de UF inteira: funil narrativo por UF + ranking de MUNICÍPIOS.
+    """Visão de UF inteira: funil narrativo por UF, com os rankings por município.
 
     Porta de entrada do app — o operador escolhe um estado e vê a leitura
-    territorial de toda a UF; o painel recomenda municípios (clique -> drill-down).
+    territorial de toda a UF. O passo 5 é o Top 10 de hexágonos da UF (recomendação
+    única, DEC-077: bloco `recomendacao` no topo do payload, cada item com o município
+    para o drill-down) — ou a fila legada de municípios quando o país não tem régua.
     READ-ONLY sobre o M1.
     """
     df = carregar_uf(uf)
-    passos = montar_funil_uf(df, uf.upper())
+    bloco = _bloco_recomendacao(
+        df, Recorte(nivel="uf", uf=uf.upper(), nome=uf.upper()), regra=_regra_recomendacao()
+    )
+    passos = montar_funil_uf(df, uf.upper(), recomendacao=bloco)
 
-    citados = {h for p in passos for h in p["hexes"][:200]}
+    # Os 10 do Top 10 entram SEMPRE no mapa: o corte por residual abaixo tiraria o Premium,
+    # que tem residual quase sempre 0.
+    citados = {h for p in passos for h in p["hexes"][:200]} | set(_hex_ids_do_bloco(bloco))
     if len(df) > limite:
         base = df.nlargest(limite, "oferta_efetiva_disponivel")
         extras = df[df["hex_id"].isin(citados - set(base["hex_id"]))]
@@ -7718,7 +8947,7 @@ def uf_view(uf: str, limite: int = 15000) -> dict[str, Any]:
     for p in passos:
         p["hexes"] = p["hexes"][:400]
 
-    return {
+    payload: dict[str, Any] = {
         "nivel": "uf",
         "uf": uf.upper(),
         "municipio": None,
@@ -7735,31 +8964,32 @@ def uf_view(uf: str, limite: int = 15000) -> dict[str, Any]:
         "ctx_mun": _bloco_camadas_leitura(vis),
         "pins": _pins_ultra_bbox(df),
     }
+    # A presenca da chave e' o discriminador do front; sem regua o payload e' o de antes.
+    return payload if bloco is None else {"recomendacao": bloco, **payload}
 
 
 @app.get("/api/municipio/{uf}/{municipio}")
 def municipio(uf: str, municipio: str, limite: int = 4000) -> dict[str, Any]:
-    """Hexes + funil narrativo de 4 passos, tudo sobre dado real."""
-    df = carregar_uf(uf)
-    sel = df[df["nome_municipio"].str.casefold() == municipio.casefold()]
-    if sel.empty:
-        sugestoes = (
-            df["nome_municipio"].dropna().unique().tolist()[:8]
-            if "nome_municipio" in df.columns
-            else []
-        )
-        raise HTTPException(
-            404,
-            f"Municipio '{municipio}' nao encontrado na UF {uf}. Voce quis dizer: {sugestoes}",
-        )
+    """Hexes + funil narrativo de 5 passos, tudo sobre dado real.
 
-    cod = sel["cod_municipio"].dropna().astype(str).iloc[0] if "cod_municipio" in sel.columns and sel["cod_municipio"].notna().any() else None
+    Com a régua da recomendação única (DEC-077) o payload abre com o bloco
+    `recomendacao` — o Top 10 calculado sobre TODOS os hexágonos do município — e o
+    passo 5 o apresenta; sem régua, o funil legado byte a byte.
+    """
+    df = carregar_uf(uf)
+    sel, cod, nome = _recorte_do_municipio(df, uf, municipio)
     bairros = bairros_por_hex(uf.upper(), cod) if cod else {}
-    passos = montar_funil(sel, municipio, bairros)
+    bloco = _bloco_recomendacao(
+        sel,
+        Recorte(nivel="municipio", uf=uf.upper(), cod_municipio=cod, nome=nome),
+        regra=_regra_recomendacao(),
+    )
+    passos = montar_funil(sel, municipio, bairros, recomendacao=bloco)
 
     # O mapa recebe no maximo `limite` hexes, priorizando os de maior residual —
-    # os hexes citados no funil entram sempre.
-    citados = {h for p in passos for h in p["hexes"][:200]}
+    # os hexes citados no funil entram sempre, e os 10 do Top 10 tambem (o Premium tem
+    # residual quase sempre 0 e cairia fora do corte).
+    citados = {h for p in passos for h in p["hexes"][:200]} | set(_hex_ids_do_bloco(bloco))
     if len(sel) > limite:
         base = sel.nlargest(limite, "oferta_efetiva_disponivel")
         extras = sel[sel["hex_id"].isin(citados - set(base["hex_id"]))]
@@ -7772,7 +9002,7 @@ def municipio(uf: str, municipio: str, limite: int = 4000) -> dict[str, Any]:
     for p in passos:
         p["hexes"] = p["hexes"][:400]
 
-    return {
+    payload: dict[str, Any] = {
         "nivel": "municipio",
         "uf": uf.upper(),
         "municipio": municipio,
@@ -7789,6 +9019,8 @@ def municipio(uf: str, municipio: str, limite: int = 4000) -> dict[str, Any]:
         # de semantica oposta (quem disputa x quem se compra), e a intersecao entre eles e' vazia.
         "independentes": _pins_independentes(sel),
     }
+    # A presenca da chave e' o discriminador do front; sem regua o payload e' o de antes.
+    return payload if bloco is None else {"recomendacao": bloco, **payload}
 
 
 # Tolerancia de simplificacao dos poligonos de setor para o mapa de calor (graus).
@@ -10291,6 +11523,17 @@ def _rede_territorio() -> dict[str, dict[str, Any]]:
             )
         except Exception as erro:  # noqa: BLE001
             print(f"[rede] mercado por hexágono ilegível ({erro})", file=sys.stderr)
+    faltam_malha = [
+        c for c in _renda_hex.COLS_RENDA_MALHA if hexes is not None and c not in hexes.columns
+    ]
+    if hexes is not None and len(hexes) and faltam_malha:
+        # E3: o artefato de mercado nao carrega a renda da malha; sem ela a ficha cairia na
+        # formula municipal e divergiria do tooltip para o MESMO hexagono.
+        try:
+            malha = _renda_hex.colunas_malha_por_hex(hexes.index, STAGING_DIR)
+            hexes = hexes.join(malha[faltam_malha])
+        except Exception as erro:  # noqa: BLE001 -- sem a malha, a renda cai na formula de antes
+            print(f"[rede] renda da malha ilegível ({erro})", file=sys.stderr)
 
     oferta = _rede_oferta_sem_estudio()
     ultra = _rede_ler_opcional(
@@ -11618,8 +12861,18 @@ def _praca_para_pdf(
     municipio = municipio.title() if municipio.isupper() else municipio
 
     linha_cres = {c: _mun_val(hexes, c) for c in _COLS_CRESCIMENTO if c in hexes.columns}
-    tem_cres = linha_cres.get("cres_tendencia") is not None or linha_cres.get("v_frase")
-    frase = _narrativa_crescimento(hexes, municipio) if tem_cres else None
+    # DEC-077: na instancia com a regua da recomendacao unica o PDF Pontual tambem perde a
+    # frase-veredito ("E' praca para entrar" e variantes) e fica com a leitura descritiva da
+    # TELA (`leitura=True`). Sem regua (AR), o texto legado de sempre.
+    leitura = _regra_recomendacao() is not None
+    if leitura:
+        linha_cres.pop("v_frase", None)
+        tem_cres = linha_cres.get("cres_tendencia") is not None or bool(
+            _texto(linha_cres.get("cres_dims")) or _texto(linha_cres.get("cres_series"))
+        )
+    else:
+        tem_cres = linha_cres.get("cres_tendencia") is not None or linha_cres.get("v_frase")
+    frase = _narrativa_crescimento(hexes, municipio, leitura=leitura) if tem_cres else None
     crescimento = rp.resumir_crescimento(linha_cres, uf=uf, frase=frase, rotulo_tendencia=_ROTULO_TEND)
 
     # Hexagono do ponto: primeiro na propria cidade (ja com `cres_hex_*`); ponto na divisa cai
@@ -12631,15 +13884,22 @@ def _op_renda_pc_por_hex(df: pd.DataFrame) -> dict[int, float | None]:
 
             dset = ds.dataset(str(ENRICHED_DIR), partitioning="hive")
             cols = [
-                c for c in ("hex_id", "uf", "cod_municipio", *_renda_hex.COLS_RENDA_LEITURA)
+                c
+                for c in (
+                    "hex_id", "uf", "cod_municipio",
+                    *_renda_hex.COLS_RENDA_LEITURA, *_renda_hex.COLS_RENDA_MALHA,
+                )
                 if c in set(dset.schema.names)
             ]
-            base = (
+            # As colunas da malha (E3) vem do staging quando o artefato nao as traz: a MESMA
+            # politica do tooltip (`carregar_uf`), senao o imovel e o hexagono dele mostrariam
+            # duas rendas enquanto o enriquecido nao e' remontado com a malha nova.
+            base = _completar_colunas_malha(
                 dset.to_table(filter=pc.field("hex_id").isin(ids), columns=cols)
                 .to_pandas()
                 .drop_duplicates("hex_id")
-                .set_index("hex_id")
-            )
+                .reset_index(drop=True)
+            ).set_index("hex_id")
         except Exception as erro:  # noqa: BLE001 -- sem a base, cai no fallback pelo modulo
             print(f"[oportunidades] base do hexagono ilegivel ({erro})", file=sys.stderr)
             base = pd.DataFrame()

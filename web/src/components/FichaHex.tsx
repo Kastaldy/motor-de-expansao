@@ -6,6 +6,7 @@ import { FAIXA_M1_HEX } from '../lib/colors'
 import { CAPACIDADE_UNIDADE_ALUNOS, FAIXAS_DEMANDA, FAIXAS_POTENCIAL } from '../lib/faixas'
 import { classeAluguelFat, corTipo, custoOcup, labelTipo, pctAluguelFat } from '../lib/imovel'
 import { composicaoMercado, faixaDoValor, leituraDeSaturacao } from '../lib/medidor'
+import { textosTop10 } from '../lib/top10'
 import type { ContextoMunicipio, Hex, Oportunidade } from '../lib/types'
 import IconeTipo from './IconeTipo'
 import { CardPainel, LinhaTabela, Ticks, TituloSecao } from './PecasPainel'
@@ -142,6 +143,21 @@ export default function FichaHex({
   const perfilBomMercadoTomado =
     saturacao?.tom === 'saturado' && hex.faixa != null && FAIXAS_M1_DE_ENTRAR.has(hex.faixa)
 
+  /* O SELO DA FAIXA M1 COMO LEITURA (recomendação única, DEC-077). Onde há o Top 10 (tabela
+     de textos por país), o selo diz "Faixa M1 · Alta" — sem o prefixo "Prioridade", que
+     lia como recomendação ao lado de um Top 10 que pode nem incluir o hexágono (em São José
+     dos Campos os 205 hexágonos são "Prioridade máxima"). O rótulo da faixa é o do M1,
+     intocado. Fora da tabela (AR), o selo de sempre. */
+  const textosFaixa = textosTop10()
+  const rotuloDoSelo =
+    hex.faixa == null
+      ? null
+      : textosFaixa
+        ? `${textosFaixa.seloFaixaPrefixo}${hex.faixa}`
+        : FAIXAS_M1_COM_PREFIXO.has(hex.faixa)
+          ? `Prioridade ${hex.faixa}`
+          : hex.faixa
+
   return (
     <div style={{ display: 'grid', gap: 16 }}>
       {/* ---- Veredito: a frase que resume, com a faixa M1 e os numeros-chave ---- */}
@@ -156,7 +172,10 @@ export default function FichaHex({
               /* O selo diz o NOME da régua junto com o valor. Sozinho, "ALTA" era lido
                  como veredito do hexágono inteiro — e logo abaixo, na mesma janela, a
                  sobra de mercado dizia o contrário. */
-              title="Faixa de prioridade do M1: percentil de renda e população. Não considera a concorrência instalada — isso é o bloco 'Quanto de mercado sobra'."
+              title={
+                textosFaixa?.seloFaixaTitulo ??
+                "Faixa de prioridade do M1: percentil de renda e população. Não considera a concorrência instalada — isso é o bloco 'Quanto de mercado sobra'."
+              }
               style={{
                 display: 'inline-flex',
                 alignItems: 'center',
@@ -182,9 +201,10 @@ export default function FichaHex({
                   flexShrink: 0,
                 }}
               />
-              {/* "PRIORIDADE ALTA", não "ALTA" — só nas faixas que são grau de prioridade
-                  (ver `FAIXAS_M1_COM_PREFIXO`). As demais saem como a API as escreveu. */}
-              {FAIXAS_M1_COM_PREFIXO.has(hex.faixa) ? `Prioridade ${hex.faixa}` : hex.faixa}
+              {/* Com o Top 10: "FAIXA M1 · ALTA". Sem ele (AR): "PRIORIDADE ALTA", não
+                  "ALTA" — só nas faixas que são grau de prioridade (ver
+                  `FAIXAS_M1_COM_PREFIXO`); as demais saem como a API as escreveu. */}
+              {rotuloDoSelo}
             </span>
           )}
           {hex.hib != null && (

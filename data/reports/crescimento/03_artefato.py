@@ -36,9 +36,12 @@ print(f"\nsem leitura por confiabilidade muito baixa: {int(fraco.sum()):,} munic
 print(f"  destes, quantos estao na carteira: {int(fraco[d.cod6.isin(set(cart.cod6))].sum()):,}")
 
 art = d[["cod6","cres_tendencia","cres_ramp","emp_cresc_pct","saldo","confiabilidade",
-         "vinculos_2024","pop_2024"]].copy()
+         "vinculos_2024","pop_2024","aberturas","fechamentos"]].copy()
 art.columns = ["cod6","cres_tendencia","cres_ramp","cres_emp_pct","cres_saldo_empresas",
-               "cres_confiab","cres_vinculos","cres_pop"]
+               "cres_confiab","cres_vinculos","cres_pop",
+               # as duas parcelas do saldo (2026-10-20): o relatorio mostra "abertas - fechadas"
+               # embaixo do saldo. Fechada = baixada na Receita (situacao 08), como no TEC.
+               "cres_aberturas_empresas","cres_fechamentos_empresas"]
 # as quatro leituras que um percentual sozinho nao da (ver t2_enriquecer.py)
 extra = pd.read_parquet(trabalho("_cres_extra.parquet"))
 extra["cod6"] = extra.cod6.astype(str).str.zfill(6)

@@ -16,6 +16,9 @@
  * alternar; quem tem uma so' nao ve' pilula nenhuma — a escolha nao existe para ele.
  */
 
+import { perfilDoCliente } from './perfil'
+import { textosTop10 } from './top10'
+
 /**
  * Os modos que o operador escolhe na entrada. Identificadores SEM acento e sem hifen
  * (regra do CLAUDE.md §2; o teste de contrato exige `^[a-z]+$`).
@@ -60,8 +63,9 @@ export type ArteInicio = 'brasil' | 'estado' | 'ponto' | 'painel' | 'rede' | 'fi
  *   `endereco` -> que ponto analisar (era a caixa de colar do modo de ponto)
  *
  * `null` = o card navega direto. Sobrou para dois, e nos dois isso e' DELIBERADO: o
- * panorama da rede e' a rede inteira por definicao, e a fila nacional promete no proprio
- * texto "sem escolher estado antes" — pedir um recorte ali contradiria o card.
+ * panorama da rede e' a rede inteira por definicao, e o Top 10 de oportunidades abre pelo
+ * BRASIL ("do Brasil ao municipio") — estado e municipio sao filtros DENTRO da tela, e
+ * pedir um recorte antes contradiria o card.
  */
 export type SegundoPasso = 'recorte' | 'unidade' | 'uf' | 'endereco' | null
 
@@ -168,12 +172,14 @@ export const MODOS: readonly ModoDefinicao[] = Object.freeze([
     id: 'oportunidades',
     trilha: 'expansao',
     eyebrow: 'Brasil',
-    titulo: 'Ver as melhores oportunidades',
+    titulo: 'Ver o Top 10 de oportunidades',
     /* O texto DESTE card ja mentiu duas vezes, nas duas direcoes: prometeu hexagono
        enquanto a tela entregava municipio, e depois prometeu cidade enquanto a tela
        passava a entregar o ranking nacional por hexagono. Ele muda no MESMO commit da
-       rota, nunca num commit de acompanhamento. */
-    linha: 'A fila nacional de hexágonos, sem escolher estado antes.',
+       rota, nunca num commit de acompanhamento — e mudou de novo com a recomendacao
+       unica (DEC-077): a tela agora e' o Top 10 (5 Mata Virgem + 5 Premium) do recorte.
+       Este card so' existe onde ha' a tela de Oportunidades (a AR nao tem a aba). */
+    linha: 'Mata Virgem e Premium por hexágono, do Brasil ao município.',
     arte: 'brasil',
     destino: 'oportunidades',
     /* Desde que o modo ganhou tela propria (`OportunidadesScreen`), a fila NAO e' mais
@@ -186,6 +192,9 @@ export const MODOS: readonly ModoDefinicao[] = Object.freeze([
     trilha: 'expansao',
     eyebrow: 'Estado ou cidade',
     titulo: 'Explorar uma região',
+    /* Texto LEGADO (instância sem régua). Onde há a recomendação única quem fala é
+       `linhaDoModo`, pela tabela de textos por país — este card também vive na AR, e lá
+       nada muda. */
     linha: 'O funil de 5 camadas até os municípios com espaço.',
     arte: 'estado',
     destino: 'mapa',
@@ -286,6 +295,22 @@ export const SUBTITULO_AMBAS =
 /** Busca defensiva: id desconhecido (payload velho, link antigo) devolve `null`. */
 export function modoPorId(id: string): ModoDefinicao | null {
   return MODOS.find((m) => m.id === id) ?? null
+}
+
+/**
+ * A LINHA que o card mostra, já resolvida pelo país da instância.
+ *
+ * O card `regiao` mora nas duas instâncias (BR e AR, mesma imagem web). Onde há a
+ * recomendação única ele fala de camadas de leitura + Top 10 (`TEXTOS_TOP10_POR_PAIS`);
+ * fora da tabela, o texto de sempre (`m.linha`). Tabela por país, nunca ramo por país
+ * (DEC-047). Os outros cards devolvem a própria linha — e `MODOS` segue congelado.
+ */
+export function linhaDoModo(
+  m: Pick<ModoDefinicao, 'id' | 'linha'>,
+  pais: string = perfilDoCliente().pais,
+): string {
+  if (m.id === 'regiao') return textosTop10(pais)?.regiaoLinha ?? m.linha
+  return m.linha
 }
 
 /** Os cards de uma trilha, na ordem declarada. */

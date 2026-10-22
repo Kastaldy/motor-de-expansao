@@ -84,6 +84,7 @@ import { degrauSobreFichaDePonto, janelaDoHexVisivel, pontoSeleciona } from '../
 import { selecaoMarcadaNoMapa } from '../lib/alcance'
 import type { PinDoPonto } from '../lib/pontos-estado'
 import type { Tema } from '../lib/tema'
+import { hexesComTop10, legendaTop10, mapaTop10, textosTop10 } from '../lib/top10'
 import type {
   Cobertura1k,
   RedeUnidade,
@@ -1127,12 +1128,25 @@ export default function MapScreen({
     [municipios],
   )
 
+  /* O Top 10 da recomendação única (DEC-077), indexado por hexágono para o mapa. `null`
+     sem o bloco no payload (AR): a camada 5 segue a legada, pela faixa M1. */
+  const top10 = useMemo(
+    () => (dados?.recomendacao ? mapaTop10(dados.recomendacao) : null),
+    [dados],
+  )
+
   // Filtro global de "melhores hexes" por faixa M1 (aplicado ao mapa).
+  /* As 10 regiões do Top 10 voltam para o mapa mesmo que o filtro as tire
+     (`hexesComTop10`): um Premium de faixa "Média" sumiria do território enquanto o painel
+     o lista. Sem Top 10 o resultado é exatamente o filtro de sempre. */
   const hexesFiltrados = useMemo(() => {
     const hs = dados?.hexes ?? []
     const permitidas = FAIXA_FILTROS[filtroFaixa]
-    return permitidas ? hs.filter((h) => h.faixa != null && permitidas.has(h.faixa)) : hs
-  }, [dados, filtroFaixa])
+    const filtradosPelaFaixa = permitidas
+      ? hs.filter((h) => h.faixa != null && permitidas.has(h.faixa))
+      : hs
+    return hexesComTop10(filtradosPelaFaixa, hs, top10?.ids ?? [])
+  }, [dados, filtroFaixa, top10])
 
   /**
    * Os hexes a COMPARAR: de 2 a 5 selecionados.
@@ -1685,7 +1699,12 @@ export default function MapScreen({
       <Landing
         marcador="Explorar uma região"
         titulo={tituloEscolhaUnidade()}
-        explicacao="O mapa lê o território inteiro e monta a sequência de camadas — do potencial socioeconômico até os municípios com mais espaço para abrir."
+        /* Texto por PAÍS (tabela, DEC-047): onde há a recomendação única, a landing fala de
+           camadas de leitura + Top 10; fora da tabela (AR), o texto de sempre. */
+        explicacao={
+          textosTop10()?.landingMapa ??
+          'O mapa lê o território inteiro e monta a sequência de camadas — do potencial socioeconômico até os municípios com mais espaço para abrir.'
+        }
         onInicio={onInicio}
       >
         {/* A caixa E' o seletor. Ate' 2026-09-22 havia DUAS: este painel com o rotulo
@@ -1768,6 +1787,7 @@ export default function MapScreen({
           desenhando={ferramenta === 'geometria'}
           verticesDesenho={vertices}
           coresHex={coresHex}
+          top10={top10}
           onCliqueDesenho={cliqueNoDesenho}
           pontosComparados={pontosComparados}
           onPontoClicado={aoClicarPontoComparado}
@@ -2011,11 +2031,14 @@ export default function MapScreen({
           </label>
         ) : (
         <label style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+          {/* A faixa M1 é LEITURA, não recomendação: onde há o Top 10 o filtro se chama
+              pelo que ele é ("FAIXA M1"). Os identificadores (`prioridade|alta|media`,
+              `FAIXA_FILTROS`) não mudam; fora da tabela de textos (AR), o rótulo de sempre. */}
           <span className="num" style={{ font: '600 11px/1 var(--f-num)', color: 'var(--tx-strong)' }}>
-            MELHORES
+            {textosTop10()?.filtroFaixaRotulo ?? 'MELHORES'}
           </span>
           <Select
-            label="Filtrar pelos melhores hexes"
+            label={textosTop10()?.filtroFaixaLabel ?? 'Filtrar pelos melhores hexes'}
             value={filtroFaixa}
             onChange={setFiltroFaixa}
             maxWidth={150}
@@ -2263,6 +2286,10 @@ export default function MapScreen({
                      nomeia simbolo ausente ensina o operador a procurar o que nao
                      existe naquele recorte. */
                   comAlunos={(pinsNoMapa?.concorrentes ?? []).some(temAlunos)}
+                  /* Camada 5 com o Top 10: Mata Virgem / Premium / fora do Top 10. */
+                  top10={
+                    passo.n === 5 && dados.recomendacao ? legendaTop10(dados.recomendacao) : null
+                  }
                 />
               )}
               {legendaVisivel && calorDesenhado && modoCalor && <LegendaCalor modo={modoCalor} />}
@@ -2299,6 +2326,7 @@ export default function MapScreen({
               passos={dados.passos}
               nivel={dados.nivel}
               crescimentoEstado={dados.crescimento_estado}
+              recomendacao={dados.recomendacao ?? null}
               selecionado={selecionado}
               onSelecionarHex={selecionarDaLista}
               onAnalisar={analisar}

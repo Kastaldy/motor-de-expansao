@@ -256,6 +256,16 @@
   --score-hibrido: #eef6f7;
   --score-hibrido-tick: #cfdfe3;
 
+  /* --- Top 10 da recomendacao unica (DEC-077) ----------------------------------
+     Duas matizes DISTINTAS para os dois segmentos — verde para Mata Virgem, violeta
+     para Premium — e um cinza translucido para o "fora do Top 10". O violeta nao existe
+     em nenhuma outra regua do mapa, e o verde foge do verde da faixa M1 "Prioridade
+     maxima" (que no Top 10 deixa de pintar a camada 5). O deck.gl nao le CSS: o espelho
+     RGBA mora na `PELE` do `HexMap` (travado por `mapa-top10.test.ts`). */
+  --top10-mv: #3fcf8e;
+  --top10-premium: #c58cff;
+  --top10-fora: rgba(154, 167, 181, 0.28);
+
   /* --- Semaforo do diagnostico ---------------------------------------------
      Estes quatro moravam como HEX em `lib/exec.ts` (COR_SEVERIDADE). Viraram token
      porque o tema claro precisa de outros valores e a cor e' aplicada em DOM/SVG, onde
@@ -704,6 +714,14 @@
   --score-residual: #0e7278;
   --score-hibrido: #1f1f1f;
   --score-hibrido-tick: #3a3a3a;
+
+  /* --- Top 10 da recomendacao unica (ver o bloco gemeo no :root) ----------------
+     As duas matizes escurecem ate' o rotulo MV1/P1 de 11px passar 4,5:1 sobre o branco
+     (o verde do escuro daria ~2:1 aqui); o cinza do "fora" vira tinta escura de baixo
+     alfa, que esmaece sem sumir sobre o Positron. */
+  --top10-mv: #0a7042;
+  --top10-premium: #7a3fc4;
+  --top10-fora: rgba(90, 100, 112, 0.22);
 
   /* --- Semantica ----------------------------------------------------------- */
   --pos: #0f9d55;

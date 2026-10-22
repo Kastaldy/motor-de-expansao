@@ -34,7 +34,9 @@ export interface StepperBarProps {
   onIr: (n: number) => void
   onGerarRelatorio: () => void
   gerando: boolean
-  /** Na visão de UF inteira o último passo recomenda municípios — sem relatório. */
+  /** Visão de UF inteira — sem relatório: o relatório é do município. No último passo o
+   *  CTA pede um município (com a recomendação única o passo 5 da UF é o Top 10 de
+   *  hexágonos do estado, e "Abrir {município}" em cada região desce até ele). */
   nivelUf?: boolean
 }
 
