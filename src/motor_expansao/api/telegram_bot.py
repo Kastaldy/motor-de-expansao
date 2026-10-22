@@ -175,7 +175,8 @@ _AJUDA = (
     "📍 *Relatorio Pontual* — a partir de um ponto (link do Maps, `lat,lng` ou "
     "endereco+CEP), estuda o entorno num raio de 1,0 km.\n"
     "🏙️ *Relatorio Municipal* — a partir de um *estado* + *municipio*, estuda o "
-    "municipio inteiro (cobertura, score, residual, dominio, bairros).\n\n"
+    # Sem "dominio" (DEC-077): Expansao de Dominio saiu do PDF do Brasil ate' os dados do gestor.
+    "municipio inteiro (bairros, score, residual, concorrencia, onde crescer).\n\n"
     "*Comandos:*\n"
     "• *Relatorio Pontual* / *Relatorio Municipal* — escolhe o estudo\n"
     "• *Ajuda* — mostra esta descricao\n"

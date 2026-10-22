@@ -1316,10 +1316,11 @@ _ENRIQUECIDO_DIR = "hexagonos_dashboard_enriquecido"
 def _enriquecido_uf_df(settings: Settings, uf: str):
     """Particao enriquecida da UF COM a coluna `uf` (DEC-077, item 5 do Felipe), ou `None`.
 
-    `None` quando o pais nao tem regua de recomendacao (Argentina: o PDF segue a camada de
-    mercado, como antes) ou quando a particao nao existe neste ambiente. A particao lida direto
-    do diretorio `uf=XX` nao traz `uf` (chave de particao hive), e a recomendacao a le em cada
-    linha (fator e uplift da renda do card).
+    `None` so' quando o pais nao tem regua de recomendacao (Argentina: o PDF segue a camada de
+    mercado, como antes). No pais com regua, particao ausente e' erro 503: a camada de mercado e'
+    outra base e daria outro Top 10 que o da tela, sem nada no PDF avisando. A particao lida
+    direto do diretorio `uf=XX` nao traz `uf` (chave de particao hive), e a recomendacao a le em
+    cada linha (fator e uplift da renda do card).
     """
     import pandas as pd
 
@@ -1329,8 +1330,12 @@ def _enriquecido_uf_df(settings: Settings, uf: str):
         return None
     part = Path(settings.censo_geo_dir).parent / _ENRIQUECIDO_DIR / f"uf={str(uf).strip().upper()}"
     if not part.is_dir():
-        _LOG_PRACA.warning("particao enriquecida ausente (%s): o PDF usa a camada de mercado", part)
-        return None
+        _LOG_PRACA.error("particao enriquecida ausente (%s): o PDF municipal recusa", part)
+        raise APIError(
+            503,
+            "Base da tela ausente neste servidor: o Relatorio Municipal nao sai sem ela",
+            "base_da_tela_ausente",
+        )
     return pd.read_parquet(part).assign(uf=str(uf).strip().upper())
 
 
@@ -1416,11 +1421,13 @@ def gerar_pdf_municipio(
     `unidade` escolhe a leitura: "bairro" (default, 12 paginas) ou "hexagono" (11 paginas,
     o relatorio classico com a pagina Bairros Oficiais).
 
-    Resolve o municipio (aceita nome sem acento), recorta a camada de mercado pela UF E pelo
-    nome e delega a `montar_pdf_municipio` -- o mesmo preparo do motor (web). O filtro por UF
-    e' obrigatorio: 232 nomes se repetem entre UFs, e "Rio Branco"/AC levava junto os hexes
-    de Rio Branco/MT (o mapa enquadrava os dois estados e os hexagonos sumiam). Levanta 404
-    se o municipio nao existe/nao tem hexes na UF.
+    Resolve o municipio (aceita nome sem acento), recorta a base pelo municipio e delega a
+    `montar_pdf_municipio` -- o mesmo preparo do motor (web). No pais com regua de recomendacao
+    (Brasil) a base e' a da tela, a particao enriquecida da UF (`_enriquecido_uf_df`; 503 sem
+    ela); sem regua (Argentina), a camada de mercado recortada pela UF E pelo nome. O filtro por
+    UF e' obrigatorio ali: 232 nomes se repetem entre UFs, e "Rio Branco"/AC levava junto os
+    hexes de Rio Branco/MT (o mapa enquadrava os dois estados e os hexagonos sumiam). Levanta
+    404 se o municipio nao existe/nao tem hexes na UF.
     """
     uf = str(uf).strip().upper()
     nome_exato, cands = resolver_municipio(uf, municipio, settings)
@@ -1432,7 +1439,7 @@ def gerar_pdf_municipio(
 
     # DEC-077 (item 5 do Felipe, 2026-10-21): no pais com regua de recomendacao (Brasil) o bot le
     # a MESMA base da tela -- a particao enriquecida da UF --, para o Top 10 do PDF ser o da tela.
-    # Sem a particao (ou sem regua: Argentina) segue a camada de mercado, como antes.
+    # Sem regua (Argentina) segue a camada de mercado, como antes.
     enriquecido = _enriquecido_uf_df(settings, uf)
     if enriquecido is not None:
         from motor_expansao.dashboard.relatorio_municipal import _municipio_mask
@@ -1467,8 +1474,9 @@ def montar_pdf_municipio(
 ) -> bytes:
     """Preparo UNICO do Relatorio Municipal: bot/API e motor (web) passam por aqui. READ-ONLY.
 
-    Quem chama entrega os hexes do municipio JA recortados (`df_muni`), cada um da sua base:
-    o bot a camada de mercado, o motor a particao enriquecida da UF (que tambem serve a AR).
+    Quem chama entrega os hexes do municipio JA recortados (`df_muni`): o motor e, no Brasil, o
+    bot a particao enriquecida da UF (que tambem serve a AR no motor); o bot sem regua de
+    recomendacao, a camada de mercado.
     Todo o resto sai daqui, igual para os dois: concorrentes pela uniao DEC-046, bairros por
     hex e divisa dos bairros, renda DOMICILIAR por hex, divisa do municipio, logos, os mapas
     (basemap online com fallback offline) e o PDF. Levanta 404 sem hexes.
@@ -1613,21 +1621,22 @@ def montar_pdf_municipio(
 
     # Paginas da PRACA (mapas de calor, pressao, crescimento, onde crescer). Falha aqui deixa o PDF
     # sair sem elas, como antes -- nunca derruba o relatorio. Vem ANTES dos mapas do relatorio
-    # porque os 5 hexagonos de "Onde crescer" sao os unicos que levam nome de bairro neles.
+    # porque o Top 10 do Dominio (Argentina) sai das mesmas listas. A recomendacao do Brasil tem
+    # try proprio dentro de `_praca_da_cidade`: base recusada pelo modulo nao leva estas paginas.
     try:
         praca = _praca_da_cidade(
             df_muni, uf=uf, nome_municipio=nome_municipio, cod=cod, comp_df=comp_df,
             ultra_df=ultra_df, poligono=poligono, renda_dom=renda_dom, settings=settings,
             regra=regra, setores_nomes=setores_nomes,
         )
-    except Exception as exc:  # noqa: BLE001
-        _LOG_PRACA.warning("paginas da praca omitidas em %s/%s: %r", nome_municipio, uf, exc)
+    except Exception:  # noqa: BLE001
+        _LOG_PRACA.exception("paginas da praca omitidas em %s/%s", nome_municipio, uf)
         praca = None
 
     if regra is not None:
-        # DEC-077: os hexagonos rotulados sao os do Top 10, e nao ha Top 10 do Dominio pela
-        # mediana (`_top_para_o_dominio`) -- a pagina de Dominio sai no Brasil.
-        hexes_rotulados = set(_hexes_da_recomendacao(praca)) or None
+        # DEC-077: sem Top 10 do Dominio pela mediana (`_top_para_o_dominio`) -- a pagina de
+        # Dominio sai no Brasil.
+        hexes_rotulados = None
         hexes_top = None
     else:
         hexes_rotulados = (
@@ -1684,12 +1693,6 @@ def _top_para_o_dominio(df_muni, renda_dom: dict | None) -> set[str] | None:
     return {str(h) for h in sel.hexagonos["hex_id"]} or None
 
 
-def _hexes_da_recomendacao(praca) -> list[str]:
-    """Os `hex_id` das vagas preenchidas da recomendacao unica, na ordem da pagina."""
-    rec = getattr(praca, "recomendacao", None)
-    return list(rec.hex_ids) if rec is not None else []
-
-
 def _listas_da_recomendacao(rec):
     """As duas listas do mapa de "Onde crescer" (`hex_id` + `posicao`) a partir da recomendacao."""
     import pandas as pd
@@ -1703,6 +1706,49 @@ def _listas_da_recomendacao(rec):
         )
 
     return _lista(rec.mata_virgem), _lista(rec.premium)
+
+
+def _recomendacao_indisponivel(regra, recorte, n_hexes: int):
+    """Top 10 indisponivel porque o modulo recusou a base da cidade (coluna faltando, hexagono
+    repetido): os dois segmentos `indisponivel`, como o modulo devolve sem o carimbo k, com o
+    motivo do PDF `MOTIVO_BASE_RECUSADA`. Nao e' uma lista: nenhuma vaga e' preenchida."""
+    from motor_expansao.dashboard.relatorio_municipal import MOTIVO_BASE_RECUSADA
+    from motor_expansao.recomendacao import Recomendacao, ResultadoSegmento, VagaVazia
+
+    def _segmento(seg: str) -> ResultadoSegmento:
+        return ResultadoSegmento(
+            segmento=seg, status="indisponivel", n_elegiveis=0,
+            vagas=tuple(VagaVazia(segmento=seg, posicao=i + 1, motivo=MOTIVO_BASE_RECUSADA)
+                        for i in range(regra.vagas_por_segmento)),
+        )
+
+    return Recomendacao(
+        regra=regra, recorte=recorte, n_hexes_recorte=n_hexes, renda=None,
+        mata_virgem=_segmento("mata_virgem"), premium=_segmento("premium"),
+    )
+
+
+def _subtitulos_onde_crescer(rec) -> tuple[str, str]:
+    """Subtitulos do mapa de "Onde crescer" no Brasil: com regiao e sem nenhuma.
+
+    A contagem e' das vagas PREENCHIDAS e o teto sai da regua -- das 313 cidades com 100 mil+
+    habitantes so' 26 enchem as 10 vagas (DEC-077), e "5 e 5" fixo prometia o que o mapa nao
+    mostrava. Sem acento, como todo texto dos mapas da praca: a fonte embutida do Pillow nao tem
+    os glifos ("regiao" saia com um quadrado no lugar do "a").
+    """
+    from motor_expansao.recomendacao import ROTULO_SEGMENTO, ItemRecomendado
+
+    def _n(seg) -> int:
+        return sum(isinstance(v, ItemRecomendado) for v in seg.vagas)
+
+    com_regiao = (
+        f"{_n(rec.mata_virgem)} {ROTULO_SEGMENTO['mata_virgem']} e {_n(rec.premium)} "
+        f"{ROTULO_SEGMENTO['premium']}, de {rec.regra.vagas_por_segmento} vagas cada"
+    )
+    indisponivel = "indisponivel" in (rec.mata_virgem.status, rec.premium.status)
+    sem_regiao = ("Recomendacao indisponivel" if indisponivel
+                  else "Nenhuma regiao da cidade atende a regua")
+    return com_regiao, sem_regiao
 
 
 def _praca_da_cidade(
@@ -1742,9 +1788,7 @@ def _praca_da_cidade(
     rotulos_recomendacao: dict[str, str] = {}
     if regra is not None:
         # DEC-077 (Felipe, 2026-10-21): no Brasil o "Onde crescer" e' o Top 10 do modulo unico --
-        # 5 Mata Virgem por residual + 5 Premium por populacao --, a mesma lista da tela. O
-        # modulo valida as colunas (fail-closed): base errada derruba a pagina, nunca troca a
-        # lista por outra regua.
+        # 5 Mata Virgem por residual + 5 Premium por populacao --, a mesma lista da tela.
         from motor_expansao.recomendacao import (
             Recorte,
             bairros_ordenados_por_hex,
@@ -1758,17 +1802,26 @@ def _praca_da_cidade(
             # UM municipio, e a renda do card le o codigo por linha: sem ele a renda dessas linhas
             # sumiria e a vaga sairia com o rotulo FALSO "nao ha outra regiao".
             df_rec = df_rec.assign(cod_municipio=df_rec["cod_municipio"].fillna(cod))
-        recomendacao = montar_recomendacao(
-            df_rec,
-            recorte=Recorte(nivel="municipio", uf=uf, cod_municipio=cod, nome=nome_municipio),
-            staging_dir=settings.staging_dir,
-            regra=regra,
-        )
+        recorte = Recorte(nivel="municipio", uf=uf, cod_municipio=cod, nome=nome_municipio)
+        try:
+            recomendacao = montar_recomendacao(
+                df_rec, recorte=recorte, staging_dir=settings.staging_dir, regra=regra,
+            )
+        except Exception:  # noqa: BLE001
+            # O modulo valida a base (fail-closed): base recusada deixa o "Onde crescer"
+            # INDISPONIVEL, com o motivo -- nunca troca a lista pela de outra regua, e calor,
+            # pressao e crescimento saem do mesmo jeito.
+            _LOG_PRACA.exception("recomendacao indisponivel em %s/%s: base recusada", nome_municipio, uf)
+            recomendacao = _recomendacao_indisponivel(regra, recorte, len(df_rec))
         top_residual, top_socio = _listas_da_recomendacao(recomendacao)
-        rotulos_recomendacao = rotulos_das_regioes(
-            [*top_residual["hex_id"], *top_socio["hex_id"]],
-            bairros_ordenados_por_hex(setores_nomes),
-        )
+        try:
+            rotulos_recomendacao = rotulos_das_regioes(
+                [*top_residual["hex_id"], *top_socio["hex_id"]],
+                bairros_ordenados_por_hex(setores_nomes),
+            )
+        except Exception:  # noqa: BLE001 - sem nome a regiao sai com o do municipio, nunca sem lista
+            _LOG_PRACA.exception("nomes da recomendacao indisponiveis em %s/%s", nome_municipio, uf)
+            rotulos_recomendacao = {}
     else:
         # "Onde crescer" em duas listas (2026-10-20): maior residual e maior score socioeconomico.
         top_residual = rp.top_por_coluna(hexes, rp.COL_RESIDUAL)
@@ -1813,11 +1866,15 @@ def _praca_da_cidade(
 
     def _onde_crescer(fundo: bool):
         if recomendacao is not None:
-            # DEC-077: o mapa diz o que as duas cores sao no Brasil.
+            # DEC-077: o mapa diz o que as duas cores sao no Brasil e quantas vagas sairam; sem
+            # nenhuma regiao, a cidade em cinza diz por que -- nao "Mapa indisponivel".
+            from motor_expansao.recomendacao import ROTULO_SEGMENTO
+
+            com_regiao, sem_regiao = _subtitulos_onde_crescer(recomendacao)
             return rpm.render_onde_crescer_duas_listas(
                 hexes, top_residual, top_socio, basemap=fundo,
-                rotulos_listas=("Mata Virgem", "Premium"),
-                subtitulo="5 Mata Virgem e 5 Premium (DEC-077)",
+                rotulos_listas=(ROTULO_SEGMENTO["mata_virgem"], ROTULO_SEGMENTO["premium"]),
+                subtitulo=com_regiao, subtitulo_sem_regiao=sem_regiao,
             )
         return rpm.render_onde_crescer_duas_listas(hexes, top_residual, top_socio, basemap=fundo)
 

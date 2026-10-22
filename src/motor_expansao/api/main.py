@@ -123,6 +123,14 @@ def create_app() -> FastAPI:
         "renda: fatores versao=%s pais=%s fixada_por_env=%s",
         fatores.versao, fatores.pais, fatores.fixada_por_env,
     )
+    # Recomendacao unica (DEC-077 §7): o PDF municipal da API e do bot sai do Top 10, que depende
+    # da regua e do carimbo k da malha. Em producao a falta do carimbo derruba a subida (sem ele
+    # todo PDF sairia com o Top 10 indisponivel); em dev so' avisa. Pais sem regua: nada a conferir.
+    from motor_expansao.recomendacao import validar_na_subida as validar_recomendacao
+
+    regra = validar_recomendacao(settings.staging_dir)
+    if regra is not None:
+        _log.info("recomendacao: regua versao=%s pais=%s", regra.versao, regra.pais)
 
     app = FastAPI(
         title="API GeoEspacial — Motor de Expansao Ultra Academia",
