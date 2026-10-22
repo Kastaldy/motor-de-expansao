@@ -8040,8 +8040,13 @@ _ONDE_DO_ALCANCE = {
 MSG_ALCANCE_DESCONHECIDO = (
     "Alcance desconhecido: {alcance!r}. Use raio_1km, raio_2km, carro_5min ou carro_10min."
 )
-MSG_ULTRA_SO_NO_RAIO_1KM = (
-    "O estudo da unidade Ultra é só do raio de 1 km. Volte ao raio de 1 km para usá-lo."
+# O estudo da unidade Ultra vale em TODO alcance da ficha (raio de 1 e 2 km, isocronas de 5
+# e 10 min): (lat, lng) e' a ORIGEM clicada, e a unidade a ate' 150 m dela sai da conta no
+# MESMO recorte. So' a AREA DESENHADA fica de fora -- ela nao tem uma origem que "seja" a
+# unidade (Vinicius, 2026-10-21; emenda do item 6 da DEC-074).
+MSG_ULTRA_SEM_DESENHO = (
+    "O estudo da unidade Ultra não vale para a área desenhada: ela não tem um ponto de "
+    "origem que seja a unidade. Use um alcance a partir do ponto."
 )
 # Logger NOMEADO no modulo (e nao `logging.getLogger(...)` inline): a guarda do BLK-SAUDE-01
 # (`test_falha_5xx_loga`) reconhece a chamada de log antes do 503 pelo NOME do alvo.
@@ -8138,8 +8143,9 @@ def ponto_alcance(
     outros, `lat`/`lng` continuam sendo a ORIGEM clicada, as réguas de total escalam pela
     área (`fator_regua`) e o mercado lê o mesmo recorte.
 
-    `excluir_ultra_proxima` (estudo da unidade Ultra) só existe no raio de 1 km -> 400 nos
-    outros. O gate de acesso é o do `/api/ponto` (prefixo). Fora do raio de 1 km a rota
+    `excluir_ultra_proxima` (estudo da unidade Ultra) vale em todos os alcances: a unidade a
+    até 150 m da origem sai do consumo medido NO recorte escolhido (emenda do item 6 da
+    DEC-074, 2026-10-21). O gate de acesso é o do `/api/ponto` (prefixo). Fora do raio de 1 km a rota
     passa pelo semáforo das análises de área (503 se lotado). READ-ONLY sobre o M1.
     """
     from motor_expansao.dashboard.alcance_ponto import ALCANCE_RAIO_1KM, ALCANCES
@@ -8151,12 +8157,14 @@ def ponto_alcance(
         payload = ponto(lat=lat, lng=lng, excluir_ultra_proxima=excluir_ultra_proxima)
         payload["recorte"] = _recorte_do_raio_1km(lat, lng)
         return payload
-    if excluir_ultra_proxima:
-        # Antes de qualquer conta: o modo Ultra mede a unidade no raio de 1 km.
-        raise HTTPException(400, MSG_ULTRA_SO_NO_RAIO_1KM)
     with _vaga_de_analise_de_area():
         resolvido = _resolver_alcance(lat, lng, alcance)
-        return _payload_ponto(resolvido.lat, resolvido.lng, alcance=resolvido)
+        return _payload_ponto(
+            resolvido.lat,
+            resolvido.lng,
+            alcance=resolvido,
+            excluir_ultra_proxima=excluir_ultra_proxima,
+        )
 
 
 def _recorte_do_raio_1km(lat: float, lng: float) -> dict[str, Any]:
@@ -8251,6 +8259,8 @@ def _payload_ponto(
     """
     if desenho is not None and alcance is not None:
         raise ValueError("desenho e alcance sao recortes exclusivos")
+    if desenho is not None and excluir_ultra_proxima:
+        raise ValueError("o estudo da unidade Ultra nao vale para a area desenhada")
     from motor_expansao.api.coord import CoordenadaInvalidaError, validar_brasil
     from motor_expansao.api.errors import APIError
     from motor_expansao.api.service import (
@@ -8354,28 +8364,30 @@ def _payload_ponto(
     # MESMA funcao no poligono (`mercado_raio.mercado_na_area` ja' aceita a geometria).
     from motor_expansao.dashboard.mercado_raio import UnidadeUltraForaDaTolerancia
 
-    if not tem_recorte and excluir_ultra_proxima:
-        # Emenda da DEC-070: estudo da unidade Ultra. Sem unidade na tolerancia, 400 com o
-        # motivo -- cair no estudo de ponto em silencio poria o consumo dela de volta numa
-        # ficha que o operador pediu sem ele.
-        try:
+    # Emenda da DEC-070: estudo da unidade Ultra -- em QUALQUER alcance (emenda do item 6 da
+    # DEC-074, 2026-10-21): a unidade sai do consumo medido no MESMO recorte da ficha. Sem
+    # unidade na tolerancia, 400 com o motivo -- cair no estudo de ponto em silencio poria o
+    # consumo dela de volta numa ficha que o operador pediu sem ele. Sem o modo, as chamadas
+    # saem com os MESMOS kwargs de antes (o dict vazio nao acrescenta nada).
+    mercado_kw: dict[str, Any] = (
+        {"excluir_ultra_proxima": True} if excluir_ultra_proxima else {}
+    )
+    try:
+        if not tem_recorte:
+            mercado = _mercado_do_ponto(lat, lng, cfg, res.get("pop_total_raio"), **mercado_kw)
+        elif geometria is not None:
+            # DEC-074: o piso de populacao do gate do SAM escala pelo MESMO fator dos criterios.
             mercado = _mercado_do_ponto(
-                lat, lng, cfg, res.get("pop_total_raio"), excluir_ultra_proxima=True
+                lat, lng, cfg, res.get("pop_total_raio"),
+                geometria=geometria, fator_regua=fator_regua, **mercado_kw,
             )
-        except UnidadeUltraForaDaTolerancia as exc:
-            raise HTTPException(400, str(exc)) from exc
-    elif not tem_recorte:
-        mercado = _mercado_do_ponto(lat, lng, cfg, res.get("pop_total_raio"))
-    elif geometria is not None:
-        # DEC-074: o piso de populacao do gate do SAM escala pelo MESMO fator dos criterios.
-        mercado = _mercado_do_ponto(
-            lat, lng, cfg, res.get("pop_total_raio"),
-            geometria=geometria, fator_regua=fator_regua,
-        )
-    else:
-        mercado = _mercado_do_ponto(
-            lat, lng, cfg, res.get("pop_total_raio"), raio_km=raio, fator_regua=fator_regua
-        )
+        else:
+            mercado = _mercado_do_ponto(
+                lat, lng, cfg, res.get("pop_total_raio"),
+                raio_km=raio, fator_regua=fator_regua, **mercado_kw,
+            )
+    except UnidadeUltraForaDaTolerancia as exc:
+        raise HTTPException(400, str(exc)) from exc
     tem_mercado = bool(mercado.get("disponivel"))
 
     import h3
@@ -8789,6 +8801,122 @@ def municipios(uf: str) -> dict[str, Any]:
             for _, r in g.iterrows()
         ],
     }
+
+
+@functools.lru_cache(maxsize=32)
+def _nomes_m1_da_uf(uf: str) -> tuple[dict[str, str], dict[str, str]]:
+    """(cod_municipio -> nome, nome normalizado -> nome) do artefato que o seletor lista.
+
+    E' o MESMO dado de `/api/municipios/{uf}` (`nome_municipio` da particao enriquecida),
+    lido so' nas duas colunas -- sem a particao inteira de `carregar_uf`, que numa UF fria
+    custa dezenas de segundos. Por arquivo, e nao `pd.read_parquet(part)`: o dicionario do
+    `nome_municipio` pode variar de tipo entre as partes, e o dataset recusa o merge.
+    UF sem particao -> dois dicionarios vazios (o nome sai do censo, abaixo).
+    """
+    import pyarrow.parquet as pq
+
+    part = ENRICHED_DIR / f"uf={uf.upper()}"
+    por_cod: dict[str, str] = {}
+    por_nome: dict[str, str] = {}
+    for arq in sorted(part.glob("*.parquet")) if part.is_dir() else []:
+        arquivo = pq.ParquetFile(arq)
+        nomes = set(arquivo.schema_arrow.names)
+        if "nome_municipio" not in nomes:
+            continue
+        cols = ["nome_municipio", *(["cod_municipio"] if "cod_municipio" in nomes else [])]
+        df = arquivo.read(columns=cols).to_pandas()
+        df["nome_municipio"] = df["nome_municipio"].astype("string")
+        # Vetorizado, e so' sobre os pares/nomes UNICOS: a particao tem um hexagono por
+        # linha, e normalizar nome a nome custava ~0,6 s no 1o clique de cada UF (revisao
+        # de 21/10/2026). `drop_duplicates`/`unique` preservam a 1a ocorrencia, entao o
+        # `setdefault` abaixo escolhe o mesmo nome que o laco linha a linha escolhia.
+        if "cod_municipio" in df.columns:
+            pares = pd.DataFrame(
+                {
+                    "cod": df["cod_municipio"]
+                    .astype("string")
+                    .str.strip()
+                    .str.replace(r"\.0$", "", regex=True),
+                    "nome": df["nome_municipio"],
+                }
+            ).dropna()
+            pares = pares[pares["cod"] != ""].drop_duplicates()
+            for cod, nome in zip(pares["cod"], pares["nome"], strict=True):
+                por_cod.setdefault(str(cod), str(nome))
+        unicos = pd.Series(df["nome_municipio"].dropna().unique(), dtype="string")
+        for chave, nome in zip(_norm_nome(unicos), unicos, strict=True):
+            por_nome.setdefault(str(chave), str(nome))
+    return por_cod, por_nome
+
+
+def _nome_municipio_do_censo(uf: str, cod_municipio: str) -> str | None:
+    """`nome_municipio` da particao censitaria do municipio -- UMA coluna de UM arquivo."""
+    import pyarrow.parquet as pq
+
+    pasta = CENSO_GEO_DIR / f"uf={uf.upper()}" / f"cod_municipio={cod_municipio}"
+    for arq in sorted(pasta.glob("*.parquet")) if pasta.is_dir() else []:
+        try:
+            arquivo = pq.ParquetFile(arq)
+            if "nome_municipio" not in arquivo.schema_arrow.names:
+                return None
+            valores = arquivo.read(columns=["nome_municipio"]).column(0).drop_null()
+        except Exception:  # noqa: BLE001  (particao ilegivel = sem nome, nunca 500)
+            return None
+        if len(valores):
+            return str(valores[0])
+    return None
+
+
+@app.get("/api/municipio-do-ponto")
+def municipio_do_ponto(lat: float, lng: float) -> dict[str, Any]:
+    """Coordenada -> (UF, municipio) pela MALHA MUNICIPAL, no nome que o seletor usa.
+
+    Por que existe (relato do Vinicius, 21/10/2026): escolher uma unidade Ultra leva o
+    cabecalho ao municipio dela, e o municipio saia da CIDADE do cadastro (texto livre, que
+    na carteira pode vir vazio) ou do hexagono da unidade no payload JA' CARREGADO -- que,
+    com o operador dentro de OUTRA cidade, so' tem os hexagonos daquela. Resultado: na
+    primeira tentativa o mapa ia para "Todos os municipios". A coordenada da unidade e' a
+    resposta que nao depende de nada disso.
+
+    A malha e' a MESMA do `/api/ponto` (`_carregar_malha`, cacheada por processo), com o
+    mesmo encoste de 2 km na orla. O NOME e' o do artefato que `/api/municipios/{uf}`
+    lista: primeiro pelo codigo; sem codigo no artefato, o nome do censo casado pelo nome
+    normalizado; sem nada disso, o nome do censo cru (`no_seletor` falso) -- o front casa
+    contra a lista e, sem casar, segue os fallbacks dele.
+
+    400 = coordenada invalida ou fora do bounding box do pais; 404 = dentro do bounding box
+    mas fora da malha (mar aberto, pais vizinho). READ-ONLY: nao le score nem artefato M1
+    alem dos nomes.
+    """
+    from motor_expansao.api.coord import CoordenadaInvalidaError, validar_brasil
+    from motor_expansao.api.errors import APIError
+    from motor_expansao.api.service import _carregar_malha
+
+    try:
+        validar_brasil(lat, lng)
+    except CoordenadaInvalidaError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    try:
+        resolvido = _carregar_malha(str(IBGE_DIR)).resolver(lat, lng)
+    except APIError as exc:
+        raise HTTPException(exc.status_code, exc.detail) from exc
+    if resolvido is None:
+        raise HTTPException(
+            404, "Nenhum município encontrado nessa coordenada (mar aberto ou fora do país)."
+        )
+    uf, cod = resolvido
+    uf = uf.upper()
+    cod = str(cod).strip()
+    por_cod, por_nome = _nomes_m1_da_uf(uf)
+    nome = por_cod.get(cod) or por_cod.get(cod[:6])
+    if nome is None:
+        do_censo = _nome_municipio_do_censo(uf, cod)
+        if do_censo:
+            chave = _norm_nome(pd.Series([do_censo])).iloc[0]
+            nome = por_nome.get(str(chave))
+            if nome is None:
+                return {"uf": uf, "municipio": do_censo, "cod_municipio": cod, "no_seletor": False}
+    return {"uf": uf, "municipio": nome, "cod_municipio": cod, "no_seletor": nome is not None}
 
 
 @app.get("/api/uf/{uf}")
@@ -13086,8 +13214,8 @@ def _resolver_recorte_do_pdf(
     """Campos Form do Estudo -> recorte pronto, ou `None` (o raio de 1 km de sempre).
 
     Recusas em portugues (400), na ordem do mais barato ao mais caro: os dois campos
-    juntos; recorte sem `so_estudo`; estudo da unidade Ultra fora do raio de 1 km;
-    geometria ilegivel ou fora das travas do desenho. Servico de rotas fora -> 503 (pela
+    juntos; recorte sem `so_estudo`; estudo da unidade Ultra na area desenhada (nos alcances
+    ele vale, emenda do item 6 da DEC-074); geometria ilegivel ou fora das travas do desenho. Servico de rotas fora -> 503 (pela
     mesma `_resolver_alcance` da ficha: o PDF e a tela recusam com as mesmas frases).
     """
     from motor_expansao.dashboard.alcance_ponto import ALCANCE_RAIO_1KM
@@ -13103,8 +13231,8 @@ def _resolver_recorte_do_pdf(
         return None
     if not so_estudo:
         raise HTTPException(400, MSG_RECORTE_SO_NO_ESTUDO)
-    if excluir_ultra_proxima:
-        raise HTTPException(400, MSG_ULTRA_SO_NO_RAIO_1KM)
+    if excluir_ultra_proxima and geometria:
+        raise HTTPException(400, MSG_ULTRA_SEM_DESENHO)
 
     if geometria:
         from motor_expansao.api.coord import CoordenadaInvalidaError, validar_brasil
@@ -13336,25 +13464,22 @@ def _gerar_relatorio_pontual_pdf(
     from motor_expansao.dashboard.mercado_raio import UnidadeUltraForaDaTolerancia
 
     try:
-        if excluir_ultra_proxima:
-            # Emenda da DEC-070: estudo da unidade Ultra. O erro de tolerancia SOBE como
-            # 400: um PDF "sem o consumo da unidade" que saisse com ele seria o pior caso.
-            residual = _mercado_do_ponto(
-                lat, lng, cfg, result.get("pop_total_raio"), excluir_ultra_proxima=True
-            )
-        elif recorte is not None:
+        mercado_kw: dict[str, Any] = {}
+        if recorte is not None:
             # DEC-074: o mercado no MESMO recorte, com o gate do SAM escalado pelo MESMO
             # fator dos cards e da Conclusao (a tela usa o mesmo par de kwargs).
-            mercado_kw: dict[str, Any] = {"fator_regua": fator_regua}
+            mercado_kw["fator_regua"] = fator_regua
             if recorte.geometria is not None:
                 mercado_kw["geometria"] = recorte.geometria
             else:
                 mercado_kw["raio_km"] = raio_pdf
-            residual = _mercado_do_ponto(
-                lat, lng, cfg, result.get("pop_total_raio"), **mercado_kw
-            )
-        else:
-            residual = _mercado_do_ponto(lat, lng, cfg, result.get("pop_total_raio"))
+        if excluir_ultra_proxima:
+            # Emenda da DEC-070: estudo da unidade Ultra. O erro de tolerancia SOBE como
+            # 400: um PDF "sem o consumo da unidade" que saisse com ele seria o pior caso.
+            # JUNTO com o recorte, e nao no lugar dele (emenda do item 6 da DEC-074): com
+            # ramos exclusivos, o PDF diria "10 min de carro" e mediria o mercado no 1 km.
+            mercado_kw["excluir_ultra_proxima"] = True
+        residual = _mercado_do_ponto(lat, lng, cfg, result.get("pop_total_raio"), **mercado_kw)
     except UnidadeUltraForaDaTolerancia as exc:
         raise HTTPException(400, str(exc)) from exc
     except Exception:  # noqa: BLE001

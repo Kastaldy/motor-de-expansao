@@ -187,6 +187,10 @@ export default function App() {
   // Começa SEM estado: o app abre na porta de entrada (escolha de UF).
   const [uf, setUf] = useState('')
   const [municipios, setMunicipios] = useState<MunicipioItem[]>([])
+  /* De que UF é a lista acima. Logo depois de uma troca de estado ela ainda é a do estado
+     ANTERIOR até a nova chegar; o mapa precisa saber disso para achar o município de uma
+     unidade escolhida (`lib/territorio-unidade`) na lista certa. */
+  const [municipiosUf, setMunicipiosUf] = useState('')
   // Vazio = visão da UF inteira; preenchido = drill-down no município.
   const [municipio, setMunicipio] = useState('')
 
@@ -323,6 +327,14 @@ export default function App() {
     pontoSoltou.current = true
     setPinPonto(null)
   }, [])
+  /* A UNIDADE escolhida solta tambem o destino de lista (`pinDestino`), e nao so' o ponto:
+     o destino vence o pin local no `searchPin`, entao com um destino ativo a camera nao ia
+     ate' a unidade do MESMO territorio -- e ia ate' a de outro, porque ai' a troca de
+     municipio limpava o destino. O comportamento dependia de onde a unidade estava. */
+  const soltarParaUnidade = useCallback(() => {
+    setPinDestino(null)
+    soltarPonto()
+  }, [soltarPonto])
 
   /**
    * O PONTO ATIVO mudou (pedido novo, leitura que chegou, troca de aba, remoção): leva o
@@ -446,13 +458,17 @@ export default function App() {
   useEffect(() => {
     if (!uf) {
       setMunicipios([])
+      setMunicipiosUf('')
       return
     }
     let vivo = true
     api
       .municipios(uf)
       .then((r) => {
-        if (vivo) setMunicipios(r.municipios)
+        if (vivo) {
+          setMunicipios(r.municipios)
+          setMunicipiosUf(r.uf ?? uf)
+        }
       })
       .catch(() => {
         /* o seletor de município degrada gracioso */
@@ -690,6 +706,7 @@ export default function App() {
               uf={uf}
               onUf={aoTrocarUf}
               municipios={municipios}
+              municipiosUf={municipiosUf}
               municipio={municipio}
               /* Trocar de municipio A MAO (ou clicar em "Todos os municipios") descarta o
                  hexagono que a lista tinha escolhido E tira do ponto ativo o comando da
@@ -730,7 +747,7 @@ export default function App() {
               /* Uma UNIDADE da rede foi escolhida (seletor do cabeçalho ou pin da Ultra): o
                  pin dela passa a valer, e o ponto ativo solta a câmera — senão ele seguia
                  vencendo a precedência e a câmera nunca chegava à unidade. */
-              onSoltarPonto={soltarPonto}
+              onSoltarPonto={soltarParaUnidade}
               /* A lupa do cabeçalho vira PONTO ANALISADO nas duas entradas: buscar um
                  endereço ali produz a MESMA ficha que colá-lo. */
               onPontoBuscado={pedirPonto}

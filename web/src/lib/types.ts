@@ -554,6 +554,18 @@ export interface MunicipioPayload {
   independentes?: Independentes
 }
 
+/**
+ * `GET /api/municipio-do-ponto`: onde a coordenada cai na malha municipal. `municipio` vem
+ * na grafia da lista de `/api/municipios/{uf}` quando `no_seletor`; senão, o nome do censo
+ * (ou `null`, sem nome nenhum). `uf` é a da COORDENADA -- pode não ser a do cadastro.
+ */
+export interface MunicipioDoPonto {
+  uf: string
+  municipio: string | null
+  cod_municipio: string | null
+  no_seletor: boolean
+}
+
 export interface MunicipioItem {
   nome: string
   n_hex: number

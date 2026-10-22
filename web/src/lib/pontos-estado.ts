@@ -328,22 +328,49 @@ export function substituir(e: EstadoPontos, ficha: PontoPayload): EstadoPontos {
  */
 export type LeituraQuerida = boolean | string
 
-/**
- * A leitura do estudo da unidade Ultra, na descrição de `leituraDaFicha`. É sempre do raio
- * de 1 km: o servidor não oferece o estudo da unidade em outro alcance.
- */
-export const LEITURA_ULTRA = `${ALCANCE_PADRAO}+ultra`
+/** O sufixo do estudo da unidade Ultra na descrição de `leituraDaFicha`. */
+const SUFIXO_ULTRA = '+ultra'
 
 /**
- * A LEITURA de uma ficha como uma string só — o alcance e, no raio de 1 km, o modo:
- * `'raio_1km'`, `'raio_1km+ultra'`, `'raio_2km'`, `'carro_10min'`. É a moeda comum das
- * trocas em voo (`pedirTroca`): modo e alcance do mesmo ponto passam pelo mesmo registro.
+ * A leitura do estudo da unidade Ultra NUM alcance: `'raio_2km+ultra'`. O estudo da unidade
+ * vale em todo alcance a partir do ponto (emenda do item 6 da DEC-074, Vinicius 2026-10-21):
+ * a unidade a até 150 m da origem sai do consumo medido no recorte escolhido.
+ */
+export function leituraUltra(alcance: string): string {
+  return `${alcance}${SUFIXO_ULTRA}`
+}
+
+/** A leitura do estudo da unidade Ultra no raio de 1 km (o alcance padrão). */
+export const LEITURA_ULTRA = leituraUltra(ALCANCE_PADRAO)
+
+/** Desmonta uma leitura em alcance + modo: `'carro_10min+ultra'` -> `carro_10min`, ultra. */
+export function partesDaLeitura(leitura: string): { alcance: string; ultra: boolean } {
+  return leitura.endsWith(SUFIXO_ULTRA)
+    ? { alcance: leitura.slice(0, -SUFIXO_ULTRA.length), ultra: true }
+    : { alcance: leitura, ultra: false }
+}
+
+/** A leitura `vigente` com o estudo da unidade ligado ou desligado — o ALCANCE fica. */
+export function leituraComModo(vigente: string, ultra: boolean): string {
+  const { alcance } = partesDaLeitura(vigente)
+  return ultra ? leituraUltra(alcance) : alcance
+}
+
+/** A leitura `vigente` em outro alcance — o MODO fica (emenda do item 6 da DEC-074). */
+export function leituraComAlcance(vigente: string, alcance: string): string {
+  return partesDaLeitura(vigente).ultra ? leituraUltra(alcance) : alcance
+}
+
+/**
+ * A LEITURA de uma ficha como uma string só — o alcance e o modo: `'raio_1km'`,
+ * `'raio_1km+ultra'`, `'raio_2km'`, `'carro_10min+ultra'`. É a moeda comum das trocas em voo
+ * (`pedirTroca`): modo e alcance do mesmo ponto passam pelo mesmo registro.
  */
 export function leituraDaFicha(
   f: Pick<PontoPayload, 'raio_km' | 'geometria' | 'recorte' | 'mercado'>,
 ): string {
   const alcance = alcanceDoItem(f) ?? ALCANCE_PADRAO
-  return alcance === ALCANCE_PADRAO && ehEstudoDaUnidade(f) ? LEITURA_ULTRA : alcance
+  return ehEstudoDaUnidade(f) ? leituraUltra(alcance) : alcance
 }
 
 export interface TrocasDeModo {

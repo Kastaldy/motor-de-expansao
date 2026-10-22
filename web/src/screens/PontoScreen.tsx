@@ -52,10 +52,14 @@ import {
 import { erroFlutuanteVisivel, janelaNaMontagem } from '../lib/pontos-estado'
 import { TOPO_BOTAO_PADRAO, topoDoBotaoVerFicha } from '../lib/botao-ver-ficha'
 import { LARGURA_FICHA_PONTO } from '../lib/janela'
+import { Z_FLUTUANTE_PONTO } from '../lib/camadas-mapa'
+import { useCabecalhoMapa } from '../lib/registro-cabecalho'
 import {
   AVISO_RELENDO_ALCANCE,
   ESTILO_ROTULO_ALCANCE,
   ESTILO_TRILHO_ALCANCE,
+  ESTILO_TIPO_ALCANCE,
+  ROTULO_CURTO_ALCANCE,
   ROTULO_SELETOR_ALCANCE,
   estiloDaOpcaoAlcance,
 } from '../lib/seletor-alcance'
@@ -245,18 +249,24 @@ export default function PontoScreen({
 
   /* Topo do botão "Ver a ficha": logo abaixo do cabeçalho do mapa, MEDIDO — o cabeçalho
      é `flex-wrap` e quebra em duas linhas em tela estreita (regra em `lib/botao-ver-ficha`).
-     O cabeçalho é do `MapScreen` (irmão desta tela na árvore), então ele é achado pelo DOM:
-     sobe-se pelos ancestrais do botão até o primeiro que contém a `barra-ultra`. */
-  const [botaoFichaEl, setBotaoFichaEl] = useState<HTMLDivElement | null>(null)
+     O cabeçalho é do `MapScreen` (irmão desta tela na árvore), então ele vem do REGISTRO
+     que o mapa publica (`lib/registro-cabecalho`). Desde 21/10/2026, e não mais de uma busca
+     no DOM feita só na montagem: no Explorar a camada existe antes do cabeçalho (sem UF o
+     mapa desenha a Landing), e a busca única deixava o topo no padrão para sempre. Com o
+     registro, a medida é refeita quando o cabeçalho aparece, some ou é trocado.
+
+     Medido a partir da CAMADA (o contêiner de tela inteira), e não do botão, desde
+     21/10/2026: a caixa de colar usa a mesma medida, e ela existe sem o botão. Com o
+     cabeçalho ACIMA das peças soltas (`Z_CABECALHO_MAPA` 29 > `Z_FLUTUANTE_PONTO` 28), a
+     caixa no `top: 88` fixo ficava com o topo escondido sob o cabeçalho de duas linhas. O
+     contêiner é o mesmo `offsetParent` do botão, então a régua não muda. */
+  const [camadaEl, setCamadaEl] = useState<HTMLDivElement | null>(null)
   const [topoBotaoFicha, setTopoBotaoFicha] = useState(TOPO_BOTAO_PADRAO)
+  const cabecalhoRegistrado = useCabecalhoMapa()
   useLayoutEffect(() => {
-    const el = botaoFichaEl
-    if (!el) return
-    const pai = el.offsetParent as HTMLElement | null
-    let cabecalho: HTMLElement | null = null
-    for (let anc = el.parentElement; anc && !cabecalho; anc = anc.parentElement) {
-      cabecalho = anc.querySelector<HTMLElement>('header.barra-ultra')
-    }
+    const pai = camadaEl
+    if (!pai) return
+    const cabecalho = cabecalhoRegistrado?.isConnected ? cabecalhoRegistrado : null
     const medir = () => {
       const caixaPai = pai?.getBoundingClientRect()
       /* A escala do `#root` (transform), lida do próprio contêiner: tela / layout. */
@@ -277,7 +287,7 @@ export default function PontoScreen({
       obs?.disconnect()
       window.removeEventListener('resize', medir)
     }
-  }, [botaoFichaEl])
+  }, [camadaEl, cabecalhoRegistrado])
 
   const ficha = fichas[aberto] ?? null
   /* Os mesmos rótulos que o painel de abas usa — desambiguados entre si ("Centro #1",
@@ -513,10 +523,16 @@ export default function PontoScreen({
        as peças; cada peça reativa pede `auto` de volta. Sem isso, uma folha invisível
        cobriria a tela inteira e o mapa do fundo não receberia nem arraste nem clique.
 
-       `zIndex` acima do chrome do Explorar (cabeçalho 10, stepper 24, legenda 25) para a
-       caixa de colar e a janela ficarem por cima dele — mas o clique nos seletores e no
-       stepper continua chegando, porque o contêiner não intercepta. */
-    <div style={{ position: 'absolute', inset: 0, zIndex: 40, pointerEvents: 'none' }}>
+       SEM `zIndex` NESTE CONTÊINER, de propósito (21/10/2026). Com o `zIndex: 40` de antes
+       ele criava um contexto de empilhamento próprio, e a janela do ponto pintava por cima
+       de TODAS as janelas do mapa, qualquer que fosse a pilha da `JanelaFicha`: a comparação
+       de hexágonos nascia em degrau e ficava quase inteira coberta, o clique nela não a
+       trazia para frente e o Esc fechava a escondida (print do Vinicius). Sem z, a janela
+       do ponto disputa o mesmo contexto das do mapa (26/27) e vale a regra de qualquer
+       gerenciador de janelas: a aberta ou clicada por último fica por cima. As peças soltas
+       (caixa de colar, espera, erro, botão "Ver a ficha") levam `Z_FLUTUANTE_PONTO` cada
+       uma, para não caírem sob o corpo do mapa (z 10). */
+    <div style={{ position: 'absolute', inset: 0, pointerEvents: 'none' }} ref={setCamadaEl}>
       {/* ---------------- Caixa de colar ----------------
           Abaixo do cabeçalho do Explorar, que continua sendo o de lá. NÃO há cabeçalho
           próprio: era justamente ele — "Análise de ponto" com botão de início repetido —
@@ -524,9 +540,12 @@ export default function PontoScreen({
       <div
         style={{
           position: 'absolute',
-          top: 88,
+          /* Abaixo do cabeçalho, MEDIDO (ver `camadaEl`): 88 com ele numa linha, mais
+             quando ele quebra em duas — nunca por baixo dele. */
+          top: Math.max(TOPO_BOTAO_PADRAO, topoBotaoFicha),
           left: 16,
           right: 16,
+          zIndex: Z_FLUTUANTE_PONTO,
           display: 'flex',
           flexDirection: 'column',
           alignItems: 'center',
@@ -645,8 +664,13 @@ export default function PontoScreen({
           da direita; e no pé da esquerda cobriria o trilho. O topo é medido do cabeçalho. */}
       {ficha && !janela && (
         <div
-          ref={setBotaoFichaEl}
-          style={{ position: 'absolute', left: 16, top: topoBotaoFicha, pointerEvents: 'auto' }}
+          style={{
+            position: 'absolute',
+            left: 16,
+            top: topoBotaoFicha,
+            zIndex: Z_FLUTUANTE_PONTO,
+            pointerEvents: 'auto',
+          }}
         >
           <Botao onClick={() => setJanela(true)}>
             Ver a ficha {fichas.length > 1 ? `(${fichas.length} pontos)` : ''} ›
@@ -680,6 +704,10 @@ export default function PontoScreen({
             : undefined
         }
         onFechar={() => setJanela(false)}
+        /* Ponto pedido (ou pedido de novo) SOBE, mesmo com outra janela por cima — a
+           comparação ou a ficha do hexágono. Sem isso, com a janela já aberta, o
+           `setJanela(true)` do `revelar` não muda nada e o ponto novo ficaria escondido. */
+        pedidoDeFrente={revelar}
         /* Mais estreita que as outras janelas do mapa (pedido do Vinicius, 20/10/2026: "no
            meu dispositivo, 480px se mostraram menor sem perder muito conteúdo"). Só a
            NASCENÇA: redimensionar continua livre, até o mínimo de sempre. */
@@ -897,7 +925,6 @@ function Ficha({
             opcoes={opcoesDeAlcance}
             atual={alcance}
             trocando={trocando}
-            comEstudoUltra={ofertaUltra?.ligado === true}
             onTrocar={onTrocarAlcance}
           />
         )}
@@ -932,9 +959,10 @@ function Ficha({
           Vinicius, 2026-10-16): ela muda a PERGUNTA da ficha inteira (estudo de ponto x
           estudo da unidade), e no fim do bloco de mercado exigia rolar a ficha toda para
           ser achada. */}
-      {/* A chave do estudo da unidade Ultra só existe no raio de 1 km: o servidor não
-          oferece o estudo da unidade em outro alcance. */}
-      {ofertaUltra && alcance === 'raio_1km' && (
+      {/* A chave do estudo da unidade Ultra vale em todo alcance a partir do ponto (emenda
+          do item 6 da DEC-074): a unidade sai do consumo do recorte escolhido. Na área
+          desenhada a oferta já não existe (`ofertaDeEstudoUltra`). */}
+      {ofertaUltra && (
         <ChaveEstudoUltra oferta={ofertaUltra} trocando={trocando} onTrocar={onTrocarModo} />
       )}
 
@@ -1137,20 +1165,18 @@ function ChaveEstudoUltra({
  * aqui. Os alcances de carro só aparecem quando a instância tem o serviço de rotas
  * (`alcancesDisponiveis`); opção que não pode acender não é desenhada apagada.
  *
- * O estudo da unidade Ultra é só do raio de 1 km: com ele ligado, escolher outro alcance
- * volta ao estudo de ponto — e a frase embaixo diz isso ANTES do clique.
+ * O estudo da unidade Ultra vale em todo alcance: com ele ligado, escolher outro alcance
+ * MANTÉM o estudo da unidade (emenda do item 6 da DEC-074).
  */
 function SeletorAlcance({
   opcoes,
   atual,
   trocando,
-  comEstudoUltra,
   onTrocar,
 }: {
   opcoes: readonly Alcance[]
   atual: Alcance
   trocando: boolean
-  comEstudoUltra: boolean
   onTrocar: (alcance: Alcance) => void
 }) {
   /* O visual mora em `lib/seletor-alcance` (travado em teste): controle segmentado da
@@ -1199,18 +1225,17 @@ function SeletorAlcance({
               aria-checked={marcado}
               onClick={() => onTrocar(a)}
               title={ROTULO_ALCANCE[a]}
+              /* O nome acessível é o rótulo INTEIRO ("5 min de carro"): o visível vem em
+                 duas linhas curtas, e "5 min" sozinho não diria de quê. */
+              aria-label={ROTULO_ALCANCE[a]}
               style={estiloDaOpcaoAlcance(marcado)}
             >
-              {ROTULO_ALCANCE[a]}
+              <span>{ROTULO_CURTO_ALCANCE[a].valor}</span>
+              <span style={ESTILO_TIPO_ALCANCE}>{ROTULO_CURTO_ALCANCE[a].tipo}</span>
             </button>
           )
         })}
       </div>
-      {comEstudoUltra && (
-        <span style={{ font: '400 11px/1.4 var(--f-ui)', color: 'var(--tx-sub)' }}>
-          O estudo da unidade Ultra é só do raio de 1 km: escolher outro alcance volta ao estudo de ponto.
-        </span>
-      )}
     </div>
   )
 }

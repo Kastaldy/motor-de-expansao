@@ -142,10 +142,14 @@ describe('o alcance do ponto, da ficha ao mapa', () => {
     expect(app).toContain('onTrocarAlcance={(i, alcance) => void pontos.trocarAlcance(i, alcance)}')
   })
 
-  it('a ficha mostra o seletor só em ponto, com mais de uma opção, e o modo Ultra só no 1 km', () => {
+  it('a ficha mostra o seletor só em ponto, com mais de uma opção, e o modo Ultra em todo alcance', () => {
     expect(pontoScreen).toContain('{!area && alcance && onTrocarAlcance && opcoesDeAlcance.length > 1 && (')
     expect(pontoScreen).toContain('role="radiogroup"')
-    expect(pontoScreen).toContain("{ofertaUltra && alcance === 'raio_1km' && (")
+    /* Emenda do item 6 da DEC-074 (Vinicius, 2026-10-21): a chave não depende mais do alcance,
+       e o seletor deixou de avisar que trocar de alcance desliga o estudo da unidade. */
+    expect(pontoScreen).toContain('{ofertaUltra && (')
+    expect(pontoScreen).not.toContain("{ofertaUltra && alcance === 'raio_1km' && (")
+    expect(pontoScreen).not.toContain('escolher outro alcance volta ao estudo de ponto')
   })
 
   it('o Estudo manda o recorte da ficha (no corpo, via `api.relatorioPontual`)', () => {

@@ -65,10 +65,24 @@ export function ofertaDeEstudoUltra(
 ): OfertaEstudoUltra | null {
   if (f.geometria?.length) return null
   const m = f.mercado
-  if (!m || !m.disponivel) return null
+  if (!m) return null
   const ligado = ehEstudoDaUnidade(f)
+  // Mercado indisponivel: so' a SAIDA do modo ligado. Desde que o modo vale em todo alcance
+  // (Emenda 2 da DEC-074), trocar de alcance preserva o modo; sem a chave aqui, uma falha do
+  // mercado deixava o estudo da unidade preso em todos os alcances, sem como desligar.
+  if (!m.disponivel && !ligado) return null
   const unidade = (ligado ? m.unidade_ultra_estudada : null) ?? m.ultra_proxima ?? null
-  if (!unidade) return null
+  if (!unidade) {
+    if (!ligado) return null
+    // Na falha o servidor manda `unidade_ultra_estudada: null`: a chave fica, sem o nome.
+    return {
+      nome: '',
+      distM: null,
+      ligado,
+      pergunta: 'Estudo da região da unidade Ultra (sem o consumo dela). Voltar ao estudo de ponto?',
+      declaracao: m.declaracao_modo ?? null,
+    }
+  }
   const dist = unidade.dist_m ?? null
   if (dist != null && dist > TOLERANCIA_UNIDADE_ULTRA_M) return null
   const onde = dist != null ? ` (a ${distanciaCurta(dist)})` : ''

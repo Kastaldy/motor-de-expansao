@@ -55,6 +55,10 @@ export interface OpcaoUnidade {
   semRede: boolean
   lat: number | null
   lng: number | null
+  /** UF e cidade do registro: o mapa leva o cabecalho ao territorio da unidade escolhida
+   *  (`lib/territorio-unidade`). */
+  uf: string | null
+  cidade: string | null
 }
 
 /**
@@ -73,6 +77,8 @@ export function unidadesDaBusca(
     semRede: false,
     lat: u.lat,
     lng: u.lng,
+    uf: u.uf,
+    cidade: u.cidade,
   }))
   const doCadastro = unidadesDaUf(semRede, uf).map((u) => ({
     id: u.id,
@@ -81,6 +87,8 @@ export function unidadesDaBusca(
     semRede: true,
     lat: u.lat,
     lng: u.lng,
+    uf: u.uf,
+    cidade: u.cidade,
   }))
   return [...daRede, ...doCadastro].sort((a, b) => a.nome.localeCompare(b.nome, 'pt-BR'))
 }

@@ -7,13 +7,17 @@ import {
   mover,
   reajustar,
   redimensionar,
+  topoMinimoSobCabecalho,
   type Ancora,
   type Area,
   type Geometria,
 } from '../lib/janela'
 import { registrarJanela, removerJanela } from '../lib/ocupacao-janelas'
+import { Z_JANELA_FICHA, Z_JANELA_FICHA_TOPO } from '../lib/camadas-mapa'
+import { useCabecalhoMapa } from '../lib/registro-cabecalho'
 
-/** Onde a janela nasce no eixo Y: abaixo do cabeçalho flutuante do mapa. */
+/** Onde a janela nasce no eixo Y: abaixo do cabeçalho flutuante do mapa. Com o cabeçalho
+ *  quebrado em duas linhas, nasce abaixo dele (`topoMinimo`), nunca embaixo. */
 const TOPO_PADRAO = 88
 
 /**
@@ -38,6 +42,14 @@ const pilhaAbertas: symbol[] = []
  * esquerda nao pode ocultar o que esta' por baixo). Agora a aberta por ultimo — ou a
  * ultima em que o operador clicou — sobe, como em qualquer gerenciador de janelas. O Esc
  * segue a mesma pilha, entao fecha justamente a que esta' a' vista por cima.
+ *
+ * SO' VALE ENTRE JANELAS SEM CONTEXTO DE EMPILHAMENTO NO MEIO. O `zIndex` de cada janela
+ * so' disputa com irmaos do mesmo contexto: ate' 21/10/2026 o conteiner da ficha de ponto
+ * tinha `zIndex: 40`, e com isso a janela do ponto pintava por cima de TODAS as do mapa
+ * qualquer que fosse a pilha -- a comparacao de hexagonos nascia em degrau e ficava 87,7%
+ * coberta, o clique nela nao a trazia para frente e o Esc fechava a janela escondida
+ * (print do Vinicius, 21/10). Quem envolver uma janela num ancestral com `zIndex`,
+ * `transform`, `filter` ou `opacity < 1` recria o defeito em silencio.
  */
 const ouvintesDaPilha = new Set<() => void>()
 /**
@@ -50,9 +62,15 @@ const escTratados = new WeakSet<KeyboardEvent>()
 function avisarPilha(): void {
   for (const f of ouvintesDaPilha) f()
 }
-/** Abaixo das camadas de 30+ (menus e modais): a janela nunca cobre um menu aberto. */
-const Z_JANELA = 26
-const Z_JANELA_TOPO = 27
+/**
+ * Abaixo do CABECALHO do mapa (z 29) e das camadas de 30+ (Metodologia, tooltips do mapa,
+ * modais). O cabecalho subiu acima das janelas em 21/10/2026 (pedido do Vinicius): a lista
+ * aberta dos seletores dele fica presa no contexto do cabecalho, e com o cabecalho no z 11
+ * ela descia SOB as janelas -- trocar de estado ou municipio com uma ficha aberta exigia
+ * fecha-la. Por isso a janela tambem nao sobe alem dele (`topoMinimo`).
+ */
+const Z_JANELA = Z_JANELA_FICHA
+const Z_JANELA_TOPO = Z_JANELA_FICHA_TOPO
 
 /**
  * A JANELA que traz a ficha por cima do mapa, no modo de ponto.
@@ -92,6 +110,7 @@ export default function JanelaFicha({
   degrau = 0,
   larguraInicial = LARGURA_PADRAO,
   rodape,
+  pedidoDeFrente,
   children,
 }: {
   aberta: boolean
@@ -128,6 +147,13 @@ export default function JanelaFicha({
    * não passam a prop.
    */
   rodape?: ReactNode
+  /**
+   * Contador: cada valor NOVO traz a janela para o topo da pilha, como o clique nela. O da
+   * MONTAGEM nao conta. Existe para a ficha de ponto: com a janela ja' aberta e outra por
+   * cima (a comparacao, a ficha do hexagono), um ponto novo pedido pelo operador ficaria
+   * escondido ate' um clique. Ausente, nada muda.
+   */
+  pedidoDeFrente?: number
   children: ReactNode
 }) {
   const ref = useRef<HTMLElement | null>(null)
@@ -150,14 +176,53 @@ export default function JanelaFicha({
     return () => obs.disconnect()
   }, [])
 
+  /* O TOPO MINIMO: a borda de baixo do cabeçalho do mapa (`topoMinimoSobCabecalho`). O
+     cabeçalho fica ACIMA das janelas (`Z_CABECALHO_MAPA`), então a barra de título que
+     subisse por baixo dele ficaria sem alça. Ele é de outro componente (o `MapScreen`; para
+     a ficha de ponto, o irmão na árvore), então vem do REGISTRO que o `MapScreen` publica
+     (`lib/registro-cabecalho`) e é medido de novo quando muda de altura (é `flex-wrap`:
+     quebra em duas linhas em tela estreita). Sem cabeçalho, 0: a trava de sempre, só o
+     topo da área.
+
+     Registro, e não busca no DOM na montagem (revisão de 21/10/2026): a janela do ponto
+     existe no Explorar ANTES de o cabeçalho existir (sem UF, o mapa desenha a Landing), e
+     trocar Landing <-> mapa remonta o cabeçalho num elemento novo. Achado uma vez só, o
+     topo ficava 0 para sempre, ou medido num elemento desligado. Agora o efeito refaz a
+     medida a cada cabeçalho que aparece, some ou troca. */
+  const cabecalho = useCabecalhoMapa()
+  const [topoMinimo, setTopoMinimo] = useState(0)
+  useLayoutEffect(() => {
+    const pai = ref.current?.parentElement
+    if (!pai || !cabecalho || !cabecalho.isConnected) {
+      setTopoMinimo(0)
+      return
+    }
+    const medir = () => {
+      const caixa = pai.getBoundingClientRect()
+      /* A escala do `#root` (transform), lida do próprio contêiner: tela / layout. */
+      const escala = pai.offsetHeight ? caixa.height / pai.offsetHeight : 1
+      setTopoMinimo(topoMinimoSobCabecalho(cabecalho.getBoundingClientRect().bottom, caixa.top, escala))
+    }
+    medir()
+    const obs = typeof ResizeObserver === 'undefined' ? null : new ResizeObserver(medir)
+    obs?.observe(cabecalho)
+    window.addEventListener('resize', medir)
+    return () => {
+      obs?.disconnect()
+      window.removeEventListener('resize', medir)
+    }
+  }, [cabecalho])
+
   useEffect(() => {
     if (!area.largura || !area.altura) return
-    setGeo((g) => (g ? reajustar(g, area) : g))
-  }, [area])
+    setGeo((g) => (g ? reajustar(g, area, topoMinimo) : g))
+  }, [area, topoMinimo])
 
   const atual =
     geo ??
-    (area.largura ? geometriaPadrao(area, TOPO_PADRAO, recuoInferior, ancora, degrau, larguraInicial) : null)
+    (area.largura
+      ? geometriaPadrao(area, Math.max(TOPO_PADRAO, topoMinimo), recuoInferior, ancora, degrau, larguraInicial)
+      : null)
 
   /** Identidade estável desta instância na pilha de janelas abertas. */
   const idJanela = useRef(Symbol('janela'))
@@ -251,6 +316,20 @@ export default function JanelaFicha({
     pilhaAbertas.push(id)
     avisarPilha()
   }
+  /* Ver `pedidoDeFrente`. Declarado DEPOIS do efeito que empilha: no render em que a
+     janela abre e o pedido muda juntos, ela ja' entra no topo e isto vira no-op. */
+  const ultimoPedido = useRef(pedidoDeFrente)
+  useEffect(() => {
+    if (pedidoDeFrente === ultimoPedido.current) return
+    ultimoPedido.current = pedidoDeFrente
+    if (!aberta) return
+    const id = idJanela.current
+    const i = pilhaAbertas.indexOf(id)
+    if (i < 0 || i === pilhaAbertas.length - 1) return
+    pilhaAbertas.splice(i, 1)
+    pilhaAbertas.push(id)
+    avisarPilha()
+  }, [pedidoDeFrente, aberta])
 
   /* Avisa ao trilho do mapa onde esta janela esta' (`lib/ocupacao-janelas`), para ele sair
      de baixo dela. Em pixels da TELA: o contêiner + a geometria — e nao o
@@ -328,7 +407,8 @@ export default function JanelaFicha({
       }}
     >
       <header
-        onPointerDown={gesto(mover)}
+        /* O arrasto respeita o cabeçalho do mapa (`topoMinimo`): a barra nunca passa por baixo dele. */
+        onPointerDown={gesto((g, dx, dy, a) => mover(g, dx, dy, a, topoMinimo))}
         style={{
           flexShrink: 0,
           display: 'flex',
