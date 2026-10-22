@@ -44,6 +44,7 @@ AGRUPAMENTO_ABAS: tuple[tuple[str, str], ...] = (
     ("/api/executiva/", "executiva"),
     ("/api/simulador/", "viabilidade"),
     ("/api/faixa-alunos", "viabilidade"),
+    ("/api/demanda-v2", "viabilidade"),
     ("/api/viabilidade", "viabilidade"),
     ("/api/relatorio/pontual", "viabilidade"),
     ("/api/geocode", "mapa"),

@@ -90,6 +90,8 @@ FEATURES_ROTULOS: tuple[tuple[str | None, str, str], ...] = (
     (None, "/api/simulador/", "Exportou simulador (XLSX)"),
     (None, "/api/viabilidade", "Rodou simulação de viabilidade"),
     (None, "/api/faixa-alunos", "Consultou faixa de alunos"),
+    # DEC-078: estado e sugestao da demanda pelo modelo de praca (rotulo sem versao).
+    (None, "/api/demanda-v2", "Pediu sugestão de demanda do modelo de praça"),
     (None, "/api/geocode", "Buscou endereço"),
     (None, "/api/resolver-ponto", "Buscou endereço"),
     (None, "/api/ponto", "Analisou ponto no mapa"),

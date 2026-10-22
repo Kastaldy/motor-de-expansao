@@ -64,10 +64,14 @@ from motor_expansao.dimensionamento.config import (
     SIM_COFINS,
     SIM_CSLL_ALIQUOTA,
     SIM_CSLL_EFETIVO,
+    SIM_CURVA_RAMPA_UNI03,
     SIM_CUSTO_PRE_OPERACIONAL_MES,
     SIM_CUSTO_STUDIO,
     SIM_DEVOLUCOES_PCT,
     SIM_FOLHA_PCT,
+    SIM_FORMA_RAMPA_CURVA_UNI03,
+    SIM_FORMA_RAMPA_RETA,
+    SIM_FORMAS_RAMPA,
     SIM_HORIZONTE_MESES,
     SIM_INADIMPLENCIA,
     SIM_IR_EFETIVO,
@@ -104,6 +108,62 @@ from motor_expansao.dimensionamento.config import (
 # Modos de apuracao de IR/CSLL.
 IR_MODO_FAIXA = "presumido_faixa"    # IRPJ 15% + adicional 10% na faixa + CSLL 9% (base bruta)
 IR_MODO_EFETIVO = "efetivo_legado"   # aliquotas efetivas sobre a receita liquida (historico)
+
+
+# ---------------------------------------------------------------------------
+# Curva da rampa com PICO de maturacao (emenda da DEC-078, 21/10/2026)
+# ---------------------------------------------------------------------------
+
+
+def _primeiro_mes_cheio(curva: tuple[float, ...]) -> int:
+    """Primeiro mes (1-based) com fracao >= 1; o seguinte ao ultimo se nenhum."""
+    return next((i for i, f in enumerate(curva, start=1) if f >= 1.0), len(curva) + 1)
+
+
+def curva_rampa_com_pico(
+    mes_pico: int, curva: tuple[float, ...] = SIM_CURVA_RAMPA_UNI03
+) -> tuple[float, ...]:
+    """A MESMA forma observada, reescalada no tempo para fechar no mes de vida `mes_pico`.
+
+    A curva e' indexada por MES DE VIDA (0 = o mes da inauguracao, como no estudo; o mes de
+    vida k e' o mes de operacao k + 1 do simulador). `p` = mes de pico da curva base
+    (primeiro mes de vida com 100%; 10 na UNI-03). O mes 0 (a inauguracao, 80% na UNI-03)
+    fica o MEDIDO em todo pico, e dali em diante valem os dois extremos medidos: o mes 1
+    abre no nivel observado (68%) e o mes `mes_pico` fecha em 100%. Entre eles, o mes `k`
+    le a curva base em `s = 1 + (k - 1) x (p - 1) / (mes_pico - 1)`, interpolada
+    linearmente entre os meses observados (`s >= p` -> 1,0). A saida tem
+    `1 + mes_pico + (len(curva) - 1 - p)` meses (os mesmos meses cheios de cauda da base),
+    arredondada a 6 casas — monotonica do mes 1 em diante, e o primeiro mes de vida com
+    100% e' `mes_pico`.
+
+    `mes_pico == p` devolve a curva base INTACTA (o mesmo objeto).
+    """
+    mes_pico = int(mes_pico)
+    if mes_pico < 1:
+        raise ValueError(f"mes_pico tem de ser >= 1 (veio {mes_pico})")
+    base = tuple(float(f) for f in curva)
+    if len(base) < 2:
+        raise ValueError("curva base precisa do mes 0 e de ao menos um mes depois dele")
+    abertura = base[0]
+    resto = base[1:]  # meses de vida 1.. : a posicao 1-based em `resto` E' o mes de vida
+    p = _primeiro_mes_cheio(resto)
+    if p > len(resto):
+        raise ValueError("curva base sem mes com 100%: nao ha pico para reescalar")
+    if mes_pico == p:
+        return curva
+    saida: list[float] = []
+    for k in range(1, mes_pico + (len(resto) - p) + 1):
+        # pico 1: nao ha' meses entre os extremos — do mes 1 em diante a rampa ja' e' cheia.
+        s = float(p) if mes_pico == 1 else 1.0 + (k - 1) * (p - 1) / (mes_pico - 1)
+        if s <= 1.0:
+            f = resto[0]
+        elif s >= p:
+            f = 1.0
+        else:
+            i = int(s)  # mes observado logo abaixo (1..p-1); resto[i-1] e' o mes i
+            f = resto[i - 1] + (resto[i] - resto[i - 1]) * (s - i)
+        saida.append(round(f, 6))
+    return (abertura, *saida)
 
 
 # ---------------------------------------------------------------------------
@@ -205,6 +265,17 @@ class Premissas:
     # Neste modo `alunos_inicial` esta em unidades de BALCAO.
     rampa_apenas_balcao: bool = False
 
+    # FORMA da rampa (DEC-078). "reta" (default DO NUCLEO, que preserva o motor antigo byte
+    # a byte para os adaptadores historicos e o golden do FIN-VIAB-01): `alunos_inicial` no
+    # mes 1 ate a demanda em `maturacao_meses`. "curva_uni03": alunos(t) = demanda x
+    # `curva_rampa[t-1]` nos meses 1..len(curva) e a demanda cheia depois (a curva e' por
+    # mes de VIDA: `curva_rampa[0]` e' o mes 0 do estudo, a inauguracao = mes de operacao 1) —
+    # `alunos_inicial` e `maturacao_meses` NAO entram. O default do PRODUTO (tela, PDF, API,
+    # planilha da rota) sai do payload (`forma_rampa_padrao()`): a CURVA desde a emenda de
+    # 21/10/2026, com o pico escolhido pelo operador (`curva_rampa_com_pico`).
+    forma_rampa: str = SIM_FORMA_RAMPA_RETA
+    curva_rampa: tuple[float, ...] = SIM_CURVA_RAMPA_UNI03
+
     def __post_init__(self) -> None:
         # Normaliza para tupla de float (chamadores podem mandar lista) e falha FECHADO
         # no que o modelo nao sabe representar.
@@ -227,6 +298,57 @@ class Premissas:
             # qual total" nao tem resposta ali. Nenhum chamador legado usa studios.
             if self.rampa_apenas_balcao:
                 raise ValueError("studios nao sao suportados com rampa_apenas_balcao=True")
+
+        if self.forma_rampa not in SIM_FORMAS_RAMPA:
+            raise ValueError(
+                f"forma_rampa deve ser um de {SIM_FORMAS_RAMPA} (veio {self.forma_rampa!r})"
+            )
+        curva = tuple(float(f) for f in self.curva_rampa)
+        object.__setattr__(self, "curva_rampa", curva)
+        if not curva or any(not 0.0 < f <= 1.0 for f in curva):
+            raise ValueError("curva_rampa: fracoes da demanda em (0, 1], ao menos um mes")
+        # Do 2o mes em diante a rampa nunca decresce (a mesma regra da reta e da derivacao
+        # da curva UNI-03). E' o que faz "primeiro mes com 100%" ser o FIM da rampa: com uma
+        # curva que cai depois de chegar a 1, o steady-state sairia de um mes que nao e' o
+        # regime pleno. O 1o mes (o mes 0 do estudo, inauguracao com pre-venda: 80%) pode
+        # ficar ACIMA do seguinte (68%) — e' o medido (emenda de 22/10/2026).
+        if any(b < a for a, b in zip(curva[1:], curva[2:], strict=False)):
+            raise ValueError(
+                "curva_rampa: do 2o mes em diante a fracao da demanda nao pode decrescer"
+            )
+        if curva[0] >= 1.0 and any(f < 1.0 for f in curva[1:]):
+            raise ValueError("curva_rampa: depois de um mes com 100% a fracao nao pode cair")
+        # A curva e' fracao da demanda TOTAL; no modo historico so' o balcao rampa e
+        # "fracao de qual total" nao tem resposta. Nenhum chamador legado usa a curva.
+        if self.forma_rampa == SIM_FORMA_RAMPA_CURVA_UNI03 and self.rampa_apenas_balcao:
+            raise ValueError("forma_rampa='curva_uni03' nao e' suportada com rampa_apenas_balcao=True")
+
+    # ---- Rampa ------------------------------------------------------------------
+
+    @property
+    def usa_curva(self) -> bool:
+        return self.forma_rampa == SIM_FORMA_RAMPA_CURVA_UNI03
+
+    def fracao_curva(self, t: int) -> float:
+        """Fracao da demanda no mes de operacao `t` na curva (1,0 depois do ultimo mes)."""
+        if t < 1:
+            return 0.0
+        return self.curva_rampa[t - 1] if t <= len(self.curva_rampa) else 1.0
+
+    @property
+    def mes_maturidade_rampa(self) -> int:
+        """Primeiro mes de operacao com a demanda CHEIA — o fim da rampa, nas duas formas.
+
+        Reta: `maturacao_meses`. Curva: o primeiro mes com fracao >= 1 (11 na curva UNI-03:
+        o mes de operacao 11 e' o mes de vida 10, o pico), ou o mes seguinte ao ultimo da
+        tabela. E' daqui que sai o mes de steady-state.
+        """
+        if not self.usa_curva:
+            return max(int(self.maturacao_meses), 1)
+        return next(
+            (i for i, f in enumerate(self.curva_rampa, start=1) if f >= 1.0),
+            len(self.curva_rampa) + 1,
+        )
 
     # ---- Studios ----------------------------------------------------------------
 
@@ -810,11 +932,17 @@ def gerar_serie_mensal_completa(
         f_custos = _fator_reajuste(t, p.reajuste_custos_aa)
 
         frac = min(t / maturacao, 1.0)
-        if p.rampa_apenas_balcao:
+        studios: tuple[float, ...]
+        if p.usa_curva:
+            # Curva observada (DEC-078): fracao do mes sobre a demanda madura, mesmo split
+            # da reta. `alunos_inicial`/`maturacao_meses` nao entram nesta forma.
+            alunos_total = float(demanda_total) * p.fracao_curva(t)
+            bal, agr, studios = p.split_alunos(alunos_total)
+        elif p.rampa_apenas_balcao:
             bal = alunos_inicial + (bal_maturidade - alunos_inicial) * frac
             agr = agr_maturidade
             alunos_total = bal + agr
-            studios: tuple[float, ...] = ()
+            studios = ()
         else:
             # Os studios rampam junto com o total (8% de uma demanda que rampa) e o split
             # balcao/agregador vale so' sobre o restante — `split_alunos` e a regua unica.
@@ -905,7 +1033,7 @@ def simular(
     # O mes de referencia do steady-state e o primeiro em REGIME PLENO: alunos
     # maduros E anuidade ja em cobranca. Sem isso a DRE de steady ficaria sem a
     # anuidade enquanto o break-even ja a considera — duas reguas diferentes.
-    mes_ref = max(int(p.maturacao_meses), 1)
+    mes_ref = p.mes_maturidade_rampa
     if p.anuidade_valor > 0:
         mes_ref = max(mes_ref, int(p.anuidade_mes_inicio))
     steady = operacao[min(mes_ref, len(operacao)) - 1]
@@ -1235,6 +1363,7 @@ def m2_otimo(
 
 __all__ = [
     "Premissas", "ViabilidadeResult", "simular", "gerar_serie_mensal_completa",
+    "curva_rampa_com_pico",
     "break_even_alunos", "alunos_para_margem", "aluguel_teto_clusters", "pmt_price", "tir_mensal", "vpl",
     "IR_MODO_FAIXA", "IR_MODO_EFETIVO",
     "viabilidade", "gerar_serie_mensal", "aluguel_teto", "alunos_minimos_viaveis", "m2_otimo",

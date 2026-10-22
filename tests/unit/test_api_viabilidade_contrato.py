@@ -111,8 +111,13 @@ def test_viabilidade_inputs_nao_repete_a_coordenada() -> None:
     assert {"lat", "lng"}.isdisjoint(campos_inputs)
     assert {"lat", "lng"} <= campos_cenario
     # O cenario completo e' os inputs MAIS o ponto: nenhum campo financeiro se perdeu
-    # no caminho, o que uma redeclaracao a mao deixaria acontecer em silencio.
-    assert campos_cenario == campos_inputs | {"lat", "lng"}
+    # no caminho, o que uma redeclaracao a mao deixaria acontecer em silencio. Os dois
+    # campos da Viabilidade v2 (DEC-078 ampliada) sao SO' do piloto, de proposito: a API
+    # publica nao os aceita.
+    assert campos_cenario == campos_inputs | {"lat", "lng", "modelo_demanda", "demanda_v2"}
+    # Ja' a forma da rampa (DEC-078, Parte 1) ENTRA na API publica: mudanca de contrato
+    # declarada na DEC-078 como emenda a DEC-005.
+    assert "forma_rampa" in campos_inputs
 
 
 def test_analisar_request_aceita_o_cenario_e_os_dados_do_imovel() -> None:
