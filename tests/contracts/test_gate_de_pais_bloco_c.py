@@ -10,14 +10,14 @@ isso: é tabela de UNIÃO sobre a permissão do USUÁRIO ("/api/uf/" aceita
 Este arquivo trava a tabela NOVA, `SUPERFICIE_DA_ROTA`, que responde uma pergunta
 diferente ("esta INSTÂNCIA tem a superfície?"), casada por CONJUNÇÃO contra
 `perfil.superficies`, e a checagem irmã `ROTAS_QUE_EXIGEM_MALHA_MUNICIPAL` — para as
-cinco rotas que dependem da malha adm2 (`api/service._carregar_malha`), um recurso
+seis rotas que dependem da malha adm2 (`api/service._carregar_malha`), um recurso
 que `superficies` não modela porque `ponto`/`municipal` não são abas (§3 item 5 do
 plano multi-país).
 
 Medido contra os DOIS perfis reais (não um perfil sintético): o Brasil sai 100%
 inerte — toda rota do app libera, como hoje — e a Argentina libera exatamente
 `mapa` + `viabilidade`, bloqueando `oportunidades`, `imobiliaria`, `executiva` e as
-cinco rotas de malha, cada uma com 404 nomeando o que falta.
+seis rotas de malha, cada uma com 404 nomeando o que falta.
 """
 
 from __future__ import annotations
@@ -67,8 +67,22 @@ def test_brasil_libera_toda_rota_com_superficie_declarada(br: Perfil) -> None:
         assert acesso.motivo_bloqueio_pais(prefixo, br) is None, prefixo
 
 
-def test_brasil_tem_a_malha_entao_as_cinco_rotas_de_ponto_liberam(br: Perfil) -> None:
-    assert len(acesso.ROTAS_QUE_EXIGEM_MALHA_MUNICIPAL) == 5
+# As rotas que dependem da malha, escritas A MAO (nao lidas de `acesso`): a lista e' o
+# tripwire. Rota nova de malha entra aqui E no `acesso`, senao o teste reprova. Foram duas
+# ao mesmo tempo em 22/10/2026 -- `/api/demanda-v2` (DEC-078, #483) e
+# `/api/municipio-do-ponto` (unidade -> municipio) --, e cada branch contava so' a sua.
+ROTAS_DE_MALHA = (
+    "/api/ponto",
+    "/api/resolver-ponto",
+    "/api/municipio-do-ponto",
+    "/api/demanda-v2",
+    "/api/relatorio/municipal",
+    "/api/relatorio/pontual",
+)
+
+
+def test_brasil_tem_a_malha_entao_as_seis_rotas_de_ponto_liberam(br: Perfil) -> None:
+    assert set(acesso.ROTAS_QUE_EXIGEM_MALHA_MUNICIPAL) == set(ROTAS_DE_MALHA)
     for rota in acesso.ROTAS_QUE_EXIGEM_MALHA_MUNICIPAL:
         assert acesso.motivo_bloqueio_pais(rota, br) is None, rota
 
@@ -128,15 +142,9 @@ def test_argentina_bloqueia_o_que_a_decisao_06_nao_libera(
 
 @pytest.mark.parametrize(
     "rota",
-    [
-        "/api/ponto",
-        "/api/resolver-ponto",
-        "/api/municipio-do-ponto",
-        "/api/relatorio/municipal",
-        "/api/relatorio/pontual",
-    ],
+    ROTAS_DE_MALHA,
 )
-def test_argentina_com_malha_libera_as_cinco_rotas_de_ponto(ar: Perfil, rota: str) -> None:
+def test_argentina_com_malha_libera_as_seis_rotas_de_ponto(ar: Perfil, rota: str) -> None:
     """P7 fechada em 2026-09-03: a malha adm2 chegou (dados/malha_admin do Juan,
     529 departamentos -> ibge/municipios_<UF>.geojson via exportador) e o perfil AR
     real virou malha_municipal_disponivel=true — as rotas de ponto liberam, e com o
@@ -146,17 +154,11 @@ def test_argentina_com_malha_libera_as_cinco_rotas_de_ponto(ar: Perfil, rota: st
 
 @pytest.mark.parametrize(
     "rota",
-    [
-        "/api/ponto",
-        "/api/resolver-ponto",
-        "/api/municipio-do-ponto",
-        "/api/relatorio/municipal",
-        "/api/relatorio/pontual",
-    ],
+    ROTAS_DE_MALHA,
 )
-def test_pais_sem_malha_bloqueia_as_cinco_rotas_com_404_nomeado(ar: Perfil, rota: str) -> None:
+def test_pais_sem_malha_bloqueia_as_seis_rotas_com_404_nomeado(ar: Perfil, rota: str) -> None:
     """O comportamento que motivou o campo, agora provado com perfil SINTETICO (o
-    proximo pais sem malha): as cinco rotas que estourariam 500 na primeira
+    proximo pais sem malha): as seis rotas que estourariam 500 na primeira
     coordenada clicada viram 404 nomeado ANTES de chegar la'."""
     sem_malha = dataclasses.replace(ar, malha_municipal_disponivel=False)
     detalhe = acesso.motivo_bloqueio_pais(rota, sem_malha)
@@ -188,7 +190,7 @@ def test_ponto_e_municipal_nao_aparecem_em_superficie_da_rota() -> None:
 
 
 def test_rotas_de_malha_nao_duplicam_entrada_em_superficie_da_rota() -> None:
-    """As cinco rotas de malha tem checagem PROPRIA — nao devem ganhar tambem uma
+    """As seis rotas de malha tem checagem PROPRIA — nao devem ganhar tambem uma
     entrada em `SUPERFICIE_DA_ROTA` que a checagem de malha jamais executaria (a
     ordem de `motivo_bloqueio_pais` testa superficie primeiro)."""
     prefixos_superficie = {p for p, _ in acesso.SUPERFICIE_DA_ROTA}
