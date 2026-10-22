@@ -50,6 +50,13 @@ import {
 import { perfilDoCliente } from '../lib/perfil'
 import { svgMolduraAlunos, TAMANHO_MOLDURA, temDestaque } from '../lib/pins'
 import type { Tema } from '../lib/tema'
+import {
+  TOKEN_COR_TOP10,
+  corTop10,
+  type CoresTop10,
+  type MapaTop10,
+  type MarcaTop10,
+} from '../lib/top10'
 import type {
   Cobertura1k,
   CrescimentoMunicipal,
@@ -218,6 +225,16 @@ interface PeleDoMapa {
    * filete discreto CONTRÁRIO ao basemap, nos dois temas.
    */
   gradeSemCor: RGBA
+  /**
+   * O Top 10 da recomendação única (DEC-077) na camada 5: Mata Virgem, Premium e o "fora do
+   * Top 10". Espelhos de `--top10-mv`, `--top10-premium` e `--top10-fora` (styles/tokens.css)
+   * nos dois temas — `mapa-top10.test.ts` trava o par. Nas duas cores de segmento o alpha
+   * daqui só vale para a BORDA do rótulo MV1/P1: o preenchimento usa o `alphaHex` do tema
+   * (ver `corTop10`). O "fora" leva o alpha próprio, bem baixo — é o esmaecido.
+   */
+  top10Mv: RGBA
+  top10Premium: RGBA
+  top10Fora: RGBA
 }
 
 const PELE: Record<Tema, PeleDoMapa> = {
@@ -232,6 +249,9 @@ const PELE: Record<Tema, PeleDoMapa> = {
     alphaHex: HEX_FILL_ALPHA,
     desenho: [95, 208, 140, 255], // --gr-verde (#5fd08c) do escuro
     gradeSemCor: [214, 222, 232, 70],
+    top10Mv: [63, 207, 142, 255], // --top10-mv do escuro
+    top10Premium: [197, 140, 255, 255], // --top10-premium do escuro
+    top10Fora: [154, 167, 181, 71], // --top10-fora do escuro (alpha 0,28)
   },
   claro: {
     basemap: 'https://basemaps.cartocdn.com/gl/positron-gl-style/style.json',
@@ -249,6 +269,9 @@ const PELE: Record<Tema, PeleDoMapa> = {
     alphaHex: 170,
     desenho: [15, 157, 85, 255], // --gr-verde (#0f9d55) do claro
     gradeSemCor: [11, 18, 25, 70],
+    top10Mv: [10, 112, 66, 255], // --top10-mv do claro
+    top10Premium: [122, 63, 196, 255], // --top10-premium do claro
+    top10Fora: [90, 100, 112, 56], // --top10-fora do claro (alpha 0,22)
   },
 }
 
@@ -343,13 +366,16 @@ const ALPHA_SOMBRA = 34
 
 /** Precedencia do dashboard: pop<5k vence, senao NaN, senao faixa de score.
  *  Hexes fora do passo atual entram esmaecidos (holofote no funil).
- *  Com `raio1km` ligado nos passos 2/3, a contagem de concorrentes vem ANTES de tudo. */
+ *  Com `raio1km` ligado nos passos 2/3, a contagem de concorrentes vem ANTES de tudo.
+ *  Com o Top 10 (recomendacao unica, DEC-077) na camada 5, a cor do SEGMENTO vem antes do
+ *  corte de 5k hab — ver o comentario no corpo. */
 function fillDoHex(
   h: Hex,
   passoN: number,
   noPasso: boolean,
   raio1km = false,
   alphaHex: number = HEX_FILL_ALPHA,
+  top10: { marca: MarcaTop10 | null; cores: CoresTop10 } | null = null,
 ): RGBA {
   /* O hexagono NAO muda de cor com a chave ligada — de proposito.
      Pintar o hexagono inteiro (por contagem ou por alunos perdidos) afirmava que ele
@@ -367,6 +393,13 @@ function fillDoHex(
     // visualmente iguais aos vizinhos e os rotulos de rank pousavam no nada.
     return noPasso ? c : [c[0], c[1], c[2], Math.round(c[3] * DIM_FORA_DO_PASSO)]
   }
+
+  /* Camada 5 com o Top 10: os 10 na cor do SEGMENTO (Mata Virgem / Premium) e o resto no
+     "fora do Top 10", esmaecido. Vem ANTES do corte de pop < 5k: o Top 10 le o recorte
+     inteiro com regua propria, e um Premium ou Mata Virgem nunca pode sair cinza
+     "descartado" do mapa enquanto o painel o lista. Sem o bloco (AR) o ramo legado da
+     faixa M1, abaixo, continua igual. */
+  if (passoN === PASSO_POR_FAIXA_M1 && top10) return corTop10(top10.marca, top10.cores, alphaHex)
 
   let base: RGBA
   if (h.pop !== null && h.pop < POP_MIN_ACIONAVEL) base = [...DISCARDED_FILL]
@@ -391,6 +424,8 @@ interface RotuloRank {
   hexId: string
   texto: string
   position: [number, number]
+  /** Borda do chip na cor do SEGMENTO (Top 10). Ausente = a cor da camada, como sempre. */
+  borda?: RGBA
 }
 
 /** Mesma formatacao do painel lateral (NarrativePanel): "1º" no passo 5, "01" nos demais. */
@@ -553,6 +588,13 @@ export interface HexMapProps {
    * continuam. A captura do PDF não depende disto: ela já esvazia a coropleta.
    */
   coresHex?: boolean
+  /**
+   * O Top 10 da recomendação única (DEC-077), indexado por hexágono (`lib/top10.mapaTop10`).
+   * Só tem efeito na camada 5: os 10 pintados pelo segmento, o resto esmaecido, rótulos
+   * MV1..MV5 / P1..P5 e o segmento no tooltip. `null`/ausente (AR, payload sem o bloco) =
+   * a camada 5 legada, pela faixa M1, exatamente como era.
+   */
+  top10?: MapaTop10 | null
 }
 
 /**
@@ -619,8 +661,17 @@ export default function HexMap({
   verticesDesenho,
   onCliqueDesenho,
   coresHex = true,
+  top10 = null,
 }: HexMapProps) {
   const pele = PELE[tema]
+  /* O Top 10 só pinta/rotula a camada 5. Nas outras ele não existe para o mapa — e a chave
+     vazia mantém os gatilhos do deck.gl parados quando se troca de camada. */
+  const top10DoPasso = passo.n === PASSO_POR_FAIXA_M1 ? top10 : null
+  const top10Chave = top10DoPasso?.chave ?? ''
+  const coresTop10 = useMemo<CoresTop10>(
+    () => ({ mv: pele.top10Mv, premium: pele.top10Premium, fora: pele.top10Fora }),
+    [pele],
+  )
   /* O clique do mapa esta' TOMADO por uma ferramenta do trilho (regua, "Selecionar ponto"
      ou "Analisar geometria"; `lib/ferramenta-mapa` garante que so' uma esta' ligada). Uma
      flag so' para os `onClick` das camadas e o cursor nao precisarem conhecer cada
@@ -1023,6 +1074,24 @@ export default function HexMap({
   const rotulosRank = useMemo(() => {
     const vistos = new Set<string>()
     const out: RotuloRank[] = []
+    /* Camada 5 com o Top 10: um rotulo por regiao (MV1..MV5 / P1..P5), nascido do centro
+       do H3 — independe do array `hexes`, entao a marca aparece mesmo que o filtro tire o
+       hexagono. A borda do chip vai na cor do SEGMENTO, nao na da camada. */
+    if (top10DoPasso) {
+      for (const id of top10DoPasso.ids) {
+        const marca = top10DoPasso.porHex[id]
+        if (!marca || vistos.has(id)) continue
+        vistos.add(id)
+        try {
+          const [lat, lng] = cellToLatLng(id)
+          const c = corTop10(marca, coresTop10, 230)
+          out.push({ hexId: id, texto: marca.rotulo, position: [lng, lat], borda: c })
+        } catch {
+          // hex_id invalido: a regiao continua no painel, so nao ganha rotulo no mapa.
+        }
+      }
+      return out
+    }
     for (const it of passo.itens) {
       if (out.length >= RANK_LABEL_MAX) break
       if (!it.hex_id || vistos.has(it.hex_id)) continue
@@ -1035,7 +1104,7 @@ export default function HexMap({
       }
     }
     return out
-  }, [passo.itens, passo.n])
+  }, [passo.itens, passo.n, top10DoPasso, coresTop10])
 
   /* Hexes que a camada de cobertura pinta por inteiro. As pecas `livre` + `coberto`
      LADRILHAM o hexagono (somam 100% da area), entao o preenchimento do proprio hexagono
@@ -1193,7 +1262,14 @@ export default function HexMap({
              entrando no picking (hover e clique), que é o que faz a grade sem cor ainda
              servir para selecionar. */
           if (!coresHex) return [0, 0, 0, 1]
-          return fillDoHex(d, passo.n, destaque.has(d.id), comRaio, pele.alphaHex)
+          return fillDoHex(
+            d,
+            passo.n,
+            destaque.has(d.id),
+            comRaio,
+            pele.alphaHex,
+            top10DoPasso ? { marca: top10DoPasso.porHex[d.id] ?? null, cores: coresTop10 } : null,
+          )
         },
         // Borda neutra e fina; hex SELECIONADO -> contorno CONTRÁRIO ao basemap (claro
         // no escuro, escuro no claro); hexes do CENÁRIO
@@ -1243,7 +1319,7 @@ export default function HexMap({
         updateTriggers: {
           // `tema` entra nos dois gatilhos: as funções acima o capturam por closure, e
           // sem ele o deck.gl reusa os buffers e o mapa fica com a pele antiga.
-          getFillColor: [passo.n, raio1km, hexesCobertos, tema, coresHex],
+          getFillColor: [passo.n, raio1km, hexesCobertos, tema, coresHex, top10Chave],
           getLineColor: [selecionado, cenarioKey, tema, coresHex],
           getLineWidth: [selecionado, cenarioKey],
         },
@@ -2055,8 +2131,9 @@ export default function HexMap({
           background: true,
           getBackgroundColor: [8, 11, 16, 214],
           // Borda na cor da CAMADA: o chip diz "01..10 desta camada" sem que
-          // nenhuma cor toque o fill dos hexes (que segue 100% rampa de score).
-          getBorderColor: [cor.rgb[0], cor.rgb[1], cor.rgb[2], 170],
+          // nenhuma cor toque o fill dos hexes (que segue 100% rampa de score). No Top 10
+          // a borda e' a do SEGMENTO (MV verde, P violeta), que vem pronta no rotulo.
+          getBorderColor: (d) => d.borda ?? [cor.rgb[0], cor.rgb[1], cor.rgb[2], 170],
           getBorderWidth: 1,
           backgroundPadding: [6, 4, 6, 4],
           backgroundBorderRadius: 5,
@@ -2113,11 +2190,19 @@ export default function HexMap({
     onPontoClicado,
     // Cores dos hexágonos ligadas/desligadas: o corpo lê para preencher (ou não) a grade.
     coresHex,
+    // O Top 10 da camada 5: o `getFillColor` o lê por closure (segmento de cada hexágono).
+    top10DoPasso,
+    top10Chave,
+    coresTop10,
     // `pele` e `tema` andam juntos (um deriva do outro), mas os dois entram: `pele` é o
     // que o corpo do memo lê, e `tema` é o que vai nos `updateTriggers` das camadas.
     pele,
     tema,
   ])
+
+  /** O hexágono sob o cursor está no Top 10 da camada 5? (segmento, posição e chave) */
+  const marcaDoHover: MarcaTop10 | null =
+    hover && top10DoPasso ? (top10DoPasso.porHex[hover.h.id] ?? null) : null
 
   return (
     <div
@@ -2226,14 +2311,31 @@ export default function HexMap({
 
           {hover.h.faixa && <Linha rotulo="Faixa M1" valor={hover.h.faixa} />}
 
+          {/* Top 10 da recomendacao unica (camada 5): o segmento e a posicao, na cor do
+              segmento, e o numero que ORDENA o segmento — residual medido (Mata Virgem) ou
+              populacao do Censo (Premium). E' isto que colore o hexagono nesta camada. */}
+          {marcaDoHover && top10DoPasso && (
+            <>
+              <Divisoria />
+              <Linha
+                rotulo={top10DoPasso.titulo}
+                valor={`${marcaDoHover.rotuloSegmento} ${marcaDoHover.posicao}`}
+                forte
+                cor={TOKEN_COR_TOP10[marcaDoHover.segmento]}
+              />
+              <Linha rotulo={marcaDoHover.chaveRotulo} valor={marcaDoHover.chaveValor} />
+            </>
+          )}
+
           <Divisoria />
           {/* O score em destaque e o que colore o mapa NESTE passo (M1 / censo /
               residual) — informacao de CAMADA, entao vai na cor da camada. O M1
-              destaca no passo 5 (a main renumerou: a sintese virou a quinta). */}
+              destaca no passo 5 (a main renumerou: a sintese virou a quinta) SO' sem o
+              Top 10: com ele a camada 5 pinta pelo segmento, e o M1 vira leitura. */}
           <Linha
             rotulo="Score M1"
             valor={num(hover.h.m1, 1)}
-            forte={passo.n === 5}
+            forte={passo.n === 5 && !top10DoPasso}
             cor={cor.fg}
           />
           <Linha

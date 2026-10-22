@@ -29,12 +29,12 @@ const TONS: Record<Tom, { fg: string; bg: string }> = {
 /**
  * Chip do ranking.
  *
- * `cor` (hex solido) tem PRECEDENCIA sobre `tom` e existe para o chip usar a cor
- * EXATA da faixa da legenda (BLK-MAPA-FAIXAS-01). A paleta `TONS` tem 5 entradas
- * nomeadas que nao cobrem as 5 cores das faixas 1:1 — mapeando por nome, a etiqueta
- * "Excelente" saia AZUL enquanto o bloco dela na legenda e' verde-escuro (defeito
- * apontado pelo Juan em 2026-08-03). Com a cor vindo junto do dado, chip e legenda
- * nao tem como divergir.
+ * `cor` (hex solido, ou `var(--token)` de tema) tem PRECEDENCIA sobre `tom` e existe
+ * para o chip usar a cor EXATA da faixa da legenda (BLK-MAPA-FAIXAS-01). A paleta
+ * `TONS` tem 5 entradas nomeadas que nao cobrem as 5 cores das faixas 1:1 — mapeando
+ * por nome, a etiqueta "Excelente" saia AZUL enquanto o bloco dela na legenda e'
+ * verde-escuro (defeito apontado pelo Juan em 2026-08-03). Com a cor vindo junto do
+ * dado, chip e legenda nao tem como divergir.
  */
 export function Chip({
   tom = 'gray',
@@ -45,8 +45,15 @@ export function Chip({
   cor?: string | null
   children: ReactNode
 }) {
-  // `26` = alpha ~15% em hex, a mesma proporcao de fundo dos TONS.
-  const c = cor ? { fg: cor, bg: `${cor}26` } : TONS[tom]
+  // `26` = alpha ~15% em hex, a mesma proporcao de fundo dos TONS. Cor por TOKEN de tema
+  // (`var(--...)`, como a dos segmentos do Top 10 na metodologia) nao aceita sufixo de
+  // alpha: ali o fundo sai por `color-mix`, na mesma proporcao.
+  const c = cor
+    ? {
+        fg: cor,
+        bg: cor.startsWith('#') ? `${cor}26` : `color-mix(in srgb, ${cor} 15%, transparent)`,
+      }
+    : TONS[tom]
   return (
     <span
       style={{

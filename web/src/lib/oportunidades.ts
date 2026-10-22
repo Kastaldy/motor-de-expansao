@@ -1,11 +1,17 @@
 /**
- * Fila de oportunidades (passo 5) — crescimento como LEITURA, nunca como peso.
+ * Fila de oportunidades do passo 5 LEGADO — crescimento como LEITURA, nunca como peso.
  *
- * A fila em si NAO e' calculada aqui. Ela ja' vem pronta do servidor, pela cascata
- * que roda em producao: potencial socioeconomico >= 70, populacao >= 5.000, residual
- * >= 2.000 e ZERO concorrente mapeado (white space), ordenada por
- * `oferta_efetiva_disponivel` decrescente. Criar score novo em cima do M1 exigiria
- * gate humano (CLAUDE.md §2) e o piloto e' "sem recalculo de score em runtime".
+ * ESCOPO DESDE A RECOMENDACAO UNICA (DEC-077). Onde o payload traz o bloco
+ * `recomendacao`, o passo 5 e' o Top 10 (5 Mata Virgem + 5 Premium por hexagono),
+ * desenhado por `Top10Regioes` a partir do bloco, na ordem do servidor — e NADA daqui
+ * (`ordenarComDesempate`, `filtrarPorCrescimento`, `leituraDoItem`) e' aplicado a ele. As
+ * regras de fila abaixo valem so' para a instancia SEM regua (a Argentina hoje), cujo
+ * payload segue o legado byte a byte. `lerCrescimento`, `UFS_COM_SATELITE` e
+ * `destinoDoHex` continuam gerais.
+ *
+ * A fila legada NAO e' calculada aqui: ela vem pronta do servidor (no legado, ordenada
+ * pelo indice de praca da DEC-041). Criar score novo em cima do M1 exigiria gate humano
+ * (CLAUDE.md §2) e o piloto e' "sem recalculo de score em runtime".
  *
  * O QUE ESTE MODULO ACRESCENTA e' a camada de CONTEXTO que faltava na tela: dizer,
  * para cada item da fila, como a cidade dele esta indo — e deixar filtrar por isso,

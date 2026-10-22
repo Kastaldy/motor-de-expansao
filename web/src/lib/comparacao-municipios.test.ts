@@ -2,11 +2,16 @@ import { describe, expect, it } from 'vitest'
 
 import {
   DIMENSOES_MUNICIPIO,
+  DIMENSOES_MUNICIPIO_LEITURA,
   compararMunicipios,
+  linhasLadoALado,
   montarMunicipio,
   municipiosDisponiveis,
+  passosDeLeitura,
   type MunicipioComparavel,
 } from './comparacao-municipios'
+import { TEXTO_SEM_DADO } from './constants'
+import { num, valorComUnidade } from './format'
 import type { Passo } from './types'
 
 /** Passos com a forma REAL do payload de GO (um `valor` por município, por passo). */
@@ -135,5 +140,91 @@ describe('compararMunicipios', () => {
     const c = compararMunicipios(a, { ...a, nome: 'Clone' })
     expect(c.vencedor).toBe('empate')
     expect(c.frase).toContain('equivalentes')
+  })
+})
+
+/* ---------------------------------------------------------------------------------------
+   MODO LEITURA — o payload COM o Top 10 (recomendação única, DEC-077). O passo 5 deixa de
+   ser fila de municípios: os itens são HEXÁGONOS (bairro no `titulo`, `municipio` só para
+   o drill-down) e o `valor` é o residual de um hexágono.
+   --------------------------------------------------------------------------------------- */
+
+/** Os mesmos passos de GO, com o passo 5 já no formato do Top 10 (itens de hexágono). */
+function passosComTop10(): Passo[] {
+  const base = passos().filter((p) => p.n !== 5)
+  const top10 = {
+    n: 5,
+    titulo: 'Para onde crescer',
+    itens: [
+      { rank: 1, titulo: 'Setor Sul', municipio: 'Goiânia', valor: 9000, tipo_item: 'hex', segmento: 'mata_virgem' },
+      { rank: 2, titulo: 'Jundiaí', municipio: 'Anápolis', valor: 41000, tipo_item: 'hex', segmento: 'premium' },
+    ],
+  } as unknown as Passo
+  return [...base, top10]
+}
+
+describe('passosDeLeitura', () => {
+  it('ignora o passo 5: nome de bairro do Top 10 não vira "cidade" no comparador', () => {
+    const lidos = passosDeLeitura(passosComTop10())
+    expect(lidos.map((p) => p.n)).toEqual([1, 2, 3, 4])
+    expect(municipiosDisponiveis(lidos)).not.toContain('Setor Sul')
+    expect(municipiosDisponiveis(lidos)).not.toContain('Jundiaí')
+    // Contra-prova: lendo TODOS os passos, o bairro entraria como se fosse cidade.
+    expect(municipiosDisponiveis(passosComTop10())).toContain('Setor Sul')
+  })
+
+  it('o residual de UM hexágono não vira o número da cidade', () => {
+    const m = montarMunicipio('Goiânia', passosDeLeitura(passosComTop10()), CRES)
+    expect(m.porPasso[5]).toBeUndefined()
+    expect(m.porPasso[2]).toBe(85891)
+  })
+})
+
+describe('DIMENSOES_MUNICIPIO_LEITURA', () => {
+  it('sem a dimensão "Residual na fila", que lia o passo 5', () => {
+    expect(DIMENSOES_MUNICIPIO_LEITURA.map((d) => d.chave)).toEqual([
+      'residual_bruto',
+      'hexes_quentes',
+      'cres_vs_mediana',
+    ])
+    expect(DIMENSOES_MUNICIPIO_LEITURA.some((d) => d.rotulo.includes('fila'))).toBe(false)
+  })
+
+  it('o legado continua com ela, para a instância sem régua', () => {
+    expect(DIMENSOES_MUNICIPIO[0].chave).toBe('residual_fila')
+    expect(Object.isFrozen(DIMENSOES_MUNICIPIO_LEITURA)).toBe(true)
+  })
+})
+
+describe('linhasLadoALado — números lado a lado, sem vencedor', () => {
+  const lidos = passosDeLeitura(passosComTop10())
+  const goiania = montarMunicipio('Goiânia', lidos, CRES)
+  const anapolis = montarMunicipio('Anápolis', lidos, CRES)
+
+  it('um valor por cidade, na ordem escolhida, formatado na unidade da dimensão', () => {
+    const linhas = linhasLadoALado(DIMENSOES_MUNICIPIO_LEITURA, [goiania, anapolis])
+    const demanda = linhas.find((l) => l.chave === 'residual_bruto')!
+    expect(demanda.rotulo).toBe('Demanda não atendida')
+    expect(demanda.valores).toEqual([num(85891), num(30120)])
+    const cres = linhas.find((l) => l.chave === 'cres_vs_mediana')!
+    expect(cres.valores).toEqual([valorComUnidade(8.7 - 7.6, 'p.p.'), valorComUnidade(5.0 - 7.6, 'p.p.')])
+  })
+
+  it('não declara vencedor nem perdedor: só chave, rótulo, unidade e valores', () => {
+    for (const l of linhasLadoALado(DIMENSOES_MUNICIPIO_LEITURA, [goiania, anapolis])) {
+      expect(Object.keys(l).sort()).toEqual(['chave', 'rotulo', 'unidade', 'valores'])
+    }
+  })
+
+  it('cidade sem o número aparece como "sem dado", nunca zero', () => {
+    const goianesia = montarMunicipio('Goianésia', lidos, CRES)
+    const linhas = linhasLadoALado(DIMENSOES_MUNICIPIO_LEITURA, [goiania, goianesia])
+    expect(linhas.find((l) => l.chave === 'residual_bruto')!.valores).toEqual([num(85891), TEXTO_SEM_DADO])
+  })
+
+  it('dimensão que nenhuma das cidades tem fica de fora', () => {
+    const semNada: MunicipioComparavel = { nome: 'X', porPasso: {}, crescimento: null }
+    const outro: MunicipioComparavel = { nome: 'Y', porPasso: {}, crescimento: null }
+    expect(linhasLadoALado(DIMENSOES_MUNICIPIO_LEITURA, [semNada, outro])).toEqual([])
   })
 })
