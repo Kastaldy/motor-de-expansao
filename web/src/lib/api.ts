@@ -27,6 +27,7 @@ import type {
   MunicipioPayload,
   PontoPayload,
   PontoResolvido,
+  MunicipioDoPonto,
   RedeCarteira,
   RedeFicha,
   RedeFiltros,
@@ -640,13 +641,15 @@ export const api = {
    * A isócrona é calculada no SERVIDOR (serviço de rotas): sem ele, a rota responde 503 com
    * a mensagem em português, que vira `ApiError.message` e é mostrada como veio — nunca
    * cai em silêncio para o raio de 1 km.
+   *
+   * `excluirUltraProxima`: o estudo da unidade Ultra NESTE alcance (emenda do item 6 da
+   * DEC-074). Sem ele, a query sai a mesma de antes.
    */
-  pontoAlcance: (lat: number, lng: number, alcance: Alcance) =>
-    pedir<PontoPayload>(
-      `/api/ponto/alcance?${new URLSearchParams({ lat: String(lat), lng: String(lng), alcance }).toString()}`,
-      {},
-      TIMEOUT_ALCANCE,
-    ),
+  pontoAlcance: (lat: number, lng: number, alcance: Alcance, opts?: { excluirUltraProxima?: boolean }) => {
+    const q = new URLSearchParams({ lat: String(lat), lng: String(lng), alcance })
+    if (opts?.excluirUltraProxima) q.set('excluir_ultra_proxima', 'true')
+    return pedir<PontoPayload>(`/api/ponto/alcance?${q.toString()}`, {}, TIMEOUT_ALCANCE)
+  },
 
   /**
    * Texto colado -> coordenada. Só é chamada quando o front NÃO resolveu sozinho
@@ -774,6 +777,13 @@ export const api = {
   municipios: (uf: string) =>
     pedir<{ uf: string; municipios: MunicipioItem[] }>(
       `/api/municipios/${encodeURIComponent(uf)}`,
+    ),
+
+  /** Coordenada -> UF e município pela malha municipal do servidor (a unidade escolhida
+   *  leva o cabeçalho à cidade dela). Leve: a malha fica em cache no processo. */
+  municipioDoPonto: (lat: number, lng: number) =>
+    pedir<MunicipioDoPonto>(
+      `/api/municipio-do-ponto?lat=${encodeURIComponent(lat)}&lng=${encodeURIComponent(lng)}`,
     ),
 
   municipio: (uf: string, municipio: string) =>

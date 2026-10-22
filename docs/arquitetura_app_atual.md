@@ -70,7 +70,7 @@ web/
 ```
 
 Endpoints do backend (`web/server/app.py`): `GET /api/health`, `/api/ufs`,
-`/api/geocode`, `/api/municipios/{uf}`, `/api/uf/{uf}`,
+`/api/geocode`, `/api/municipios/{uf}`, `/api/municipio-do-ponto`, `/api/uf/{uf}`,
 `/api/municipio/{uf}/{municipio}`, `/api/faixa-alunos`, `/api/executiva/{uf}`;
 `POST /api/viabilidade`, `/api/relatorio/municipal`, `/api/relatorio/pontual`,
 `/api/simulador/xlsx`.

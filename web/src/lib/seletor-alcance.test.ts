@@ -6,10 +6,14 @@ import { describe, expect, it } from 'vitest'
 import {
   AVISO_RELENDO_ALCANCE,
   ESTILO_ROTULO_ALCANCE,
+  ESTILO_TIPO_ALCANCE,
   ESTILO_TRILHO_ALCANCE,
+  ROTULO_CURTO_ALCANCE,
   ROTULO_SELETOR_ALCANCE,
   estiloDaOpcaoAlcance,
 } from './seletor-alcance'
+import { ALCANCES, ROTULO_ALCANCE } from './alcance'
+import { LARGURA_FICHA_PONTO, LARGURA_MINIMA } from './janela'
 
 const pontoScreen = readFileSync(fileURLToPath(new URL('../screens/PontoScreen.tsx', import.meta.url)), 'utf-8')
 
@@ -136,5 +140,72 @@ describe('o aviso de releitura não faz parte do nome do grupo', () => {
     // Nada de `{trocando && (<span role="status" ...` — a região nasceria junto com o texto.
     expect(seletor).not.toMatch(/trocando && \(\s*<span\s+role="status"/)
     expect(seletor.indexOf('{AVISO_RELENDO_ALCANCE}')).toBeGreaterThan(regiao)
+  })
+})
+
+/* ---------------- Rótulos sem reticências (print do Vinicius, 21/10/2026) ---------------- */
+
+/**
+ * Largura de TEXTO de cada opção, a partir da largura da janela, descontando o que está
+ * entre a borda dela e o texto do botão: borda da janela (2), recuo do corpo (16 x 2), o
+ * cartão da identificação (`Glass` com padding 18 e borda 1, x 2), o trilho (padding 4 e
+ * borda 1, x 2), os 3 vãos de 4 entre as 4 opções e, por opção, o recuo lateral do botão.
+ */
+function larguraDoTextoPorOpcao(larguraJanela: number, recuoLateralBotao: number): number {
+  const trilho = larguraJanela - 2 - 32 - 38 - 10
+  return (trilho - 3 * 4) / 4 - 2 * recuoLateralBotao
+}
+
+/** Estimativa conservadora de largura de texto: ~0,55 em por caractere (0,6 em no negrito). */
+function larguraEstimada(texto: string, px: number, negrito: boolean): number {
+  return texto.length * px * (negrito ? 0.6 : 0.55)
+}
+
+const recuoLateral = (padding: unknown) => Number(/^\d+px (\d+)px$/.exec(String(padding))![1])
+
+describe('os rótulos do seletor cabem sem reticências', () => {
+  const recuo = recuoLateral(estiloDaOpcaoAlcance(true).padding)
+
+  it('a régua reproduz o defeito: o rótulo inteiro numa linha NÃO cabia na largura de nascença', () => {
+    const antes = larguraDoTextoPorOpcao(LARGURA_FICHA_PONTO, 10)
+    expect(larguraEstimada(ROTULO_ALCANCE.carro_10min, 13, false)).toBeGreaterThan(antes)
+  })
+
+  it.each([
+    ['nascença da ficha', LARGURA_FICHA_PONTO],
+    ['largura mínima', LARGURA_MINIMA],
+  ])('na %s, valor (13px negrito) e tipo (10,5px) de TODAS as opções cabem', (_n, largura) => {
+    const cabe = larguraDoTextoPorOpcao(largura, recuo)
+    for (const a of ALCANCES) {
+      expect(larguraEstimada(ROTULO_CURTO_ALCANCE[a].valor, 13, true), a).toBeLessThanOrEqual(cabe)
+      expect(larguraEstimada(ROTULO_CURTO_ALCANCE[a].tipo, 10.5, false), a).toBeLessThanOrEqual(cabe)
+    }
+  })
+
+  it('valor + tipo dizem o mesmo que o rótulo inteiro', () => {
+    expect(ROTULO_CURTO_ALCANCE).toEqual({
+      raio_1km: { valor: '1 km', tipo: 'raio' },
+      raio_2km: { valor: '2 km', tipo: 'raio' },
+      carro_5min: { valor: '5 min', tipo: 'de carro' },
+      carro_10min: { valor: '10 min', tipo: 'de carro' },
+    })
+    expect(Object.keys(ROTULO_CURTO_ALCANCE).sort()).toEqual([...ALCANCES].sort())
+  })
+
+  it('as duas linhas empilhadas; a de baixo só com tokens', () => {
+    expect(estiloDaOpcaoAlcance(false).display).toBe('grid')
+    expect(String(ESTILO_TIPO_ALCANCE.font)).toMatch(/^500 10\.5px/)
+    expect(JSON.stringify(ESTILO_TIPO_ALCANCE)).not.toMatch(SEM_HEX)
+  })
+
+  it('o botão desenha as duas linhas curtas e mantém o rótulo inteiro como nome acessível', () => {
+    const inicio = pontoScreen.indexOf('function SeletorAlcance(')
+    const seletor = pontoScreen.slice(inicio, pontoScreen.indexOf('\n}\n', inicio))
+    expect(seletor).toContain('aria-label={ROTULO_ALCANCE[a]}')
+    expect(seletor).toContain('title={ROTULO_ALCANCE[a]}')
+    expect(seletor).toContain('<span>{ROTULO_CURTO_ALCANCE[a].valor}</span>')
+    expect(seletor).toContain('<span style={ESTILO_TIPO_ALCANCE}>{ROTULO_CURTO_ALCANCE[a].tipo}</span>')
+    // O rótulo inteiro não é mais o CONTEÚDO visível do botão.
+    expect(seletor).not.toContain('>\n              {ROTULO_ALCANCE[a]}\n            </button>')
   })
 })

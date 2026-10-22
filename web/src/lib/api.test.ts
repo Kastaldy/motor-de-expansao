@@ -334,6 +334,24 @@ describe('pontoAlcance — a rota de alcance', () => {
     expect(q.get('alcance')).toBe('carro_10min')
   })
 
+  it('o estudo da unidade Ultra vai na query do alcance; sem ele, a query é a de antes', async () => {
+    const urls: string[] = []
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (u: string) => {
+        urls.push(u)
+        return { ok: true, json: async () => ({}) } as unknown as Response
+      }),
+    )
+    await api.pontoAlcance(-23.48, -46.61, 'raio_2km', { excluirUltraProxima: true })
+    await api.pontoAlcance(-23.48, -46.61, 'raio_2km')
+    const [com, sem] = urls.map((u) => new URLSearchParams(u.split('?')[1]))
+    expect(com.get('excluir_ultra_proxima')).toBe('true')
+    expect(com.get('alcance')).toBe('raio_2km')
+    expect(sem.has('excluir_ultra_proxima')).toBe(false)
+    expect([...sem.keys()]).toEqual(['lat', 'lng', 'alcance'])
+  })
+
   it('503 do serviço de rotas vira a mensagem do servidor, nunca um raio de 1 km calado', async () => {
     const msg = 'O cálculo de tempo de deslocamento está indisponível agora. Tente de novo em instantes ou use o raio.'
     vi.stubGlobal(

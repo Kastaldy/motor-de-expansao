@@ -20,6 +20,10 @@ import {
   pinParaAtivo,
   pinsDoEstado,
   LEITURA_ULTRA,
+  leituraComAlcance,
+  leituraComModo,
+  leituraUltra,
+  partesDaLeitura,
   TROCAS_VAZIO,
   concluirTroca,
   leituraDaFicha,
@@ -511,7 +515,7 @@ describe('janelaNaMontagem / erroFlutuanteVisivel', () => {
 /* ---------------- Alcance do ponto (DEC-074) ---------------- */
 describe('alcance: o MESMO item, trocado no lugar', () => {
   /** A ficha do mesmo ponto relida em outro alcance: `lat`/`lng` = a origem clicada. */
-  function emAlcance(c: { lat: number; lng: number }, tipo: 'raio_2km' | 'carro_10min') {
+  function emAlcance(c: { lat: number; lng: number }, tipo: 'raio_2km' | 'carro_5min' | 'carro_10min') {
     const base = ficha(c.lat, c.lng) as unknown as Record<string, unknown>
     return {
       ...base,
@@ -537,12 +541,38 @@ describe('alcance: o MESMO item, trocado no lugar', () => {
     expect(decidirPedido(e, A.lat, A.lng)).toEqual({ tipo: 'repetido', indice: 0 })
   })
 
-  it('a leitura da ficha: alcance e, só no raio de 1 km, o modo', () => {
+  it('a leitura da ficha: alcance e modo, em TODO alcance (emenda do item 6 da DEC-074)', () => {
     expect(leituraDaFicha(ficha(A.lat, A.lng))).toBe('raio_1km')
     expect(leituraDaFicha(emAlcance(A, 'raio_2km'))).toBe('raio_2km')
     expect(leituraDaFicha(emAlcance(A, 'carro_10min'))).toBe('carro_10min')
-    const ultra = { ...(ficha(A.lat, A.lng) as object), mercado: { modo_estudo: 'unidade_ultra' } } as unknown as PontoPayload
-    expect(leituraDaFicha(ultra)).toBe(LEITURA_ULTRA)
+    const comUltra = (p: PontoPayload) =>
+      ({ ...(p as object), mercado: { modo_estudo: 'unidade_ultra' } }) as unknown as PontoPayload
+    expect(leituraDaFicha(comUltra(ficha(A.lat, A.lng)))).toBe(LEITURA_ULTRA)
+    expect(LEITURA_ULTRA).toBe('raio_1km+ultra')
+    // Era o defeito: fora do 1 km a leitura perdia o modo e a ficha "esquecia" o estudo.
+    expect(leituraDaFicha(comUltra(emAlcance(A, 'raio_2km')))).toBe('raio_2km+ultra')
+    expect(leituraDaFicha(comUltra(emAlcance(A, 'carro_5min')))).toBe('carro_5min+ultra')
+    expect(leituraDaFicha(comUltra(emAlcance(A, 'carro_10min')))).toBe('carro_10min+ultra')
+  })
+
+  it('trocar o alcance PRESERVA o modo; trocar o modo PRESERVA o alcance', () => {
+    expect(leituraComAlcance('raio_1km+ultra', 'carro_10min')).toBe('carro_10min+ultra')
+    expect(leituraComAlcance('raio_2km', 'carro_5min')).toBe('carro_5min')
+    expect(leituraComModo('carro_10min', true)).toBe('carro_10min+ultra')
+    expect(leituraComModo('raio_2km+ultra', false)).toBe('raio_2km')
+    expect(leituraComModo('raio_1km', true)).toBe(LEITURA_ULTRA)
+    // "2 km" em voo e então "liga o estudo da unidade": o pedido é o 2 km COM o modo.
+    const r1 = pedirTroca(TROCAS_VAZIO, 'k', 'raio_1km', leituraComAlcance('raio_1km', 'raio_2km'))
+    const vigente = r1.trocas.emVoo.k.querido as string
+    expect(leituraComModo(vigente, true)).toBe('raio_2km+ultra')
+  })
+
+  it('a leitura se desmonta em alcance + modo, e `leituraUltra` é a inversa', () => {
+    expect(partesDaLeitura('carro_10min+ultra')).toEqual({ alcance: 'carro_10min', ultra: true })
+    expect(partesDaLeitura('raio_2km')).toEqual({ alcance: 'raio_2km', ultra: false })
+    for (const a of ['raio_1km', 'raio_2km', 'carro_5min', 'carro_10min']) {
+      expect(partesDaLeitura(leituraUltra(a))).toEqual({ alcance: a, ultra: true })
+    }
   })
 
   it('"último clique vence" entre modo e alcance: as duas trocas passam pelo MESMO registro', () => {

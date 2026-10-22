@@ -97,6 +97,11 @@ REGRAS_DE_ACESSO: tuple[tuple[str, frozenset[str]], ...] = (
     ("/api/uf/", frozenset({"mapa", "oportunidades"})),
     ("/api/municipio/", frozenset({"mapa", "oportunidades"})),
     ("/api/municipios/", frozenset({"mapa", "oportunidades"})),
+    # Coordenada -> municipio (a unidade escolhida leva o cabecalho a' cidade dela,
+    # 21/10/2026). MESMO gate de `/api/municipios/`: devolve so' o NOME de um municipio,
+    # o mesmo dado que a lista ja' entrega a quem ve o mapa. Sem a barra no prefixo, nao
+    # casa por acidente com `/api/municipio/` nem com `/api/municipios/`.
+    ("/api/municipio-do-ponto", frozenset({"mapa", "oportunidades"})),
     ("/api/estados", frozenset({"oportunidades"})),
     # Ranking NACIONAL por hexagono (DEC-044). MESMO gate de `/api/estados`: e' a
     # outra leitura do Modo 3 ("ver as melhores oportunidades"), sobre a mesma
@@ -184,8 +189,9 @@ SUPERFICIE_DA_ROTA: tuple[tuple[str, frozenset[str]], ...] = (
     ("/api/pin-concorrente/", frozenset({"mapa"})),
 )
 
-# `/api/ponto`, `/api/resolver-ponto`, `/api/relatorio/municipal` e
-# `/api/relatorio/pontual` NÃO estão em `SUPERFICIE_DA_ROTA`: elas resolvem
+# `/api/ponto`, `/api/resolver-ponto`, `/api/municipio-do-ponto`,
+# `/api/relatorio/municipal` e `/api/relatorio/pontual` NÃO estão em
+# `SUPERFICIE_DA_ROTA`: elas resolvem
 # coordenada -> município via a malha adm2 (`api/service._carregar_malha`), um
 # recurso que `perfil.superficies` não modela (ver a nota do campo em
 # `motor_expansao.perfil.Perfil.malha_municipal_disponivel`). Sem a malha, o
@@ -200,6 +206,9 @@ ROTAS_QUE_EXIGEM_MALHA_MUNICIPAL: frozenset[str] = frozenset(
     {
         "/api/ponto",
         "/api/resolver-ponto",
+        # Coordenada -> municipio pela mesma malha (`_carregar_malha`): sem ela, 500 na
+        # primeira unidade escolhida -- o mesmo motivo das outras quatro.
+        "/api/municipio-do-ponto",
         "/api/relatorio/municipal",
         "/api/relatorio/pontual",
         # A v2 le a malha de setores na isocrona (DEC-078 ampliada): sem malha, 404 honesto.
@@ -627,6 +636,7 @@ REGRAS_POR_CAPACIDADE: tuple[tuple[str, tuple[str, ...] | None, str], ...] = (
     ("/api/uf/", None, "territorio.explorar"),
     ("/api/municipio/", None, "territorio.explorar"),
     ("/api/municipios/", None, "territorio.explorar"),
+    ("/api/municipio-do-ponto", None, "territorio.explorar"),
     ("/api/estados", None, "territorio.ranking_nacional"),
     # Ranking NACIONAL de hexagonos (DEC-044) — mesma natureza de `/api/estados`: a fila
     # pronta sem escolher estado. No modelo por aba as duas sao `oportunidades`.

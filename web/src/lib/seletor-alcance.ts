@@ -18,6 +18,8 @@
  */
 import type { CSSProperties } from 'react'
 
+import type { Alcance } from './alcance'
+
 /** O rótulo visível do grupo (é também o nome acessível do `radiogroup`). */
 export const ROTULO_SELETOR_ALCANCE = 'Alcance da análise'
 
@@ -63,6 +65,29 @@ export const ESTILO_ROTULO_ALCANCE: CSSProperties = {
  * medida que existia era a do botão primário, de texto grande, e não valia para 13px.
  */
 export const FUNDO_OPCAO_MARCADA = 'var(--ac-text)'
+
+/**
+ * O rótulo VISÍVEL de cada opção, em duas linhas curtas: o valor ("5 min") e o tipo
+ * ("de carro"). Pedido do Vinicius (print de 21/10/2026): na largura de nascença da ficha
+ * (480 px) cada opção tem ~77 px de texto, e "5 min de carro"/"10 min de carro" saíam
+ * cortados em reticências. O rótulo INTEIRO (`ROTULO_ALCANCE`) continua sendo o nome
+ * acessível e o `title` do botão.
+ */
+export const ROTULO_CURTO_ALCANCE: Readonly<Record<Alcance, { valor: string; tipo: string }>> = Object.freeze({
+  raio_1km: { valor: '1 km', tipo: 'raio' },
+  raio_2km: { valor: '2 km', tipo: 'raio' },
+  carro_5min: { valor: '5 min', tipo: 'de carro' },
+  carro_10min: { valor: '10 min', tipo: 'de carro' },
+})
+
+/** A segunda linha (o tipo): menor e mais leve, na cor do botão (marcado ou não). */
+export const ESTILO_TIPO_ALCANCE: CSSProperties = {
+  font: '500 10.5px/1.1 var(--f-ui)',
+  opacity: 0.85,
+  overflow: 'hidden',
+  textOverflow: 'ellipsis',
+  maxWidth: '100%',
+}
 export const TEXTO_OPCAO_MARCADA = 'var(--ac-on)'
 
 /**
@@ -78,7 +103,13 @@ export function estiloDaOpcaoAlcance(marcado: boolean): CSSProperties {
     flex: 1,
     minWidth: 0,
     minHeight: 38,
-    padding: '9px 10px',
+    /* Duas linhas (valor + tipo) empilhadas e centradas. Recuo lateral de 4 px: cabe
+       "10 min" até na largura MÍNIMA da janela (320 px). */
+    display: 'grid',
+    placeItems: 'center',
+    alignContent: 'center',
+    gap: 1,
+    padding: '6px 4px',
     borderRadius: 9,
     border: 'none',
     background: marcado ? FUNDO_OPCAO_MARCADA : 'transparent',

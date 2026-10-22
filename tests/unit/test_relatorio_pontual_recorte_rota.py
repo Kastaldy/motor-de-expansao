@@ -7,7 +7,9 @@ desenho dos textos e das metas no PDF e' do `censo_report` e tem teste proprio. 
 
 - sem os campos, nenhuma chamada ganha kwarg novo (o PDF de sempre);
 - o recorte so' existe no Estudo; com os dois campos, sem `so_estudo` ou com o estudo da
-  unidade Ultra -> 400 em portugues, ANTES de registrar o relatorio;
+  unidade Ultra na AREA DESENHADA -> 400 em portugues, ANTES de registrar o relatorio;
+- o estudo da unidade Ultra vale no raio de 2 km e nos 5/10 min de carro e o mercado do PDF
+  e' medido NO recorte, sem a unidade (emenda do item 6 da DEC-074, 2026-10-21);
 - o servidor RECALCULA o recorte: a isocrona sai do servico de rotas (mockado), o desenho
   passa pelo validador da ficha -- e o PDF roda na origem/ponto interno dele;
 - servico de rotas fora -> 503, nunca o raio de 1 km em silencio;
@@ -363,7 +365,8 @@ def test_area_desenhada_invalida_e_400(espioes, geometria, trecho) -> None:
         ({"alcance": "raio_2km"}, "use o Estudo"),
         ({"geometria": "{}"}, "use o Estudo"),
         ({"so_estudo": True, "alcance": "raio_2km", "geometria": "{}"}, "não os dois"),
-        ({"so_estudo": True, "alcance": "raio_2km", "excluir_ultra_proxima": True}, "raio de 1 km"),
+        ({"so_estudo": True, "geometria": "{}", "excluir_ultra_proxima": True}, "área desenhada"),
+        ({"alcance": "raio_2km", "excluir_ultra_proxima": True}, "use o Estudo"),
         ({"so_estudo": True, "alcance": "raio_9km"}, "Alcance desconhecido"),
     ],
 )
@@ -374,6 +377,54 @@ def test_recusas_sao_400_em_portugues_antes_de_registrar(espioes, kwargs, trecho
     assert trecho in exc.value.detail
     assert espioes["registro"] == [], "relatorio recusado nao entra na trilha"
     assert espioes["carga"] == []
+
+
+# --------------------------------------------------------------------------- #
+# Estudo da unidade Ultra no recorte (emenda do item 6 da DEC-074)               #
+# --------------------------------------------------------------------------- #
+@pytest.fixture
+def unidade_valida(monkeypatch: pytest.MonkeyPatch) -> list:
+    """A validacao antecipada da unidade (cadastro em disco) vira espia: a regra dela e' a
+    do `mercado_na_area`, com teste proprio; aqui so' importa ONDE ela roda."""
+    vistos: list = []
+    monkeypatch.setattr(pilot, "_validar_estudo_da_unidade", lambda lat, lng: vistos.append((lat, lng)))
+    return vistos
+
+
+def test_estudo_da_unidade_no_raio_de_2km_mede_o_mercado_no_2km(espioes, unidade_valida) -> None:
+    """O defeito que a emenda fecha: com ramos exclusivos, o flag mandava o mercado para o
+    raio de 1 km e o PDF diria "raio de 2 km" medindo o 1 km. Agora o MESMO recorte e o
+    modo chegam JUNTOS ao mercado."""
+    _rota(so_estudo=True, alcance="raio_2km", excluir_ultra_proxima=True)
+    assert _kw(espioes, "mercado") == {
+        "raio_km": 2.0,
+        "fator_regua": 4.0,
+        "excluir_ultra_proxima": True,
+    }
+    assert _kw(espioes, "motor")["raio_km"] == 2.0
+    assert _kw(espioes, "gerador")["recorte"]["tipo"] == "raio_2km"
+    # A tolerancia de 150 m e' conferida na ORIGEM pedida, antes do registro.
+    assert unidade_valida == [(_LAT, _LNG)]
+    assert len(espioes["registro"]) == 1
+
+
+@pytest.mark.parametrize("alcance", ["carro_5min", "carro_10min"])
+def test_estudo_da_unidade_na_isocrona_mede_o_mercado_na_isocrona(
+    espioes, valhalla, unidade_valida, alcance
+) -> None:
+    _rota(so_estudo=True, alcance=alcance, excluir_ultra_proxima=True)
+    mercado = _kw(espioes, "mercado")
+    assert mercado["excluir_ultra_proxima"] is True
+    assert "raio_km" not in mercado
+    assert mercado["geometria"].equals(_kw(espioes, "motor")["geometria_wgs84"])
+    assert mercado["fator_regua"] > 1.0
+    assert _kw(espioes, "gerador")["recorte"]["tipo"] == alcance
+
+
+def test_estudo_da_unidade_no_raio_de_1km_segue_igual(espioes, unidade_valida) -> None:
+    """Sem recorte, o mercado do estudo da unidade recebe SO' o flag, como antes."""
+    _rota(so_estudo=True, excluir_ultra_proxima=True)
+    assert _kw(espioes, "mercado") == {"excluir_ultra_proxima": True}
 
 
 def test_os_campos_sao_form_e_nao_query() -> None:
