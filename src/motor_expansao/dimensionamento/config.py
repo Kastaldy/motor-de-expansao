@@ -95,6 +95,86 @@ SIM_ALUNOS_INICIAL = 500                 # E9
 SIM_CHURN = 0.06                         # E12
 SIM_MATURACAO_MESES = 8                  # E13
 
+# Forma da rampa de alunos (DEC-078). "reta" e' a rampa historica da planilha (parte de
+# SIM_ALUNOS_INICIAL no mes 1 e chega a demanda em SIM_MATURACAO_MESES). "curva_uni03" e'
+# a curva OBSERVADA na rede pelo BLK-UNI-03: alunos(t) = demanda x fracao do mes t.
+SIM_FORMA_RAMPA_RETA = "reta"
+SIM_FORMA_RAMPA_CURVA_UNI03 = "curva_uni03"
+SIM_FORMAS_RAMPA = (SIM_FORMA_RAMPA_CURVA_UNI03, SIM_FORMA_RAMPA_RETA)
+# Default do PRODUTO (tela, PDF, planilha da rota, API publica/bot e os caminhos legados
+# de `viabilidade_ponto`) — a UNICA constante que decide a forma de quem nao escolhe, com
+# QUALQUER origem da demanda. Emenda da DEC-078 (Vinicius, 21/10/2026: "A rampa de
+# maturacao fica exclusivamente como curva observada"): o padrao passa a ser a CURVA. A
+# tela nao oferece mais a reta; a API publica continua ACEITANDO `forma_rampa = "reta"`
+# por compatibilidade de contrato. Trocar esta constante de volta para a reta reverte o
+# produto inteiro (a tela le a forma servida).
+SIM_FORMA_RAMPA_PADRAO = SIM_FORMA_RAMPA_CURVA_UNI03
+
+# Viabilidade v2 (DEC-078, ampliada em 2026-10-20): demanda madura SUGERIDA por um modelo de
+# praca + estudios, SEM masters (decisao de Felipe, 20/10). Fonte dos dois modos de demanda:
+# "densidade" (o de sempre: a demanda e' a do operador, semeada pela faixa de comparaveis) e
+# "v2" (semeada pelo p50 da v2, editavel). O padrao do NUCLEO e da API segue "densidade": a
+# v2 so' entra quando a TELA a pede, e a tela so' a pede quando o servidor diz que ela esta
+# disponivel (`/api/demanda-v2/estado`).
+SIM_MODELO_DEMANDA_DENSIDADE = "densidade"
+SIM_MODELO_DEMANDA_V2 = "v2"
+SIM_MODELOS_DEMANDA = (SIM_MODELO_DEMANDA_DENSIDADE, SIM_MODELO_DEMANDA_V2)
+SIM_MODELO_DEMANDA_PADRAO = SIM_MODELO_DEMANDA_DENSIDADE
+# CHAVE UNICA de servidor que desliga a v2 (critica C4): env com "0"/"false"/"nao"/"off"
+# -> a v2 fica INDISPONIVEL em toda superficie (estado, sugestao, viabilidade, PDF e
+# planilha), e a tela volta sozinha ao modo densidade. Ausente = ligada SE os coeficientes
+# existirem e forem validos.
+V2_ENV_CHAVE = "MOTOR_VIABILIDADE_V2"
+# Arquivo dos coeficientes, exportado pelo Felipe (ficha_v2). AUSENTE no repo por enquanto:
+# sem ele a v2 fica indisponivel com motivo, nunca erro 500. Schema em `demanda_v2.py`.
+V2_COEFICIENTES_ARQUIVO = "v2_coeficientes.json"
+# A isocrona do modelo: 10 min de carro sem transito (DEC-074). Nunca o raio.
+V2_MINUTOS_ISOCRONA = 10
+# Predicado de "abre SEM agregador" (achado UNI-14, critica A3): a curva da rampa foi medida
+# em unidades que abriram COM agregador. Ate' a emenda de 21/10/2026 o modo v2 com share de
+# balcao >= este valor FORCAVA a reta; com o produto so' na curva isso deixou de valer (a
+# curva vale sem agregador tambem, com a ressalva declarada na ajuda da tela). O predicado
+# fica (diagnostico/teste). Fracao, nunca percentual.
+V2_SHARE_BALCAO_SEM_AGREGADOR = 0.999
+# Transcricao LITERAL da tabela P1 de data/analysis/uni/uni03/resultado_uni03.md, coluna
+# "alunos (mediana)", meses de vida 0..12, como fracao do nivel maduro (media dos meses de
+# vida 11-13 da propria unidade; 33 unidades de exploracao). NAO e' o que o motor usa:
+# fica aqui para a derivacao abaixo ser auditavel (um teste refaz a conta).
+SIM_CURVA_UNI03_ALUNOS_P1 = (
+    0.80, 0.68, 0.77, 0.84, 0.88, 0.90, 0.92, 0.97, 0.95, 0.99, 1.00, 1.01, 1.01,
+)
+# O que o MOTOR usa: fracao da demanda por MES DE VIDA 0..12 da unidade, como no estudo
+# (0 = o mes da inauguracao); o mes de vida k e' o mes de OPERACAO k + 1 do simulador, e
+# do mes de vida 13 em diante vale 1,0. Regras sobre a tabela bruta (DEC-078):
+#   1. o mes 0 (inauguracao + pre-venda, 80%) ENTRA como o 1o mes de operacao, com o valor
+#      do estudo, e a queda para os 68% do mes 1 fica (emenda de 22/10/2026: "a rampa de
+#      alunos deve seguir o padrao do estudo, comecando a valer desde o mes 0"). Ate' ali o
+#      mes 0 saia e o mes de operacao t lia o mes de vida t;
+#   2. maximo acumulado A PARTIR DO MES 1 (dali em diante a rampa nunca decresce): o mes 8
+#      bruto (95%) vira 97% do mes 7. O mes 0 fica fora dessa regra;
+#   3. teto de 100%: a demanda assumida E' o nivel maduro; os 101% dos meses 11-12 sao
+#      ruido da propria definicao (o nivel e' a media dos meses 11-13).
+SIM_CURVA_RAMPA_UNI03 = (
+    0.80, 0.68, 0.77, 0.84, 0.88, 0.90, 0.92, 0.97, 0.97, 0.99, 1.00, 1.00, 1.00,
+)
+# PICO DE MATURACAO (emenda da DEC-078, 21/10/2026): o MES DE VIDA em que a rampa atinge
+# 100% da demanda madura. O observado e' o primeiro mes da curva acima com 100% (mes 10).
+# O operador escolhe outro pico e a MESMA forma observada e' reescalada no tempo
+# (`simulador.curva_rampa_com_pico`): o mes 0 (80%) e o mes 1 (68%) ficam os medidos, e o
+# mes `pico` fecha em 100%:
+#   fracao(k) = curva_obs(1 + (k - 1) x 9 / (pico - 1)) para k >= 1, interpolando
+#   linearmente entre meses observados; >= 10 -> 100%.
+# Pico 10 devolve a curva acima INTACTA (byte a byte). Intervalo: qualquer mes de 1 a 36,
+# de mes em mes (o mesmo do contador "-/+" da rampa antiga, `rampa_meses`; pedido de
+# Vinicius em 22/10/2026, que trocou as 7 opcoes fixas pelo contador). Pico 1 = o mes 0 do
+# estudo e, do mes 1 em diante, a demanda cheia. Fora do intervalo -> 422.
+SIM_MES_PICO_RAMPA_OBSERVADO = next(
+    k for k, f in enumerate(SIM_CURVA_RAMPA_UNI03) if f >= 1.0
+)
+SIM_MES_PICO_RAMPA_MIN = 1
+SIM_MES_PICO_RAMPA_MAX = 36
+SIM_MES_PICO_RAMPA_PADRAO = SIM_MES_PICO_RAMPA_OBSERVADO
+
 # Drivers financeiros (Simulador — celulas J9, N9, N11, R9)
 SIM_MENSALIDADE_BALCAO = 137             # J9 cenario 0 (=IF(N12=0,137,...))
 SIM_TICKET_AGREGADOR = 82                # aba Simulador linha 11 (~R$82/aluno/mes)

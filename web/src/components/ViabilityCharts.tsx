@@ -7,6 +7,7 @@ import type {
 } from '../lib/types'
 import { Glass } from './primitives'
 import { TEXTO_SEM_DADO } from '../lib/constants'
+import { mesFimDaRampa } from '../lib/viabilidade-rampa'
 
 /* ---------------------------------------------------------------------------
    Graficos da Viabilidade. Formas herdadas do template de referencia.
@@ -430,7 +431,11 @@ export function CascataDre({
             <strong style={{ color: 'var(--tx-soft)' }}>mês {num(mesRef)}</strong> — o primeiro em
             regime pleno
             {premissas
-              ? `: alunos maduros (rampa de ${num(premissas.maturacao_meses)} meses) e anuidade já em cobrança`
+              ? `: alunos maduros (${
+                  premissas.forma_rampa === 'curva_uni03'
+                    ? `curva observada, demanda cheia no mês ${num(mesFimDaRampa(premissas))}`
+                    : `rampa de ${num(premissas.maturacao_meses)} meses`
+                }) e anuidade já em cobrança`
               : ''}
             .
           </div>
@@ -604,18 +609,30 @@ function LinhaReceita({
  * Antes era uma reta sintética de 0 até a demanda total, desenhada aqui e sem
  * contrapartida no simulador: a operação começa com `alunos_inicial` no mês 1 e
  * o mix balcão/agregadores escala junto até o platô.
+ *
+ * Desde a DEC-078 a série vem da CURVA observada (padrão do produto desde a emenda de 21/10/2026,
+ * com o pico escolhido) ou, pela API pública, da rampa linear; o desenho
+ * é o mesmo (é a série do motor), e `maturacaoMeses` é o fim da rampa SERVIDO
+ * (`mes_maturidade_rampa`), não o parâmetro da reta.
  */
 export function RampaAlunos({
   serie,
   maturacaoMeses,
+  formaRampa = null,
 }: {
   serie: SerieMensalLinha[]
   maturacaoMeses: number | null
+  formaRampa?: string | null
 }) {
+  // Na curva observada o eixo é o MÊS DE VIDA do estudo (0 = a inauguração = o 1º mês de
+  // operação do motor) e a linha já começa com alunos no mês 0 (emenda de 22/10/2026). Na
+  // rampa linear (só pela API) o eixo segue o mês de operação e a linha parte de zero.
+  const curva = formaRampa === 'curva_uni03'
+  const desloc = curva ? 1 : 0
   const pts = pontos(
     serie.filter((l) => l.fase === 'operacao'),
     (l) => (Number.isFinite(l.alunos_total) ? l.alunos_total : null),
-  )
+  ).map((p) => ({ ...p, mes: p.mes - desloc }))
 
   if (pts.length < 2) {
     return (
@@ -637,7 +654,8 @@ export function RampaAlunos({
   }
 
   // Horizonte curto: a rampa se lê nos primeiros meses; o platô já aparece plano.
-  const mat = maturacaoMeses != null && maturacaoMeses > 0 ? Math.round(maturacaoMeses) : null
+  const mat =
+    maturacaoMeses != null && maturacaoMeses > 0 ? Math.round(maturacaoMeses) - desloc : null
   const limite = Math.min(pts[pts.length - 1].mes, Math.max((mat ?? 8) + 6, 18))
   const visiveis = pts.filter((p) => p.mes <= limite)
   const plateau = Math.max(...visiveis.map((p) => p.v))
@@ -647,8 +665,8 @@ export function RampaAlunos({
   const y = (v: number) => H - (v / Math.max(1, plateau)) * (H * 0.88) - 8
   const x = (mes: number) => (mes / limite) * W
 
-  // A curva parte do mês 0 (unidade fechada) e sobe até o platô do motor.
-  const linha = [`0,${y(0).toFixed(1)}`]
+  // Rampa linear: parte do mês 0 com a unidade fechada. Curva: o mês 0 já é um ponto da série.
+  const linha = (curva ? [] : [`0,${y(0).toFixed(1)}`])
     .concat(visiveis.map((p) => `${x(p.mes).toFixed(1)},${y(p.v).toFixed(1)}`))
     .join(' ')
   const area = `0,${H} ${linha} ${W},${H}`
@@ -666,7 +684,11 @@ export function RampaAlunos({
     >
       <Cabecalho
         titulo="Rampa de alunos"
-        sub={mat != null ? `alunos totais · platô no mês ${mat}` : 'alunos totais (motor)'}
+        sub={
+          mat != null
+            ? `${formaRampa === 'curva_uni03' ? 'curva observada' : 'rampa linear'} · platô no mês ${mat}`
+            : 'alunos totais (motor)'
+        }
         valor={alunos(plateau)}
         cor="var(--ac-text)"
       />

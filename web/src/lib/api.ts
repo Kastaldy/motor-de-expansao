@@ -12,6 +12,9 @@ import type {
   AdminUsuariosPayload,
   AlvoEvento,
   ExecutivaPayload,
+  DemandaV2In,
+  DemandaV2Out,
+  EstadoDemandaV2,
   FaixaAlunos,
   MePayload,
   MetodologiaPayload,
@@ -807,6 +810,22 @@ export const api = {
    *  o registro É a linha que o middleware grava para a chamada. */
   cienciaConfidencialidade: () =>
     pedir<{ ok: boolean }>('/api/ciencia-confidencialidade', { method: 'POST' }),
+
+  /** A Viabilidade v2 está disponível neste servidor? (DEC-078 ampliada) */
+  demandaV2Estado: () => pedir<EstadoDemandaV2>('/api/demanda-v2/estado', {}, 15_000),
+
+  /** Sugestão da v2: isócrona de 10 min de carro + modelo. 503 com o motivo quando
+   *  indisponível. Usa o teto das análises de área (a isócrona chama o serviço de rotas). */
+  demandaV2: (body: DemandaV2In) =>
+    pedir<DemandaV2Out>(
+      '/api/demanda-v2',
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      },
+      TIMEOUT_ALCANCE,
+    ),
 
   viabilidade: (body: ViabilidadeIn) =>
     pedir<ViabilidadeOut>('/api/viabilidade', {

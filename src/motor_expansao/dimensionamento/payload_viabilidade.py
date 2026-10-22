@@ -30,7 +30,9 @@ from pathlib import Path
 from typing import Annotated, Any
 
 import pandas as pd
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+
+from motor_expansao.dimensionamento.viabilidade_v2 import DemandaV2Ref
 
 
 def num_json_safe(v: Any, casas: int = 0) -> float | None:
@@ -113,9 +115,23 @@ class ViabilidadeInputs(BaseModel):
     # Carencia de aluguel: meses iniciais sem pagar aluguel (beneficio de rampa;
     # melhora payback/FCF, nao muda margem/breakeven de steady-state).
     carencia_aluguel_meses: int | None = Field(default=None, ge=0, le=60)
-    # Meses de rampa de maturacao (Simulador E13; default do motor = 8). Controlavel
-    # pelo operador; afeta a serie e o payback, nao a margem/breakeven de steady-state.
+    # Meses de rampa de maturacao da RETA (Simulador E13; default do motor = 8). So' a API
+    # publica ainda o manda (a tela nao). Afeta a serie e o payback; se passar do mes 12,
+    # o regime pleno cai no 2o ano e o DRE de steady-state ja' sai com o reajuste anual.
     rampa_meses: int | None = Field(default=None, ge=1, le=36)
+    # FORMA da rampa (DEC-078): "curva_uni03" (curva observada na rede, BLK-UNI-03) ou
+    # "reta" (a rampa historica, com `rampa_meses` e os alunos iniciais do config). None =
+    # `forma_rampa_do_body()`: a RETA se o corpo trouxe `rampa_meses` (corpo de quem
+    # integrou antes da emenda, que escolhia a rampa por ele), senao a CURVA
+    # (`forma_rampa_padrao()`, emenda de 21/10/2026). A tela nao oferece mais a reta; a API
+    # publica segue ACEITANDO "reta". Com a curva EXPLICITA, `rampa_meses` e' aceito e
+    # IGNORADO — o payload devolve `mes_maturidade_rampa`, o fim da rampa que valeu.
+    forma_rampa: str | None = None
+    # PICO de maturacao (emenda da DEC-078): o mes em que a curva chega a 100% da demanda.
+    # None = o observado (`SIM_MES_PICO_RAMPA_PADRAO`, mes 10). Qualquer mes de
+    # `SIM_MES_PICO_RAMPA_MIN` a `SIM_MES_PICO_RAMPA_MAX` (1 a 36; fora -> 422). Na reta e'
+    # aceito e IGNORADO.
+    mes_pico_rampa: int | None = None
 
     # --- Premissas explicitas (FIN-VIAB-01) ---------------------------------
     # Todas OPCIONAIS: None = default do config.py (fonte unica). Estavam escondidas
@@ -146,6 +162,33 @@ class ViabilidadeInputs(BaseModel):
     valor_residual_mes_60: float | None = Field(default=None, ge=0)
     capex_renovacao: float | None = Field(default=None, ge=0)
 
+    @field_validator("forma_rampa")
+    @classmethod
+    def _forma_rampa_conhecida(cls, v: str | None) -> str | None:
+        from motor_expansao.dimensionamento.config import SIM_FORMAS_RAMPA
+
+        if v is not None and v not in SIM_FORMAS_RAMPA:
+            raise ValueError(
+                f"forma_rampa desconhecida: {v!r}. Use 'curva_uni03' (curva observada) "
+                f"ou 'reta'"
+            )
+        return v
+
+    @field_validator("mes_pico_rampa")
+    @classmethod
+    def _pico_no_intervalo(cls, v: int | None) -> int | None:
+        from motor_expansao.dimensionamento.config import (
+            SIM_MES_PICO_RAMPA_MAX,
+            SIM_MES_PICO_RAMPA_MIN,
+        )
+
+        if v is not None and not SIM_MES_PICO_RAMPA_MIN <= v <= SIM_MES_PICO_RAMPA_MAX:
+            raise ValueError(
+                f"mes_pico_rampa fora do intervalo: {v!r}. Use um mês de "
+                f"{SIM_MES_PICO_RAMPA_MIN} a {SIM_MES_PICO_RAMPA_MAX}"
+            )
+        return v
+
     @model_validator(mode="after")
     def _studios_coerentes(self) -> ViabilidadeInputs:
         if (
@@ -166,6 +209,71 @@ class ViabilidadeIn(ViabilidadeInputs):
 
     lat: float = Field(ge=-90, le=90)
     lng: float = Field(ge=-180, le=180)
+    # Viabilidade v2 (DEC-078 ampliada). So' no PILOTO (a API publica monta o corpo de
+    # `ViabilidadeInputs`, que nao tem estes campos). None/"densidade" = o de sempre, e o
+    # payload sai byte a byte igual. "v2" exige `demanda_v2` (o token de procedencia e as
+    # entradas da isocrona devolvidos pela rota de sugestao): a `demanda` continua a do
+    # corpo (D10a) — o servidor so' CONFERE se ela e' a sugerida ou foi editada.
+    modelo_demanda: str | None = None
+    demanda_v2: DemandaV2Ref | None = None
+
+    @field_validator("modelo_demanda")
+    @classmethod
+    def _modelo_demanda_conhecido(cls, v: str | None) -> str | None:
+        from motor_expansao.dimensionamento.config import SIM_MODELOS_DEMANDA
+
+        if v is not None and v not in SIM_MODELOS_DEMANDA:
+            raise ValueError(f"modelo_demanda desconhecido: {v!r}. Use 'densidade' ou 'v2'")
+        return v
+
+    @model_validator(mode="after")
+    def _v2_com_referencia(self) -> ViabilidadeIn:
+        if self.modelo_demanda == "v2" and self.demanda_v2 is None:
+            raise ValueError(
+                "modelo_demanda='v2' exige demanda_v2 (o token da sugestão); peça a "
+                "sugestão em /api/demanda-v2"
+            )
+        if self.modelo_demanda != "v2" and self.demanda_v2 is not None:
+            raise ValueError("demanda_v2 só vale com modelo_demanda='v2'")
+        return self
+
+
+def modo_v2(body: Any) -> bool:
+    """O corpo pede a demanda da v2? (`getattr`: a API publica nao tem o campo.)"""
+    return getattr(body, "modelo_demanda", None) == "v2"
+
+
+def forma_rampa_do_body(body: Any) -> str:
+    """Forma da rampa do corpo: a escolha explicita; sem ela, a RETA se o corpo trouxe
+    `rampa_meses`; senao `forma_rampa_padrao()`.
+
+    O ramo do `rampa_meses` e' compatibilidade de CONTRATO (revisao de 21/10/2026): ate' a
+    emenda, um corpo com `rampa_meses = N` e sem `forma_rampa` era a reta de N meses, e
+    so' a reta le aquele numero. Cair na curva ignoraria o N EM SILENCIO e mudaria o
+    payback de quem ja' integrou (medido no golden com N = 14: 39 -> 25 meses). A tela
+    nao manda `rampa_meses`, entao para ela vale o padrao.
+
+    Igual com qualquer origem da demanda. Ate' a emenda de 21/10/2026 o modo v2 FORCAVA a
+    reta sem agregador (UNI-14: a curva foi medida em unidades COM agregador); com o
+    produto so' na curva isso caiu — a curva vale sem agregador tambem, e a ressalva fica
+    declarada na ajuda da tela. A flag `rampa_reta_forcada_sem_agregador` do bloco v2
+    continua no payload (identificador), sempre falsa.
+    """
+    if body.forma_rampa:
+        return str(body.forma_rampa)
+    if getattr(body, "rampa_meses", None) is not None:
+        from motor_expansao.dimensionamento.config import SIM_FORMA_RAMPA_RETA
+
+        return str(SIM_FORMA_RAMPA_RETA)
+    return forma_rampa_padrao()
+
+
+def mes_pico_do_body(body: Any) -> int:
+    """Pico de maturacao do corpo: a escolha, senao o observado (mes 10)."""
+    from motor_expansao.dimensionamento.config import SIM_MES_PICO_RAMPA_PADRAO
+
+    pico = getattr(body, "mes_pico_rampa", None)
+    return int(SIM_MES_PICO_RAMPA_PADRAO if pico is None else pico)
 
 
 def investimento_do_body(body: ViabilidadeIn) -> dict[str, Any]:
@@ -222,6 +330,18 @@ def investimento_do_body(body: ViabilidadeIn) -> dict[str, Any]:
     }
 
 
+def forma_rampa_padrao() -> str:
+    """Forma da rampa de quem nao escolhe (DEC-078; emenda de 21/10/2026: a CURVA).
+
+    `SIM_FORMA_RAMPA_PADRAO`, a mesma com qualquer origem da demanda. Lido em tempo de
+    chamada: trocar a constante no config muda a API, o PDF, a planilha, os caminhos
+    legados e a tela (que le a forma servida) de uma vez.
+    """
+    from motor_expansao.dimensionamento import config
+
+    return str(config.SIM_FORMA_RAMPA_PADRAO)
+
+
 def premissas_do_body(body: ViabilidadeIn):  # -> simulador.Premissas
     """Traduz o corpo da requisicao em `Premissas` — a fonte unica de coeficientes.
 
@@ -233,9 +353,20 @@ def premissas_do_body(body: ViabilidadeIn):  # -> simulador.Premissas
     `Premissas.custo_studio_mes` (e nao mais somado em `outros_fixos_mes` aqui): assim a
     planilha .xlsx mostra a linha "Studios" em vez de ratear o valor pelas contas fixas.
     """
-    from motor_expansao.dimensionamento.config import SIM_MENSALIDADE_BALCAO
-    from motor_expansao.dimensionamento.simulador import Premissas
+    from motor_expansao.dimensionamento.config import (
+        SIM_FORMA_RAMPA_CURVA_UNI03,
+        SIM_MENSALIDADE_BALCAO,
+    )
+    from motor_expansao.dimensionamento.simulador import Premissas, curva_rampa_com_pico
 
+    forma = forma_rampa_do_body(body)
+    # Na curva, a forma observada reescalada para o PICO escolhido (pico 10 = a curva
+    # observada intacta, e as Premissas sao as de antes da emenda). Na reta nada entra.
+    curva: dict[str, Any] = (
+        {"curva_rampa": curva_rampa_com_pico(mes_pico_do_body(body))}
+        if forma == SIM_FORMA_RAMPA_CURVA_UNI03
+        else {}
+    )
     opcionais: dict[str, Any] = {
         "devolucoes_pct": body.deducoes_pct,
         "share_balcao": body.share_balcao,
@@ -261,6 +392,10 @@ def premissas_do_body(body: ViabilidadeIn):  # -> simulador.Premissas
         ticket_cheio=float(body.ticket or SIM_MENSALIDADE_BALCAO),
         aluguel_mes=float(body.aluguel),
         tickets_studios=tickets_studios_do_body(body),
+        # O default do PRODUTO sai de `forma_rampa_padrao()` (DEC-078), nunca do default do
+        # dataclass: e' ele que a constante do config controla.
+        forma_rampa=forma,
+        **curva,
         **{k: v for k, v in opcionais.items() if v is not None},
     )
 
@@ -371,6 +506,14 @@ def montar_payload_viabilidade(
 
     premissas = premissas_do_body(body)
     inv = investimento_do_body(body)
+    # Modo v2: confere o token ANTES de rodar o motor (falha cedo: `V2Indisponivel` sem
+    # coeficientes, `TokenV2Invalido` com sugestao velha). No modo densidade nada disto
+    # roda e o payload e' o de antes.
+    conferida = None
+    if modo_v2(body):
+        from motor_expansao.dimensionamento.viabilidade_v2 import conferir_demanda_v2
+
+        conferida = conferir_demanda_v2(body, premissas)
     base, fonte_base = base_calibracao(staging_dir)
 
     res = analisar_viabilidade_ponto(
@@ -412,7 +555,7 @@ def montar_payload_viabilidade(
         (linha for linha in serie if linha["mes"] == int(r.mes_referencia_steady)), {}
     )
 
-    return {
+    payload = {
         "versao": VIABILIDADE_PAYLOAD_VERSAO,
         "premissas": {
             "ticket_cheio": num_json_safe(premissas.ticket_cheio, 2),
@@ -468,7 +611,21 @@ def montar_payload_viabilidade(
             "carencia_aluguel_meses": int(premissas.carencia_aluguel_meses),
             "mes_inicio_aluguel": mes_inicio_aluguel,
             "custo_pre_operacional_mes": num_json_safe(premissas.custo_pre_operacional_mes, 2),
+            # `maturacao_meses` e' o PARAMETRO da reta (ecoado mesmo na curva, onde nao
+            # vale). O fim da rampa que de fato valeu e' `mes_maturidade_rampa`: LEIA dele.
             "maturacao_meses": int(premissas.maturacao_meses),
+            # Forma da rampa (DEC-078) e, na curva, as fracoes da demanda nos meses 1..N
+            # (depois, 1,0). Na reta `curva_rampa` vai null: a forma e' a do parametro acima.
+            "forma_rampa": str(premissas.forma_rampa),
+            "mes_maturidade_rampa": int(premissas.mes_maturidade_rampa),
+            # Pico de maturacao pedido (emenda da DEC-078): o observado (10) sem escolha.
+            # Na reta vai null — o fim da rampa la' e' `maturacao_meses`.
+            "mes_pico_rampa": mes_pico_do_body(body) if premissas.usa_curva else None,
+            "curva_rampa": (
+                [num_json_safe(f, 4) for f in premissas.curva_rampa]
+                if premissas.usa_curva
+                else None
+            ),
             "horizonte_meses": int(premissas.horizonte_meses),
             # Anuidade (Simulador J10/J12): R$ por aluno de BALCAO que completa
             # `anuidade_mes_inicio` meses, cobrada 1x/ano e reconhecida pro-rata.
@@ -670,6 +827,13 @@ def montar_payload_viabilidade(
             serie, num_json_safe(r.payback_meses, 1), float(body.aluguel), float(r.investimento_total)
         ),
     }
+    if conferida is not None:
+        # ADITIVO e so' no modo v2: `faixa_alunos` e `aluguel_teto.teto_p10` seguem sendo os
+        # da DENSIDADE (comparaveis), com o significado de sempre — a faixa da v2 mora aqui
+        # dentro. Por isso `viabilidade_payload_v1` nao muda de versao.
+        payload["demanda_v2"] = conferida.bloco
+        payload["demanda_fonte"] = conferida.demanda_fonte
+    return payload
 
 
 def _melhoria_payback(
@@ -738,6 +902,11 @@ def base_calibracao(staging_dir: Path | str) -> tuple[pd.DataFrame | None, str]:
     return None, FONTE_BASE_INDISPONIVEL
 
 
+# O PDF pediu a v2 e ela nao entrou (ver `montar_payload_para_pdf`).
+DEMANDA_V2_AVISO_NAO_RECONHECIDA = "nao_reconhecida"
+DEMANDA_V2_AVISO_INDISPONIVEL = "indisponivel"
+
+
 def montar_payload_para_pdf(
     body: ViabilidadeIn,
     *,
@@ -761,17 +930,46 @@ def montar_payload_para_pdf(
 
     Devolve o payload v1 + as chaves PLANAS que o slide legado consome + `graficos`.
     `None` em qualquer falha -> o PDF cai no payload so-numeros (`viabilidade_json`).
+
+    Modo v2 com a sugestao NAO reconhecida (token de outro ponto/metragem/estudios, ou a v2
+    indisponivel): o PDF nao cai e tambem nao sai CALADO. Os numeros saem com a demanda do
+    corpo no modo densidade (a demanda e' sempre a do operador, D10a) e a chave
+    `demanda_v2_aviso` ("nao_reconhecida" | "indisponivel") faz o slide DIZER que a v2 nao
+    foi usada. Antes a falha era engolida e o slide saia sem aviso nenhum.
     """
     from motor_expansao.dashboard.viabilidade_charts import montar_payload_pdf_viabilidade
 
+    # Uma classe por linha: com as duas na mesma linha, a regra generic-api-key do gitleaks
+    # lia o nome com "Token" e o seguinte como chave e segredo (falso positivo).
+    from motor_expansao.dimensionamento.viabilidade_v2 import (
+        TokenV2Invalido,
+        V2Indisponivel,
+    )
+
+    aviso_v2: str | None = None
     try:
         payload = montar_payload_viabilidade(
             body, staging_dir=staging_dir, setores_df=setores_df
         )
+    except (TokenV2Invalido, V2Indisponivel) as exc:
+        aviso_v2 = (
+            DEMANDA_V2_AVISO_NAO_RECONHECIDA
+            if isinstance(exc, TokenV2Invalido)
+            else DEMANDA_V2_AVISO_INDISPONIVEL
+        )
+        try:
+            densidade = body.model_copy(update={"modelo_demanda": None, "demanda_v2": None})
+            payload = montar_payload_viabilidade(
+                densidade, staging_dir=staging_dir, setores_df=setores_df
+            )
+        except Exception:  # noqa: BLE001 — o PDF nunca cai por causa da viabilidade
+            return None
     except Exception:  # noqa: BLE001 — o PDF nunca cai por causa da viabilidade
         return None
 
     saida: dict[str, Any] = dict(payload)
+    if aviso_v2 is not None:
+        saida["demanda_v2_aviso"] = aviso_v2
     try:
         saida.update(montar_payload_pdf_viabilidade(payload) or {})
     except Exception:  # noqa: BLE001 — sem graficos o slide sai so com os numeros
