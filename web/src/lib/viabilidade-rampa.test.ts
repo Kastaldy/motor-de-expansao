@@ -39,7 +39,7 @@ const CURVA_PICO_6 = {
 // Rampa linear: só chega da API pública ou com a constante do servidor revertida.
 const LINEAR = { maturacao_meses: 8, forma_rampa: 'reta', mes_maturidade_rampa: 8, mes_pico_rampa: null }
 
-describe('pico de maturação (emenda de 21/10/2026 da DEC-077)', () => {
+describe('pico de maturação (emenda de 21/10/2026 da DEC-078)', () => {
   it('o intervalo e o pico observado espelham o config.py do servidor', () => {
     const config = readFileSync(
       fileURLToPath(new URL('../../../src/motor_expansao/dimensionamento/config.py', import.meta.url)),
@@ -127,7 +127,7 @@ describe('fim da rampa lido do payload', () => {
     expect(mesFimDaRampa(CURVA_PICO_6)).toBe(6)
   })
 
-  it('backend anterior à DEC-077 (sem o campo) cai na rampa de maturacao_meses', () => {
+  it('backend anterior à DEC-078 (sem o campo) cai na rampa de maturacao_meses', () => {
     expect(mesFimDaRampa({ maturacao_meses: 8 })).toBe(8)
     expect(formaDoPayload({ maturacao_meses: 8 })).toBe('reta')
   })

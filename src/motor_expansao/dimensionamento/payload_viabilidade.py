@@ -119,7 +119,7 @@ class ViabilidadeInputs(BaseModel):
     # publica ainda o manda (a tela nao). Afeta a serie e o payback; se passar do mes 12,
     # o regime pleno cai no 2o ano e o DRE de steady-state ja' sai com o reajuste anual.
     rampa_meses: int | None = Field(default=None, ge=1, le=36)
-    # FORMA da rampa (DEC-077): "curva_uni03" (curva observada na rede, BLK-UNI-03) ou
+    # FORMA da rampa (DEC-078): "curva_uni03" (curva observada na rede, BLK-UNI-03) ou
     # "reta" (a rampa historica, com `rampa_meses` e os alunos iniciais do config). None =
     # `forma_rampa_do_body()`: a RETA se o corpo trouxe `rampa_meses` (corpo de quem
     # integrou antes da emenda, que escolhia a rampa por ele), senao a CURVA
@@ -127,7 +127,7 @@ class ViabilidadeInputs(BaseModel):
     # publica segue ACEITANDO "reta". Com a curva EXPLICITA, `rampa_meses` e' aceito e
     # IGNORADO — o payload devolve `mes_maturidade_rampa`, o fim da rampa que valeu.
     forma_rampa: str | None = None
-    # PICO de maturacao (emenda da DEC-077): o mes em que a curva chega a 100% da demanda.
+    # PICO de maturacao (emenda da DEC-078): o mes em que a curva chega a 100% da demanda.
     # None = o observado (`SIM_MES_PICO_RAMPA_PADRAO`, mes 10). Qualquer mes de
     # `SIM_MES_PICO_RAMPA_MIN` a `SIM_MES_PICO_RAMPA_MAX` (1 a 36; fora -> 422). Na reta e'
     # aceito e IGNORADO.
@@ -209,7 +209,7 @@ class ViabilidadeIn(ViabilidadeInputs):
 
     lat: float = Field(ge=-90, le=90)
     lng: float = Field(ge=-180, le=180)
-    # Viabilidade v2 (DEC-077 ampliada). So' no PILOTO (a API publica monta o corpo de
+    # Viabilidade v2 (DEC-078 ampliada). So' no PILOTO (a API publica monta o corpo de
     # `ViabilidadeInputs`, que nao tem estes campos). None/"densidade" = o de sempre, e o
     # payload sai byte a byte igual. "v2" exige `demanda_v2` (o token de procedencia e as
     # entradas da isocrona devolvidos pela rota de sugestao): a `demanda` continua a do
@@ -331,7 +331,7 @@ def investimento_do_body(body: ViabilidadeIn) -> dict[str, Any]:
 
 
 def forma_rampa_padrao() -> str:
-    """Forma da rampa de quem nao escolhe (DEC-077; emenda de 21/10/2026: a CURVA).
+    """Forma da rampa de quem nao escolhe (DEC-078; emenda de 21/10/2026: a CURVA).
 
     `SIM_FORMA_RAMPA_PADRAO`, a mesma com qualquer origem da demanda. Lido em tempo de
     chamada: trocar a constante no config muda a API, o PDF, a planilha, os caminhos
@@ -392,7 +392,7 @@ def premissas_do_body(body: ViabilidadeIn):  # -> simulador.Premissas
         ticket_cheio=float(body.ticket or SIM_MENSALIDADE_BALCAO),
         aluguel_mes=float(body.aluguel),
         tickets_studios=tickets_studios_do_body(body),
-        # O default do PRODUTO sai de `forma_rampa_padrao()` (DEC-077), nunca do default do
+        # O default do PRODUTO sai de `forma_rampa_padrao()` (DEC-078), nunca do default do
         # dataclass: e' ele que a constante do config controla.
         forma_rampa=forma,
         **curva,
@@ -614,11 +614,11 @@ def montar_payload_viabilidade(
             # `maturacao_meses` e' o PARAMETRO da reta (ecoado mesmo na curva, onde nao
             # vale). O fim da rampa que de fato valeu e' `mes_maturidade_rampa`: LEIA dele.
             "maturacao_meses": int(premissas.maturacao_meses),
-            # Forma da rampa (DEC-077) e, na curva, as fracoes da demanda nos meses 1..N
+            # Forma da rampa (DEC-078) e, na curva, as fracoes da demanda nos meses 1..N
             # (depois, 1,0). Na reta `curva_rampa` vai null: a forma e' a do parametro acima.
             "forma_rampa": str(premissas.forma_rampa),
             "mes_maturidade_rampa": int(premissas.mes_maturidade_rampa),
-            # Pico de maturacao pedido (emenda da DEC-077): o observado (10) sem escolha.
+            # Pico de maturacao pedido (emenda da DEC-078): o observado (10) sem escolha.
             # Na reta vai null — o fim da rampa la' e' `maturacao_meses`.
             "mes_pico_rampa": mes_pico_do_body(body) if premissas.usa_curva else None,
             "curva_rampa": (

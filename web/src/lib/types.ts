@@ -586,14 +586,14 @@ export interface ViabilidadeIn {
   /** Meses de rampa de maturacao do balcao (Simulador E13; default do motor = 8). So'
    *  vale na forma `reta`; na curva o motor o aceita e ignora. */
   rampa_meses?: number
-  /** Forma da rampa (DEC-077): `curva_uni03` (curva observada) ou `reta`. Ausente = o
+  /** Forma da rampa (DEC-078): `curva_uni03` (curva observada) ou `reta`. Ausente = o
    *  padrao do SERVIDOR (a curva, desde a emenda de 21/10/2026). A tela NAO manda: o
    *  produto e' so' a curva; o campo segue no contrato pela API publica. */
   forma_rampa?: 'curva_uni03' | 'reta'
-  /** Pico de maturacao da curva (emenda da DEC-077): o mes em que a rampa chega a 100%
+  /** Pico de maturacao da curva (emenda da DEC-078): o mes em que a rampa chega a 100%
    *  da demanda. Ausente = o observado (mes 10). Qualquer mes de 1 a 36 (`PICO_RAMPA_MIN/MAX`). */
   mes_pico_rampa?: number
-  /** Fonte da demanda (DEC-077 ampliada). Ausente/`densidade` = o de sempre. `v2` exige
+  /** Fonte da demanda (DEC-078 ampliada). Ausente/`densidade` = o de sempre. `v2` exige
    *  `demanda_v2` (o token devolvido por `/api/demanda-v2`); a `demanda` continua a do
    *  corpo — o servidor só confere se ela é a sugerida ou foi editada. */
   modelo_demanda?: 'densidade' | 'v2'
@@ -870,13 +870,13 @@ export interface PremissasViabilidade {
   /** Parametro da RETA (ecoado mesmo na curva, onde nao vale). O fim da rampa que de
    *  fato valeu e' `mes_maturidade_rampa`. */
   maturacao_meses: number
-  /** Forma da rampa usada (DEC-077). Ausente = backend anterior, que era sempre a reta. */
+  /** Forma da rampa usada (DEC-078). Ausente = backend anterior, que era sempre a reta. */
   forma_rampa?: 'curva_uni03' | 'reta'
   /** Primeiro mes de operacao com a demanda cheia, na forma usada. */
   mes_maturidade_rampa?: number
   /** Na curva: fracao da demanda nos meses 1..N (depois, 1,0). Na reta: null. */
   curva_rampa?: number[] | null
-  /** Pico de maturacao pedido (emenda da DEC-077). Na reta: null. */
+  /** Pico de maturacao pedido (emenda da DEC-078). Na reta: null. */
   mes_pico_rampa?: number | null
   horizonte_meses: number
   /* --- Anuidade (Simulador J10/J12) -----------------------------------------
@@ -1121,7 +1121,7 @@ export interface ViabilidadeOut {
   /** "premissa_explicita" (DEC-009) no modo densidade; no modo v2, "modelo_v2" (a
    *  sugestão da v2) ou "premissa_editada" (o operador mudou a sugestão). */
   demanda_fonte: string
-  /** Só no modo v2 (DEC-077 ampliada): a sugestão conferida pelo servidor. */
+  /** Só no modo v2 (DEC-078 ampliada): a sugestão conferida pelo servidor. */
   demanda_v2?: DemandaV2Out
   /** Alunos assumidos por canal. `studios` traz um valor por studio, na ordem dos
    *  tickets (vazio ou ausente sem studio). */

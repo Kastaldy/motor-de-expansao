@@ -1,4 +1,4 @@
-"""Pico de maturacao da rampa (emenda de 21/10/2026 da DEC-077).
+"""Pico de maturacao da rampa (emenda de 21/10/2026 da DEC-078).
 
 Pedido do Vinicius (21/10/2026): "A rampa de maturacao fica exclusivamente como curva
 observada, mas deve receber a opcao de selecionar um pico de maturacao". O pico e' o MES
@@ -253,7 +253,7 @@ def test_pico_mais_lento_paga_mais_tarde() -> None:
     assert paybacks == sorted(paybacks)
 
 
-# Numeros da tabela da emenda na DEC-077 (golden de Londrina), medidos rodando o motor:
+# Numeros da tabela da emenda na DEC-078 (golden de Londrina), medidos rodando o motor:
 # pico -> (alunos no mes 1, payback, TIR do socio a.a., mes de steady).
 # Remedidos na revisao de 21/10/2026 (abertura ancorada): o mes 1 e' o mesmo em todo pico.
 EMENDA_PICO: dict[int, tuple[float, float, float, int]] = {
@@ -283,7 +283,7 @@ def test_pico_tardio_mede_o_steady_no_2o_ano_com_reajuste() -> None:
     pico, que ja' tem o degrau do reajuste anual (mes 13). O DRE de steady sobe so' pelo
     reajuste (os alunos sao os mesmos). A nota da tela deixa de dizer "nao a margem de
     steady-state" nesse caso (`efeitoDaRampaNoSteady`). Se um dia o steady passar a precos
-    do ano 1 (decisao pendente do dono, DEC-077), este teste muda junto com a nota."""
+    do ano 1 (decisao pendente do dono, DEC-078), este teste muda junto com a nota."""
     r12 = simular(DEMANDA, _premissas_pico(12), **INVEST)  # type: ignore[arg-type]
     r15 = simular(DEMANDA, _premissas_pico(15), **INVEST)  # type: ignore[arg-type]
     assert (r12.mes_referencia_steady, r15.mes_referencia_steady) == (12, 15)

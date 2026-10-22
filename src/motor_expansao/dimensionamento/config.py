@@ -95,7 +95,7 @@ SIM_ALUNOS_INICIAL = 500                 # E9
 SIM_CHURN = 0.06                         # E12
 SIM_MATURACAO_MESES = 8                  # E13
 
-# Forma da rampa de alunos (DEC-077). "reta" e' a rampa historica da planilha (parte de
+# Forma da rampa de alunos (DEC-078). "reta" e' a rampa historica da planilha (parte de
 # SIM_ALUNOS_INICIAL no mes 1 e chega a demanda em SIM_MATURACAO_MESES). "curva_uni03" e'
 # a curva OBSERVADA na rede pelo BLK-UNI-03: alunos(t) = demanda x fracao do mes t.
 SIM_FORMA_RAMPA_RETA = "reta"
@@ -103,14 +103,14 @@ SIM_FORMA_RAMPA_CURVA_UNI03 = "curva_uni03"
 SIM_FORMAS_RAMPA = (SIM_FORMA_RAMPA_CURVA_UNI03, SIM_FORMA_RAMPA_RETA)
 # Default do PRODUTO (tela, PDF, planilha da rota, API publica/bot e os caminhos legados
 # de `viabilidade_ponto`) — a UNICA constante que decide a forma de quem nao escolhe, com
-# QUALQUER origem da demanda. Emenda da DEC-077 (Vinicius, 21/10/2026: "A rampa de
+# QUALQUER origem da demanda. Emenda da DEC-078 (Vinicius, 21/10/2026: "A rampa de
 # maturacao fica exclusivamente como curva observada"): o padrao passa a ser a CURVA. A
 # tela nao oferece mais a reta; a API publica continua ACEITANDO `forma_rampa = "reta"`
 # por compatibilidade de contrato. Trocar esta constante de volta para a reta reverte o
 # produto inteiro (a tela le a forma servida).
 SIM_FORMA_RAMPA_PADRAO = SIM_FORMA_RAMPA_CURVA_UNI03
 
-# Viabilidade v2 (DEC-077, ampliada em 2026-10-20): demanda madura SUGERIDA por um modelo de
+# Viabilidade v2 (DEC-078, ampliada em 2026-10-20): demanda madura SUGERIDA por um modelo de
 # praca + estudios, SEM masters (decisao de Felipe, 20/10). Fonte dos dois modos de demanda:
 # "densidade" (o de sempre: a demanda e' a do operador, semeada pela faixa de comparaveis) e
 # "v2" (semeada pelo p50 da v2, editavel). O padrao do NUCLEO e da API segue "densidade": a
@@ -144,7 +144,7 @@ SIM_CURVA_UNI03_ALUNOS_P1 = (
     0.80, 0.68, 0.77, 0.84, 0.88, 0.90, 0.92, 0.97, 0.95, 0.99, 1.00, 1.01, 1.01,
 )
 # O que o MOTOR usa: fracao da demanda nos meses de OPERACAO 1..12 (mes 13 em diante = 1,0).
-# Tres regras sobre a tabela bruta, todas declaradas na DEC-077:
+# Tres regras sobre a tabela bruta, todas declaradas na DEC-078:
 #   1. o mes 0 (inauguracao parcial + pre-venda, 80%) SAI: o simulador nao tem mes de
 #      operacao parcial — os meses de pre-abertura sao de obra, sem aluno nem receita;
 #   2. maximo acumulado (a rampa nunca decresce): o mes 8 bruto (95%) vira 97% do mes 7;
@@ -153,7 +153,7 @@ SIM_CURVA_UNI03_ALUNOS_P1 = (
 SIM_CURVA_RAMPA_UNI03 = (
     0.68, 0.77, 0.84, 0.88, 0.90, 0.92, 0.97, 0.97, 0.99, 1.00, 1.00, 1.00,
 )
-# PICO DE MATURACAO (emenda da DEC-077, 21/10/2026): o MES em que a rampa atinge 100% da
+# PICO DE MATURACAO (emenda da DEC-078, 21/10/2026): o MES em que a rampa atinge 100% da
 # demanda madura. O observado e' o primeiro mes da curva acima com 100% (mes 10). O
 # operador escolhe outro pico entre as opcoes abaixo e a MESMA forma observada e'
 # reescalada no tempo (`simulador.curva_rampa_com_pico`), com os DOIS extremos medidos

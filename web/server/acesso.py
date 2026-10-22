@@ -90,7 +90,7 @@ REGRAS_DE_ACESSO: tuple[tuple[str, frozenset[str]], ...] = (
     ("/api/relatorio/pontual", frozenset({"mapa", "viabilidade"})),
     ("/api/viabilidade", frozenset({"mapa", "viabilidade"})),
     ("/api/faixa-alunos", frozenset({"viabilidade"})),
-    # Viabilidade v2 (DEC-077 ampliada): estado e sugestao da demanda. Mesmo gate da faixa
+    # Viabilidade v2 (DEC-078 ampliada): estado e sugestao da demanda. Mesmo gate da faixa
     # de alunos, que e' a outra fonte da semente da demanda na mesma tela.
     ("/api/demanda-v2", frozenset({"viabilidade"})),
     ("/api/simulador/", frozenset({"viabilidade"})),
@@ -161,7 +161,7 @@ SUPERFICIE_DA_ROTA: tuple[tuple[str, frozenset[str]], ...] = (
     ("/api/relatorio/comparacao", frozenset({"mapa"})),
     ("/api/viabilidade", frozenset({"viabilidade"})),
     ("/api/faixa-alunos", frozenset({"viabilidade"})),
-    # `/api/demanda-v2` (DEC-077 ampliada) NAO entra aqui: ela e' rota de MALHA, com
+    # `/api/demanda-v2` (DEC-078 ampliada) NAO entra aqui: ela e' rota de MALHA, com
     # checagem propria em `ROTAS_QUE_EXIGEM_MALHA_MUNICIPAL` (e o gate do usuario e' o da
     # viabilidade em `REGRAS_DE_ACESSO`).
     ("/api/simulador/", frozenset({"viabilidade"})),
@@ -202,7 +202,7 @@ ROTAS_QUE_EXIGEM_MALHA_MUNICIPAL: frozenset[str] = frozenset(
         "/api/resolver-ponto",
         "/api/relatorio/municipal",
         "/api/relatorio/pontual",
-        # A v2 le a malha de setores na isocrona (DEC-077 ampliada): sem malha, 404 honesto.
+        # A v2 le a malha de setores na isocrona (DEC-078 ampliada): sem malha, 404 honesto.
         "/api/demanda-v2",
     }
 )

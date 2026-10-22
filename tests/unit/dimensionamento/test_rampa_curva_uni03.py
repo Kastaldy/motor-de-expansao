@@ -1,4 +1,4 @@
-"""Rampa pela CURVA OBSERVADA na rede (DEC-077, BLK-UNI-03).
+"""Rampa pela CURVA OBSERVADA na rede (DEC-078, BLK-UNI-03).
 
 O QUE ESTE ARQUIVO TRAVA
 ------------------------
@@ -9,7 +9,7 @@ O QUE ESTE ARQUIVO TRAVA
    codigo da `origin/main` ANTERIOR a esta mudanca (git archive) e reproduzidos aqui.
    Se um campo novo entrar na serie mensal, refaca o digest contra a main de ANTES da
    mudanca — nunca contra o proprio codigo novo, que tornaria o teste circular.
-4. Os NUMEROS da DEC-077 (caso golden Boulevard Londrina, reta x curva) — medidos
+4. Os NUMEROS da DEC-078 (caso golden Boulevard Londrina, reta x curva) — medidos
    rodando o motor; a DEC cita estes valores e nao outros.
 5. O contrato do payload (`forma_rampa`): default CURVA desde a emenda de 21/10/2026
    (Vinicius: "A rampa de maturacao fica exclusivamente como curva observada"; antes era
@@ -19,7 +19,7 @@ O QUE ESTE ARQUIVO TRAVA
 6. A planilha .xlsx com a curva: recalculada, bate com o motor nos 64 meses; e trocar a
    celula "Forma da rampa" para "reta" reproduz o motor na reta. A planilha da RETA nao
    tem nada da curva (e' a de antes da DEC).
-7. As sensibilidades e cenarios de fronteira citados na DEC-077.
+7. As sensibilidades e cenarios de fronteira citados na DEC-078.
 
 READ-ONLY sobre o M1.
 """
@@ -261,7 +261,7 @@ def test_premissas_recusa_rampa_que_o_modelo_nao_representa(over: dict, trecho: 
 
 
 # ---------------------------------------------------------------------------
-# 5. Os numeros da DEC-077 (golden Boulevard Londrina, reta x curva)
+# 5. Os numeros da DEC-078 (golden Boulevard Londrina, reta x curva)
 # ---------------------------------------------------------------------------
 
 # forma -> (payback, TIR socio a.a., TIR negocio a.a., VPL socio, VPL negocio,
@@ -342,7 +342,7 @@ def test_payload_default_e_a_curva_e_ainda_aceita_a_reta() -> None:
 def test_payload_sem_forma_e_a_curva_de_hoje_e_a_reta_explicita_e_a_de_antes() -> None:
     """Sem `forma_rampa` o corpo vira EXATAMENTE as Premissas da curva escolhida (pico
     observado, a curva UNI-03 intacta). Com a reta explicita, as Premissas que o codigo
-    anterior a DEC-077 montava (o default do nucleo)."""
+    anterior a DEC-078 montava (o default do nucleo)."""
     antes = Premissas(ticket_cheio=177.0, aluguel_mes=30_000.0, tickets_studios=())
     assert premissas_do_body(ViabilidadeIn(**_BODY, forma_rampa="reta")) == antes
     curva = premissas_do_body(ViabilidadeIn(**_BODY, forma_rampa="curva_uni03"))
@@ -477,7 +477,7 @@ def _rotulos(ws) -> list[str]:
 
 
 def test_xlsx_da_reta_nao_tem_nada_da_curva() -> None:
-    """A planilha de quem nao pediu a curva e' a de antes da DEC-077: sem a premissa
+    """A planilha de quem nao pediu a curva e' a de antes da DEC-078: sem a premissa
     "Forma da rampa", sem o bloco da curva, sem a validacao de lista e sem os nomes novos.
     (O snapshot contra a `origin/main` confirmou o arquivo inteiro igual membro a membro.)"""
     wb = openpyxl.load_workbook(BytesIO(gerar_simulador_xlsx(DEMANDA, _premissas(), **INVEST)))
@@ -590,7 +590,7 @@ def test_xlsx_trocar_a_celula_para_reta_reproduz_o_motor_na_reta(
 
 
 # ---------------------------------------------------------------------------
-# 8. Sensibilidades e cenarios de fronteira citados na DEC-077 (golden)
+# 8. Sensibilidades e cenarios de fronteira citados na DEC-078 (golden)
 # ---------------------------------------------------------------------------
 
 # cenario -> (overrides das Premissas, overrides do investimento, forma -> (payback,))

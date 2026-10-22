@@ -1,4 +1,4 @@
-"""Viabilidade v2 nas superficies: rotas do piloto, planilha e PDF (DEC-077 ampliada).
+"""Viabilidade v2 nas superficies: rotas do piloto, planilha e PDF (DEC-078 ampliada).
 
 Coeficientes FICTICIOS (os mesmos de `test_viabilidade_v2.py`), num `tmp_path`.
 """
@@ -237,7 +237,7 @@ def test_planilha_v2_mostra_faturamento_fixo_e_r_aluno_como_formulas(coef, tmp_p
     assert str(rot["Alunos que o faturamento p50 sustenta"][1]).startswith("=MAX(")
     assert "Sugerida pelo modelo de praça" in str(wb["Premissas"].cell(
         row=rot["Demanda total (alunos na maturidade)"][0], column=4).value)
-    # Produto unico (emenda da DEC-077, 21/10/2026): nenhuma celula de TEXTO da planilha
+    # Produto unico (emenda da DEC-078, 21/10/2026): nenhuma celula de TEXTO da planilha
     # fala em versao nem em faixa provisoria. Identificadores (nomes definidos `v2_*`) e
     # formulas nao sao texto de usuario.
     textos = [c.value for aba in wb.worksheets for linha in aba.iter_rows() for c in linha

@@ -547,7 +547,7 @@ def test_payload_serve_folha_fixa_desde_o_mes_1(empty_data: Path) -> None:
     e o EBITDA do mes 1 fica bem mais negativo do que com a folha escalonada.
     """
     # Rampa LINEAR explicita: os numeros abaixo (637,5 -> 1.600 alunos, mes 1 no vermelho)
-    # sao dela. Desde a emenda de 21/10/2026 da DEC-077 o padrao do produto e' a curva
+    # sao dela. Desde a emenda de 21/10/2026 da DEC-078 o padrao do produto e' a curva
     # observada; a reta segue aceita pelo contrato e a regra da folha fixa vale nas duas.
     corpo = _viab(forma_rampa="reta")
     operacao = [linha for linha in corpo["serie_mensal"] if linha["fase"] == "operacao"]

@@ -7864,7 +7864,7 @@ def faixa_alunos(m2: float, formato: str | None = None) -> dict[str, Any]:
 
 
 # ============================================================================
-# Viabilidade v2 (DEC-077 ampliada): demanda madura SUGERIDA por modelo de praca +
+# Viabilidade v2 (DEC-078 ampliada): demanda madura SUGERIDA por modelo de praca +
 # estudios, sem masters. A tela consulta o ESTADO no servidor (chave unica
 # `MOTOR_VIABILIDADE_V2` + coeficientes + servico de rotas) e so' entao pede a
 # SUGESTAO. Indisponivel -> 503 com o motivo, e a tela segue no modo densidade.
@@ -7880,7 +7880,7 @@ def demanda_v2_estado() -> dict[str, Any]:
     return _viab_v2.estado_v2(rotas_configuradas())
 
 
-# Texto de usuario das 503 da sugestao (emenda da DEC-077, 21/10/2026): a Viabilidade e'
+# Texto de usuario das 503 da sugestao (emenda da DEC-078, 21/10/2026): a Viabilidade e'
 # UM produto, sem rotulo de versao — fala-se do "modelo de praça" que sugere a demanda.
 _MOTIVO_SUGESTAO_INDISPONIVEL = "A sugestão de demanda pelo modelo de praça está indisponível: "
 
@@ -8054,7 +8054,7 @@ def _payload_viabilidade(body: ViabilidadeIn) -> dict[str, Any]:
             staging_dir=STAGING_DIR,
             setores_df=_setores_para_catchment(body.lat, body.lng),
         )
-    except _viab_v2.V2Indisponivel as exc:  # so' no modo v2 (DEC-077 ampliada)
+    except _viab_v2.V2Indisponivel as exc:  # so' no modo v2 (DEC-078 ampliada)
         raise HTTPException(503, str(exc)) from exc
     except _viab_v2.TokenV2Invalido as exc:
         raise HTTPException(422, str(exc)) from exc
@@ -12300,7 +12300,7 @@ def _gerar_simulador_xlsx_response(
     gerar = _gerador_simulador_xlsx()
     premissas = _premissas_do_body(body)
     inv = _investimento(body)
-    # Modo v2 (DEC-077 ampliada): o bloco "Origem da demanda" da planilha, conferido pelo
+    # Modo v2 (DEC-078 ampliada): o bloco "Origem da demanda" da planilha, conferido pelo
     # MESMO token da Viabilidade. Modo densidade: nada, e a planilha e' a de antes.
     bloco_v2: dict[str, Any] | None = None
     if _viab.modo_v2(body):

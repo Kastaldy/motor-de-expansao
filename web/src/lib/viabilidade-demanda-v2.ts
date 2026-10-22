@@ -1,5 +1,5 @@
 /* ---------------------------------------------------------------------------
-   Sugestão de demanda pelo modelo de praça (DEC-077 ampliada; os identificadores ainda
+   Sugestão de demanda pelo modelo de praça (DEC-078 ampliada; os identificadores ainda
    dizem "v2", o TEXTO de usuário não — emenda de 21/10/2026: a Viabilidade é um produto
    único). Quando o SERVIDOR diz que o modelo está disponível, a demanda é semeada pelo
    p50 dele (editável), a faixa p10–p90 aparece SEM aviso de provisória e o pedido leva o
