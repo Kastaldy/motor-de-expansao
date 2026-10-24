@@ -13,12 +13,12 @@ camadas paralelas por direito proprio).
 
 | Arquivo | Tam. aprox | Produtor | Consumidor |
 |---------|-----------|----------|------------|
-| `hexagonos_dashboard_enriquecido/uf=XX/` | 257 MB | `fase1_bi_exports.py` (merge offline de M1 + hibrido + censo) | piloto web (Mapa Territorial, carga lazy por UF — obrigatorio) |
+| `hexagonos_dashboard_enriquecido/uf=XX/` | 257 MB | `fase1_bi_exports.py` (merge offline de M1 + hibrido + censo) | piloto web (Mapa, carga lazy por UF — obrigatorio) e API/bot (Relatorio Municipal no Brasil, DEC-077: sem a particao da UF, 503 `base_da_tela_ausente`) |
 | `setores_censitarios_2022_geo/uf=XX/cod_municipio=NNNNNNN/` | 1.2 GB | `materializar_setores_censitarios_geo` | Relatorio Pontual Censitario (piloto web, API, bot) |
 | `hexagonos_brasil_dashboard.parquet` | 47 MB | `fase1_bi_exports.py` | insumo do merge do enriquecido (base oficial M1) |
-| `oportunidades_expansao_hibrido.parquet` | 109 MB | `jobs/pipelines/modelo_hibrido_expansao.py` | insumo do merge do enriquecido (hibrido/censitario/residual) |
-| `carteira_expansao_acionavel.parquet` | 600 KB | `jobs/pipelines/gerar_carteira_acionavel.py` | sem superficie de exibicao desde a DEC-022 (artefato oficial da camada de mercado; pipeline e testes seguem) |
-| `plano_expansao_curto_prazo.parquet` | 80 KB | `jobs/pipelines/gerar_plano_expansao_curto_prazo.py` | idem — perdeu superficie, continua produzido e valido |
+| `oportunidades_expansao_hibrido.parquet` | 109 MB | `src/motor_expansao/pipelines/modelo_hibrido_expansao.py` | insumo do merge do enriquecido (hibrido/censitario/residual) |
+| `carteira_expansao_acionavel.parquet` | 600 KB | `src/motor_expansao/pipelines/gerar_carteira_acionavel.py` | sem superficie de exibicao desde a DEC-022 (artefato oficial da camada de mercado; pipeline e testes seguem) |
+| `plano_expansao_curto_prazo.parquet` | 80 KB | `src/motor_expansao/pipelines/gerar_plano_expansao_curto_prazo.py` | idem — perdeu superficie, continua produzido e valido |
 | `staging/crescimento_municipal.parquet` | 2 MB | `data/reports/crescimento/` (10 scripts, ordem no README) | piloto web, passo 4 do funil — OPCIONAL, ausente degrada so o passo |
 | `staging/crescimento_hex.parquet` | 370 KB | idem | piloto web, passo 4 — cor do mapa por taxa de crescimento do hexagono |
 
@@ -58,7 +58,7 @@ Politica: nao versionar no git (bloqueado por `*.parquet` e `*.csv` no `.gitigno
 | `unidades_ultra_performance_hex.parquet` | 53 KB | `calcular_penetracao_ultra_hex.py` | piloto web (pins Ultra; fallback da faixa de alunos) |
 | `growth_api_historico.parquet` | 3.4 MB | `scripts/ingerir_growth_api.py` (ingestao semanal, DEC-013) | piloto web (Visao Executiva — a tela responde 404 sem ele) |
 | `base_calibracao_maduras.parquet` | 21 KB | `scripts/consolidar_base_calibracao.py` | piloto web (semente p50 da demanda na Viabilidade) |
-| `uplift_renda_domiciliar_municipio.parquet`, `uplift_composicao_setor.parquet`, `fator_temporal_renda.json` | — | pipeline de renda domiciliar | piloto web + PDFs (renda media domiciliar municipal; sem eles, fallback nacional ~4,55x) |
+| `uplift_renda_domiciliar_municipio.parquet`, `uplift_composicao_setor.parquet` | — | pipeline de renda domiciliar | piloto web + API/PDFs (renda media domiciliar; em producao — `MOTOR_DATA_DIR` setado — a subida do piloto e da API RECUSA sem eles, E0. O `fator_temporal_renda.json` saiu: os fatores sao versionados na imagem, `src/motor_expansao/renda/fatores/<PAIS>/`, DEC-075) |
 
 Politica: nao versionar no git (bloqueado por `data/staging/` e `*.parquet`).
 

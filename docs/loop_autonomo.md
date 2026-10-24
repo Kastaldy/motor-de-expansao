@@ -30,8 +30,8 @@ antes de rodar (default 10).
 ## O que é "loop-safe"
 Um bloco do backlog marcado `| **Autonomia** | loop-safe ... |`. Critério: **READ-ONLY sobre o M1**,
 **não toca VPS/deploy/segredos**, **não persiste PII**, e **consome `data/staging`** (sem ingestão ao
-vivo na Growth API — o container não tem credencial). Hoje: **BLK-DIM-01, -02, -03, -04**
-(`BLK-DIM-03` é o melhor para começar: Média, determinístico, sem dependências).
+vivo na Growth API — o container não tem credencial). Quais são hoje: `python scripts/garimpeiro_select_block.py --list`
+(lê o marcador direto do `tasks/backlog.md`; os BLK-DIM-01..04 citados aqui antes foram SUPERSEDED em 2026-06-13).
 
 Para tornar um bloco novo elegível: adicione a linha `Autonomia: loop-safe` à tabela dele — isso é a
 **pré-aprovação humana** que autoriza o loop a rodá-lo sem o gate interativo.
@@ -47,8 +47,8 @@ O loop também **respeita `Depende de`**: só inicia um bloco cujas dependência
 `tasks/completed.md`. Ex.: `BLK-DIM-02` (depende do GO do DIM-01) só roda depois que o DIM-01 fechar;
 `BLK-DIM-04` só depois de 01/02/03. Então, mesmo marcando vários, a ordem é segura.
 
-> Dica: para um primeiro loop conservador, deixe **só `BLK-DIM-03`** com `loop-safe` (Média, sem
-> dependências) e marque os demais quando quiser. Hoje estão marcados DIM-01/02/03/04.
+> Dica: para um primeiro loop conservador, deixe **um só** bloco (Média, sem dependências) com
+> `loop-safe` e marque os demais quando quiser. Os marcados hoje: `python scripts/garimpeiro_select_block.py --list`.
 
 ## As 4 redes de segurança (substituem o humano no loop)
 1. **Container sem credencial** — o `run-ralph-loop.sh` **aborta** se achar `VPS_`, `SSH_PRIVATE_KEY`,
@@ -109,7 +109,7 @@ passam (cria `LOOP_DONE`) ou trava (3× no mesmo erro, ou guard → `RELATORIO-B
 
 ### Por que os parquets de `data/staging` aparecem dentro do container
 São **gitignored** e estão na sua máquina; o `-v "${PWD}:/repo"` os monta. O loop os **lê** para os
-blocos de modelagem (DIM-01/03/04) — mas **não** os commita (seguem ignorados).
+blocos loop-safe que consomem `data/staging` — mas **não** os commita (seguem ignorados).
 
 ## 3. Acompanhar
 - `git log --oneline` e `git diff main...HEAD` no branch `ciclo/loop-*` — veja o que foi feito.

@@ -1,5 +1,7 @@
 # Plano — Piloto Web App do Motor de Expansão (substituição do Streamlit)
 
+> **[histórico]** Plano EXECUTADO: o piloto web substituiu o Streamlit (escopo na DEC-020; corte pela DEC-022 em 2026-08-03). O app atual está em `web/README.md` e `docs/arquitetura_app_atual.md`; o texto abaixo é o plano de 2026-07 e não descreve o estado do produto.
+
 > Documento de handoff para desenvolvimento. Objetivo: construir um piloto web app que
 > reorganiza a plataforma em torno da **narrativa analítica** (potencial → residual →
 > concorrência → recomendação) e, se validado, substitui o dashboard Streamlit atual.

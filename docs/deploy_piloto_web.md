@@ -36,7 +36,8 @@ motor-expansao-web` no GHCR, com **Trivy bloqueante** (HIGH/CRITICAL).
 
 - **Automático**: o job roda em **todo push na `main`** (DEC-022 — a imagem `motor-expansao-web`
   é a imagem principal de UI) e publica quando o path-filter acusa mudança em `web/**`,
-  `Dockerfile.web`, `src/motor_expansao/(dashboard|dimensionamento|api)/**` ou `pyproject.toml`.
+  `Dockerfile.web`, `src/motor_expansao/(dashboard|dimensionamento|api|db|renda)/**`,
+  `src/motor_expansao/perfil.py` ou `pyproject.toml`.
 - **Manual / bootstrap** (ex.: mudança que o filtro não pega):
   ```bash
   gh workflow run ci.yml --ref main -f publish_web=true
@@ -115,9 +116,9 @@ Confira o que o piloto precisa (senão a feature degrada em silêncio):
   silêncio que manteve a camada fora do ar de 2026-08-19 a 2026-08-24 (BLK-MA-19). Juntos têm
   ~2,9 MB. **Depois do `scp`, RESTARTAR o `web`** — ver o aviso logo abaixo. A variante
   `vulnerabilidade_ma_academias.parquet` **não** sobe: nenhuma superfície de produção a lê.
-- `concorrentes/logo_<rede>.png` — **logos das bandeiras** (pendente; sem eles, fallback sigla+cor).
+- `concorrentes/logo_<rede>.png` — **logos das bandeiras** (sincronizados toda semana pelo lote de domingo — BLK-CONC-SYNC-01, `scripts/sync_concorrentes_dashboard.py`; rede sem arte cai no fallback sigla+cor).
 
-Enviar arquivos que faltarem (scp permitido; ssh remoto não — §6 do CLAUDE.md):
+Enviar arquivos que faltarem (`scp` e `ssh` funcionam via `~/.ssh/id_ultra_mcp`; cada comando na VPS exige confirmação explícita — §6 do CLAUDE.md):
 ```bash
 scp -i ~/.ssh/id_ultra_mcp <arquivo> root@2.25.137.241:/opt/motor-expansao/data/staging/
 # validar na VPS: md5sum
@@ -210,7 +211,7 @@ O Authelia autentica; **quem autoriza por aba é o backend do piloto**
 ```
 
 Formato (abas válidas: `mapa`, `oportunidades`, `imobiliaria`, `executiva`,
-`viabilidade`; `"*"` é o default para usuário fora da lista; chave começando com `_` é
+`viabilidade`; `"*"` é o default para usuário fora da lista — mas **nunca concede aba sensível** (`executiva`, `viabilidade`, `imobiliaria` exigem concessão nominal) e não vale para requisição sem `Remote-User`; chave começando com `_` é
 comentário):
 
 ```json
@@ -253,7 +254,9 @@ Regras de operação:
 - A SPA esconde as abas via `GET /api/me`; o bloqueio real é o middleware (403 nas
   rotas da aba vetada). Rota nova sem regra reprova em
   `tests/unit/test_piloto_web_acesso.py` (cobertura obrigatória).
-- Solução **temporária** até o banco de identidade (plano de 2026-08-07).
+- Solução **temporária** até o banco de identidade (plano de 2026-08-07). **O banco já existe no código:** com
+  `MOTOR_DATABASE_URL` preenchida, o RBAC por capacidade do banco (`REGRAS_POR_CAPACIDADE`, `web/server/acesso.py`)
+  passa a mandar e este JSON deixa de ser consultado — conferir com `grep '^MOTOR_DATABASE_URL=' .env`.
 
 ---
 
@@ -320,7 +323,8 @@ docker compose -f docker-compose.prod.yml exec web curl -fsS \
 
 Sem o mount, a rota `/api/oportunidades` responde **200 com lista vazia** e a tela diz
 "Nada no recorte" — exatamente o que ela diz quando um filtro não casou. Foi por isso que
-o artefato entrou no `/api/health`: é o único lugar onde essa falta vira sinal.
+o artefato entrou no inventário de artefatos — hoje em `/api/acessos/saude-artefatos` (rota de admin), não mais no
+`/api/health`, emudecido pelo pentest Onda B #8: é o único lugar onde essa falta vira sinal.
 
 ---
 
@@ -357,6 +361,13 @@ piloto.ultra-expansao.tech {
         copy_headers Remote-User Remote-Groups Remote-Name Remote-Email
     }
     reverse_proxy web:8899
+    log {
+        output file /var/log/caddy/piloto-access.log {
+            roll_size 20mb
+            roll_keep 10
+            roll_keep_for 2160h
+        }
+    }
 }
 ```
 
@@ -387,14 +398,14 @@ access_control:
     - domain: piloto.ultra-expansao.tech
       policy: one_factor          # ou two_factor, se o ultra_team já usa 2FA
       subject:
-        - "group:ultra_team"
+        - "group:expansao_br"   # Bloco D (2026-09-03); a regra do `piloto-ar.` usa `group:expansao_ar`
 ```
 Garanta que o subdomínio está coberto pela config de sessão/cookie (mesmo `session.domain`
 base `ultra-expansao.tech` já cobre os subdomínios). Reiniciar:
 ```bash
 docker compose -f docker-compose.prod.yml restart authelia
 ```
-Usuários novos: `authelia/users_database.yml` (argon2id, grupo `ultra_team`) — ver
+Usuários novos: `authelia/users_database.yml` (argon2id, grupos `ultra_team` + `expansao_br`; `expansao_ar` para a AR) — ver
 `docs/infra_producao.md`.
 
 ---
@@ -431,7 +442,7 @@ Abrir `https://piloto.ultra-expansao.tech` → login Authelia → piloto.
 
 ## 6. Checklist de verificação pós-deploy
 
-- [ ] `GET /api/health` responde `{"status":"ok"}` no container. **É só isso que ele
+- [ ] `GET /api/health` responde `{"status":"ok"}` + `renda_fatores` (versão dos fatores de renda e `fixada_por_env`, E0) no container. **É só isso que ele
       responde** — foi emudecido pelo pentest Onda B #8, então ele fica verde com os
       artefatos faltando. Prova que o container está de pé, e nada além disso.
 - [ ] **`artefatos_faltando` vem vazio** — em `GET /api/acessos/saude-artefatos`, que é
@@ -441,7 +452,8 @@ Abrir `https://piloto.ultra-expansao.tech` → login Authelia → piloto.
       git nem na imagem — chegam só pelo bind mount `/opt/motor-expansao/data/staging`.
       Sem eles o piloto sobe normal e o **passo 4 sai vazio e sem cor, em silêncio**,
       então nenhum outro item deste checklist acusa a falta. Se aparecer algum nome ali,
-      copiar o arquivo para o staging do VPS (juntos têm ~2,4 MB) e repetir o `up -d`.
+      copiar o arquivo para o staging do VPS (juntos têm ~2,4 MB) e `docker restart motor_expansao_web` — `up -d` sem mudança de config não recria o container, e os leitores
+      memoizam a ausência (aviso do §2).
       **Vale igual para `independentes_nomeadas` e `redes_nomeadas`** (pins de academia,
       ~2,9 MB juntos): a lista de nomes possíveis aqui não é só a de crescimento.
 - [ ] **Os pins de academia aparecem de fato** — e este item é separado do anterior de
@@ -461,7 +473,8 @@ Abrir `https://piloto.ultra-expansao.tech` → login Authelia → piloto.
 - [ ] Viabilidade calcula um ponto e mostra o **banner "preliminar"**.
 - [ ] Relatório Pontual (PDF) gera sem erro (basemap/contextily presentes).
 - [ ] Tooltip de renda domiciliar mostra valor **municipal** (não o fallback nacional) —
-      se cair no nacional, faltam os 3 parquets de renda domiciliar (§2).
+      desde a E0 da renda não há mais queda silenciosa no nacional: sem os 2 parquets de uplift (§2) o container
+      recusa subir (`InsumoRendaInvalido` no log).
 - [ ] **Visão Executiva** abre com a rede do Brasil inteiro (sem pedir UF) e a carteira
       lista as unidades com semáforo. `GET /api/rede/carteira` deve responder em < 1 s.
 - [ ] Filtro de **consultor** tem nomes (se estiver vazio, falta o `cadastro_unidades.json` — §2.1).
@@ -539,7 +552,8 @@ ordem:
    mesmo ato da linha nominal do passo 4; `caddy reload`; atualizar os backups
    cifrados (`secrets/`).
 7. **Validar e subir** *(na VPS, de `/opt/motor-expansao/app`, com aprovação do
-   Felipe, comando a comando)*: primeiro `git pull` — é o que traz o
+   Felipe, comando a comando)*: primeiro levar o arquivo por `scp` (o checkout da VPS está parado e o compose de produção foi trocado à mão em
+   17/10, então `git pull` ali não é passo rotineiro) — é o que traz o
    `docker-compose.ar.yml` e o template para a VPS (o merge deste PR precisa já ter
    acontecido); depois `docker compose -f docker-compose.ar.yml config`
    (a validação sintática final — `docker compose` não roda na máquina de dev) e

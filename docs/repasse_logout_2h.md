@@ -4,7 +4,7 @@
 > com confirmação explícita do Felipe ou do Vinicius antes de cada um (§6 do `CLAUDE.md`). Se
 > qualquer saída vier diferente do previsto, **pare e chame quem repassou**.
 
-**Origem:** emenda da DEC-067 (D2) de 14/10/2026, decidida por Vinicius — inatividade 30 min -> 2 h;
+**Estado:** executado na VPS em 17/10/2026; o backup cifrado (R1/R2) entrou no #461. **Origem:** emenda da DEC-067 (D2) de 14/10/2026, decidida por Vinicius — inatividade 30 min -> 2 h;
 o teto absoluto de 8 h e a trava de toque de 5 min ficam como estão.
 
 ## Por que existe um passo manual

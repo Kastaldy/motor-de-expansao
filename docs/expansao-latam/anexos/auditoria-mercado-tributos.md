@@ -1,7 +1,7 @@
 # Auditoria — mercado, tributos e regulação (CO, MX, PE, PY)
 
 - Data de acesso de todas as fontes: **2026-10-16**. Nada foi alterado no repositório.
-- Escopo: seções B, C, D e F dos dossiês `dossie_CO.md`, `dossie_MX.md`, `dossie_PE.md`, `dossie_PY.md` e `dossie_transversal.md`.
+- Escopo: seções B, C, D e F dos dossiês `../01-dossie-CO.md`, `../01-dossie-MX.md`, `../01-dossie-PE.md`, `../01-dossie-PY.md` e `../01-dossie-transversal.md`.
 - Status: **verificado** = abri a fonte primária (RI, lei/decreto, jurisprudência, autoridade tributária, banco central/instituto, site oficial); **secundário** = imprensa, escritório, compilação ou trecho de busca de página oficial que não abriu; **não verificado** = sem fonte confiável.
 - Amostras (dado não confiável) em `scratchpad/amostras/auditoria/`; scripts em `scratchpad/scripts_aud/` (rodados com `python -P -E`, fora do diretório das amostras).
 

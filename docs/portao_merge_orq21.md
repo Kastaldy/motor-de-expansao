@@ -12,7 +12,7 @@ A `main` não é mais protegida por "1 aprovação humana". Ela é protegida por
 | check | quem é | o que reprova |
 |---|---|---|
 | `test` | `ci.yml` | suíte full, `ruff`, `mypy`, `gitleaks`, `pip-audit`. Gate sem bypass. |
-| `guard` | `guard.yml` → `scripts/loop_guard.py` | o PR toca caminho **crítico** (M1, `config.py`, `deploy/`, `secrets/`, `Dockerfile.*`, CI) ou de **governança** (`.github/`, `CLAUDE.md`, `REVIEW.md`, `tasks/backlog.md`, o próprio guard) **sem a label humana validada**. |
+| `guard` | `guard.yml` → `scripts/loop_guard.py` | o PR toca caminho **crítico** (M1, `config.py`, `deploy/`, `secrets/`, `Dockerfile.*`, CI) ou de **governança** (`.github/`, `CLAUDE.md`, `REVIEW.md`, `tasks/backlog.md`, o próprio guard e, depois do bootstrap, `web/`, `src/motor_expansao/api/`, `prompts/`, `.claude/` — lista completa em `scripts/loop_guard.py`) **sem a label humana validada**. |
 | `review-gate` | `guard.yml` | a label `criticidade:*` do PR **não bate** com o campo Criticidade do bloco em `tasks/backlog.md` **da base** (criticidade não é auto-declarada), ou falta a label humana em bloco Alta/Crítica. |
 | `claude-review` | `claude-review.yml` | achado de **severidade ALTA** pela régua do `REVIEW.md` (defeito técnico). |
 
@@ -21,7 +21,7 @@ A `main` não é mais protegida por "1 aprovação humana". Ela é protegida por
 - **Baixa / Média** → mergeia **sozinho** (auto-merge nativo), sem humano, com os 4 verdes.
 - **Alta** → exige a label `aprovado-humano`, aplicada por um humano **não-bot**, **diferente do
   autor do PR**, com `write`/`admin` — tudo validado **via API**, não na confiança.
-- **Crítica** → exige `critica-aprovada` aplicada pelo **próprio dono** (`Kastaldy`).
+- **Crítica** → exige `critica-aprovada` aplicada por um dos **donos** (`Kastaldy` ou `VinhoAbencoado` — DEC-019), além de `aprovado-humano` de um humano ≠ autor (`review-gate`).
 
 **O deploy NUNCA é automático.** Auto-merge não deploya: um push na `main` só publica a imagem
 no GHCR. Subir a imagem na VPS continua sendo passo manual, por digest (`CLAUDE.md` §6).
@@ -45,7 +45,7 @@ App poderia reportar um check chamado `guard` e satisfazer o portão.
 
 1. **`guard` vermelho** — leia o veredito no log: ele diz o caminho, a classe e a label que falta.
    - classe `governanca` → alguém **que não seja você** aplica `aprovado-humano`.
-   - classe `critico` → o **dono** (`Kastaldy`) aplica `critica-aprovada`.
+   - classe `critico` → um dos **donos** (`Kastaldy` ou `VinhoAbencoado`, DEC-019) aplica `critica-aprovada`.
 2. **`review-gate` vermelho** — aplique a label `criticidade:<nivel>` **igual** ao campo
    Criticidade do bloco no `backlog.md`. Divergir = reprovado (é o ponto: o agente não
    se auto-classifica como Baixa).
@@ -114,10 +114,9 @@ Incidente = PR auto-mergeado que reprove o `guard` em auditoria, introduza segre
 
 ## 6. Pendências conhecidas
 
-- **O auto-merge do loop ainda não flui.** O housekeeping do `/run-cycle` stuba
-  `tasks/backlog.md` a cada ciclo → o `guard` classifica como **governança** → todo PR de ciclo
-  pede `aprovado-humano`. É o que o **BLK-ORQ-24** resolve (tirar o housekeeping do PR de ciclo).
-  Enquanto ele não entra, o auto-merge vale para PRs que **não** tocam o backlog.
+- **Resolvido pelo BLK-ORQ-24 (2026-07-14):** no modo auto-merge o PR de ciclo não toca mais
+  `tasks/backlog.md` (só código + testes + o append em `completed.md`); o stub vai para o PR de
+  housekeeping em lote (`/run-cycle` Passo 6.0-lote), o único que pede `aprovado-humano`.
 - **`claude-review` é um SPOF externo.** Token expirado, rate-limit da assinatura ou outage da
   action = check vermelho e nada mergeia. O kill-switch da §5 é a saída.
 - **`strict: true`** exige a branch atualizada com a `main`: se a `main` andar, o PR precisa de

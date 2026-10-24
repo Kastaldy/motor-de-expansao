@@ -1,18 +1,18 @@
 # Piloto web — Motor de Expansão
 
-Substituição faseada do Streamlit por um app web. Três telas: **Mapa Territorial**
+App de produção do Motor desde a DEC-022 (2026-08-03), que aposentou o Streamlit. Abre no **Início** (seletor de modo em duas trilhas) e leva às telas **Oportunidades** (Top 10), **Ponto**, **Oportunidades imobiliárias**, **Acessos** (restrita) e às três abaixo: **Mapa Territorial**
 (porta de entrada por estado → funil de 5 camadas → município), **Visão Executiva**
 (a rede Ultra real como carteira acionável — Growth API) e **Viabilidade do ponto** (stress-test
 de um imóvel real). Os relatórios em PDF saem do Mapa e da Viabilidade.
 
 ## Porta de entrada por UF e drill-down
 
-O app abre numa **landing** com um seletor de estado bem visível. Ao escolher um
+O app abre no **Início**; no modo **Explorar uma região** o card pede o estado antes de abrir o mapa (a antiga landing virou esse passo). Ao escolher um
 estado, o Mapa mostra a leitura territorial da **UF inteira** e o painel recomenda
 **municípios**; clicar num município **filtra automático** para ele (drill-down).
 "Todos os municípios" volta à visão da UF. Dois extras enxutos: **multi-hex**
 (comparar vários hexes e somar residual/população/score) e um **filtro global**
-"MELHORES" (mostra só os hexes de faixa M1 mais alta).
+"FAIXA M1" no Brasil desde a DEC-077 ("MELHORES" na instância sem o Top 10), que mostra só os hexes de faixa M1 mais alta.
 
 ## Visão Executiva — a rede como carteira acionável (DEC-023)
 
@@ -33,7 +33,7 @@ busca local. O mapa é um **card ao lado**, com bolha ∝ faturamento e cor = di
 funcionam, via `history.pushState`): série de 12 meses fechados, funil comercial,
 comparação contra os pares de mesma **maturidade**, NPS contra a meta oficial da rede,
 novos alunos dia a dia e as recomendações do diagnóstico. Ali também se **atribui
-consultor / master franqueado** — a única escrita do piloto.
+consultor / master franqueado** — a primeira escrita do piloto (DEC-023); depois vieram a trilha de acesso (DEC-027), os gestos da aba imobiliária (DEC-037) e, com o banco ligado, usuários, sessões e eventos (DEC-067).
 
 **Diagnóstico por régua absoluta, não por quartil.** Quartil acendia alerta em 85% da
 rede; réguas absolutas + persistência (saldo operacional exige 3 meses fechados
@@ -105,7 +105,7 @@ cd web && npm run dev
 
 O **mapa** conta a história em cinco camadas, e cada uma declara de onde veio e o
 que sobrou — no DF: `999 hexágonos → 99 hexágonos quentes → 38 com residual →
-23 white spaces → 4 aberturas`. Os números saem do dado real, não são mock. O
+23 white spaces → 4 aberturas` (medição anterior à DEC-041, que trocou o white space por "regiões que comportam entrada", até 2 concorrentes, e à DEC-077, que no Brasil faz da camada 5 o Top 10 único — 5 Mata Virgem + 5 Premium — lido no município inteiro). Os números saem do dado real, não são mock. O
 passo 1 (Potencial) só conta regiões com **≥ 5.000 habitantes** (mesma régua
 `POP_MIN_ACIONAVEL` do mapa, que pinta `<5k` em cinza); o corte propaga por todo o
 funil. A cadeia acima tem quatro elos para cinco camadas porque o **passo 4 não
@@ -114,16 +114,17 @@ chegaram até ali, sem tirar nem reordenar ninguém.
 
 O **4º passo** ("Como a cidade está indo") é contexto sobre a praça — emprego
 formal, renda, população, empresas e área construída, com o veredito em uma frase
-e o detalhe atrás de um botão. No **5º passo** o botão da barra inferior deixa de
-ser "próxima camada" e passa a gerar o **Relatório Municipal** (9 páginas).
+e o detalhe atrás de um botão. O **Relatório Municipal** sai de qualquer camada no nível de
+município (desde 2026-10-20); no **5º passo** o "próxima camada" sai e só ele fica. O número
+de páginas varia (no Brasil, 8 fixas e 12 com as da praça — DEC-077).
 
 O filtro de **UF e Município** é ordenado alfabeticamente e ganha um campo de
 **busca** (insensível a acento) quando há muitas opções. O painel lateral mostra
 até as **10 melhores** localidades da camada; como a lista já chega filtrada pelo
-funil (quente + residual + white space), toda recomendação é viável — se houver
+funil (quente + residual + até 2 concorrentes, DEC-041; no Brasil a camada 5 é o Top 10 da DEC-077), toda recomendação é viável — se houver
 menos, a lista encurta sozinha.
 
-Escolhendo um hexágono, "Testar viabilidade deste ponto" leva para a segunda tela
+Escolhendo um hexágono, "Testar viabilidade desta região →" leva para a Viabilidade
 com a coordenada já carregada. Lá, os campos opcionais do imóvel (fotos, valor,
 pé-direito, vagas, tipo, observações) alimentam o **Relatório Pontual completo**.
 
@@ -146,22 +147,22 @@ A lupa no cabeçalho aceita uma coordenada (`lat, lng`, com ponto ou vírgula
 decimal), um link do Google Maps **ou um endereço livre**. Coordenada/link são
 resolvidos offline (parser puro, bbox do Brasil); um endereço cai no **geocoding**
 (`/api/geocode`, Nominatim — DEC-010: cache em disco, timeout, fallback gracioso).
-Ao encontrar, o mapa voa até o ponto, **solta um pin**, **marca o hexágono** que o
-contém (H3 res-7) e abre o atalho **"Estudo pontual →"**, que leva à Viabilidade
-daquele ponto — funciona mesmo fora do município carregado (a viabilidade e o
+Ao encontrar, a coordenada vira um **ponto analisado** (decisão do dono, 2026-10-14): abre a ficha
+de ponto, com os botões **"Estudo"** e **"Simulador"**, e o comparativo de pontos — sem pin local
+nem cartão "Estudo pontual" — funciona mesmo fora do município carregado (a viabilidade e o
 Relatório Pontual são geográficos, resolvem o município no servidor).
 
 ## Guardrail da demanda
 
-A demanda da Viabilidade é **premissa explícita do operador** — nunca prevista pela
-geografia (DEC-009). A ferramenta testa o número que você assume; ela não adivinha
-quantos alunos o ponto teria.
+A demanda da Viabilidade é **premissa do operador**, sempre editável. Desde a DEC-078
+(que revogou a DEC-009) ela pode vir **sugerida pelo modelo de praça** (isócrona de 10 min de
+carro), quando `GET /api/demanda-v2/estado` diz que ele está disponível; o veredito usa o valor final.
 
 Ela **vem preenchida com o p50** da curva tamanho→densidade para a metragem
 informada (dos comparáveis Ultra, depende só de `m²`) e **re-escala** quando você
 muda a metragem — até você mexer no `±`, aí o valor manual prevalece (o link
 "voltar ao p50" restaura). É um ponto de partida honesto, não uma previsão: o
-badge diz "padrão · p50" ou "ajuste manual" conforme o caso.
+badge diz "padrão · p50", "sugestão do modelo" (demanda do modelo de praça) ou "ajuste manual" conforme o caso.
 
 A demanda também **dimensiona a folha** (ver a seção abaixo): é ela que define o
 tamanho da equipe que a unidade contrata para abrir a porta.
@@ -259,7 +260,7 @@ eu empato se a equipe também encolher junto". Enquanto a folha era percentual, 
 break-even saía otimista (840,6).
 
 **TIR e VPL.** A TIR sai do fluxo de caixa real dos 64 meses; o VPL desconta o mesmo
-fluxo a **12% a.a.** — taxa **provisória, pendente de aval do comitê** (muda o VPL, não
+fluxo à **taxa mínima do negócio, 25% a.a.** (`SIM_TAXA_MINIMA_NEGOCIO_AA`, decidida em 2026-07-25), e o do sócio à taxa mínima do sócio, **derivada** — duas óticas, `PREMISSAS_VIABILIDADE.md` §6.2 (muda o VPL, não
 muda payback, EBITDA nem TIR). Quando o fluxo não troca de sinal não existe raiz real:
 a TIR vem como `null` explícito, nunca como `NaN`.
 
@@ -302,21 +303,22 @@ M-4 a M+60): mergulha com o CAPEX na pré-abertura, sobe pela rampa de maturaç�
 a linha do zero no **payback** — área vermelha abaixo, verde acima, com o marcador do
 mês de virada. Reage a metragem, aluguel, demanda, CAPEX, carência e taxa de franquia.
 
-Duas coisas que o gráfico agora mostra e antes ficavam escondidas pela média de
-steady-state: o **EBITDA do mês 1 é bem negativo** (−R$ 43.464,47 no caso de
-referência — a folha é integral desde a abertura, enquanto os alunos rampam por 8
-meses; o mês 4 já vai a +R$ 21.522,79) e há um **mês declarado de virada do caixa
-operacional** (`mes_caixa_operacional_positivo` — mês 6 no caso de referência).
+Duas coisas que o gráfico mostra e a média de steady-state escondia: o **EBITDA do mês 1**
+(a folha é integral desde a abertura; na curva observada, padrão desde a DEC-078, ele já abre em
++R$ 63.906,20 no caso de referência porque o 1º mês tem 80% da demanda — na rampa linear, só pela
+API, é −R$ 43.464,47) e o **mês declarado de virada do caixa operacional**
+(`mes_caixa_operacional_positivo` — mês 4 na curva e mês 6 na reta, no caso de referência).
 
 ## Estrutura
 
 ```
 web/
-  server/app.py         backend do piloto (não toca src/motor_expansao/api/)
+  server/app.py         backend do piloto (reusa serviços de src/motor_expansao/api/)
   src/
     lib/                contrato de tipos, cliente HTTP, formatação pt-BR
     components/         dock, mapa deck.gl, painel narrativo, stepper, gráficos
-    screens/            MapScreen, ViabilityScreen
+    screens/            InicioScreen, MapScreen, OportunidadesScreen, PontoScreen, ViabilityScreen, ExecutiveScreen,
+                        OportunidadesImobiliariasScreen, AcessosScreen, LoginScreen
     styles/tokens.css   paleta e escalas
 ```
 
@@ -326,7 +328,7 @@ Idênticas ao dashboard Streamlit (CLAUDE.md §5): faixas de 10 pontos via
 `RESIDUAL_SCORE_BANDS` (vermelho→verde), corte de `<5k hab` em cinza e score NaN
 com fill próprio — porte 1:1 de `dashboard/utils.score_band_to_color`. O score que
 colore muda por passo, espelhando os modos do dashboard: passo 1 → censitário,
-passos 2–3 → residual, passo 5 → faixa de oportunidade do M1. O **passo 4 é a
+passo 2 → residual (modelo de 2 km), passo 3 → residual do modelo de 1 km (padrão da camada desde 2026-09-02), passo 5 → faixa de oportunidade do M1 — no Brasil, a cor do segmento do Top 10 (DEC-077). O **passo 4 é a
 exceção**: ele não usa a rampa de score, e sim três classes categóricas de
 crescimento da área construída do hexágono (`crescClasseToColor`) — não há nota
 ali, há direção. Os hexágonos **do passo atual ficam em opacidade cheia e os de
@@ -340,32 +342,31 @@ Ao passar o mouse, o tooltip espelha o do dashboard Streamlit: **Município / UF
 **Faixa M1**, os três scores (M1, censitário, residual — o que colore o mapa no
 passo atual vem em destaque), **Habitantes**, **Renda per capita**, **Renda média
 domiciliar**, **Residual Fitness** e concorrentes no raio. A renda domiciliar usa a
-mesma fórmula do Streamlit (`renda per capita × moradores × uplift × fator`,
+fórmula do módulo `motor_expansao.renda` (`renda.hex.renda_domiciliar_hex`: com a malha de setores, `renda_domiciliar_2022_malha × F_dom(uf)`; sem ela, base × moradores × uplift × F_dom,
 com uplift e moradores municipais e o fator da versão vigente de
 `motor_expansao.renda`); sem os parquets municipais de uplift no `data/`, cai
 no fallback nacional em dev — em produção (`MOTOR_DATA_DIR` setado) a subida
 recusa sem eles.
 
-O basemap é o **CARTO Dark Matter** (tiles online, precedente DEC-004/DEC-010),
+O basemap é o **CARTO Dark Matter** no tema escuro e o **Positron** no claro (tiles online, precedente DEC-004/DEC-010),
 com fallback gracioso ao gradiente do tema se a rede faltar — a interatividade do
 mapa não depende de internet.
 
 ## Tipografia
 
-O template de referência usa Manrope + JetBrains Mono. Aqui:
+O template de referência usava Manrope + JetBrains Mono. Desde 2026-09-25 (decisão do
+Felipe: o guia da marca não admite fonte fora das institucionais), nos dois temas:
 
-- **Instrument Serif** — voz narrativa (títulos de camada, veredito)
-- **Instrument Sans** — interface
-- **IBM Plex Mono** — todo número, com figuras tabulares
+- **Barlow Condensed** — títulos e voz narrativa (substituta livre da DIN Condensed)
+- **Barlow** — interface e todo número, com figuras tabulares (`tnum`)
 
-A separação serif/sans é o que faz a tela ler como um briefing e não como um
-painel de métricas.
+O serif saiu do produto (`web/src/styles/tokens.css`: `--f-titulo`, `--f-story`, `--f-ui`, `--f-num`).
 
 ## O que ainda não é
 
 Piloto. O corte do Streamlit foi decidido e executado pela DEC-022 (2026-08-03) — este app é o único de produção.
-As outras três abas do dock aparecem desabilitadas de propósito, para deixar
-explícito que isto é um recorte.
+Os ícones desabilitados do Dock (`Expansão de domínio` e `Carteira e plano`) saíram em
+2026-09-02 a pedido do Juan; o tipo mantém `tela: null` para um destino futuro.
 
 Custos conhecidos: a primeira leitura de uma UF carrega a partição inteira
 (alguns segundos); o Relatório Pontual baixa tiles de rua e leva ~80 s em área

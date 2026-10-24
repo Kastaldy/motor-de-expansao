@@ -16,7 +16,9 @@ contrato, desvio de guardrail, supersessão de bloco). NÃO use para bookkeeping
 
 ## Passos
 
-1. **Descobrir o próximo ID.** Liste `docs/decisions/DEC-*.md`, pegue o maior número e some 1.
+1. **Descobrir o próximo ID.** Liste `docs/decisions/DEC-*.md` **da `origin/main` atualizada**
+   (`git fetch origin && git ls-tree --name-only origin/main docs/decisions/ | sort | tail -3` — numerar pelo
+   diretório local colide entre branches), pegue o maior número e some 1; reconfira antes de abrir o PR.
    Respeite gaps já reservados (ex.: `DEC-015` é reservado — a numeração pulou 014→016). Nunca reutilize
    um número.
 
@@ -35,7 +37,7 @@ contrato, desvio de guardrail, supersessão de bloco). NÃO use para bookkeeping
    Não é preciso repetir os **invariantes vigentes** (M1 read-only, merge por criticidade, acentuação,
    CSV/encoding, deploy-manual) — eles estão no callout do §8 e são impostos por `loop_guard.py`.
 
-3. **Inserir 1 linha no índice do `CLAUDE.md` §8** (preserve o EOL do arquivo — CLAUDE.md é CRLF), na
+3. **Inserir 1 linha no índice do `CLAUDE.md` §8** (preserve o EOL do arquivo — CLAUDE.md é LF), na
    ordem numérica, na tabela `| DEC | Data | Criticidade | Decisao | Status |`:
    ```
    | [DEC-0XX](docs/decisions/DEC-0XX.md) | <AAAA-MM-DD> | <Criticidade> | <título> | <APROVADA|...> |
@@ -50,8 +52,10 @@ contrato, desvio de guardrail, supersessão de bloco). NÃO use para bookkeeping
    python -m pytest tests/unit/test_claude_md_size.py -q
    ```
    Os dois testes devem passar: (a) `CLAUDE.md` continua sob o teto de linhas; (b) o conjunto de IDs
-   linkados no §8 == conjunto de arquivos em `docs/decisions/` (sem drift). Se o teto estourar, é sinal de
-   que algo além do índice cresceu — mova detalhe para `docs/`, não relaxe o teto sem decisão.
+   linkados no §8 == conjunto de arquivos em `docs/decisions/` (sem drift). Como o §8 cresce 1 linha
+   por DEC por contrato, suba `_TETO_LINHAS` em +1 nesse teste no MESMO PR (com o comentário
+   `N -> N+1 na DEC-0XX`, prática desde a DEC-061); se estourar por outra coisa, algo além do índice
+   cresceu — mova detalhe para `docs/`, não relaxe o teto sem decisão.
 
 ## Guardrails
 - READ-ONLY sobre o M1: registrar uma DEC não altera `score_priorizacao`/pesos/artefatos (a menos que a

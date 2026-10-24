@@ -23,7 +23,7 @@ Contrato curto para compartilhar o repo com a equipe e operar o deploy do piloto
 | caminho | papel | handoff |
 | --- | --- | --- |
 | `web/` | piloto web (SPA React/Vite + FastAPI) — app de producao | codigo principal do deploy |
-| `config.py` | parametros canonicos e defaults | manter junto do repo |
+| `src/motor_expansao/config.py` | parametros canonicos e defaults | manter junto do repo |
 | `src/motor_expansao/` | pacote interno com o motor compartilhado (`dashboard/`), core e pipelines M1 | codigo modular do projeto |
 | `src/motor_expansao/pipelines/` | pipelines analiticos e geracao de artefatos | nao rodar no deploy |
 | `docs/` | contratos tecnicos e runbooks | fonte de consulta da equipe |
@@ -45,7 +45,7 @@ montado `:ro` no container; sem o dado, a feature degrada em silencio):
 | `hexagonos_dashboard_enriquecido/` (particoes `uf=XX/`) | `data/outputs/` | **obrigatorio** — Mapa Territorial, carga por UF |
 | `setores_censitarios_2022_geo/` | `data/outputs/` | Relatorio Pontual (malha real IBGE) |
 | `base_calibracao_maduras.parquet` | `data/staging/` | semente p50/faixa da Viabilidade |
-| `uplift_renda_domiciliar_municipio.parquet`, `uplift_composicao_setor.parquet`, `fator_temporal_renda.json` | `data/staging/` | renda domiciliar municipal (sem eles, fallback nacional) |
+| `uplift_renda_domiciliar_municipio.parquet`, `uplift_composicao_setor.parquet` | `data/staging/` | renda domiciliar municipal (obrigatorios em producao: com `MOTOR_DATA_DIR` a subida recusa sem eles; o fator temporal viaja na imagem) |
 | `growth_api_historico.parquet`, `concorrentes_mapeados.parquet`, `unidades_ultra_performance_hex.parquet` | `data/staging/` | Visao Executiva + pins |
 | `logo_<rede>.png` | `concorrentes/` | logos das bandeiras (sem eles, fallback sigla+cor) |
 
@@ -61,7 +61,7 @@ Camadas `data/staging/censo2022_setores_*.parquet` enriquecem rastreabilidade qu
 Instalacao local:
 
 ```bash
-python -m pip install -e ".[dev]"
+python -m pip install -e ".[dev,api_mvp]"
 copy .env.example .env
 ```
 
@@ -125,10 +125,11 @@ A equipe deve receber os seguintes arquivos **fora** do repositorio git (via dri
 | `setores_censitarios_2022_geo/` | `data/outputs/` | sim (Relatorio Pontual) |
 | `base_calibracao_maduras.parquet` | `data/staging/` | sim (Viabilidade) |
 | `growth_api_historico.parquet`, `concorrentes_mapeados.parquet`, `unidades_ultra_performance_hex.parquet` | `data/staging/` | sim (Visao Executiva + pins) |
-| `uplift_renda_domiciliar_municipio.parquet`, `uplift_composicao_setor.parquet`, `fator_temporal_renda.json` | `data/staging/` | recomendado (renda municipal) |
+| `uplift_renda_domiciliar_municipio.parquet`, `uplift_composicao_setor.parquet` | `data/staging/` | sim (renda municipal; sem eles a subida recusa) |
 | `logo_<rede>.png` | `concorrentes/` | recomendado (logos dos pins) |
 | `.env` (com `WEB_IMAGE`/`API_IMAGE` por digest + segredos reais) | raiz do projeto | sim |
 | `censo2022_setores_calibrado.parquet` | `data/staging/` | sim |
+| `perfil.json` (versionado em `data/perfis/BR/`) | `data/` (bind de arquivo; copiar ANTES do `up`) | sim - sem ele o container nao sobe (DEC-047) |
 
 Apos copiar, validar com `python scripts/check_artifacts.py` antes do deploy.
 
@@ -162,4 +163,4 @@ Recomendacao: manter pelo menos uma versao anterior dos Parquets minimos em `/ba
 - `.env` real e credenciais fora do git; usar `.env.example` como referencia.
 - Suite rapida executada antes do envio: `tests/unit/test_piloto_web_api.py`, `tests/unit/test_piloto_web_endpoints.py` e `tests/integration/test_carteira_plano_nacional.py`.
 - Smoke do piloto executado localmente (`iniciar-piloto-web.cmd`) ou na VPS.
-- PostGIS, Prefect, scraping e pipelines nacionais pesados comunicados como fora do deploy.
+- Prefect e o recalculo nacional do M1 comunicados como fora do deploy (o `postgres`/PostGIS ja esta no `docker-compose.prod.yml`, opcional por `MOTOR_DATABASE_URL`; a coleta de concorrentes e o regen do mercado rodam por cron na VPS - DEC-013/DEC-059).

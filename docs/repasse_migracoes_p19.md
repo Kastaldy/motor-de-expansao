@@ -24,7 +24,7 @@
 > previu, **pare e chame quem repassou**. Nenhum passo aqui é urgente a ponto de justificar
 > adivinhar.
 
-**Data do ensaio:** 23/09/2026 · **Ensaiado contra:** PostgreSQL 18.4 + PostGIS, banco de
+**Estado:** sem uso na produção atual — o banco nasceu em 17/10/2026 já com as 21 migrations (`banco_deploy.md` §5); vale só para um banco pré-existente com `000`–`017`. **Data do ensaio:** 23/09/2026 · **Ensaiado contra:** PostgreSQL 18.4 + PostGIS, banco de
 ensaio com as 21 migrations aplicadas · **Duração estimada:** 20 a 30 min, com ~10 min de
 piloto fora do ar.
 
@@ -257,9 +257,9 @@ docker compose -f docker-compose.prod.yml run --rm -e MOTOR_DATABASE_URL_ADMIN \
 > números, o comando imprime uma seção `== provisionamento (D20) ==` e, no fim dela:
 >
 > ```
->   AVISO: este papel tem INSERT direto em perfil_permissoes_historico. Num
->   cluster de teste isso e' esperado (voce conecta como dono); em PRODUCAO
->   significa que o D20 nao esta de pe e a auditoria da 009 nao protege nada.
+>   AVISO: o papel que CONECTOU aqui tem INSERT direto em perfil_permissoes_historico.
+>   Se voce conectou como dono (e o §8 manda conectar assim, com a credencial de DDL), isto e' esperado e nao diz nada sobre o D20.
+>   O alarme de verdade e' este mesmo sinal sair VERDADEIRO conectado como `app`: e' o que o comando `privilegios` mede.
 > ```
 >
 > Ele sai **sempre neste passo**, e não é sintoma de nada: o passo 3 exportou

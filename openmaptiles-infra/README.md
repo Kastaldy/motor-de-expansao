@@ -1,9 +1,10 @@
 # OpenMapTiles self-host — basemap do motor
 
 Sobe um servidor de **tiles vector OpenMapTiles** na **mesma VPS do motor**, com o
-**visual MapTiler soft** (autoral) e um **satélite + overlay claro**. É a **Fase 1**:
-montar a infra. A Fase 2 (seletor de basemap no motor) vem depois, apontando o
-`map_style` do pydeck para as URLs deste servidor.
+**visual MapTiler soft** (autoral) e um **overlay de rótulos** (`ultra-labels`: nomes de rua por cima do choropleth, BLK-BASEMAP-06).
+O consumidor é o **fundo de ruas dos PDFs** (`api` e `web`), por URL interna
+(`API_BASEMAP_TILES_URL` / `API_BASEMAP_LABELS_URL` → `http://motor_expansao_tileserver:8080/styles/...`);
+a "Fase 2" original (seletor de basemap no `map_style` do pydeck) morreu com o Streamlit (DEC-022).
 
 > **Alinhado à infra de produção do motor** (`docs/infra_producao.md`): stack separada
 > (padrão dos `-infra`), na rede `app_net`, atrás do **Caddy** existente. Servido **sob
@@ -18,7 +19,7 @@ montar a infra. A Fase 2 (seletor de basemap no motor) vem depois, apontando o
 ## Como encaixa na produção (topologia)
 
 ```
-https://dashboard.ultra-expansao.tech/          -> dashboard (Streamlit)
+https://dashboard.ultra-expansao.tech/          -> 301 para o piloto (DEC-022)
 https://dashboard.ultra-expansao.tech/tiles/... -> tiles (MESMO login Authelia)
                           │
           [Caddy motor_expansao_caddy] :443  (TLS + Authelia forward_auth)
@@ -27,7 +28,7 @@ https://dashboard.ultra-expansao.tech/tiles/... -> tiles (MESMO login Authelia)
                           │  lê  data/mbtiles/brazil.mbtiles
                           ▼
           /tiles/styles/ultra-maptiler/style.json
-          /tiles/styles/sat-overlay/style.json
+          /tiles/styles/ultra-labels/style.json
 ```
 
 - **Login:** herda o Authelia do dashboard (same-origin) — sem cookie cross-origin.
@@ -49,10 +50,11 @@ openmaptiles-infra/
    ├─ config.json                # tileserver -> mbtiles + styles + publicUrl (/tiles/)
    ├─ mbtiles/                   # brazil.mbtiles vai aqui (gerado; gitignored)
    └─ styles/
-      └─ ultra-maptiler/style.json   # visual MapTiler soft (autoral)
+      ├─ ultra-maptiler/style.json   # visual MapTiler soft (autoral)
+      └─ ultra-labels/style.json     # overlay de rótulos por cima do choropleth (BLK-BASEMAP-06)
 ```
 
-> **`sat-overlay` NAO foi versionado (2026-07-28).** O estilo buscava a imagem de satelite em
+> **`sat-overlay` foi versionado mas NÃO é servido (2026-07-28).** O estilo buscava a imagem de satelite em
 > `server.arcgisonline.com` **sem chave** — exatamente o endpoint anonimo que a **DEC-018**
 > proibiu ao regularizar a licenca (`censo_map.py:1611-1617`: a vista aerea vem de
 > `ibasemaps-api.arcgis.com` autenticada por `API_ARCGIS_API_KEY`, e **sem** chave a pagina e
@@ -78,11 +80,11 @@ openmaptiles-infra/
    docker network ls | grep app      # espera-se 'app_app_net'
    ```
 
-3. **Gere os tiles do Brasil** (~3–6 GB; precisa de Java 17+: `apt install -y openjdk-17-jre-headless`):
+3. **Gere os tiles do Brasil** (~3–6 GB; precisa de **Java 21** — o planetiler `latest` é class file 65 e aborta no 17: `apt install -y openjdk-21-jre-headless`):
    ```bash
    bash scripts/generate-brazil.sh
    ```
-   > ⚠️ **Não rode no domingo 2h** (janela do job pesado do motor). Melhor: gerar em
+   > ⚠️ **Não rode de sábado 03:00 UTC até o fim do lote de domingo** (coleta do WellHub, DEC-039, e lote das 06:00 UTC de domingo). Melhor: gerar em
    > **outra máquina** e copiar só `data/mbtiles/brazil.mbtiles` — impacto zero no motor.
    > RAM: `JAVA_XMX=4g bash scripts/generate-brazil.sh` se precisar.
 
@@ -102,7 +104,7 @@ openmaptiles-infra/
 
 6. **Pronto.** Estilos disponíveis (exigem estar logado no dashboard):
    - `https://dashboard.ultra-expansao.tech/tiles/styles/ultra-maptiler/style.json`
-   - `https://dashboard.ultra-expansao.tech/tiles/styles/sat-overlay/style.json`
+   - `https://dashboard.ultra-expansao.tech/tiles/styles/ultra-labels/style.json`
 
 ---
 
@@ -133,7 +135,7 @@ a fonte é OpenMapTiles, a mesma família do MapTiler Basic.
 - [ ] `docker network ls` confirma o nome da rede em `docker-compose.yml`.
 - [ ] `handle_path /tiles/*` adicionado ao bloco **dashboard** do Caddyfile (via SOPS) e Caddy recarregado.
 - [ ] `ufw` **permanece** só 22/80/443 (nada a abrir). **Sem DNS novo.**
-- [ ] **Monitoramento:** `scripts/healthcheck_vps.sh` conta "5 containers" — subir p/ **6** (o tileserver).
+- [x] **Monitoramento:** `motor_expansao_tileserver` já está no array `CONTAINERS` de `scripts/healthcheck_vps.sh` (8 containers vigiados hoje).
 - [ ] `publicUrl` no `data/config.json` = `https://dashboard.ultra-expansao.tech/tiles/` (ajuste se o domínio mudar).
 
 ---
@@ -143,15 +145,15 @@ a fonte é OpenMapTiles, a mesma família do MapTiler Basic.
 - **Login (igual ao antigo):** os tiles ficam atrás do Authelia porque são servidos no
   domínio do dashboard. Como é same-origin, o cookie de sessão já vale — por isso **não**
   usamos subdomínio separado (lá o MapLibre não mandaria o cookie e quebraria).
-- **Fontes (glyphs):** os estilos usam `Open Sans Italic`/`Semibold` (`serveAllFonts: true`).
-  Se algum rótulo sumir, troque no `style.json` por `Open Sans Regular`/`Bold`.
+- **Fontes (glyphs):** os estilos usam `Noto Sans Regular`, a única fonte da imagem (`paths.fonts`
+  aponta para dentro dela) — ver "Fontes do estilo (nao remover)" abaixo.
 - **Sem segredos:** OpenMapTiles é keyless — nada entra no SOPS além do trecho do Caddyfile.
 - **Atualizar OSM:** re-rode `scripts/generate-brazil.sh` (trimestral basta) e
   `docker compose restart tileserver`. Opcional.
 - **Encolher:** `AREA=sao-paulo bash scripts/generate-brazil.sh` gera só uma UF. Default: `brazil`.
-- **Fase 2 (motor):** trocar os 7 `pdk.Deck(map_style=CARTO_DARK)` de `components.py` por
-  um `map_style` resolvido de `st.session_state["basemap_choice"]`, com o seletor no
-  `render_uf_selectbox` (`pages.py`), apontando para os estilos deste servidor.
+- **Consumo no motor:** o Streamlit (e com ele `components.py`/`pages.py` e o plano de seletor por `pdk.Deck`)
+  foi aposentado na DEC-022. Hoje os estilos deste servidor alimentam o basemap dos PDFs por URL interna
+  (`API_BASEMAP_TILES_URL` / `API_BASEMAP_LABELS_URL` no `docker-compose.prod.yml`).
 ```
 
 ## Fontes do estilo (nao remover)

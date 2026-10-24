@@ -5,14 +5,14 @@
 > `src/motor_expansao/dimensionamento/simulador.py`. Backend, frontend e PDF apenas
 > **leem** o resultado — nenhuma fórmula financeira pode ser reescrita fora do simulador.
 >
-> Ciclo: **FIN-VIAB-01** (reconciliação do simulador) · Atualizado em **2026-07-25**
+> Ciclo: **FIN-VIAB-01** (reconciliação do simulador) · Atualizado em **2026-07-25**, com acréscimos de **2026-10-05** (studios com ticket próprio, DEC-068) e **2026-10-21/22** (demanda do modelo de praça e curva de rampa, DEC-078)
 > (**4ª rodada** — a régua de retorno foi refeita: a taxa de desconto de 12% a.a. **saiu** e deu
 > lugar à **taxa mínima do negócio de 25% a.a.**, a **taxa mínima do sócio passou a ser derivada**
 > (não é mais parâmetro), TIR e VPL passaram a existir em **duas óticas separadas**, entrou o
 > **cheque total** e a margem mínima de viabilidade subiu de 10% para **30%**. Ver §6.2, §6.3,
 > §6.4 e §10. A 3ª rodada — **folha fixa desde o mês 1** e **taxa de franquia parcelada em 4×** —
 > segue valendo: §4.1 e §6.1.)
-> Guardrail permanente: camada **paralela**, READ-ONLY sobre o M1 (DEC-001/DEC-008/DEC-009).
+> Guardrail permanente: camada **paralela**, READ-ONLY sobre o M1 (DEC-001/DEC-008/DEC-078; a DEC-009 foi revogada pela DEC-078).
 
 ---
 
@@ -42,7 +42,7 @@
 | parâmetro | default | unidade | fonte | quem pode alterar | onde vive |
 |---|---|---|---|---|---|
 | `ticket_cheio` | — (input obrigatório) | R$/aluno/mês | planilha `Simulador!J9` (ver conflito **C** na §9) | Operador | `Premissas.ticket_cheio`; sidebar da Viabilidade, rotulado **"Ticket de musculação"** desde 2026-10-05 (era "Ticket cheio do plano"). **Não depende mais do número de studios** — cada studio tem ticket próprio (§4, `SIM_TICKETS_STUDIO_PADRAO`) |
-| `SIM_MENSALIDADE_BALCAO` | `137` | R$/aluno/mês | `Simulador!J9`, cenário 0 studios | Felipe | `config.py`; **fallback do backend** quando o operador não informa ticket (`web/server/app.py`, `viabilidade_ponto.py`, `pages.py`, `backtest_dim.py`). A tela envia `147` — ver conflito **C** na §9 |
+| `SIM_MENSALIDADE_BALCAO` | `137` | R$/aluno/mês | `Simulador!J9`, cenário 0 studios | Felipe | `config.py`; **fallback do backend** quando o operador não informa ticket (`payload_viabilidade.py`, que monta o corpo da rota de `web/server/app.py`; `viabilidade_ponto.py`; `backtest_dim.py`). A tela envia `147` — ver conflito **C** na §9 |
 | `SIM_TICKET_AGREGADOR_FATOR` | `0.60` | % do ticket cheio | comentário original de `viabilidade_ponto.py` ("~60% do ticket"), formalizado no FIN-VIAB-01 | Felipe | `config.py` → `Premissas.ticket_agregador_fator` → `Premissas.ticket_agregador` |
 | `SIM_TICKET_AGREGADOR` | `82` | R$/aluno/mês | aba `Simulador`, linha 11 | **congelado (legado)** | `config.py`; só alimenta `viabilidade()` legado e `ticket_agregador_absoluto` |
 | `SIM_SHARE_BALCAO` | `0.69` | % dos alunos totais | mix real da rede (69 balcão / 31 agregadores) | Felipe | `config.py` → `Premissas.share_balcao`; payload `premissas.share_balcao` e `split` |
@@ -54,17 +54,17 @@
 | `SIM_ANUIDADE_APENAS_BALCAO` | `True` | booleano | decisão de Felipe (2026-07-24): o agregador remunera por acesso, o aluno de Gympass/TotalPass não paga anuidade à academia | Felipe (dono do produto) | `config.py` → `Premissas.anuidade_apenas_balcao`; payload `premissas.anuidade_apenas_balcao` |
 | `SIM_ANUIDADE_ELEGIVEL_PCT` | `None` (= **deriva do churn**) | % dos alunos de balcão | derivado, não arbitrado: `(1 − churn)^12` = `0,94^12` = **47,59%** | Felipe (dono do produto) | `config.py` → `Premissas.anuidade_elegivel_efetivo`; payload `premissas.anuidade_elegivel_pct` |
 | `SIM_ANUIDADE_PRO_RATA` | `True` | booleano | decisão de Felipe (2026-07-24): reconhecimento mensal de `99 ÷ 12` a partir do mês 12 | Felipe (dono do produto) | `config.py` → `Premissas.anuidade_por_aluno_balcao_mes`; linha `receita_anuidade` da série |
-| `demanda_total` | — (input obrigatório) | alunos totais | **premissa explícita do operador** (DEC-009 — nunca prevista pela geografia) | Operador | argumento de `simular()`; payload `demanda_premissa` / `demanda_fonte` |
+| `demanda_total` | — (input obrigatório) | alunos totais | **premissa do operador**, sempre editável: semeada pela faixa de densidade da metragem ou, no modo `v2`, pelo p50 do modelo de praça (DEC-078, que revogou a DEC-009) | Operador | argumento de `simular()`; payload `demanda_premissa` / `demanda_fonte` |
 | `SIM_FORMA_RAMPA_PADRAO` | `"curva_uni03"` | lista (`curva_uni03` \| `reta`) | **DEC-078**, emenda de 21/10/2026 (Vinicius): "A rampa de maturação fica exclusivamente como curva observada" — padrão de TODO o produto, com qualquer origem da demanda | Comitê + DEC | `config.py` → `payload_viabilidade.forma_rampa_padrao()`; payload `forma_rampa` (vazio = este padrão), eco em `premissas.forma_rampa`. A tela NÃO oferece a reta; a API pública ainda a aceita (compatibilidade). ÚNICA fonte do padrão: voltar para `"reta"` reverte o produto — ver §2.2 |
-| `SIM_MESES_PICO_RAMPA` / `SIM_MES_PICO_RAMPA_PADRAO` | `(6, 8, 10, 12, 15, 18, 24)` / `10` (= `SIM_MES_PICO_RAMPA_OBSERVADO`, o 1º mês com 100% na curva) | meses | **DEC-078**, emenda de 21/10/2026: pico de maturação selecionável | Comitê + DEC | payload `mes_pico_rampa` (vazio = 10; fora das opções → 422), eco em `premissas.mes_pico_rampa` (null na reta); `simulador.curva_rampa_com_pico` reescala a curva; tela "Pico de maturação da rampa" |
+| `SIM_MES_PICO_RAMPA_MIN` / `SIM_MES_PICO_RAMPA_MAX` / `SIM_MES_PICO_RAMPA_PADRAO` | `1` / `36` / `10` (= `SIM_MES_PICO_RAMPA_OBSERVADO`, o 1º mês de VIDA com 100% na curva) | meses de vida | **DEC-078**, emendas de 21/10/2026 (pico selecionável) e 22/10/2026 (contador de 1 a 36; `SIM_MESES_PICO_RAMPA` deixou de existir) | Comitê + DEC | payload `mes_pico_rampa` (vazio = 10; fora de 1–36 → 422), eco em `premissas.mes_pico_rampa` (null na reta); `simulador.curva_rampa_com_pico` reescala a curva; tela "Pico de maturação" (contador −/+) |
 | `SIM_MODELO_DEMANDA_PADRAO` | `"densidade"` | lista (`densidade` \| `v2`) | **DEC-078** (Parte 2) | Comitê + DEC | payload `modelo_demanda`; ausente = densidade (o de sempre). A tela só pede a v2 quando `GET /api/demanda-v2/estado` diz disponível |
 | `V2_ENV_CHAVE` | `MOTOR_VIABILIDADE_V2` | env (`0`/`false`/`nao`/`off` desliga) | **DEC-078** (Parte 2), crítica C4 | Dono do deploy | chave ÚNICA de servidor da v2: desligada, some do estado, da sugestão, da viabilidade, do PDF e da planilha |
 | `V2_COEFICIENTES_ARQUIVO` | `v2_coeficientes.json` (ao lado de `dimensionamento/`) | JSON (schema em `demanda_v2.py`) | Felipe (ficha_v2, variante sem masters) | Felipe + DEC | entregue em 21/10/2026 (reestimado com o Valhalla); ausente -> sugestão indisponível com motivo |
 | `V2_MINUTOS_ISOCRONA` | `10` | minutos de carro | **DEC-078** (Parte 2) / DEC-074 | Comitê + DEC | entradas `pop_c10`, `dom_c10`, `renda_pc_c10` na isócrona do Valhalla; nunca no raio |
 | `V2_SHARE_BALCAO_SEM_AGREGADOR` | `0,999` | fração | **DEC-078** (Parte 2), achado UNI-14 | Comitê + DEC | predicado de "abre sem agregador". **Desde a emenda de 21/10/2026 NÃO força mais a reta**: a curva vale sem agregador também (ressalva na ajuda da tela); a flag `rampa_reta_forcada_sem_agregador` segue no payload, sempre falsa |
-| `SIM_CURVA_RAMPA_UNI03` | `0,68 0,77 0,84 0,88 0,90 0,92 0,97 0,97 0,99 1 1 1` | fração da demanda, meses de operação 1–12 (1,0 depois) | **BLK-UNI-03**, tabela P1 (alunos, mediana), derivada de `SIM_CURVA_UNI03_ALUNOS_P1` (sem o mês 0, máximo acumulado, teto 100%) | Comitê + DEC | `config.py` → `Premissas.curva_rampa` (com pico ≠ 10, a versão reescalada de `curva_rampa_com_pico`); payload `premissas.curva_rampa` (null na reta); fecha no pico (`premissas.mes_maturidade_rampa`; 10 sem escolha) |
+| `SIM_CURVA_RAMPA_UNI03` | `0,80 0,68 0,77 0,84 0,88 0,90 0,92 0,97 0,97 0,99 1 1 1` | fração da demanda por mês de VIDA 0–12 = meses de operação 1–13 (1,0 depois) | **BLK-UNI-03**, tabela P1 (alunos, mediana), derivada de `SIM_CURVA_UNI03_ALUNOS_P1` (com o mês 0 desde a emenda de 22/10/2026; máximo acumulado do mês 1 em diante, teto 100%) | Comitê + DEC | `config.py` → `Premissas.curva_rampa` (com pico ≠ 10, a versão reescalada de `curva_rampa_com_pico`); payload `premissas.curva_rampa` (null na reta); fecha no pico (o fim da rampa, `premissas.mes_maturidade_rampa`, é o mês de operação pico + 1: 11 sem escolha) |
 | `SIM_ALUNOS_INICIAL` | `500` | alunos | `Simulador!E9` | Felipe | `config.py` → `Premissas.alunos_inicial` (piso da rampa). **Só na forma "reta"** |
-| `SIM_MATURACAO_MESES` | `8` | meses | `Simulador!E13` | Felipe | `config.py` → `Premissas.maturacao_meses`. **Só na forma "reta"**; o fim da rampa que entra no mês de *steady* (junto com `SIM_ANUIDADE_MES_INICIO`, §2.1) é `Premissas.mes_maturidade_rampa` (reta: este valor; curva: 10) |
+| `SIM_MATURACAO_MESES` | `8` | meses | `Simulador!E13` | Felipe | `config.py` → `Premissas.maturacao_meses`. **Só na forma "reta"**; o fim da rampa que entra no mês de *steady* (junto com `SIM_ANUIDADE_MES_INICIO`, §2.1) é `Premissas.mes_maturidade_rampa` (reta: este valor; curva: pico + 1, 11 no padrão) |
 | `SIM_ALUNOS_BALCAO_MATURIDADE` | `938` | alunos | `Simulador!E10` | **congelado (legado)** | `config.py`; só o caminho `viabilidade()` legado |
 | `SIM_ALUNOS_AGREGADORES_MATURIDADE` | `651` | alunos | `Simulador!E11` | **congelado (legado)** | `config.py`; só o caminho `viabilidade()` legado |
 | `rampa_apenas_balcao` | `False` | booleano | contrato de rampa do FIN-VIAB-01 | Engenharia (compat) | `Premissas`; `True` só nos adaptadores históricos |
@@ -107,12 +107,12 @@ Padrão: **curva observada**, em todo o produto (emenda de 21/10/2026, Vinicius:
 
 | Forma | Alunos no mês `t` de operação | Usa |
 |---|---|---|
-| **curva observada** (`curva_uni03`, o padrão) | `demanda × fração(t)`, com `fração(t) = curva_obs(1 + (t − 1) × 9 / (pico − 1))` interpolada linearmente entre meses observados (mês 1 = a abertura observada, 68%, em todo pico; `≥ 10` → 100%); pico 10 = `SIM_CURVA_RAMPA_UNI03` intacta | a demanda e o pico (`mes_pico_rampa`) |
+| **curva observada** (`curva_uni03`, o padrão) | `demanda × fração(k)`, com `k = t − 1` o mês de vida (mês 0 = a inauguração, 80%, e mês 1 = 68%, medidos e iguais em todo pico) e, para `k ≥ 1`, `fração(k) = curva_obs(1 + (k − 1) × 9 / (pico − 1))` interpolada linearmente entre meses observados (`≥ 10` → 100%); pico 10 = `SIM_CURVA_RAMPA_UNI03` intacta | a demanda e o pico (`mes_pico_rampa`) |
 | **reta** (`reta`, a rampa histórica da planilha; só pela API) | `alunos_iniciais + (demanda − alunos_iniciais) × min(t / maturação, 1)` | `SIM_ALUNOS_INICIAL`, `SIM_MATURACAO_MESES` |
 
-Pico de maturação: o mês em que a curva chega a 100% (fim da rampa); o mês de *steady* é `max(pico, mês da anuidade)`. Opções `6, 8, 10, 12, 15, 18, 24`; no golden, quanto mais tarde o pico, igual ou maior o payback (travado em teste). **Pico depois do mês 12:** o *steady* é medido no próprio pico, que já tem o reajuste anual do mês 13 — o DRE de *steady* sai a preços do 2º ano e fica acima do de um pico até 12 (faturamento +3,84% no golden, margem 39,26% → 39,20%); a nota da tela diz isso nesse caso. Medir o *steady* a preços do ano 1 é decisão pendente do dono (DEC-078).
+Pico de maturação: o mês de VIDA em que a curva chega a 100%; o fim da rampa é o mês de operação pico + 1 e o *steady* é `max(pico + 1, mês da anuidade)`. Qualquer mês de 1 a 36 (contador −/+, emenda de 22/10/2026); no golden, quanto mais tarde o pico, igual ou maior o payback (travado em teste). **Pico a partir do mês 12:** o *steady* é medido no fim da rampa (pico + 1), que já tem o reajuste anual do mês 13 — o DRE de *steady* sai a preços do 2º ano e fica acima do de um pico até 12 (faturamento +3,84% no golden, margem 39,26% → 39,20%); a nota da tela diz isso nesse caso. Medir o *steady* a preços do ano 1 é decisão pendente do dono (DEC-078).
 
-Nas duas o split balcão/agregador/studios é o mesmo (`Premissas.split_alunos`) e o faturamento é alunos × ticket. **Não modelado na curva:** o ticket menor dos primeiros meses (o faturamento observado rampa mais devagar que os alunos: 52% contra 68% no mês 1) e a participação crescente do agregador — o caixa do 1º ano sai otimista em relação ao observado. Efeito da curva no golden (Boulevard Londrina): payback 31 → 25, TIR do sócio 38,98% → 56,30%, menor demanda viável 2.164 → 2.037; margem e EBITDA de steady idênticos. Amarras na DEC-078: BLK-UNI-05 (rampa nova sem a demanda nova aumenta aprovações) — até 21/10 resolvida por a curva só ser padrão com a demanda sugerida; desde a emenda a curva vale também com a demanda do operador, por decisão do dono, e o risco medido (menor demanda viável −127 alunos no golden) vale para todo o produto; UNI-14 (curva medida em unidades que abriram com agregador) declarada na ajuda da tela.
+Nas duas o split balcão/agregador/studios é o mesmo (`Premissas.split_alunos`) e o faturamento é alunos × ticket. **Não modelado na curva:** o ticket menor dos primeiros meses (o faturamento observado rampa mais devagar que os alunos: 52% contra 68% no mês 1) e a participação crescente do agregador — o caixa do 1º ano sai otimista em relação ao observado. Efeito da curva no golden (Boulevard Londrina): payback 31 → 25, TIR do sócio 38,98% → 54,12%, menor demanda viável 2.164 → 2.052 (remedido com o mês 0, emenda de 22/10/2026); margem e EBITDA de steady idênticos. Amarras na DEC-078: BLK-UNI-05 (rampa nova sem a demanda nova aumenta aprovações) — até 21/10 resolvida por a curva só ser padrão com a demanda sugerida; desde a emenda a curva vale também com a demanda do operador, por decisão do dono, e o risco medido (menor demanda viável −112 alunos no golden; eram −127 antes do mês 0) vale para todo o produto; UNI-14 (curva medida em unidades que abriram com agregador) declarada na ajuda da tela.
 
 ---
 
@@ -619,13 +619,13 @@ Vivem em `src/motor_expansao/dimensionamento/viabilidade_ponto.py` e aparecem no
 | parâmetro | default | unidade | fonte | quem pode alterar | onde vive |
 |---|---|---|---|---|---|
 | `POP_ZONA_MORTA_MIN` | `5 000` | habitantes | alinhado ao `POP_MIN_ACIONAVEL` do dashboard | Felipe | `viabilidade_ponto.py`; payload `flag_zona_morta` |
-| `RENDA_ZONA_MORTA_MIN` | `1 600` | R$ per capita | régua mínima do entorno | Felipe | `viabilidade_ponto.py`; payload `motivo_zona_morta` |
+| `RENDA_ZONA_MORTA_MIN` | `500` | R$ per capita | guarda de absurdo, inerte na rede atual (DEC-042; era 1.600) | Felipe | `viabilidade_ponto.py`; payload `motivo_zona_morta` |
 | `ENVELOPE_MIN` / `ENVELOPE_MAX` | `600` / `3 000` | m² | base de calibração Ultra (636-2.800 m² + folga; MAPE 85% além) | Engenharia + Felipe | `viabilidade_ponto.py`; payload `flag_fora_envelope` |
 | `N_MIN_COMPARAVEIS` | `3` | un. | mínimo de comparáveis para não alargar a faixa | Engenharia | `viabilidade_ponto.py`; payload `faixa_alunos.n_comparaveis` |
 | `ALUNOS_RANGE_DEFAULT` | `(200 … 1200)` | alunos | eixo da grade de sensibilidade | Felipe | `viabilidade_ponto.py`; payload `grade` |
 | `ALUGUEL_RANGE_FATOR` | `(0,6 … 1,5)` | × aluguel pedido | eixo da grade de sensibilidade | Felipe | `viabilidade_ponto.py`; payload `grade` |
 | `SHARE_BALCAO_DEFAULT` | `0.69` | % | **duplicata** de `SIM_SHARE_BALCAO` — o canônico é o do `config.py` | Engenharia (remover) | `viabilidade_ponto.py` |
-| `DEMANDA_FONTE_PREMISSA` | `"premissa_explicita"` | string | **DEC-009** — a demanda nunca vem de lat/lng | Comitê + DEC | `viabilidade_ponto.py`; payload `demanda_fonte` |
+| `DEMANDA_FONTE_PREMISSA` | `"premissa_explicita"` | string | default do modo densidade (era a regra da DEC-009, revogada pela DEC-078); no modo `v2` o payload traz `"modelo_v2"` ou `"premissa_editada"` (`viabilidade_v2.py`) | Comitê + DEC | `viabilidade_ponto.py`; payload `demanda_fonte` |
 
 **Escopo fechado, fora deste documento:** fórmulas de renda per capita e domiciliar, Residual
 Fitness (não vira regra de viabilidade), contagem de concorrentes, metodologia de p10/p90 e o botão
@@ -790,7 +790,7 @@ Premissas(..., taxa_minima_negocio_aa=0.25)   # SIM_TAXA_MINIMA_NEGOCIO_AA
 
 Qualquer consumidor que ainda passe `taxa_desconto_aa` a `Premissas` ou leia
 `premissas.taxa_desconto_aa` **quebra em runtime** — não devolve número errado silencioso, o que é
-o comportamento desejado. Consumidores a reconciliar: `web/server/app.py` (campo do body e do
-payload), `web/src/lib/types.ts` + `ViabilityNotes.tsx` + `ViabilityScreen.tsx` (rótulo da tela),
-`dimensionamento/simulador_xlsx.py` (linha "Taxa de desconto (VPL)" da aba Premissas) e
-`tests/contracts/test_viabilidade_golden.py` (pin da constante antiga).
+o comportamento desejado. Na borda, `taxa_desconto_aa` segue como **alias depreciado** de
+`taxa_minima_negocio_aa`, no corpo e em `premissas` do payload (`dimensionamento/payload_viabilidade.py`).
+Consumidor ainda a reconciliar: `web/src/screens/ViabilityScreen.tsx`, que lê o alias e ainda chama a
+taxa de "provisória" (contra o §10).

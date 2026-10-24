@@ -1,5 +1,7 @@
 # STATUS — Ciclo FIN-VIAB-01 (reconciliação do simulador de viabilidade)
 
+> **[histórico]** Ciclo encerrado: o FIN-VIAB-01 entrou na `main` com o piloto web (merge 3bd61a8d, BLK-WEB-18/DEC-022, 2026-08-03), e a 4ª rodada (2026-07-25: taxa mínima do negócio de 25% a.a., margem mínima de 30%, cheque total) não está refletida aqui. Premissas vigentes: `PREMISSAS_VIABILIDADE.md`.
+
 **Branch:** `ciclo/FIN-VIAB-01-reconciliacao` · **Worktree:** `.claude/worktrees/fin-viab-01`
 **Snapshot deste documento:** 2026-07-24, **3ª rodada** (estado observado no momento da escrita; o
 ciclo roda com frentes em paralelo — confirmar com `git status` antes de tomar decisão de
@@ -157,7 +159,7 @@ paralelo, uma por arquivo:
 **Guardrails que a Fase 2 não pode quebrar:**
 
 - READ-ONLY sobre o M1 — nada de `score_priorizacao`, pesos ou artefatos oficiais.
-- A demanda **nunca** vem de lat/lng (DEC-009); `demanda_fonte = "premissa_explicita"`.
+- A demanda vinha só do operador (DEC-009 — revogada pela DEC-078: no modo `v2` ela é sugerida pelo modelo de praça e `demanda_fonte` vira `modelo_v2` ou `premissa_editada`).
 - `web/server/app.py` **não** pode chamar `to_parquet`/`to_csv` (há teste com AST que verifica).
 - O payload sai por `json.dumps(..., allow_nan=False)`: nenhum `inf`/`NaN` pode vazar — payback
   infinito e TIR `None` viram `null` explícito.
@@ -218,8 +220,8 @@ Detalhe completo em `PREMISSAS_VIABILIDADE.md` §9 e §10.
 
 | # | Pendência | Quem decide | Por que importa |
 |---|---|---|---|
-| 1 | **NÍVEL da folha: 17% × 25-26%** (BLK-VIAB-11, 6 DREs reais, CV 0,16). **A ESTRUTURA — folha fixa — está decidida** (3ª rodada); só o nível segue aberto | Controladoria + Felipe | Re-medido na estrutura nova: a 26% o EBITDA cai de 39,26% para 30,26%, o break-even sobe para 1.416,1 e **o payback NÃO OCORRE dentro dos 60 meses** (TIR −1,05% a.a., VPL −R$ 384.910,19, acumulado M60 −R$ 40.745,08). Com a folha percentual a medição dava "54 meses" — **a pendência ficou pior, não melhor**. É a de maior impacto do ciclo. |
-| 2 | **Taxa de desconto do VPL** (12% a.a. é default provisório) | Comitê | Não há WACC formalizado. Muda o VPL (hoje **R$ 849.484,15**); não muda payback, EBITDA nem TIR. |
+| 1 | **NÍVEL da folha: 17% × 25-26%** (BLK-VIAB-11, 6 DREs reais, CV 0,16). **A ESTRUTURA — folha fixa — está decidida** (3ª rodada); só o nível segue aberto | Controladoria + Felipe | Re-medido na estrutura nova: a 26% o EBITDA cai de 39,26% para 30,26%, o break-even sobe para 1.416,1 e **o payback NÃO OCORRE dentro dos 60 meses** (na régua da 4ª rodada: do negócio TIR 11,20% / VPL −R$ 623.616,27, do sócio TIR −1,05% / VPL −R$ 623.473,26; acumulado M60 −R$ 40.745,08). Com a folha percentual a medição dava "54 meses" — **a pendência ficou pior, não melhor**. É a de maior impacto do ciclo. |
+| 2 | ~~**Taxa de desconto do VPL** (12% a.a. é default provisório)~~ **RESOLVIDA em 2026-07-25 (4ª rodada):** a taxa saiu; vale a **taxa mínima do negócio de 25% a.a.** (`SIM_TAXA_MINIMA_NEGOCIO_AA`), com a do sócio **derivada** (27,08% a.a. no caso de referência) | Felipe | VPL do negócio **R$ 312.177,18** e do sócio **R$ 276.103,24**; ver `PREMISSAS_VIABILIDADE.md` §6.2 e §10. |
 | 3 | **Taxa de franquia: R$ 160.000 × R$ 140.000** (planilha `Simulador!R10` e `docs/modelo_dimensionamento_expansao.md:276` dizem 140.000) | Felipe + Comitê | Mantido 160.000 por decisão; agora **editável pelo operador** e **parcelado em 4×**. Re-medido a R$ 140.000: payback **30** (contra 31), acumulado M60 R$ 1.665.454,56 (+R$ 20.000), VPL R$ 869.203,92 (+R$ 19.719,77), TIR 40,01% a.a. |
 | 4 | ~~**Ticket por studio deslocado um degrau**: a tela usa `[147,157,167,177]`, a planilha `Simulador!J9` usa `[137,147,157,167]`~~ **SEM OBJETO quanto à escada por studio (2026-10-05):** o studio ganhou ticket próprio (`SIM_TICKETS_STUDIO_PADRAO = (157, 167, 177)`, 8% da demanda por studio via `SIM_STUDIO_SHARE_DEMANDA`) e o "Ticket de musculação" não depende mais do número de studios — a tabela `TICKET_POR_STUDIO` deixou de existir. **Permanece só** a divergência do ticket de musculação: fallback do backend 137 × 147 da tela | Felipe | Registro histórico da medição: a R$ 137 o payback vai a **37 meses** e `flag_viavel` **cai para falso** (limite 36); EBITDA R$ 101.306,71 (37,60%), break-even 1.199,2, TIR 25,66%, VPL R$ 416.749,97. Com a folha percentual davam 34 meses e o critério ainda passava — com a folha fixa este conflito reprova a unidade sozinho. Não corrigido neste ciclo: é régua comercial, não engenharia. |
 | 5 | **Linhas da planilha ainda ausentes do motor**: **matrícula** (`Simulador!J11`) e **múltiplo de valuation 1,5×** (`Simulador!R11`) como valor terminal | Comitê + DEC | As duas **aumentariam** o resultado. A omissão é conservadora, mas é a primeira diferença a checar ao comparar com números vindos do Excel. **A anuidade saiu desta pendência** — foi decidida e implementada (ver a linha "RESOLVIDA" abaixo). |

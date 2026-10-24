@@ -22,7 +22,8 @@ este doc cobre so o ciclo rotineiro de atualizacao.
   - tag `latest` (apenas em push na `main`).
   Publica SOMENTE quando o job `test` conclui com sucesso (`needs: [test]`) e, em push
   na `main`, apenas se o diff tocar o path-filter (`Dockerfile.web`, `web/**`,
-  `src/motor_expansao/(dashboard|dimensionamento|api)/**`, `pyproject.toml`).
+  `src/motor_expansao/(dashboard|dimensionamento|api|db|renda)/**`, `src/motor_expansao/perfil.py`,
+  `pyproject.toml`).
   Scan Trivy HIGH/CRITICAL e BLOQUEANTE antes do push.
 - Um container serve tudo (`web`, container `motor_expansao_web`): o SPA (build do
   Vite) e a API em `/api/*` na porta interna `8899`, atras do Caddy + Authelia em
@@ -79,6 +80,10 @@ docker compose -f docker-compose.prod.yml logs --tail=80 web
 docker compose -f docker-compose.prod.yml exec web curl -fsS http://127.0.0.1:8899/api/health
 ```
 
+> **Stack AR (`web_ar`, `docker-compose.ar.yml`) usa o MESMO `WEB_IMAGE`:** o `up -d web` acima nao a
+> recria — rodar tambem `docker compose -f docker-compose.ar.yml pull web_ar` e
+> `docker compose -f docker-compose.ar.yml up -d web_ar` (idem no rollback). Ver `docs/deploy_piloto_web.md` §5.
+
 ## Rollback (por digest imutavel)
 
 ```bash
@@ -107,7 +112,7 @@ docker compose -f docker-compose.prod.yml restart web
 - Healthcheck falha: `docker compose -f docker-compose.prod.yml logs web`.
 - Imagem stale: mudanca fora do path-filter do `publish-web` nao republica —
   disparar manual:
-  `gh workflow run ci.yml --ref main -f publish_web=true -f dispatch_build_sanity=false`.
+  `gh workflow run ci.yml --ref main -f publish_web=true`.
 - Primeira carga de uma UF lenta: o Mapa Territorial le a particao inteira de
   `hexagonos_dashboard_enriquecido` no primeiro acesso.
 

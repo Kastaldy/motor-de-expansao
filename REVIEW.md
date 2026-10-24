@@ -40,7 +40,7 @@
 5. **Dependência de rede no caminho de CARGA do dashboard.** A seção 2 proíbe API ao vivo
    em produção. As únicas exceções são as já aprovadas e restritas a um caminho específico:
    DEC-004 (tiles do relatório pontual e, pela emenda de 2026-10-14, do PDF de concorrência
-   da unidade), DEC-010 (geocoding da barra de busca), DEC-011 (tiles do relatório municipal)
+   da unidade), DEC-010 (geocoding da barra de busca), DEC-011 (tiles do relatório municipal), DEC-018 (tiles de satélite Esri da vista aérea do relatório pontual, com chave ArcGIS por env)
    e DEC-074 (isócrona de carro pelo serviço de rotas PRÓPRIO, `MOTOR_ROTAS_URL`, só no
    cálculo do alcance do ponto: ficha, PDF pontual e comparativo; opcional por env, e sem
    ela a opção não aparece). Qualquer rede fora desses caminhos é achado ALTA.
@@ -51,7 +51,7 @@
 1. **Lógica nova sem teste** (a seção 2 exige teste para toda mudança relevante).
 2. **CSV fora do padrão** do projeto: `sep=";"` e `encoding="utf-8-sig"` (exceção legada
    conhecida: `data/ultra/Ultra.csv`).
-3. **Acentuação fora da regra.** Acento em **identificador** (`key=`, `st.session_state`,
+3. **Acentuação fora da regra.** Acento em **identificador** (chave de payload/estado,
    seletor CSS, valor bruto de enum, nome de coluna, slug ou nome de arquivo) — proibido;
    ou **falta** de acento em texto voltado ao usuário (dashboard, PDF, CSV) — obrigatório.
    No PDF, caractere fora de `latin-1` (`—`, `•`, `→`, `…`, aspas curvas) vira `?`: use

@@ -42,11 +42,10 @@ Rodar validações. Preparar handoff para QA.
 
 Executar sempre ao final (validação por SUBCONJUNTO impactado — a suíte full roda 1× no QA, não aqui):
 ```bash
-python -m pytest -n auto -q <subconjunto impactado pelo escopo + tests/integration/test_streamlit_app.py>
-python -c "import streamlit_app; print('import ok')"
+python -m pytest -n auto -q <subconjunto impactado pelo escopo + tests/unit/test_piloto_web_api.py>
 ```
 
-- O smoke `import streamlit_app` é OBRIGATÓRIO em todo ciclo (rede de segurança mínima).
+- O smoke do piloto web (`tests/unit/test_piloto_web_api.py`, que importa `web/server/app.py`) é OBRIGATÓRIO em todo ciclo (rede de segurança mínima).
 - Escolha o subconjunto pelos arquivos que você tocou; quando em dúvida, amplie o subconjunto.
 - A suíte COMPLETA (`pytest -n auto`) é responsabilidade do QA (gate único por ciclo) — NÃO rode a full aqui.
 - Se alterar pipelines ou dados, inclua os testes relevantes de staging no subconjunto.

@@ -3,7 +3,7 @@
 > **Leia junto com `01-consolidacao-auditoria.md`.** Este dossiê é a versão de campo, de 2026-10-16. A auditoria cruzada corrigiu alguns números e vereditos depois dele, e a versão corrigida vale sobre esta.
 
 - Data da pesquisa e de todos os acessos: **2026-10-16**. Somente leitura sobre o repositório; nada foi alterado nele.
-- Insumos lidos antes de pesquisar: `fase0_acoplamento_contrato.md` §2.0-2.8 e `fase0_receita_argentina.md` §1 e §6.
+- Insumos lidos antes de pesquisar: `anexos/fase0-a-acoplamento-e-contrato.md` §2.0-2.8 e `anexos/fase0-b-receita-argentina.md` §1 e §6.
 - Amostras baixadas (dado não confiável, lido com `python -I`; nada baixado foi executado), em `C:\Users\Pichau\AppData\Local\Temp\claude\C--Users-Pichau-Documents-motor-de-expansao\d45e86bf-d899-46b1-bd74-dd25828a14cf\scratchpad\amostras\MX\`:
   - `ageb01.zip`: CPV 2020 por AGEB e manzana, Aguascalientes, 2,6 MB.
   - `denue_00_71_csv.zip`: DENUE 05/2026, setor 71 nacional, 6,7 MB.

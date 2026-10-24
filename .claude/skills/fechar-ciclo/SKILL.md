@@ -19,8 +19,9 @@ executa esse procedimento de forma consistente, evitando a prosa densa repetida 
      python scripts/housekeeping_move_block.py <BLK-ID> --date <AAAA-MM-DD>
      python scripts/housekeeping_move_block.py <BLK-ID> --check     # valida antes do commit
      ```
-2. **Sincronizar o contexto** quando a feature muda estado de produção: `CLAUDE.md` §5 (nota curta),
-   `docs/<runbook>` afetado, e a DEC quando aplicável (use `/registrar-decisao`).
+2. **Sincronizar o contexto** quando a feature muda estado de produção: o `docs/<runbook>` afetado
+   e a DEC quando aplicável (use `/registrar-decisao`); o `CLAUDE.md` só se uma regra canônica mudar (está
+   no teto de `tests/unit/test_claude_md_size.py` e o §5 não guarda histórico de ciclo).
 3. **Commit por path** (nunca `git add -A`): só os arquivos do ciclo + `context/handoff/` versionado.
    **NUNCA** commitar `context/handoff.md` nem `tasks/current_task.md` (locais/gitignored). No modo
    auto-merge, o commit **não inclui `backlog.md`** (só código + testes + `completed.md`).

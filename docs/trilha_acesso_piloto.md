@@ -27,7 +27,7 @@ A camada 1 é a fonte primária de auditoria de uso; a 2 é o registro bruto de 
 ## Camada 1 — contrato do gravador
 
 - **Módulo:** `src/motor_expansao/dashboard/acesso_log.py` (gravador, filtro, poda).
-  **Middleware:** `_trilha_acesso` em `web/server/app.py` (logo após o CORS).
+  **Middleware:** `_trilha_acesso` em `web/server/app.py` (declarado por último, depois de `_controle_de_acesso_por_aba` e `_portao_de_sessao`: roda primeiro e registra inclusive os 401/403 deles).
 - **Uma linha JSON por requisição relevante**, chaves (identificadores, sem acento):
   `quando` (UTC, ISO, segundos), `usuario` (`Remote-User` → fallback `Remote-Email` →
   `"desconhecido"`; teto 120), `ip` (**último** token do `X-Forwarded-For`; fallback IP do
@@ -47,7 +47,7 @@ A camada 1 é a fonte primária de auditoria de uso; a 2 é o registro bruto de 
   > ausente, porque quem a seguir reimplementa a falha.
 - **Filtro "sem inflar"** (`relevante()`): ficam FORA os assets estáticos do SPA
   (`/assets/*` e extensões `.js/.css/.woff2/.png/...`) e o `/api/health` (healthcheck do
-  compose a cada 30 s). Todo o resto entra — inclusive `/` e deep-links do SPA (sinal de
+  compose a cada 30 s) — e, desde 28/09/2026, também o `/api/verify` (o `forward_auth` do P19, eco de cada requisição protegida). Todo o resto entra — inclusive `/` e deep-links do SPA (sinal de
   navegação) e todos os `/api/*` (a query do Relatório Pontual carrega lat/lng e inputs
   de viabilidade: é exatamente o "o quê" da auditoria).
 - **Arquivo por dia UTC** (`acesso-AAAA-MM-DD.jsonl`), append-only. **Sem prazo de
@@ -78,7 +78,7 @@ A camada 1 é a fonte primária de auditoria de uso; a 2 é o registro bruto de 
   a trilha nominal (usuário + IP + rota) é guardada sem prazo, por decisão do Vinicius —
   um afastamento declarado da postura "retenção definida" da DEC-005, registrado na emenda.
 - **Limite de confiança da identidade:** `Remote-User`/`X-Forwarded-For` são headers, e o
-  backend `web:8899` não tem autenticação própria — a camada 1 só é **confiável para
+  backend `web:8899` só autentica por conta própria com `MOTOR_AUTENTICACAO_PROPRIA` ligada (aí o portão de sessão apaga o `Remote-User` do cliente e o refaz pelo cookie); desligada, como na produção hoje, a camada 1 só é **confiável para
   tráfego que passou pelo Caddy** (que sobrescreve `Remote-User` com o valor do Authelia
   e ignora XFF de cliente não confiável). Uma requisição feita direto ao container (outro
   processo na `app_net`, dev local) pode forjar usuário/IP na linha. Para perícia, cruzar
@@ -235,7 +235,7 @@ A trilha ganhou um consumidor visual: a aba `Acessos` do piloto
 
 ## O que continua fora (dívidas conhecidas)
 
-- **Bot Telegram e API GeoEspacial**: log próprio anônimo/efêmero; sessões do bot sem
+- **Bot Telegram e API GeoEspacial**: a API segue com log anônimo/efêmero; o bot tem trilha própria desde 24/09/2026 (JSONL por dia no volume `bot_data`, chat por referência opaca e sem nome, 90 dias — `TRILHA_RETENCAO_DIAS` em `telegram_bot.py`), e as sessões do bot seguem sem
   expurgo. Fora deste ciclo por decisão de Felipe — retomar quando o bot voltar à pauta.
 - **Correlação entre camadas** (request-id único app↔Caddy): não há; o timestamp + rota
   resolve na prática para o volume atual (~1 req/s de pico).

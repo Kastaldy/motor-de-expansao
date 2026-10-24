@@ -39,7 +39,7 @@
 ## O que o Motor promete fora do Brasil, e o que não promete
 
 - **Promete:** triagem. Onde há população, renda e demanda não atendida, e quem já está lá.
-- **Não promete:** prever faturamento. Isso foi testado no Brasil e fechado por decisão (DEC-043).
+- **Não promete:** prever faturamento. No Brasil isso foi fechado pela DEC-043 e reaberto em 21/10/2026 pela DEC-078: a Viabilidade passou a sugerir o faturamento de um imóvel com um modelo calibrado nas unidades Ultra, que os quatro países não têm.
 - **Validação:** nenhum dos quatro países tem unidade Ultra para calibrar. Validaremos com:
   - um teste de "falso-veto" contra as unidades da Smart Fit: o motor não pode descartar onde ela já opera;
   - as aberturas dela em pré-venda, registradas como previsão antes de abrirem;

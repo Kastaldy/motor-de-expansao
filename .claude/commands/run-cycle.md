@@ -104,13 +104,13 @@ e qualquer alerta antes de prosseguir.
 Agent(Block Orchestrator) → lê handoff → Agent(Builder) → reportar ao usuário
 ```
 
-**Média / Alta:**
+**Média:**
 ```
 Agent(Block Orchestrator) → lê handoff → Agent(Planner) → lê handoff
 → Agent(Builder) → lê handoff → Agent(QA) → reportar veredito ao usuário
 ```
 
-**Crítica / Estratégica:**
+**Alta / Crítica / Estratégica:**
 ```
 Agent(Block Orchestrator) → lê handoff → Agent(Planner) → lê handoff
 → PARAR: apresentar handoff.md ao usuário e aguardar aprovação explícita
@@ -144,11 +144,11 @@ recursos/tempo em tarefas/prompts simples:
 | Builder | sonnet | sonnet | opus | opus |
 | QA | **opus** | **opus** | **opus** | **opus** |
 
-Modelos (IDs): Opus 4.8 = `claude-opus-4-8`; Sonnet 4.6 = `claude-sonnet-4-6`;
-Haiku 4.5 = `claude-haiku-4-5`.
+Modelos: os aliases `haiku` | `sonnet` | `opus` resolvem para a versão vigente de cada família no harness
+(a pinagem Opus 4.8/Sonnet 4.6/Haiku 4.5 é de 2026-06-02).
 
 Regras que acompanham a tabela:
-- **QA = SEMPRE Opus 4.8**, inegociável, independe da criticidade (regra dura). Nunca rebaixar o QA.
+- **QA = SEMPRE Opus** (alias `opus`, versão vigente), inegociável, independe da criticidade (regra dura). Nunca rebaixar o QA.
 - **Override por complexidade real (adaptatividade):** o orquestrador PODE ajustar ±1 nível em
   relação à tabela para um agente específico quando o prompt/tarefa for atipicamente simples ou
   complexo para a sua criticidade, registrando uma justificativa de 1 linha no
@@ -160,7 +160,7 @@ Regras que acompanham a tabela:
 
 ---
 
-## Passo 5 — Pausa de aprovação (Crítica/Estratégica)
+## Passo 5 — Pausa de aprovação (Alta/Crítica/Estratégica)
 
 Quando a esteira exigir aprovação humana:
 
@@ -170,7 +170,7 @@ Quando a esteira exigir aprovação humana:
 ```
 ⚠ APROVAÇÃO NECESSÁRIA
 
-Esta tarefa é classificada como [Crítica/Estratégica].
+Esta tarefa é classificada como [Alta/Crítica/Estratégica].
 O Planner gerou o plano técnico acima.
 
 Responda com uma das opções:
@@ -207,15 +207,15 @@ Próximo passo recomendado: [próxima tarefa do backlog ou ação]
 Ordem de fechamento (execução): **(6.0) housekeeping de concluídos → (6.a) commit por path → (6.b) merge → (6.c) dry-run autônomo → (6.d) rollback se preciso**.
 
 5. **(6.0) Housekeeping de concluídos (roda ANTES do commit 6.a).** Desde a **DEC-016 / BLK-ORQ-24** há DOIS modos, escolhidos pela via de merge do ciclo (ver 6.b). Só se aplica quando o bloco do ciclo APROVADO existe como bloco completo em `tasks/backlog.md` (ciclos ad-hoc, fora do backlog, PULAM este passo: o resumo já entra em `completed.md` via Passo 6.2).
-   - **Modo MERGE-HUMANO (ciclo interativo que um humano vai mergear com revisão de code owner).** Comportamento clássico: **mova via helper versionado** — `python scripts/housekeeping_move_block.py <BLK-ID> --date <AAAA-MM-DD>`. O helper move o bloco íntegro (fatia literal byte-idêntica, preservando CRLF) de `tasks/backlog.md` para `tasks/completed.md` e substitui o bloco no backlog por stub de 1 linha (`- BLK-XXX (concluído AAAA-MM-DD) — ver tasks/completed.md`). NÃO editar `backlog.md`/`completed.md` à mão (byte-identity garantida e testada em `tests/unit/test_housekeeping_helper.py`). Validar antes do 6.a: `... --check` (stub presente + heading ausente no backlog + bloco em completed) **e** `pytest -q` verde. As mudanças de `backlog.md` + `completed.md` entram no MESMO commit por path do 6.a; a revisão do code owner (guard classifica `backlog.md` como **governança**) sai junto do merge humano.
+   - **Modo MERGE-HUMANO (ciclo interativo que um humano vai mergear pela label `aprovado-humano`/`critica-aprovada`).** Comportamento clássico: **mova via helper versionado** — `python scripts/housekeeping_move_block.py <BLK-ID> --date <AAAA-MM-DD>`. O helper move o bloco íntegro (fatia literal byte-idêntica, preservando CRLF) de `tasks/backlog.md` para `tasks/completed.md` e substitui o bloco no backlog por stub de 1 linha (`- BLK-XXX (concluído AAAA-MM-DD) — ver tasks/completed.md`). NÃO editar `backlog.md`/`completed.md` à mão (byte-identity garantida e testada em `tests/unit/test_housekeeping_helper.py`). Validar antes do 6.a: `... --check` (stub presente + heading ausente no backlog + bloco em completed) **e** `pytest -q` verde. As mudanças de `backlog.md` + `completed.md` entram no MESMO commit por path do 6.a; a label `aprovado-humano` (o guard classifica `backlog.md` como **governança**; ele saiu do CODEOWNERS na DEC-017) sai junto do merge humano.
    - **Modo AUTO-MERGE (Baixa/Média sem revisor humano — o caso do loop/Garimpeiro, DEC-016).** **NÃO rode o helper. NÃO toque em `tasks/backlog.md`.** O bloco permanece íntegro no backlog (com o marcador `loop-safe`); só o **resumo do ciclo (Passo 6.2) vai a `completed.md`**. **Motivo:** o `guard` classifica `backlog.md` como **governança** → incluí-lo no PR de ciclo forçaria a label `aprovado-humano` e o PR **não auto-mergearia** — anulando o objetivo da DEC-016. O PR de ciclo fica então com **só código + testes + o append em `completed.md`** (que o guard trata como LIMPO) e auto-mergeia sozinho com os 4 checks verdes. A remoção do bloco do backlog é **DIFERIDA** para o PR de housekeeping em lote (6.0-lote). `completed.md` é a **fonte única de verdade** de conclusão — a seleção do loop/Garimpeiro pula um bloco cuja conclusão o helper confirma por HEADING (`python scripts/housekeeping_move_block.py <BLK-ID> --is-done`, fronteira de palavra — NÃO menção em prosa), então o bloco NÃO é re-selecionado durante a defasagem (ver `run-ralph-loop.sh`).
-   - **(6.0-lote) PR de housekeeping em lote (semanal; passo humano até a routine Zelador existir).** Um PR de **governança** (revisado por code owner) que stuba, de uma vez, os blocos já concluídos que ficaram diferidos. **Derive o delta de forma DETERMINÍSTICA, nunca por `grep` de substring:** `python scripts/housekeeping_move_block.py --emit-delta` lista os IDs a stubar — cada bloco que ainda tem heading `### BLK-XXX` ABERTO no `backlog.md` **e** já tem heading de conclusão em `completed.md`, casando por **fronteira de palavra** (senão `### BLK-FIX-06` concluído arrastaria um `BLK-FIX-06` ainda aberto, ou vice-versa por colisão de prefixo). Para cada ID emitido, rode `... <BLK-ID> --date <AAAA-MM-DD>`. A lista é **derivada** (não uma fila) — auto-corrigível: bloco stubado à mão some do delta sozinho; sem estado a apodrecer. Este é o único caminho que edita `backlog.md` no regime de auto-merge, e por isso passa por revisão humana — que é exatamente onde o marcador `loop-safe` deve ser concedido/removido sob o olho de uma pessoa.
+   - **(6.0-lote) PR de housekeeping em lote (semanal; passo humano até a routine Zelador existir).** Um PR de **governança** (liberado pela label `aprovado-humano`; `backlog.md` sem code owner desde a DEC-017) que stuba, de uma vez, os blocos já concluídos que ficaram diferidos. **Derive o delta de forma DETERMINÍSTICA, nunca por `grep` de substring:** `python scripts/housekeeping_move_block.py --emit-delta` lista os IDs a stubar — cada bloco que ainda tem heading `### BLK-XXX` ABERTO no `backlog.md` **e** já tem heading de conclusão em `completed.md`, casando por **fronteira de palavra** (senão `### BLK-FIX-06` concluído arrastaria um `BLK-FIX-06` ainda aberto, ou vice-versa por colisão de prefixo). Para cada ID emitido, rode `... <BLK-ID> --date <AAAA-MM-DD>`. A lista é **derivada** (não uma fila) — auto-corrigível: bloco stubado à mão some do delta sozinho; sem estado a apodrecer. Este é o único caminho que edita `backlog.md` no regime de auto-merge, e por isso passa por revisão humana — que é exatamente onde o marcador `loop-safe` deve ser concedido/removido sob o olho de uma pessoa.
    - **Ciclo ad-hoc (qualquer modo):** se o bloco não existe no backlog, o helper sai com **código 3** (`EXIT_AD_HOC`, `SKIP:` no stderr) → no-op (o resumo já vai a `completed.md` via 6.2). Qualquer outro código ≠ 0 é falha real → NÃO commitar; reverter não-destrutivo (`git restore tasks/backlog.md tasks/completed.md`) e reportar (6.d).
 6. **(6.a) Commit isolado por path.** Commite apenas os arquivos do ciclo + os handoffs versionados: `git add <paths> context/handoff/`, mensagem com o ID do bloco. **NÃO commite `context/handoff.md` nem `tasks/current_task.md`** (locais/gitignored desde 2026-07-10 — anti-conflito de ciclos paralelos). NÃO inclua `PRD.md` ou outros arquivos não relacionados. No **modo auto-merge**, o commit do ciclo **não inclui `backlog.md`** (só código + testes + `completed.md`). Este commit é o que viabiliza o merge e o dry-run dos passos seguintes.
 7. **(6.b) Merge — regime por criticidade (DEC-016).** O portão da `main` é por **4 checks de CI** (`test` + `guard` + `review-gate` + `claude-review`), não mais "1 aprovação humana". A via de merge depende da **criticidade do bloco** (validada contra `backlog.md` da base):
    - **Baixa / Média →** **auto-merge nativo do GitHub** (`gh pr merge <N> --auto --squash`, armado na abertura). Mergeia SOZINHO quando os 4 checks ficam verdes, sem humano. É este o caso que exige o **modo auto-merge** do 6.0.
    - **Alta →** exige a label `aprovado-humano`, aplicada por um humano (não-bot, ≠ autor do PR, com `write`/`admin`) — o merge segue humano.
-   - **Crítica →** exige a label `critica-aprovada` aplicada pelo **próprio dono** (`Kastaldy`) — merge humano.
+   - **Crítica →** exige a label `critica-aprovada` aplicada por um dos **donos** (`Kastaldy` ou `VinhoAbencoado`, DEC-019), além de `aprovado-humano` de um humano ≠ autor (`review-gate`) — merge humano.
    - **DEPLOY NUNCA é automático, em nenhum caso:** auto-merge só publica a imagem no GHCR; subir na VPS é sempre passo manual do humano, por digest (§6 do CLAUDE.md). Runbook do portão: `docs/portao_merge_orq21.md`. Após o merge, segue-se o dry-run autônomo (6.c).
 8. **(6.c) Dry-run autônomo pós-merge (gate — só para ciclos que alteram a orquestração).**
    - **Escopo (quando dispara):** o dry-run SÓ dispara quando o ciclo recém-fechado alterou a própria orquestração — `.claude/commands/run-cycle.md`, `prompts/*.md`, `.codex/skills/codex-run-cycle/SKILL.md` ou a esteira. Ciclos normais (que não tocam a orquestração) NÃO disparam dry-run.
@@ -232,14 +232,14 @@ Ordem de fechamento (execução): **(6.0) housekeeping de concluídos → (6.a) 
 ## Guardrails permanentes do orquestrador
 
 - Nunca spawnar Builder sem handoff do Planner (exceto criticidade baixa).
-- Nunca spawnar Builder em tarefa Crítica/Estratégica sem aprovação explícita do usuário.
+- Nunca spawnar Builder em tarefa Alta/Crítica/Estratégica sem aprovação explícita do usuário.
 - Se qualquer Agent retornar erro ou handoff malformado: parar, reportar ao usuário e aguardar instrução.
 - Nunca sobrescrever `tasks/completed.md` — apenas acrescentar, e **sempre AO FINAL do arquivo** (o merge dele é `union` via `.gitattributes`: appends concorrentes de ciclos paralelos se resolvem sozinhos, mas SÓ se forem appends no fim). **NUNCA reorganizar/reordenar `completed.md` com ciclos em voo** — reorganização quebra o union e recria o conflito de arquivo inteiro.
 - **Bookkeeping local vs versionado (anti-conflito, 2026-07-10):** `context/handoff.md` e `tasks/current_task.md` são LOCAIS (gitignored) — nunca entram em commit. Versionados: `context/handoff/` (snapshots) e `tasks/completed.md` (append-only union).
 - Se o QA reprovar: não fechar o ciclo; criar bloco de correção no backlog e reportar.
 - **Branch/commit isolado por ciclo:** Um branch/commit isolado por ciclo (`ciclo/<ID>`); commitar só os paths do ciclo, nunca `git add -A`/`git add .`; nunca arrastar nem reverter edições não relacionadas (ex.: `PRD.md`).
-- **Tiering de modelo / QA sempre Opus 4.8:** o orquestrador escolhe o `model` de cada Agent pela
-  tabela de tiering (Passo 4 → "Seleção de modelo por agente"); o QA roda SEMPRE em Opus 4.8;
+- **Tiering de modelo / QA sempre Opus:** o orquestrador escolhe o `model` de cada Agent pela
+  tabela de tiering (Passo 4 → "Seleção de modelo por agente"); o QA roda SEMPRE em Opus;
   override ±1 só com justificativa de 1 linha e nunca rebaixando o QA nem abaixo de `haiku`.
 - **Rollback não-destrutivo:** Rollback preferencialmente não-destrutivo (`git switch`, `git restore --staged`); `git reset --hard`/`git branch -D` só com confirmação humana explícita e nunca alcançando edições não relacionadas.
 - **Handoff versionado append-only:** Cada Skill (incluindo o QA) grava cópia append-only em `context/handoff/AAAAMMDD-HHMMSS-<slug>.md`; nunca editar snapshots existentes.

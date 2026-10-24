@@ -103,7 +103,7 @@ Medido, e as duas já estão disponíveis:
    `senha_definida_em_usuario` é literalmente a fila: nulo = ainda na senha inicial. O P19 diz, com
    estas palavras, que essa coluna "é a fila que a epic precisa zerar".
 
-As duas se combinam: importar cobre quem não agiu, a fila mede quem já agiu.
+As duas se combinam: o `alinhar-senhas` cobre quem não agiu, a fila mede quem já agiu.
 
 **Não medido:** quantas pessoas já têm senha própria hoje. Isso exige consultar o banco em produção,
 o que não foi feito daqui.
@@ -139,9 +139,9 @@ o que não foi feito daqui.
 - **Limpar estado no cliente não é logout.** O `BotaoSair` documenta o motivo: a tela pareceria
   deslogada e a requisição seguinte continuaria autenticada. Logout tem de invalidar no servidor.
 
-## 7. Decisões ainda em aberto
+## 7. Decisões da epic (todas fechadas desde 25/09/2026)
 
-Nenhuma destas foi tomada. Estão aqui para não serem descobertas no meio da implementação:
+Todas as cinco foram tomadas até 25/09/2026 (a DEC-067 as dá por fechadas); cada item guarda quando e como:
 
 1. ~~**Onde a sessão vive**~~ — **DECIDIDA em 17/09/2026 pela D30: tabela** (`sessoes`,
    `banco-de-reservas/sql/018-sessoes.md`). O "custo de leitura por requisição" que pesava contra
@@ -209,7 +209,7 @@ Nenhuma destas foi tomada. Estão aqui para não serem descobertas no meio da im
    > ler este bloco antes: depois destas duas mudanças, elas deixaram de ser independentes.
 
    Custo operacional evitado, e que pesou: cadastrar TOTP exige as pessoas presentes, uma a uma
-   (`infra_producao.md:1026`), e perder o celular viraria um SEGUNDO caminho de recuperação, com
+   (`infra_producao.md`, nota do BLK-SEC-03-FU1), e perder o celular viraria um SEGUNDO caminho de recuperação, com
    toda a discussão da decisão 4 repetida.
 4. ~~**Recuperação de senha**~~ — **DECIDIDA em 18/09/2026** (D31 + migration 019). Mediada por
    administrador, **sem autoatendimento**: o piloto não envia e-mail, e essa foi a razão. Quem
@@ -232,13 +232,13 @@ Nenhuma destas foi tomada. Estão aqui para não serem descobertas no meio da im
    MANTIDA.** O Caddy continua fazendo `forward_auth`, repontado do Authelia para o nosso
    `/api/verify` (rota escrita no mesmo dia). Era o último item aberto do §7, então **a data
    do corte deixa de estar travada por decisão** — o que resta é execução manual na VPS, e
-   um pré-requisito medido: `MOTOR_AUTENTICACAO_PROPRIA` ainda não chega ao container
+   um pré-requisito medido, já resolvido: `MOTOR_AUTENTICACAO_PROPRIA` não chegava ao container até o #416 (merge `f5b5e9b`, 28/09/2026)
    (`banco-de-reservas/decisoes-pendentes.md:39`). Continua sendo decisão de infraestrutura, com
    execução na VPS sob o §6.
    **Sobre os headers `Remote-*` que o RBAC lê hoje, a resposta já está no código e não depende da
    borda:** com o portão ligado, o motor **apaga** `remote-user`/`remote-email` de toda requisição e
-   reinjeta `remote-user` a partir do COOKIE (`web/server/app.py:413-432` e `:469-472`), e
-   `Remote-Groups`/`Remote-Name` não têm leitor nenhum no piloto (`web/server/acesso.py:313-315`).
+   reinjeta `remote-user` a partir do COOKIE (`_sem_headers_de_identidade` e `_portao_de_sessao`, em `web/server/app.py`), e
+   `Remote-Groups`/`Remote-Name` não têm leitor nenhum no piloto (`HEADERS_DE_IDENTIDADE`, em `web/server/acesso.py`).
    Ver a correção do D4 na DEC-067.
 
 ## 8. O que este documento não é

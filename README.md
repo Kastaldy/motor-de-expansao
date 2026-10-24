@@ -4,7 +4,7 @@ Base territorial do MVP nacional do `motor-de-expansao`.
 
 O contrato canonico do projeto esta em `CLAUDE.md`; detalhes do ciclo ativo ficam em `PRD.md`.
 
-O app de producao e o **piloto web** (`web/` — SPA React/Vite + deck.gl no front, FastAPI em `web/server/app.py` no back), com **3 superficies**: **Mapa Territorial** (porta de entrada por UF, funil de 5 camadas ate a recomendacao por municipio), **Visao Executiva** (a rede Ultra real, via Growth API) e **Viabilidade do ponto** (stress-test deterministico de um imovel). Os relatorios em PDF (Pontual Censitario 1,0 km e Municipal) saem do Mapa e da Viabilidade. Em producao tudo roda num unico container (`motor_expansao_web`) em `piloto.ultra-expansao.tech`, atras de Caddy + Authelia. Detalhes de produto em `web/README.md`; arquitetura em `docs/arquitetura_app_atual.md`.
+O app de producao e o **piloto web** (`web/` — SPA React/Vite + deck.gl no front, FastAPI em `web/server/app.py` no back), que abre no **Inicio** (seletor de modo em duas trilhas: expandir a rede e operacoes) e tem as telas **Mapa Territorial** (Explorar uma regiao: funil de 5 camadas por UF e municipio; no Brasil a camada 5 e o Top 10 unico da DEC-077), **Oportunidades** (Top 10 de hexagonos), **Ponto** (analise de ponto ou imovel), **Viabilidade do ponto** (stress-test de um imovel), **Visao Executiva** (a rede Ultra real, via Growth API), **Oportunidades imobiliarias** (DEC-037) e **Acessos** (restrita por allowlist). Os relatorios em PDF (Pontual Censitario 1,0 km e Municipal) saem do Mapa e da Viabilidade. Em producao tudo roda num unico container (`motor_expansao_web`) em `piloto.ultra-expansao.tech`, atras de Caddy + Authelia. Detalhes de produto em `web/README.md`; arquitetura em `docs/arquitetura_app_atual.md`.
 
 O dashboard Streamlit — o app original, estabilizado nos ciclos de mai/2026 — foi **aposentado em 2026-08-03 pela DEC-022** (escopo do corte definido na DEC-020: paridade de Mapa + Visao Executiva + Viabilidade; Expansao de Dominio e Carteira/Plano nao viraram telas). O **motor compartilhado** que ele usava (`src/motor_expansao/dashboard/` — dados, censo, relatorios, concorrentes, viabilidade) continua vivo e e consumido pelo piloto, pela API GeoEspacial, pelo bot Telegram e pelo `fase1_bi_exports`; so a UI Streamlit saiu do repo. Historia dos ciclos: `tasks/completed.md` e `docs/decisions/DEC-020.md`/`DEC-022.md`.
 
@@ -52,7 +52,7 @@ O app le Parquets locais apontados por `MOTOR_DATA_DIR` (montados `:ro` em produ
 | --- | --- | --- |
 | `data/outputs/hexagonos_dashboard_enriquecido/uf=XX/` | Mapa Territorial (carga lazy por UF) | obrigatorio |
 | `data/outputs/setores_censitarios_2022_geo/uf=XX/cod_municipio=NNNNNNN/part-000.parquet` | Relatorio Pontual Censitario 1,0 km | por municipio |
-| `data/staging/concorrentes_mapeados.parquet` e `unidades_ultra_performance_hex.parquet` | pins de concorrentes/Ultra no mapa | recomendado |
+| `data/staging/concorrentes_mapeados.parquet` e `unidades_ultra_performance_hex.parquet`; `vulnerabilidade_ma_redes.parquet` e `vulnerabilidade_ma_nomeadas.parquet` (unidades de rede e independentes dos agregadores) | pins de concorrentes/Ultra no mapa | recomendado (os dois de M&A sao opcionais: ausentes, os pins deles nao aparecem) |
 | `data/staging/growth_api_historico.parquet` | Visao Executiva (numeros reais da rede) | recomendado; sem ele a tela responde 404 |
 | `data/staging/base_calibracao_maduras.parquet` | semente p50 da demanda na Viabilidade | recomendado |
 | `data/staging/hexagonos_mercado_mapeado.parquet` | residual fitness do ponto no Relatorio Pontual | opcional |
@@ -70,20 +70,20 @@ O piloto sobrepoe pins de concorrentes e das unidades Ultra no Mapa Territorial.
 
 ### Busca por coordenada
 
-A lupa no cabecalho do piloto aceita coordenada (`lat, lng`, ponto ou virgula decimal), link do Google Maps ou endereco livre. Coordenada/link resolvem offline (parser puro, bbox do Brasil); endereco cai no geocoding (`/api/geocode`, Nominatim — DEC-010, com cache e fallback gracioso). Ao encontrar, o mapa voa ate o ponto, marca o hexagono H3 res-7 e abre o atalho "Estudo pontual" para a Viabilidade.
+A lupa no cabecalho do piloto aceita coordenada (`lat, lng`, ponto ou virgula decimal), link do Google Maps ou endereco livre. Coordenada/link resolvem offline (parser puro, bbox do Brasil); endereco cai no geocoding (`/api/geocode`, Nominatim — DEC-010, com cache e fallback gracioso). Ao encontrar, a coordenada vira um **ponto analisado** (decisao do dono, 2026-10-14): o mapa abre a ficha de ponto, com os botoes "Estudo" e "Simulador", e o comparativo de pontos.
 
 ### Relatorios em PDF
 
-- **Relatorio Pontual Censitario 1,0 km** (`POST /api/relatorio/pontual`): intersecao real setor censitario x circulo em CRS metrico (`setor_censitario_intersecao_area_1km`; raio 1,0 km desde a DEC-021). Contrato: `docs/relatorio_pontual_censitario.md`.
-- **Relatorio Municipal** (`POST /api/relatorio/municipal`): 9 paginas, gerado no 4o passo do funil do Mapa. Contrato: `docs/relatorio_municipal_template.md`.
+- **Relatorio Pontual Censitario 1,0 km** (`POST /api/relatorio/pontual`): intersecao real setor censitario x recorte em CRS metrico: raio de 1,0 km por padrao (`setor_censitario_intersecao_area_1km`, DEC-021) ou o alcance escolhido no ponto — raio de 2 km, 5 ou 10 min de carro (DEC-074) — e area desenhada (DEC-071). Contrato: `docs/relatorio_pontual_censitario.md`.
+- **Relatorio Municipal** (`POST /api/relatorio/municipal`): numero de paginas variavel (no Brasil, 8 fixas e 12 com as da praca, mais uma por parte dos Bairros Oficiais em municipio grande — DEC-077, contrato v3); o botao aparece em todas as camadas do funil do Mapa no nivel de municipio (desde 2026-10-20). Contrato: `docs/relatorio_municipal_template.md`.
 
 Ambos usam os geradores do motor compartilhado (`censo_report.py`, `relatorio_municipal.py`) — os mesmos da API GeoEspacial e do bot Telegram.
 
 ### Regua visual de populacao minima (5k hab)
 
-Hexagonos com menos de 5.000 habitantes sao pintados de cinza no mapa e ficam fora do passo 1 (Potencial) do funil — o corte propaga pelas 5 camadas.
+Hexagonos com menos de 5.000 habitantes sao pintados de cinza no mapa e ficam fora do passo 1 (Potencial) do funil — o corte propaga pelas camadas 1 a 4; no Brasil, a camada 5 (Top 10 da DEC-077) le o municipio inteiro com regua propria (a Mata Virgem nao tem piso de populacao) e o hexagono dela nunca sai cinza.
 
-- Constante: `POP_MIN_ACIONAVEL = 5_000` em `src/motor_expansao/dashboard/constants.py`
+- Constante: `POP_MIN_ACIONAVEL` (5.000 no Brasil), lida de `reguas.pop_min_acionavel` do `data/perfis/BR/perfil.json` (DEC-047) por `src/motor_expansao/dashboard/constants.py` e `web/server/app.py`
 - Fonte preferencial de populacao: `pop_total_setor_2022` (granular); fallback: `populacao_proxy` = `pop_total` municipal
 - M1 (`score_priorizacao`) nao e alterado por este corte
 
@@ -170,7 +170,7 @@ O contrato de handoff do repositorio esta em `docs/handoff_repositorio.md`.
 ## Mapa de docs
 
 - `CLAUDE.md`: contrato canonico curto e guardrails permanentes.
-- `PRD.md`: ciclo operacional atual e status dos blocos.
+- `PRD.md`: visao de produto (versao de 2026-07-19, anterior ao corte do Streamlit); o status dos blocos vive em `tasks/backlog.md` e `tasks/completed.md`.
 - `web/README.md`: produto e telas do piloto web.
 - `docs/arquitetura_app_atual.md`: arquitetura do app atual (piloto web) + historia do Streamlit.
 - `docs/deploy_piloto_web.md`: runbook de deploy do piloto na VPS (digest, Caddy, Authelia).
@@ -271,9 +271,9 @@ Para tarefas simples de documentação, o ciclo costuma ser: delimitar escopo, e
 Estes comandos sao de pipeline analitico, nao do deploy do piloto:
 
 ```bash
-python base_h3_brasil.py
-python hex_enrichment.py --brasil
-python fase1_bi_exports.py
+python -m motor_expansao.pipelines.m1.base_h3_brasil
+python -m motor_expansao.pipelines.m1.hex_enrichment --brasil
+python -m motor_expansao.pipelines.m1.fase1_bi_exports
 ```
 
 Testes relevantes do M1:
@@ -288,9 +288,9 @@ A variavel correta para populacao total no Censo IBGE 2022 Basico e `v0001` (Tot
 
 **Status atual:**
 - Piloto GO/SP/RJ (`censo2022_setores_calibrado.parquet`): corrigido e rematerializado.
-- Nacional — 21 UFs restantes (`censo2022_setores_calibrado_nacional_completo.parquet`): aguarda regeneracao (Bloco 8 do PRD).
+- Nacional — 21 UFs restantes (`censo2022_setores_calibrado_nacional_completo.parquet`): regenerado com v0001 em 2026-05-15 (Bloco 8, commit 35a0226e); a renda setorial chega as 27 UFs do piloto desde a DEC-038.
 
-**Cadeia de regeneracao** (em `jobs/pipelines/`, executar na ordem):
+**Cadeia de regeneracao** (em `src/motor_expansao/pipelines/`, executar na ordem com `python -m motor_expansao.pipelines.<modulo>`; a parte de mercado roda toda semana na VPS por `scripts/cron/run_regen_mercado.sh`, DEC-059, que inclui `enriquecimento_espacial_hexagonos` e a rematerializacao do enriquecido):
 
 | passo | script | saida |
 | --- | --- | --- |
@@ -309,7 +309,7 @@ python -m pytest tests/unit/test_pop_censo_v0001.py -v
 python -m pytest tests/integration/test_modelo_hibrido_expansao.py tests/integration/test_modelo_mercado_hexagonos.py -v
 ```
 
-UFs com `qualidade_join_uf=C` (AM, RR, AL, AP, CE, MA, PA, PB, PE, RO, SE) sao filtradas automaticamente pelo modelo hibrido; nao afetam a carteira final.
+Desde a DEC-050 a qualidade de join e a classe real (`classe_join_uf`): so AM e RR sao classe C, e desde a DEC-054 (denominador por populacao na DEC-058) uma nota de cobertura por municipio promove para leitura granular os municipios bem cobertos dessas UFs (Manaus, Boa Vista).
 
 ## Docker, imagens e API
 
@@ -318,7 +318,7 @@ O caminho de producao usa duas imagens publicadas no GHCR pelo CI e pinadas por 
 - `motor-expansao-web` (`Dockerfile.web`): o piloto — estagio Node builda o Vite, estagio Python serve SPA + API na porta 8899.
 - `motor-expansao-api` (`Dockerfile.api`): API GeoEspacial on-demand + bot Telegram (mesma imagem, dois containers).
 
-A imagem `motor-expansao-streamlit` morreu com o corte (DEC-022); fica retida no GHCR por algumas semanas so para rollback. O legado de PostGIS/Prefect segue em `fora_primeira_fase/api_postgis/` e nao entra no caminho de producao.
+A imagem `motor-expansao-streamlit` morreu com o corte (DEC-022); fica retida no GHCR por algumas semanas so para rollback. O legado de PostGIS/Prefect de `fora_primeira_fase/api_postgis/` nao entra no caminho de producao; o banco de producao e outro, o servico `postgres` (`postgis/postgis:18-3.6`) do `docker-compose.prod.yml`, opcional por construcao (`MOTOR_DATABASE_URL` vazia = comportamento pre-banco; `docs/banco_deploy.md`).
 
 ## Fora do caminho de producao
 

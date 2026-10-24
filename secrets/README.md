@@ -19,8 +19,8 @@ esta no `.gitignore`.
 | ----------------- | ------------------------------------ | ---------------------------------- |
 | `*.enc.yaml`      | YAML (criptografa apenas valores)    | Authelia configuration/users       |
 | `*.enc.env`       | dotenv (`encrypted_regex: ^.*$`)     | `.env` com `AUTHELIA_*` etc.       |
-| `*.enc.txt`       | texto simples                        | `Caddyfile` (texto)                |
-| `*.enc`           | binario opaco                        | `authelia/db.sqlite3`              |
+| `*.enc.txt`       | texto simples                        | (sem uso hoje)                     |
+| `*.enc`           | binario opaco                        | `authelia/db.sqlite3`, `Caddyfile` |
 | `*.dec`           | **plaintext temporario** (gitignored)| Saida de `sops -d`                 |
 | `*.plain.*`       | **plaintext temporario** (gitignored)| Defensivo                          |
 
@@ -45,7 +45,7 @@ runbook.
 ## Editar um segredo
 
 ```bash
-sops secrets/env.enc
+sops secrets/env.enc.env
 # abre o editor padrao com conteudo desencriptado em MEMORIA
 # salvar e sair re-encripta automaticamente
 ```

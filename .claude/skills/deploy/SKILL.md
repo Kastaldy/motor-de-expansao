@@ -1,6 +1,6 @@
 ---
 name: deploy
-description: Conduz o deploy de produção do Motor (piloto web + API/bot Telegram) na VPS, por digest imutável, passo a passo. Cobre os path-filters do publish-web e do publish-api (mudança só em dashboard/ NÃO rebuilda a imagem api/bot) e a matriz de capacidade da VPS. Use ao pedir "faça o deploy", "leve para prod", "suba na VPS", "atualize produção".
+description: Conduz o deploy de produção do Motor (piloto web + API/bot Telegram) na VPS, por digest imutável, passo a passo. Cobre os path-filters do publish-web e do publish-api (desde 2026-08-14 o publish-api também rebuilda com mudança em dashboard/ e dimensionamento/; commit só em pipelines/, docs/ ou testes não publica nenhuma das duas) e a matriz de capacidade da VPS. Use ao pedir "faça o deploy", "leve para prod", "suba na VPS", "atualize produção".
 ---
 
 # /deploy — deploy de produção por digest (web + API/bot)
@@ -11,36 +11,38 @@ absoluto).** Esta skill organiza o procedimento e não dispensa a confirmação 
 
 ## Imagens e path-filters (desde a DEC-022, 2026-08-03, não há mais imagem Streamlit)
 - **`motor-expansao-web`** (job `publish-web`, `Dockerfile.web`): publica no push da `main` com
-  path-filter `Dockerfile.web | web/** | src/motor_expansao/(dashboard|dimensionamento|api)/** |
-  pyproject.toml`. Deploy por **`WEB_IMAGE`** (serviço `web`, container `motor_expansao_web`,
+  path-filter `Dockerfile.web | web/** | src/motor_expansao/(dashboard|dimensionamento|api|db|renda)/** |
+  src/motor_expansao/perfil.py | pyproject.toml`. Deploy por **`WEB_IMAGE`** (serviço `web`, container `motor_expansao_web`,
   porta interna 8899, `https://piloto.ultra-expansao.tech`). Runbook: `docs/deploy_piloto_web.md`
   (ciclo curto pull+up: `docs/deploy.md`).
 - **`motor-expansao-api`** (job `publish-api`, `Dockerfile.api`): path-filter
-  `Dockerfile.api | src/motor_expansao/api/** | pyproject.toml`. Deploy por **`API_IMAGE`**
+  `Dockerfile.api | src/motor_expansao/(api|dashboard|dimensionamento|renda)/** | src/motor_expansao/perfil.py | pyproject.toml`. Deploy por **`API_IMAGE`**
   (serviços `api` + `telegram-bot`). Runbook: `docs/deploy_api_bot.md`.
 
 ## Gotcha crítico (a causa nº 1 de "o bot ficou velho")
-O `publish-api` tem **filtro de path**: um PR/commit que muda **só `dashboard/`** publica a imagem
-`web` (o filtro do `publish-web` cobre `dashboard/`) mas **NÃO rebuilda a imagem `api`/`telegram-bot`**.
-Se a feature toca render usado pela API/bot, republicar manualmente após o merge:
+O `publish-api` tem **filtro de path**, que desde 2026-08-14 cobre `dashboard/` e `dimensionamento/`
+(depois também `renda/` e `perfil.py`): mudança só em `dashboard/` JÁ rebuilda a imagem `api`/`telegram-bot`.
+O gotcha que sobra é o inverso — commit só em `pipelines/`, `docs/` ou testes fica fora dos dois filtros e
+não publica nada (ver 3b). Para republicar à mão após o merge:
 ```
-gh workflow run ci.yml --ref main -f publish_api=true -f dispatch_build_sanity=false
+gh workflow run ci.yml --ref main -f publish_api=true
 ```
 → deploya `api` + `telegram-bot` por `API_IMAGE`. Análogo para o web (mudança fora do filtro do
-`publish-web` que afete o runtime): `gh workflow run ci.yml --ref main -f publish_web=true -f dispatch_build_sanity=false`.
+`publish-web` que afete o runtime): `gh workflow run ci.yml --ref main -f publish_web=true`.
 
 ## Matriz de capacidade da VPS (consulte ANTES de dizer "não consigo")
-- `scp` para a VPS = **SIM**, via `~/.ssh/id_ultra_mcp` (o classificador bloqueia `ssh` remoto, não `scp`; memória `deploy-vps-scp-arquivos`). Validar por `md5sum` na VPS.
+- `scp` para a VPS = **SIM**, via `~/.ssh/id_ultra_mcp` (memória `deploy-vps-scp-arquivos`). Validar por `md5sum` na VPS.
 - `ssh` remoto = **SIM**, mesma chave. A linha antiga dizia "bloqueado pelo classificador" e era FALSA — confundia proibição com impossibilidade (corrigido no CLAUDE.md §2 em 2026-08-29). O MCP `ssh-vps-ultra` também serve para inspeção. **Capacidade não é autorização:** o §6 continua exigindo confirmação explícita para cada comando, um a um.
 - Nunca declarar incapacidade de enviar arquivo à VPS sem antes **testar** o `scp`.
 
 ## Passos
 1. **Determinar o alvo.** `git diff --name-only origin/main~1 origin/main` (ou os paths do ciclo):
-   mudou `web/` ou `src/motor_expansao/(dashboard|dimensionamento|api)/`? → nova imagem `web`.
-   Tocou `src/motor_expansao/api/`? → nova imagem `api`. Só `dashboard/`? → o `web` republica,
-   a `api`/bot NÃO (gotcha acima) — decide se precisa do `publish_api=true`.
+   mudou `web/`, `src/motor_expansao/(dashboard|dimensionamento|api|db|renda)/` ou `perfil.py`? → nova imagem `web`.
+   Tocou `src/motor_expansao/(api|dashboard|dimensionamento|renda)/` ou `perfil.py`? → nova imagem `api` também
+   (o `dashboard/` entrou no filtro em 2026-08-14). Só `pipelines/`, `docs/` ou testes? → nenhuma imagem
+   republica (ver 3b) — decide se precisa do `publish_api=true`/`publish_web=true`.
 2. **Confirmar CI verde + imagem publicada no GHCR** (deploy só por digest de imagem que passou CI). Se faltar imagem → disparar o dispatch correspondente (comandos acima) e **aguardar** (prometa "te aviso quando publicar" + PushNotification).
-3. **Na VPS (cada comando com confirmação do Felipe, §6):** pinar `WEB_IMAGE`/`API_IMAGE` por **digest** no `.env` → `pull` → `up -d`/`restart` dos serviços afetados (`web`, `api`, `telegram-bot`) → healthcheck.
+3. **Na VPS (cada comando com confirmação do Felipe, §6):** pinar `WEB_IMAGE`/`API_IMAGE` por **digest** no `.env` → `pull` → `up -d`/`restart` dos serviços afetados (`web`, `api`, `telegram-bot` e, se o `WEB_IMAGE` mudou, o `web_ar` do `docker-compose.ar.yml`, que lê o MESMO digest) → healthcheck.
 3b. **CONFERIR O `revision` DA IMAGEM, e não só o digest.** Puxe a tag e leia o label:
    `docker inspect --format='{{index .Config.Labels "org.opencontainers.image.revision"}}' <ref>`
    — ele tem de bater com `git rev-parse origin/main`. **Por que este passo existe:** em 2026-09-11
@@ -52,7 +54,7 @@ gh workflow run ci.yml --ref main -f publish_api=true -f dispatch_build_sanity=f
    cima. Se o `revision` divergir, force o republish (comandos acima) antes de pinar o digest.
 
 4. **Healthcheck:** `piloto.ultra-expansao.tech` (`/api/health` no container `web`) + `api.ultra-expansao.tech` respondendo; conferir os **digests** dos serviços.
-5. **Reportar** os digests + tag ao Felipe (ele valida de relance). Nunca deployar sem CI verde; nunca usar `ssh` remoto.
+5. **Reportar** os digests + tag ao Felipe (ele valida de relance). Nunca deployar sem CI verde; nunca rodar comando na VPS (`ssh` ou MCP) sem a confirmação do §6.
 
 ## Guardrails
 - §6 absoluto: NUNCA rodar comando na VPS sem confirmação explícita, comando-a-comando; não encadear.

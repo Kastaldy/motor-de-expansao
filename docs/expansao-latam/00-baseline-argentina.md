@@ -61,7 +61,7 @@
 |---|---|---|---|---|
 | `score_setor_2022_calibrado` | 0–100, **régua absoluta** nas âncoras do perfil (0,60·renda linear + 0,40·pop log) | hex7 | **Recomputado pela plataforma**, nunca herdado do pipeline | Ausente: funil vazio, sem erro. **Percentil com o mesmo nome:** corte 30 com outro significado (na AR, 12,9 % de quentes contra 5,5 % recomputado) |
 | População (`populacao_corte_hex` > `pop_total_setor_2022` > `pop_total`) | habitantes **do hexágono** (ou captação hex + 6 vizinhos) | hex7 | Soma por país ≈ total do censo (±2 %) | Gate `_povoado` falso. **`pop_total` é falso amigo**: no BR é a população do município repetida por hex |
-| Renda (`renda_per_capita_setor_2022_calibrada` > `renda_per_capita`) | moeda declarada em `moeda.indicadores_renda`, per capita, mês | hex7 | Moeda declarada e coerente com as âncoras | A origem decide a escala: a coluna setorial é dividida pelo `k`, a municipal pelo uplift. Sem carimbo de `k`, cai em `1.0239` (BR) **em silêncio** |
+| Renda (`renda_per_capita_setor_2022_calibrada` > `renda_per_capita`) | moeda declarada em `moeda.indicadores_renda`, per capita, mês | hex7 | Moeda declarada e coerente com as âncoras | A origem decide a escala: a coluna setorial é dividida pelo `k`, a municipal pelo uplift. Sem carimbo de `k`, cai em `1.0239` (BR) **em silêncio** (só WARNING), salvo se o arquivo de fatores do país (`renda/fatores/<PAIS>/`, DEC-075) declarar `artefato_k_obrigatorio`, como o BR: aí a subida em produção falha. O da AR não declara |
 | `faixa_oportunidade` | enum cru (`prioridade_maxima`/`alta`/…) | hex7 | Valores crus do vocabulário | Faixa ausente na ficha |
 | Perfil | `reguas.renda_abs_min/max`, `pop_abs_min/max`, `score_corte_quente`, `pop_min_acionavel` (5.000) | — | Declarados e validados no boot | Boot fail-closed |
 
@@ -97,6 +97,8 @@
 
 ### 2.5 Camada 5 — Fila de prioridade
 
+Desde a DEC-077, esta é a fila da instância SEM régua da recomendação única (`_passo5_legado` em `web/server/app.py`, travado para a AR por `tests/unit/test_piloto_web_recomendacao_legado_ar.py`). Com régua (`src/motor_expansao/recomendacao/regra/<PAIS>/`, hoje só o BR), o passo 5 é o Top 10 único (5 Mata Virgem + 5 Premium), com réguas próprias na escala BR (renda domiciliar ≥ R$ 4.500, residual ≥ 2.000 alunos, score ≥ 50, população ≥ 10 mil).
+
 | Insumo | Fórmula | Mínimo aceitável | Se faltar ou vier fora de escala |
 |---|---|---|---|
 | Nota socio (`score_setor_2022_calibrado`) + nota demanda (`oferta_efetiva_disponivel`) + `n_concorrentes_est` | `0,70·socio + 0,30·nota_dem`, com `nota_dem` em log entre **2.000 e 20.000 alunos** (`praca_indice.py:45-58`) | Âncoras de demanda **na escala do país** (hoje literais) | Índice NaN e fila vazia. Com residual em escala ~0,4× (AR), `nota_dem = 0` entre 802 e 2.000 alunos e a fila vira "só socio", **em silêncio** |
@@ -107,7 +109,7 @@
 |---|---|---|---|
 | **Ficha do ponto + Relatório Pontual** | Malha nível 2 em GeoJSON. Setores com `geometry_wkb`, `pop_total_setor_2022`, `domicilios_particulares_ocupados_setor_2022`, `renda_per_capita_setor_2022_calibrada`, `avg_moradores_domicilio_setor_2022`, **`renda_responsavel_media_setor_2022`**, `bbox_*`, `nome_bairro` | **Unidade censitária com geometria** | A renda domiciliar é `V06004 × uplift × fator temporal`, o contrato **mais brasileiro** do sistema. A AR o imitou fabricando `renda × moradores` com uplift 1,0. **Hoje ainda reprova por `RENDA_MIN` R$ 4.500 e pela zona morta em R$ 500** |
 | **Relatório Municipal** | Mesmos setores + bairro/distrito | setor | "Censo 2022" e "CAGED/RAIS" fixos no texto |
-| **Viabilidade** | `base_calibracao_maduras` (curva m² → alunos da rede **Ultra BR**) + câmbios + aviso | ponto | **O motor não lê o perfil.** Lucro Presumido, PIS/COFINS/ISS, folha, CAPEX e réguas de veredito são BR. Golden de Londrina sem eixo de país |
+| **Viabilidade** | `base_calibracao_maduras` (curva m² → alunos da rede **Ultra BR**) + câmbios + aviso; desde a DEC-078, também o "modelo de praça" (`dimensionamento/v2_coeficientes.json`, OLS do faturamento de unidades **Ultra BR** sobre a isócrona de 10 min do Valhalla) e a rampa padrão pela curva observada da rede **Ultra BR** | ponto | **O motor não lê o perfil.** A sugestão do modelo de praça só existe com `MOTOR_ROTAS_URL` (ausente no compose AR) e não tem gate de país. Lucro Presumido, PIS/COFINS/ISS, folha, CAPEX e réguas de veredito são BR. Golden de Londrina sem eixo de país |
 | **Oportunidades imobiliárias** | `oportunidades/viaveis.parquet` (31 colunas, coletor externo de portais BR) | ponto | Coletor só para o BR. R$ e IPTU no front |
 | **M&A / vulnerabilidade** | Snapshots semanais de agregadores (WellHub/TotalPass) | ponto | Vocabulário fechado de fontes. Não existe fora do BR |
 
@@ -150,7 +152,7 @@
 |---|---|---|---|
 | S1 | Critério de renda da ficha do ponto em **R$ 4.500** e rótulo "R$" sobre renda em USD: reprova toda praça | `web/server/app.py:6478-6481`, `:6808`; `config.py:62` | P |
 | S2 | Zona morta: `RENDA_ZONA_MORTA_MIN = 500` R$ sobre renda per capita em USD (mediana ~US$ 478). Alimenta o selo DEMOGRÁFICO do PDF. **Inferido, não medido na base AR** | `dimensionamento/viabilidade_ponto.py:72`, `:542` | P–M |
-| S3 | Choropleth de setores no front com faixas BR. O backend já serve as faixas do perfil em `/api/me` e ninguém as lê | `web/src/lib/colors.ts:358-377` | M |
+| S3 | Choropleth de setores no front com faixas BR. O backend serve em `/api/me` as faixas de densidade e as de renda PER CAPITA do perfil, e ninguém as lê; desde o #473 (E1 da DEC-075) o calor de renda pinta a renda DOMICILIAR, cujas faixas do perfil o `/api/me` não serve | `web/src/lib/colors.ts:358-377` | M |
 | S4 | Renda USD rotulada "R$" (ponto, detalhe da região, recomendação) e "$" de peso sobre USD | `PontoScreen.tsx:645`, `DetalheRegiao.tsx:67`, `format.ts:169`, … | M |
 | S8 | Metas SAM/residual da AR = 2.000 (escala BR de alunos): cards vermelhos por construção | `data/perfis/AR/perfil.json` | P (dado) |
 
@@ -168,7 +170,7 @@
 | S5 | `mascara.ts` com gramática pt-BR fixa: em es-MX e es-PE (`1,500.00`) o valor digitado sai **errado sem erro** | **MX, PE** | M |
 | S6 | Join do crescimento por `cod6` IBGE | CO, MX (5 dígitos) | P |
 | S7 | Âncoras e pesos da camada 5, `CONC_ADENSAR_MAX`, `CRIT_PONTO_*` literais | quando `oportunidades` ligar | P–M |
-| S10 | Fallbacks BR escondidos: `k = 1.0239`, `fillna(2_500)`, `FATOR_TEMPORAL = 1,0` rotulado "julho/2022 (Censo IBGE)", `TAXA_FITNESS_FALLBACK = 0,10` | pacote incompleto | P cada |
+| S10 | Fallbacks BR escondidos: `k = 1.0239`, `fillna(2_500)`, `TAXA_FITNESS_FALLBACK = 0,10` (o `FATOR_TEMPORAL = 1,0` rotulado "julho/2022 (Censo IBGE)" deixou de ser fallback com a DEC-075: país sem `renda/fatores/<PAIS>/` não sobe; na AR, fator e rótulo estão declarados no arquivo dela) | pacote incompleto | P cada |
 | S12 | **Viabilidade inteira em regime e moeda BR.** Furos fora de `Premissas` (`aluguel_teto_clusters`, `flag_viavel`, payload, XLSX). Trocar alíquota é parâmetro; **trocar regime (IVA/IGV/ICA/ISR/PTU) é código** | todos | GG: 2–4 semanas de eng. uma vez + 3–6 semanas humanas por país |
 | C1–C9 | Cosméticos: "IBGE/Censo 2022/CAGED" em PDFs e metodologia; vocabulário "estado/UF"; bandeira só BR+AR; sem i18n (1,5–2,5 mil strings no front + 453 nos PDFs); mapas sem rótulo de rua fora do BR | todos | P a GG (i18n) |
 
@@ -258,7 +260,7 @@ Detalhe no anexo B, §2.
 |---|---|---|---|
 | Pipeline de dados (censo fino → H3 → renda modelada → concorrentes → mercado) | ~7 semanas, 1 pessoa | **5–9 semanas** × fator de complexidade do país (Fase 2) | estimativa |
 | Malha adm2 na convenção | dias | 1–3 dias se pública | estimativa |
-| Perfil + decisões de régua (P1–P9) | ~3 dias, gargalo = decisão do dono | 2–4 dias | estimativa |
+| Perfil + decisões de régua (P1–P9) + arquivo de fatores de renda do país (`src/motor_expansao/renda/fatores/<PAIS>/`, obrigatório desde a DEC-075: sem ele a instância não sobe) | ~3 dias, gargalo = decisão do dono | 2–4 dias | estimativa |
 | Exportador / de-para | 1.100 linhas | 2–5 dias (cai para ~1 dia com exportador genérico) | estimativa |
 | Infra (DNS, compose, Caddy, grupo, cadastro, medição) | ~1 dia | 1 dia + 24 h de observação | medido na AR |
 | **Cauda de correções** | ~4 semanas | **2–4 semanas** de atenção intermitente (cai com o validador semântico) | estimativa |

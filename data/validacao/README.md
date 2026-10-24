@@ -1,8 +1,8 @@
 # data/validacao/ — fontes de validação de scores
 
 Pasta dedicada às **bases brutas de redes concorrentes usadas para validar/testar os scores**
-(M1, censitário, residual, domínio). É insumo do **BLK-SCORE-01** (dataset rotulado de validação) →
-**BLK-SCORE-02** (poder preditivo) → **BLK-SCORE-03** (recalibração com DEC).
+(M1, censitário, residual, domínio). Foi insumo do **BLK-SCORE-01** (dataset rotulado de validação) →
+**BLK-SCORE-02** (poder preditivo) → **BLK-SCORE-03** (recalibração com DEC), concluídos em 2026-05-31 (a DEC-001 manteve os pesos), e hoje alimenta o crosswalk de alunos reais (`pipelines/alunos_reais.py`, BLK-ALUNOS-01), que chega ao tooltip do pino.
 
 ## Arquivos (gitignored — NÃO commitar)
 
@@ -48,7 +48,7 @@ agregador **não** está dentro do total de ativos). O crosswalk guarda `alunos_
 ## Convenções e guardrails
 
 - **Não commitar os dados brutos** (gitignored). Não colar conteúdo agregável a PII em logs/handoff.
-- CSVs derivados locais: `sep=";"`, `encoding="utf-8-sig"`. (Os fontes aqui são `.xlsx`.)
+- CSVs derivados locais: `sep=";"`, `encoding="utf-8-sig"`. (Os fontes aqui são `.xlsx` e as transcrições de imagem em CSV — `redfit_*.csv`, `pacer_*.csv`.)
 - Artefato de análise gerado a partir destes fontes vai para `data/analysis/` (ex.:
   `dataset_validacao.parquet`), **nunca** para `data/outputs/` (não é artefato de produto M1).
 - **Cautela de rótulo (Skyfit):** confirmar se os números são medidos ou estimados antes de tratar

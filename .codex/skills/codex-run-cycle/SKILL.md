@@ -103,9 +103,9 @@ APROVADO POR [usuario] EM [data]
 
 ## Mandatory Guardrails
 
-- Never run Builder for critica or estrategica without explicit human approval.
+- Never run Builder for alta, critica or estrategica without explicit human approval.
 - Never change `score_priorizacao`, `hex_score_estrutural`, official M1 artifacts, portfolio, short-term plan, domain plan, or executive KPIs without critical approval.
-- Never create a live API dependency for the production Streamlit dashboard.
+- Never create a live API dependency for the production web pilot (`web/`, DEC-022) outside the exceptions approved in `REVIEW.md`.
 - Never overwrite production Parquets without staging.
 - Preserve official M1 rows and columns when touching parallel data layers.
 - Keep every cycle to one block; put new work in backlog.
@@ -122,8 +122,7 @@ APROVADO POR [usuario] EM [data]
 Use the validation commands named by the Planner. If Builder changes dashboard code and the handoff does not specify otherwise, run:
 
 ```bash
-python -m pytest -q tests/integration/test_streamlit_app.py
-python -c "import streamlit_app; print('import ok')"
+python -m pytest -q tests/unit/test_piloto_web_api.py tests/unit/test_piloto_web_endpoints.py
 ```
 
 If tests cannot run, record the reason in `context/handoff.md` and the final response.

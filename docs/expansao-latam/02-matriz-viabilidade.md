@@ -127,7 +127,7 @@ Mais a plataforma uma vez (F0 + F1 + F1b + F1c, ~5 semanas de calendário em par
 
 ## 5. Como validar o modelo em país sem unidade Ultra (proposta DEC-073/D9)
 
-**Princípio (DEC-043):** o motor é **triagem**, não previsão. Nenhum país novo é "validado" por acerto de faturamento. A validação mede só o que a triagem promete:
+**Princípio (DEC-041; a DEC-043 foi revogada pela DEC-078 em 21/10/2026):** o funil é **triagem**, não previsão. Nenhum país novo é "validado" por acerto de faturamento. A validação mede só o que a triagem promete:
 - **não vetar praça boa** (falso-veto);
 - **ordenar de forma estável**;
 - **não ter defeito de dado grosseiro.**
@@ -160,7 +160,7 @@ Cinco gates, pré-registrados **antes** de medir (molde do E6/E7):
 1. A amostra Smart Fit é **condicionada no desfecho** (ela só abriu onde decidiu), então prova falso-veto e **não** prova acerto ao rejeitar (DEC-042).
 2. **Circularidade:** a Smart Fit escolhe ponto com lógica parecida com a do motor; concordar com ela não é independência.
 3. O PY, com 19 pontos, tem **poder estatístico baixo** no gate 3; lá o gate 5 pesa mais.
-4. Nenhum gate aqui autoriza falar em previsão de desempenho (DEC-043).
+4. Nenhum gate aqui autoriza falar em previsão de desempenho (o funil é política declarada, DEC-041; a DEC-043 foi revogada pela DEC-078, cuja sugestão de faturamento é calibrada em unidades Ultra).
 
 ---
 
