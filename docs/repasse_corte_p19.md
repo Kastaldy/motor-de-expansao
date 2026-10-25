@@ -8,12 +8,26 @@
 > **pare e chame quem repassou**. Nenhum passo aqui é urgente a ponto de justificar adivinhar.
 >
 > **Pré-requisito obrigatório:** o banco foi criado pelo `docs/banco_deploy.md` §1 a §7 (feito na produção em 17/10/2026, já com as 21 migrations) ou, se já existia, atualizado pelo `docs/repasse_migracoes_p19.md`
-> (migrations 018, 019 e 020 aplicadas). Este documento começa onde aquele termina.
+> (migrations 018, 019 e 020 aplicadas). Este documento começa onde aquele termina. **Na produção,
+> cumprido:** o banco nasceu do zero com as 21 (`000` a `020`), e o `repasse_migracoes_p19.md` não se
+> aplica a ela.
+
+**Estado em 24/10/2026:** o corte **não foi feito**. Já estão prontos o banco (17/10/2026: 21
+migrations, D20 com `conferir` e `privilegios` OK, 20 usuários, 4 perfis) e a **ligação dele no site**
+(23/10/2026: a `MOTOR_DATABASE_URL` entrou no `.env` e o `web` foi recriado na mesma imagem; desde
+então o RBAC do BR vem do banco, e o `acesso_abas.json` deixou de valer para o BR). A chave
+`MOTOR_AUTENTICACAO_PROPRIA` segue **desligada**: quem autentica é 100% o Authelia. Duas decisões de
+Vinicius, de 24/10/2026, entram neste roteiro: a senha do dia do corte é a **compartilhada** do
+Authelia (Passo 0.b), e o cadeado "Trocar a minha senha", "Redefinir senha" e "Exigir troca" só
+aparecem, e só funcionam, com a chave ligada (Passos 4 e 6).
 
 **Duração estimada:** 45 a 60 min. **Os Passos 4 e 5 são uma sequência contínua** — a partir da
-chave ligada, quem usa o piloto já é levado à nova tela de entrar, então não interrompa entre
-eles. O Passo 3 (credencial do banco) pode ser feito antes, com calma.
-**Janela recomendada:** fora do horário de uso, com alguém disponível por telefone.
+chave ligada, quem usa o piloto já é levado à nossa tela de entrar, então não interrompa entre
+eles. O Passo 0 e a conferência do Passo 3 (a credencial do banco está no ar desde 23/10/2026) podem
+ser feitos antes, com calma.
+**Janela recomendada:** fora do horário de uso, com alguém disponível por telefone, e longe das
+06:30 UTC: o cron diário da Growth reinicia o `web` nessa hora (`docker restart`, que mantém o
+ambiente, mas tira o `web` do ar por alguns instantes no meio das conferências).
 
 ---
 
@@ -35,16 +49,39 @@ Hoje o **Authelia** confere quem entra, na porta da rua. Depois deste corte, que
 
 | O quê | De onde vem |
 |---|---|
-| Acesso SSH à VPS | já configurado |
-| `WEB_IMAGE` (digest da imagem nova) | job `publish-web` no Actions, depois do merge |
+| Acesso SSH à VPS | já configurado: a conta `deploy` (`ssh -i ~/.ssh/id_ultra_deploy deploy@<vps>`, grupos `docker` e `motor-ops`, sem `sudo`; o endereço está em `docs/infra_producao.md`). O que exige root fica com o Felipe: o healthcheck e, se a conta não puder escrever no `Caddyfile`, o Passo 5 e o rollback |
+| `WEB_IMAGE` (digest da imagem nova) | job `publish-web` no Actions, depois do merge do código de 24/10/2026 — o que esconde o cadeado e os gestos de senha enquanto a chave estiver desligada (Passos 0.c e 2) |
 | Senha do dono do banco (`reservas_owner`) | no `.env` do compose, em `POSTGRES_OWNER_PASSWORD` |
-| **Senha do papel `app`** | **com quem repassou** — ela vive DENTRO da `MOTOR_DATABASE_URL` e, se essa variável está vazia (o estado de entrega), o valor não existe em lugar nenhum que você alcance — salvo se quem instalou o guardou no `.env` (na instalação de 17/10/2026 ele ficou lá como `MOTOR_APP_DB_PASSWORD`, fora do runbook; ver o #462). Foi gerada no provisionamento do banco (`docs/banco_deploy.md`, seção dos três papéis). **Sem ela o Passo 3 para**, e o Passo 3 é o que impede o Passo 5 de apagar o piloto |
+| Senha do papel `app` | **não precisa mais:** a `MOTOR_DATABASE_URL` está preenchida desde 23/10/2026 (o Passo 3 virou conferência), e a senha do `app` fica no `.env` em `MOTOR_APP_DB_PASSWORD` — o compose não lê essa variável; a senha vai dentro da URL. Até 24/10/2026 esta linha mandava pedir a senha a quem repassou e citava o `.env` só como exceção: desde a instalação de 17/10/2026 ela está lá (#462) |
 | **Seu login na allowlist do painel de Acessos** | a env `MOTOR_ACESSOS_ADMIN_USUARIOS` do `.env`. Sem o seu login lá, o painel responde **404** para você — e é a única ferramenta de criar gente e destravar conta |
 | **Uma conta sua no Authelia**, com senha | **com quem repassou.** Estar na allowlist acima não basta: **hoje** o Caddy exige sessão do Authelia no host inteiro, então sem conta no `users_database.yml` o navegador nunca chega no painel de Acessos. Peça que o seu login seja a **mesma string** nos dois lugares |
 | **O PERFIL de cada pessoa que você for criar** | **com quem repassou.** O Passo 0.a manda criar pela tela quem falta, e o próprio passo diz *"não tente adivinhar o perfil de ninguém"* — então sem essa lista o 0.a **não fecha**. `login`, nome e e-mail você tira do `users_database.yml` (`displayname` e `email` estão lá, ao lado do login); o perfil é o único dos quatro que não existe na VPS, porque ele nasce com este trabalho |
-| **A senha compartilhada que a equipe digita hoje** | **com quem repassou** — ela **não existe em lugar nenhum do servidor**: o `users_database.yml` guarda só o hash, que não se desfaz. Sem ela o Passo 0.b não fecha, porque ele é uma comparação entre dois valores e o servidor só te dá um |
-| **`sops` instalado e a chave que decifra `secrets/Caddyfile.enc`** | **com quem repassou.** Teste **antes da janela**: `sops -d secrets/Caddyfile.enc \| head -1` tem de imprimir a primeira linha do Caddyfile. Se recusar, pare e peça — sem isso o último passo do corte não fecha, e o backup cifrado fica descrevendo um Caddyfile que não existe mais |
-| Este documento e o `deploy/caddy/piloto-br.Caddyfile.template` | o repositório |
+| **A senha compartilhada que a equipe digita hoje** | **com quem repassou** — ela **não existe em lugar nenhum do servidor**: o `users_database.yml` guarda só o hash, que não se desfaz. Sem ela o Passo 0.b não fecha: é ela que vai para a `MOTOR_SENHA_INICIAL` (decisão de 24/10/2026) |
+| **`sops` e a chave age que decifra `secrets/`** | **na estação do Vinicius** — não ficam na VPS, então os backups cifrados do fim do Passo 5 se refazem de lá, não do servidor. Teste **antes da janela**, na estação: `sops -d secrets/Caddyfile.enc \| head -1` tem de imprimir a primeira linha do Caddyfile. Se recusar, pare e peça — sem isso o último passo do corte não fecha, e o backup cifrado fica descrevendo um Caddyfile que não existe mais |
+| Este documento e o `deploy/caddy/piloto-br.Caddyfile.template` | o repositório — o template vai à VPS por `scp` no Passo 5, porque o checkout de lá é antigo e não o tem |
+
+### Antes de marcar a janela — o que tem de estar de pé
+
+Depois do corte o banco vira **ponto único** do login do BR: Postgres fora = ninguém entra, e o
+interruptor do banco (esvaziar a `MOTOR_DATABASE_URL`, §8 do `docs/banco_deploy.md`) deixa de existir.
+Por isso, antes de marcar a data:
+
+- **O healthcheck da `main` instalado na VPS, com o subcomando `banco`.** Em 24/10/2026, o que roda
+  em `/opt/motor-monitoring/healthcheck_vps.sh` (crontab do root) é uma cópia antiga, que não vigia
+  nem o container do Postgres. A da `main` vigia os 8 containers (o do Postgres entre eles), tem o
+  check `auth` (`/api/me` com um cookie de sessão falso: 401 = OK, 200 = API aberta, 503 = banco
+  fora, que depois do corte é ninguém entrar; a sonda com cookie é de 24/10/2026, e a anterior, sem
+  cookie, não enxergava o banco) e o `banco` (backup, expurgo e saúde interna, diário; a linha
+  do crontab, com os três caminhos da conta `deploy`, está no comentário do próprio script).
+  Instalar é passo do Felipe (root), comando a comando, e a troca traz junto os outros monitores da
+  `main`, que podem começar em FAIL.
+- **Um restore testado** a partir de um dump real (`docs/banco_deploy.md` §10): depois do corte o
+  banco é a fonte das credenciais.
+- **A cópia fora da máquina (restic) — recomendada.** Em 24/10/2026, banco e dumps ficam no mesmo
+  disco; destino e custo são decisão do Felipe.
+- **A entrada "banco fora" no Runbook de incidente** (`docs/infra_producao.md`): sintomas,
+  diagnóstico por SSH e quando voltar atrás.
+- **`deve_trocar` remarcado nos 20**, o que o `alinhar-senhas` faz (Passo 0.c).
 
 ### Os dois merges que precedem tudo — e eles JÁ ESTÃO na `main`
 
@@ -58,14 +95,23 @@ mais. Procure pelos merges, que são permanentes.
 | a chave `MOTOR_AUTENTICACAO_PROPRIA` no `docker-compose.prod.yml` | **#416** | `f5b5e9b` |
 
 **Confira você mesmo** — até 29/09/2026 esta seção mandava procurar as branches pelo nome, o que é
-impossível depois de apagadas:
+impossível depois de apagadas. **E confira pela sua máquina, não pela VPS** (até 24/10/2026 o bloco
+abaixo rodava lá): o `/opt/motor-expansao/app` da VPS é um checkout do root parado num commit antigo
+(`302487e`, de 19/08/2026), com o `docker-compose.prod.yml` trocado à mão pelo da `main` em
+17/10/2026. Não dá para dar `git pull` nele, o histórico dele não diz o que está no ar, e o `scripts/`
+e o `deploy/` dele não têm os arquivos deste corte. Os dois merges já estão na imagem que está no ar
+(`main` em `84429f3e`).
 
-**No terminal da VPS:**
+**Na sua máquina, num checkout do repositório:**
 ```bash
-cd /opt/motor-expansao/app && git fetch origin
+git fetch origin
 git merge-base --is-ancestor f38703b origin/main && echo "o motor esta na main"
 git merge-base --is-ancestor f5b5e9b origin/main && echo "a chave esta na main"
-git show origin/main:docker-compose.prod.yml | grep -n MOTOR_AUTENTICACAO_PROPRIA
+```
+
+**No terminal da VPS** — o compose que vale é o que está lá:
+```bash
+grep -n MOTOR_AUTENTICACAO_PROPRIA /opt/motor-expansao/app/docker-compose.prod.yml
 ```
 
 O último é o que de fato importa: a variável tem de aparecer dentro do bloco `environment:` do
@@ -84,21 +130,24 @@ Este é o único passo que não dá para desfazer depois: se alguém não conseg
 descobrir com a pessoa do outro lado da linha.
 
 **São três conferências, nesta ordem.** A primeira é a que tranca a equipe inteira se for pulada;
-as outras duas trancam pessoas individuais.
+as outras duas trancavam pessoas individuais — **na produção, pular o 0.b e o 0.c também tranca
+todo mundo**: em 24/10/2026, os 20 hashes são da senha sorteada em 17/10/2026, que ninguém conhece.
 
 ### 0.a — Todo mundo que usa o piloto EXISTE na tabela `usuarios`?
 
 **Este é o passo que, pulado, tranca a equipe inteira** — e ele não tem nada a ver com senha.
 
-Hoje quem autentica é o Authelia e quem libera as abas é o `acesso_abas.json`. **A tabela
-`usuarios` não participa de nada disso.** Ou seja: alguém pode estar usando o piloto há meses sem
-ter linha nenhuma no banco. Depois do corte, sem linha em `usuarios` **não há como entrar**.
+Hoje quem autentica é o Authelia. Quem libera as abas do BR é o banco, desde 23/10/2026 (até ali
+era o `acesso_abas.json`) — mas **a tabela `usuarios` ainda não decide quem ENTRA**. Ou seja: alguém
+pode entrar pelo Authelia sem ter linha ativa no banco (e ver o piloto vazio). Depois do corte, sem
+linha ativa em `usuarios` **não há como entrar**.
 
 > **COMPARE CONTRA O AUTHELIA, NÃO CONTRA O `acesso_abas.json`.** O JSON aceita uma entrada
 > curinga `"*"`, que dá abas a **qualquer pessoa autenticada** — então ele pode listar três logins
 > enquanto vinte pessoas usam o piloto, e uma conferência contra ele passaria **verde** deixando
 > dezessete trancadas. A lista de quem consegue entrar hoje é o **`users_database.yml` do
-> Authelia**. Se houver `"*"` no JSON, ele não serve como lista de ninguém.
+> Authelia**. Se houver `"*"` no JSON, ele não serve como lista de ninguém. E desde 23/10/2026 ele
+> nem governa mais as abas do BR.
 
 Liste os dois lados e compare:
 
@@ -107,7 +156,12 @@ Liste os dois lados e compare:
 cd /opt/motor-expansao/app
 
 # 1) quem consegue AUTENTICAR hoje — esta é a lista que importa
+# As DUAS listas, e compare quantas linhas cada uma devolve: a segunda pega login com espaço
+# ou `@`, que a primeira NÃO vê (classe de caracteres). Se os números diferirem, a diferença são
+# as pessoas que a primeira deixaria de fora -- medido em 05/10/2026, num arquivo de quatro
+# pessoas a primeira devolveu 2. Use a SEGUNDA para listar.
 docker exec motor_expansao_authelia grep -nE '^  [a-zA-Z0-9_.-]+:' /config/users_database.yml   # no host o arquivo é root:600 (banco_deploy.md §7)
+docker exec motor_expansao_authelia grep -nE '^  [^ #].*:'         /config/users_database.yml
 
 # 1b) o JSON de abas é DIAGNÓSTICO, não lista: veja se tem curinga
 grep -c '"[*]"' /opt/motor-expansao/cadastro/acesso_abas.json
@@ -125,7 +179,33 @@ docker compose -f docker-compose.prod.yml exec postgres \
 > normalmente **depois** do corte — e desaparece se houver rollback, porque o Authelia nunca soube
 > dele. É a mesma consequência da última linha da tabela de rollback, e ela não nomeia esse caso.
 
-**Se faltar alguém — e é o caso provável:** essas pessoas precisam ser **criadas pela tela de
+**O conferidor faz as duas direções de uma vez**, pessoa a pessoa, e só lê (nunca imprime senha,
+hash nem e-mail). O checkout da VPS não tem o script, então ele sai da imagem no ar. Precisa de
+`bash` (as `<(...)` não existem em `sh`), e o `-I` impede o `python3` de carregar módulo plantado
+no `/tmp`, de onde o script roda:
+
+**No terminal da VPS:**
+```bash
+cd /opt/motor-expansao/app
+docker exec motor_expansao_web cat /app/scripts/conferir_usuarios_banco.py > /tmp/conferir_usuarios_banco.py
+docker exec -i motor_expansao_postgres psql -v ON_ERROR_STOP=1 -At -F '|' \
+    -U reservas_owner -d banco_de_reservas \
+    -c "$(python3 -I /tmp/conferir_usuarios_banco.py --sql)" \
+  | python3 -I /tmp/conferir_usuarios_banco.py \
+    <(docker exec motor_expansao_authelia grep -E '^users: *(#.*)?$|^  [^ #][^:]*: *(#.*)?$|^    disabled: *([Tt][Rr][Uu][Ee]|[Yy][Ee][Ss]|[Oo][Nn]) *(#.*)?$' /config/users_database.yml) \
+    <(docker exec motor_expansao_web cat /app/cadastro/acesso_abas.json)
+```
+
+Leia as linhas `FALTA NO BANCO` (entra hoje e ficaria trancado), `falta no Authelia` (está no banco
+e não entra hoje — mas entra depois do corte) e, a mais traiçoeira, **`desativado no Authelia, mas
+ATIVO no banco`**: quem foi tirado só do Authelia **volta a entrar** quando o banco passar a
+autenticar — desative essa pessoa no painel antes do corte. As linhas `abas mudam` comparam com o
+`acesso_abas.json`, que não vale mais para o BR, então não são pendência deste corte (e podem fazer o
+código de saída vir `1` sozinhas). A lista muda a cada cadastro: rode de novo **no dia**, logo antes
+do Passo 4.
+
+**Se faltar alguém** — os 20 de 17/10/2026 foram conciliados na instalação, mas a lista muda a
+cada cadastro —, essas pessoas precisam ser **criadas pela tela de
 Acessos** antes do corte. Criar pela tela é o caminho certo porque ele grava o hash da senha
 inicial, o perfil e a trilha de quem criou; `INSERT` à mão no banco produz exatamente o hash
 inválido que o passo 0.c existe para pegar.
@@ -134,6 +214,10 @@ inválido que o passo 0.c existe para pegar.
 > repassou — os perfis (`expansao`, `consultoria`, `lideres`, `growth`) definem o que ela vê.
 
 > ### A ORDEM AQUI É CONTRAINTUITIVA, e sem ela você fica num impasse
+>
+> **Na produção este impasse já foi atravessado:** o banco está ligado desde 23/10/2026 (o Passo 3
+> foi feito), então criar pela tela funciona agora. O resto deste quadro vale para um ambiente
+> montado do zero.
 >
 > Criar gente pela tela de Acessos **exige o banco configurado** — ou seja, o Passo 3. E o Passo 3
 > manda só ser feito depois deste 0.a fechado. Parece circular; a saída é esta:
@@ -154,40 +238,85 @@ inválido que o passo 0.c existe para pegar.
 > **Contexto que ajuda a dimensionar:** esta conciliação entre o `users_database.yml` do Authelia
 > e as linhas de `usuarios` é o conteúdo do bloco **`BLK-SEC-03-FU2`**, que o levantamento do P19
 > já declarava "pré-requisito prático" do corte e que segue **pendente**. Se ele não foi feito,
-> este passo é a versão mínima dele.
+> este passo é a versão mínima dele — e essa versão mínima foi feita com o conferidor na instalação do
+> banco e antes de ligá-lo (17 e 23/10/2026). O que segue pendente no bloco é a política de saída nos dois cadastros e a
+> periodicidade da revisão.
 
-### 0.b — As duas senhas compartilhadas são a MESMA?
+### 0.b — A senha do dia do corte é a compartilhada: trocar a `MOTOR_SENHA_INICIAL`
 
 Hoje quase todo mundo usa **uma senha compartilhada** no Authelia. O motor também tem a sua, na
-variável `MOTOR_SENHA_INICIAL`. Se as duas forem a mesma string, ninguém percebe o corte.
+variável `MOTOR_SENHA_INICIAL`, e é o hash dela que o banco guarda de cada pessoa. **Na produção as
+duas são diferentes:** a `MOTOR_SENHA_INICIAL` foi sorteada na instalação (17/10/2026), ninguém a
+conhece, e os 20 hashes do banco são dela.
+
+**Decidido por Vinicius em 24/10/2026: a senha do dia do corte é a COMPARTILHADA do Authelia.** A
+`MOTOR_SENHA_INICIAL` é trocada por ela, e o 0.c regrava os hashes. Quem usa senha pessoal no Authelia
+(como o Felipe) também entra no dia com a compartilhada — a senha pessoal não existe no banco — e define a
+dele no convite do primeiro acesso; por isso não é preciso medir quem tem senha pessoal lá. A escolha
+contraria de propósito o `.env.example` ("nunca a mesma de nenhum outro sistema"): é a única saída que
+não depende de repassar senha a 20 pessoas durante a janela.
+
+**Troque sem imprimir a senha.** O bloco lê a senha do teclado sem eco e grava a linha entre aspas
+simples: sem aspas, o `.env` do compose interpreta `$` e ` #` (medido em 24/10/2026: `ab$cd #ef`
+vira `ab`). Aspa simples dentro da senha não cabe nessa forma, e o bloco para sem escrever.
 
 **No terminal da VPS:**
 ```bash
 cd /opt/motor-expansao/app
-grep '^MOTOR_SENHA_INICIAL=' .env
+cp -n .env .env.bak-$(date +%F)-antes-senha-p19   # o caminho de volta; -n não sobrescreve a do dia
+grep -c '^MOTOR_SENHA_INICIAL=' .env  # tem de ser 1
+IFS= read -rs S && echo "(lida)"     # digite a senha compartilhada; nada aparece na tela
+S="$S" python3 -I - <<'PY'
+import os, sys
+s = os.environ["S"]
+if not s or "'" in s:
+    sys.exit("PAROU: senha vazia ou com aspa simples -- nada foi escrito")
+linhas = open(".env", encoding="utf-8").read().split("\n")
+i = [n for n, l in enumerate(linhas) if l.startswith("MOTOR_SENHA_INICIAL=")]
+if len(i) != 1:
+    sys.exit("PAROU: esperava 1 linha MOTOR_SENHA_INICIAL, achei %d -- nada foi escrito" % len(i))
+linhas[i[0]] = "MOTOR_SENHA_INICIAL='" + s + "'"
+open(".env", "w", encoding="utf-8", newline="").write("\n".join(linhas))
+print("MOTOR_SENHA_INICIAL trocada; as outras linhas ficaram como estavam")
+PY
+unset S
 ```
 
-Compare com a senha que a equipe usa hoje para entrar.
+**Agora suba o `web` — antes do 0.c:**
+```bash
+unset MOTOR_DATABASE_URL MOTOR_SENHA_INICIAL MOTOR_AUTENTICACAO_PROPRIA   # no terminal, mesmo vazia, uma delas venceria o .env
+docker compose -f docker-compose.prod.yml up -d web
+```
 
-- **Iguais:** ótimo. Siga para o 0.c.
-- **Diferentes:** o corte vai funcionar, mas **todo mundo vai precisar da outra senha**. Duas
-  saídas: mudar `MOTOR_SENHA_INICIAL` no `.env` para a senha que a equipe já conhece (e então o
-  0.c é obrigatório, porque os hashes guardados continuam sendo os antigos), ou avisar a equipe
-  da senha nova. **Decida isto com quem repassou** — não escolha sozinho.
+> **A ordem não é opcional, e a falha é muda.** O comando do 0.c usa `run --rm`, que relê o `.env` a
+> cada invocação, então **os hashes ficariam alinhados com o valor novo enquanto o container no ar
+> continua criando gente com o antigo**. Quem fosse criado pela tela de Acessos até o próximo `up -d`
+> receberia a senha velha. E `restart` não serve: ele não relê o `.env` — nem o diário das 06:30 UTC.
 
-  > **Se você mudar a variável no `.env`, suba o `web` antes de seguir:**
-  > ```bash
-  > docker compose -f docker-compose.prod.yml up -d web
-  > ```
-  > Este é o único ponto do documento que edita o `.env` sem subir o container, e a falha é muda: o
-  > comando do 0.c usa `run --rm`, que relê o `.env` a cada invocação, então **os hashes ficariam
-  > alinhados com o valor novo enquanto o container no ar continua criando gente com o antigo**.
-  > Quem fosse criado pela tela de Acessos até o próximo restart receberia a senha velha. Só depois
-  > de subir, rode o 0.c.
-- **Variável ausente ou vazia:** **pare**. Sem ela ninguém consegue entrar depois do corte e não
-  há como criar usuário.
+**Confira, sem imprimir, que o `web` recebeu exatamente a senha que você digitou:**
+```bash
+IFS= read -rs S; printf '%s' "$S" | docker compose -f docker-compose.prod.yml exec -T web \
+  python -c 'import hmac, os, sys; d = sys.stdin.read(); e = os.environ.get("MOTOR_SENHA_INICIAL", "").strip(); print("IGUAIS" if d and hmac.compare_digest(d.encode(), e.encode()) else "DIFERENTES")'; unset S
+```
+
+**Esperado:** `IGUAIS`. **Se vier `DIFERENTES`,** devolva o `.env` (no mesmo dia,
+`cat .env.bak-$(date +%F)-antes-senha-p19 > .env`), suba o `web` de novo e **pare**: o 0.c
+gravaria um hash que não abre com a senha que a equipe digita.
 
 ### 0.c — Alinhar os hashes e ver quem sobra
+
+> **Antes de rodar fora da janela, confira a imagem no ar.** O alinhar **remarca a troca de senha**
+> de cada pessoa que ele regrava (ver o fim deste passo), e só a imagem com o código de 24/10/2026
+> esconde o convite e o cadeado enquanto a chave estiver desligada. Com ela, o 0.c roda dias antes da
+> janela sem nada visível para a equipe; com a imagem anterior, o convite abriria para os 20 antes do
+> corte, oferecendo trocar uma senha do banco que ainda não abre porta nenhuma.
+>
+> **No terminal da VPS:**
+> ```bash
+> docker exec motor_expansao_web grep -c LOGIN_PROPRIO_DESLIGADO_TROCA /app/web/server/app.py
+> ```
+> Maior que `0`: é a imagem certa. `0` (ou erro): faça o Passo 2 antes — ele só esconde o que hoje não
+> funciona — ou deixe o 0.c para a janela, logo antes do Passo 4.
 
 Antes dos dois comandos abaixo, **exporte a credencial do DONO do schema** — e isto não é
 formalidade:
@@ -201,6 +330,11 @@ export MOTOR_DATABASE_URL_ADMIN='postgresql://reservas_owner:<senha-do-dono>@pos
 > `%40`, `:` vira `%3A`, `/` vira `%2F`, `?` vira `%3F`). Sem isso o erro sai como "autenticação
 > falhou" ou "host não encontrado", nunca como "URL malformada".
 
+> **Na produção a senha do dono está no `.env`** (`POSTGRES_OWNER_PASSWORD`, gerada em hexadecimal na
+> instalação, então sem percent-encoding). Para não digitá-la nem deixá-la no histórico do terminal:
+> `export MOTOR_DATABASE_URL_ADMIN="postgresql://reservas_owner:$(sed -n 's/^POSTGRES_OWNER_PASSWORD=//p' .env)@postgres:5432/banco_de_reservas"`
+> (na pasta `/opt/motor-expansao/app`).
+
 > **Se você esquecer o `export`, o comando NÃO reclama — ele roda com a credencial errada.** Medido:
 > sem essa variável, o runner cai para `MOTOR_DATABASE_URL`, que é a credencial do papel **`app`** —
 > e o `app` tem `UPDATE` em `usuarios` por desenho. Ou seja, o passo que este documento chama de "o
@@ -212,10 +346,11 @@ export MOTOR_DATABASE_URL_ADMIN='postgresql://reservas_owner:<senha-do-dono>@pos
 >
 > **No terminal da VPS:**
 > ```bash
-> echo "$MOTOR_DATABASE_URL_ADMIN" | cut -d@ -f1
+> echo "$MOTOR_DATABASE_URL_ADMIN" | cut -d@ -f1 | cut -d: -f1,2
 > ```
-> Tem de imprimir algo que **comece com `postgresql://reservas_owner`**. Se sair **vazio**, o
-> `export` não pegou neste terminal — refaça antes de continuar.
+> Tem de imprimir **`postgresql://reservas_owner`**. Se sair **vazio**, o `export` não pegou neste
+> terminal — refaça antes de continuar. (Até 24/10/2026 o `cut` parava no `@` e imprimia a senha
+> junto; o segundo `cut` corta o que vem depois do usuário.)
 >
 > **Duas formas são válidas aqui, e o teste aceita as duas:**
 > `postgresql://reservas_owner:<a senha>@…` (senha na URL) e `postgresql://reservas_owner@…` (sem
@@ -251,13 +386,15 @@ usuarios ativos: <N>
 ```
 
 > **Olhe o `N` primeiro, porque é ele que denuncia o pior cenário.** `usuarios ativos` tem de ser
-> **igual ao número de logins que você conciliou no 0.a**. Se vier `0`, ou bem abaixo daquilo, o 0.a
-> não está fechado: as quatro contagens vêm zeradas, o comando imprime `nada a alinhar` — e isso
+> **igual ao número de logins que você conciliou no 0.a** (20 em 24/10/2026), e `d` tem de ser 0.
+> Se o `N` vier `0`, ou bem abaixo daquilo, o 0.a não está fechado: as quatro contagens vêm zeradas, o comando imprime `nada a alinhar` — e isso
 > significa **"não há ninguém no banco"**, não "está tudo certo". Seguir daqui leva a um corte em que
 > a rede inteira fica trancada. Volte ao 0.a.
 
 - **`c` maior que zero:** são pessoas que estão na senha compartilhada mas cujo hash guardado não
-  corresponde a ela — elas **não entrariam**. Rode o comando **sem** `--simular` para consertar:
+  corresponde a ela — elas **não entrariam**. **Depois da troca do 0.b, `c` deve sair igual a `N` −
+  `a`:** os hashes guardados são da senha sorteada, então ninguém na senha inicial confere com a nova.
+  Rode o comando **sem** `--simular` para consertar:
 
   ```bash
   docker compose -f docker-compose.prod.yml run --rm \
@@ -283,12 +420,20 @@ usuarios ativos: <N>
 > `MOTOR_SENHA_INICIAL` — ele imprime `alinhada: <seu login>`, mas não pede confirmação nem tem como
 > saber que aquilo era uma senha escolhida. Semeando com `hash_da_senha_inicial()` (§7 do
 > `banco_deploy.md`) o problema não existe: a linha nasce já conferindo.
+>
+> **Na produção é exatamente este o caso, e é o esperado:** ninguém definiu senha no banco, então os
+> 20 são regravados — inclusive quem conduz o corte e quem usa senha pessoal no Authelia (0.b).
 
 > **Atenção ao mal-entendido comum:** quem está na senha compartilhada **entra normalmente** —
 > essa pessoa tem um hash Argon2id de verdade. O risco não é "estar na senha inicial"; é o hash
 > guardado não corresponder à senha que a pessoa digita.
 
-O número `b` diz quantas pessoas vão ver o convite para trocar de senha no primeiro acesso.
+**O alinhar remarca a troca.** `SQL_ALINHAR_SENHA_INICIAL` grava `deve_trocar_senha_usuario = TRUE`
+em cada pessoa que ele regrava (o `c` da primeira simulação), e isso desfaz, para elas, o desmarcar
+de 17/10/2026. Depois do corte, o convite de troca abre para elas no primeiro acesso — com "Agora
+não", porque a troca é recomendada, não obrigatória (decisão de 25/09/2026) —, e é ele que tira cada
+pessoa da senha compartilhada. Quem já conferia (`b`) não é tocado e fica com a marca que tinha. Com
+a chave desligada nada disso aparece: é a razão da conferência da imagem no começo deste passo.
 
 ---
 
@@ -304,7 +449,12 @@ aparece para todo mundo:
   usuário de SSH nem o seu e-mail;
 - **sem a env preenchida, o painel está desligado para todos** — em produção e em dev;
 - quem não pode vê **404**, não "acesso negado": a existência do painel não é anunciada. Então um
-  404 aqui é quase sempre "seu login não está na env", e não "a rota não existe".
+  404 aqui é quase sempre "seu login não está na env", e não "a rota não existe";
+- **desde 23/10/2026, com o banco no comando, as rotas do painel exigem também a capacidade no
+  banco** (`acesso.painel_ver` para ver, `acesso.usuario_gerir` para mudar — as do perfil `growth`):
+  na allowlist sem esse perfil, a aba aparece e as rotas respondem **403**;
+- **"Redefinir senha" e "Exigir troca" só aparecem com a chave ligada** (Passo 4) e, na sua
+  própria linha, ficam desabilitados — a sua senha se troca pelo cadeado. Antes da chave, as rotas deles respondem 404.
 
 Confira antes da janela:
 
@@ -313,8 +463,8 @@ Confira antes da janela:
 cd /opt/motor-expansao/app && grep '^MOTOR_ACESSOS_ADMIN_USUARIOS=' .env
 ```
 
-**Se o seu login não estiver ali**, acrescente-o (separado por vírgula) e
-`docker compose -f docker-compose.prod.yml up -d web`. **Depois do corte** o painel passa a
+**Se o seu login não estiver ali**, acrescente-o (separado por vírgula) e, com o `unset` do 0.b
+antes, `docker compose -f docker-compose.prod.yml up -d web`. **Depois do corte** o painel passa a
 identificar você pela sessão, então o seu login também precisa existir em `usuarios` — o Passo 0.a
 cobre isso se você se incluir na conciliação.
 
@@ -329,19 +479,32 @@ cobre isso se você se incluir na conciliação.
 
 ## Passo 1 — Avisar as pessoas
 
-**Antes de virar a chave**, avise quem usa o piloto. Três coisas:
+**Antes de virar a chave**, avise quem usa o piloto. Cinco coisas:
 
-1. **A tela de login vai mudar de aparência.** É esperado.
-2. **Qual senha usar**, e isto depende do que o passo 0 encontrou: quem foi criado pela tela de
-   Acessos (inclusive agora, na preparação) nasce na **senha inicial compartilhada** — a
-   `MOTOR_SENHA_INICIAL`. Se ela for a mesma que a equipe já digita no Authelia (passo 0.b),
-   ninguém precisa decorar nada novo. Se não for, **avise qual é** antes da janela.
+1. **A tela de entrar não muda: é a mesma que a equipe já usa** — a nossa, servida no endereço
+   `auth.` desde 22/09/2026. O que muda: na primeira ação depois da virada aparece o pop-up
+   **"Sessão encerrada"** (é só clicar em **"Entrar novamente"**), e a senha passa a ser conferida
+   pelo piloto, não mais pelo Authelia. Durante a virada (entre os Passos 4 e 5) quem entrar faz
+   **dois** logins; é esperado e dura minutos.
+2. **Usuário e senha.** O usuário é o **mesmo de hoje** — atenção ao exemplo cinza do campo, que diz
+   `nome.sobrenome`: os logins usam sublinhado (`nome_sobrenome`), e a tela não converte um no outro.
+   A senha é a **compartilhada de hoje** (decisão de 24/10/2026, Passo 0.b), para todo mundo —
+   **inclusive quem usa senha pessoal no Authelia (como o Felipe)**: a pessoal não existe no banco. No
+   primeiro acesso abre o convite para criar a própria senha (no mínimo 8 caracteres e diferente da
+   compartilhada; pode ser a pessoal de antes). Ele tem "Agora não", mas aceitar é o recomendado — e,
+   depois de trocar, a tela pede para entrar de novo com a senha nova.
 3. **Se errarem a senha 5 vezes em 15 minutos, a conta trava.** E o servidor responde a mesma
    mensagem de "senha incorreta" — de propósito, para não avisar a quem varre nomes que acertou
    um. Duas saídas, e diga as duas: **esperar** — a janela é MÓVEL, então a trava se desfaz
    sozinha quando a tentativa mais antiga completa 15 minutos — ou **pedir a um administrador
    para redefinir a senha** pelo painel de Acessos, o que destrava na hora. A segunda depende de
-   haver um administrador disponível; a primeira, não.
+   haver um administrador disponível; a primeira, não. Os administradores são os da allowlist do
+   painel (`MOTOR_ACESSOS_ADMIN_USUARIOS`).
+4. **Quanto dura a sessão.** Com **"Manter conectado"** marcado, ela sobrevive a fechar e reabrir o
+   navegador; sem a caixa, termina quando o navegador fecha. Nos dois casos, **8 h** é o teto, e
+   **2 h parado** desconecta.
+5. **A senha temporária** (a que um administrador gera para quem esqueceu a senha) vale **2 h**:
+   troque ao entrar.
 
 > Deixe `docker compose -f docker-compose.prod.yml logs -f web` aberto durante a janela: é o
 > único lugar onde a trava aparece nomeada.
@@ -350,15 +513,22 @@ cobre isso se você se incluir na conciliação.
 
 ## Passo 2 — Subir a imagem nova
 
+A imagem nova é a que traz o código de 24/10/2026 — o que esconde o cadeado e os gestos de senha
+enquanto a chave estiver desligada. Os merges do P19 já estão na imagem no ar; sem imagem nova
+publicada, este passo é só conferência.
+
 **No terminal da VPS:**
 ```bash
 cd /opt/motor-expansao/app
-git pull
 cp -n .env .env.bak-$(date +%F)  # -n = NÃO sobrescreve se já existir (leia o aviso abaixo)
 grep '^WEB_IMAGE=' .env          # anote esta linha
 # edite o .env: WEB_IMAGE=<digest novo>
+unset MOTOR_DATABASE_URL MOTOR_SENHA_INICIAL MOTOR_AUTENTICACAO_PROPRIA   # ver o 0.b
 docker compose -f docker-compose.prod.yml up -d web
 ```
+
+> **Não há `git pull` aqui** (até 24/10/2026 havia): o checkout da VPS é do root, está num commit
+> antigo, e nada deste passo depende dele — a imagem vem do registro, pelo digest.
 
 > **A cópia não é zelo, é o caminho de volta.** A edição do `WEB_IMAGE` que este bloco pede escreve
 > por cima do valor antigo, e ele deixa de existir no arquivo. Sem a cópia, a instrução de rollback aqui embaixo é
@@ -370,13 +540,17 @@ docker compose -f docker-compose.prod.yml up -d web
 > que você está tentando desfazer. Sem erro nenhum, com um digest de aparência perfeita. Com `-n`, a
 > segunda execução simplesmente não toca no arquivo.
 
-> **Se você já trocou o `WEB_IMAGE` antes de chegar aqui** — no runbook das migrations, ou no
-> *Movimento 1* do pacote de repasse do banco novo — e nenhuma imagem nova foi publicada desde então,
+> **Se você já trocou o `WEB_IMAGE` antes de chegar aqui** — no runbook das migrations, no
+> *Movimento 1* do pacote de repasse do banco novo, ou para o 0.c rodar fora da janela — e nenhuma
+> imagem nova foi publicada desde então,
 > este passo é **só conferência**: o `grep` acima tem de mostrar exatamente o digest que
 > você recebeu. Não existe um segundo build.
 
 **Esperado:** o container reinicia e o piloto continua funcionando **exatamente como antes** — o
-Authelia ainda autenticando. A chave ainda está desligada.
+Authelia ainda autenticando. A chave ainda está desligada. O que muda na tela vem do código de
+24/10/2026: o cadeado "Trocar a minha senha" sai do menu, o painel de Acessos perde "Redefinir
+senha" e "Exigir troca" (os três voltam no Passo 4), e a coluna da senha passa a se chamar
+"Senha (banco)".
 
 > **A instância ARGENTINA usa o MESMO `WEB_IMAGE`.** Você acabou de editar o `.env`, que é
 > compartilhado: a AR ficou com o arquivo dizendo um digest e o processo rodando outro, e
@@ -407,45 +581,26 @@ Nada foi cortado ainda.
 
 ---
 
-## Passo 3 — Dar ao piloto a credencial do banco
+## Passo 3 — Conferir a credencial do banco (dada em 23/10/2026)
 
-**Sem este passo, o corte apaga o piloto inteiro** — e o apagão começa já no Passo 4, quando
-a chave liga: sem banco, `validar()` falha e toda rota `/api/*` responde 503. A sessão vive em tabela, então o motor
-precisa de credencial de banco para autenticar alguém — e ele **não avisa** que ela falta: a chave
-do Passo 4 não consulta o banco, só a própria variável.
+**Feito na produção em 23/10/2026:** a `MOTOR_DATABASE_URL` (papel `app`) entrou no `.env` e o `web`
+foi recriado com ela; desde então o RBAC do BR vem do banco. Aqui sobra a conferência — e ela não é
+formalidade: **sem banco, o corte apaga o piloto inteiro**, e o apagão começaria já no Passo 4, quando
+a chave liga: sem banco, `validar()` falha e toda rota `/api/*` responde 503. A sessão vive em tabela,
+e a chave do Passo 4 **não avisa** que o banco falta: ela não consulta o banco, só a própria variável.
 
-**No terminal da VPS:**
+**No terminal da VPS** (só contagens; nada aqui imprime a URL, que leva a senha do `app`):
 ```bash
 cd /opt/motor-expansao/app
-grep '^MOTOR_DATABASE_URL=' .env
+grep -c '^MOTOR_DATABASE_URL=postgresql://app:' .env
+docker compose -f docker-compose.prod.yml exec web python -c 'import os; print("web com a URL:", bool(os.environ.get("MOTOR_DATABASE_URL")))'
 ```
 
-**Se vier vazia** — e é o estado de entrega —, preencha com a credencial do papel **`app`** (nunca
-a do dono):
+**Esperado:** `1` e `web com a URL: True`. **Se não vier,** pare: o estado esperado desde 23/10/2026 é
+a URL preenchida, e ligar ou desligar o banco é o §8 do `docs/banco_deploy.md`, fora deste documento.
 
-```
-MOTOR_DATABASE_URL=postgresql://app:<senha-do-papel-app>@postgres:5432/banco_de_reservas
-```
-
-> **Se a senha tiver `@`, `:`, `/` ou `?`, ela precisa de percent-encoding** — sem isso a libpq
-> corta a string no lugar errado e o erro sai como "host não encontrado", que manda você procurar
-> rede quando o problema é a senha. Na dúvida, peça uma senha sem esses caracteres.
-
-**No terminal da VPS:**
-```bash
-docker compose -f docker-compose.prod.yml up -d web
-```
-
-> **PARE E LEIA, porque este comando muda o comportamento do piloto NA HORA, antes de qualquer
-> chave de autenticação.** Com a variável preenchida, o controle de abas troca de fonte: sai do
-> `acesso_abas.json` e passa a ser o RBAC do banco, que é **deny-by-default**. Quem não tiver linha
-> em `usuarios` com perfil **perde as abas** — o piloto abre vazio para essa pessoa.
->
-> **Portanto: só preencha esta variável depois de o Passo 0.a estar fechado** (todo mundo do
-> `authelia/users_database.yml` existe e está ativo em `usuarios`, com perfil — **não** do
-> `acesso_abas.json`, que aceita curinga e por isso o próprio 0.a proíbe usar como lista). Se o 0.a
-> não estiver fechado,
-> **volte para ele** — este passo é o que torna aquela conciliação obrigatória, e não opcional.
+> **Não confira com `grep '^MOTOR_DATABASE_URL=' .env`** — até 24/10/2026 este passo mandava fazer
+> isso, e ele imprime a URL inteira, com a senha do `app`.
 
 **Confira, com o papel certo:**
 
@@ -467,8 +622,9 @@ docker compose -f docker-compose.prod.yml run --rm web \
 **Esperado:** `PRIVILEGIOS OK: o papel do piloto nao consegue o que nao deve, e consegue o que
 precisa.` A primeira linha da saída diz `papel conectado:` — tem de ser **`app`**.
 
-**Se vier `ERRO: defina MOTOR_DATABASE_URL`:** a variável não chegou ao container — confira que
-você editou o `.env` da pasta certa e rodou o `up -d`.
+**Se vier `ERRO: defina MOTOR_DATABASE_URL`:** a variável não chegou ao container — confira o
+`.env` e se não há uma `MOTOR_DATABASE_URL` no seu terminal, que, mesmo vazia, venceria o `.env`
+(`unset MOTOR_DATABASE_URL`).
 **Se vier muitos `FALHA` e um recado sobre o dono:** você usou a credencial do **dono** em vez da
 do `app`. Troque — usar a do dono anula o isolamento de privilégios inteiro.
 
@@ -478,9 +634,17 @@ do `app`. Troque — usar a do dono anula o isolamento de privilégios inteiro.
 
 **No terminal da VPS:**
 ```bash
-# no .env:  MOTOR_AUTENTICACAO_PROPRIA=1
+cd /opt/motor-expansao/app
+grep -c '^MOTOR_AUTENTICACAO_PROPRIA=' .env   # 1 = a linha existe; 0 = não existe; mais que 1 = pare
+# 1: edite a linha para  MOTOR_AUTENTICACAO_PROPRIA=1
+# 0: acrescente-a no fim:  printf '\nMOTOR_AUTENTICACAO_PROPRIA=1\n' >> .env
+grep '^MOTOR_AUTENTICACAO_PROPRIA=' .env      # UMA linha: MOTOR_AUTENTICACAO_PROPRIA=1 (este valor não é segredo)
+unset MOTOR_DATABASE_URL MOTOR_SENHA_INICIAL MOTOR_AUTENTICACAO_PROPRIA
 docker compose -f docker-compose.prod.yml up -d web
 ```
+
+> **A linha pode não existir no `.env`:** a da `MOTOR_DATABASE_URL` não existia em 23/10/2026 e foi
+> acrescentada no fim. Os dois casos estão acima; o que importa é sair com **uma** linha só.
 
 > **`up -d web`, NÃO `restart web`.** O `restart` não relê o `.env` — o container voltaria com o
 > ambiente antigo e nada mudaria. Este é o erro mais fácil de cometer aqui.
@@ -500,7 +664,11 @@ Então, a partir deste comando:
 - entre este passo e o próximo, quem entrar passa por **DOIS logins**: o do Authelia, na borda,
   e o nosso, na aplicação. É esperado e é temporário;
 - **ver esse pop-up e, depois dele, a nossa tela de entrar é o sinal de que funcionou**, não de que
-  quebrou.
+  quebrou;
+- **e o que o código de 24/10/2026 escondia volta a aparecer** para quem entra pela nossa tela: o
+  cadeado "Trocar a minha senha" no menu, o convite de troca para quem o 0.c alinhou e, no painel de
+  Acessos, "Redefinir senha" e "Exigir troca". Antes da chave eles não aparecem, e as rotas deles
+  respondem 404. A conferência é no Passo 6, item 2.
 
 Por isso o Passo 5 é a continuação natural deste, e não um passo para outro dia.
 
@@ -514,8 +682,8 @@ docker compose -f docker-compose.prod.yml exec web printenv MOTOR_AUTENTICACAO_P
 **Esperado:** `1`.
 
 **Se vier vazio ou "não encontrado":** o `up -d` não rodou, ou a chave não está no bloco
-`environment:` do compose — o que o **#416** (merge `f5b5e9b`) levou para a `main`. Você já deu
-`git pull` no Passo 2, então confira no arquivo local:
+`environment:` do compose — o que o **#416** (merge `f5b5e9b`) levou para a `main`, e que o compose
+da VPS tem desde a troca de 17/10/2026. Confira no arquivo da VPS:
 
 **No terminal da VPS:**
 ```bash
@@ -531,14 +699,46 @@ grep -n MOTOR_AUTENTICACAO_PROPRIA docker-compose.prod.yml
 **Este é o passo que fecha o corte.** Dá para voltar (ver *Se precisar voltar atrás*), mas com o
 piloto fora do ar no meio. O que a equipe SENTE começou no passo anterior, com a chave.
 
+**Quem executa depende de quem pode escrever no `Caddyfile`** — e a escrita tem de ser no MESMO
+arquivo (mesmo inode): o Caddy o recebe por bind de ARQUIVO (`./Caddyfile:/etc/caddy/Caddyfile:ro`, no
+`docker-compose.prod.yml`), e um editor que troca o arquivo ao salvar deixa o container lendo o
+antigo — o `caddy reload` recarrega o bloco velho dizendo OK. Foi assim que o Caddyfile divergiu em
+22/09/2026 (comentário do `docker-compose.prod.yml`). Confira antes da janela:
+
+**No terminal da VPS:**
+```bash
+cd /opt/motor-expansao/app
+stat -c '%U:%G %a inode=%i' Caddyfile
+docker exec motor_expansao_caddy stat -c 'inode visto pelo container=%i' /etc/caddy/Caddyfile
+test -w Caddyfile && echo "a conta pode escrever" || echo "a conta NAO pode escrever"
+```
+
+Os dois inodes têm de ser iguais — se não forem, pare: o Caddy está lendo uma versão antiga do
+arquivo. **Se a conta `deploy` não puder escrever**, este passo e o rollback
+ficam com o Felipe (root) — ou ele ajusta antes, sem trocar o inode:
+`chgrp motor-ops Caddyfile && chmod 664 Caddyfile`.
+
 **Copie o bloco atual antes de tocar nele** — o `Caddyfile` é gitignored, então o que está lá
 não existe em nenhum outro lugar, e é dele que você vai precisar se tiver de voltar atrás:
 
 **No terminal da VPS:**
 ```bash
 cd /opt/motor-expansao/app
-cp Caddyfile Caddyfile.antes-do-p19
+cp -n Caddyfile Caddyfile.antes-do-p19   # -n: rodar de novo não troca a cópia de antes pela de depois
 ```
+
+O `-n` também preservaria uma cópia velha, de uma tentativa anterior a esta janela. Se o arquivo já
+existia, confira antes de seguir: `cmp Caddyfile Caddyfile.antes-do-p19` não pode acusar diferença
+antes do corte. Se acusar, renomeie a cópia velha e copie de novo.
+
+**Leve o template à VPS** — o checkout de lá não o tem. **Na sua máquina, num checkout da `main`:**
+```bash
+scp -i ~/.ssh/id_ultra_deploy deploy/caddy/piloto-br.Caddyfile.template deploy@<vps>:~/
+```
+O template também está dentro da imagem no ar (na versão do commit dela), se preferir lê-lo de lá:
+`docker exec motor_expansao_web cat /app/deploy/caddy/piloto-br.Caddyfile.template`. Se quem
+executa este passo for o Felipe, como root, o `~` dele é outro: o `scp` deixa o template em
+`/home/deploy/`.
 
 **Antes de colar, compare os dois lado a lado.** Este passo substitui o bloco **inteiro**, então
 **toda diretiva que exista no bloco vivo e não exista no template desaparece** — compressão
@@ -555,9 +755,10 @@ para o texto novo.** E o `caddy validate` do fim deste passo **não reclama do q
 configuração menor é uma configuração válida. O Passo 6 daria tudo verde e a perda só apareceria
 dias depois.
 
-Agora abra o `Caddyfile` e substitua o bloco de `piloto.ultra-expansao.tech` pelo bloco
-`piloto.ultra-expansao.tech { … }` do template — **da linha `piloto.ultra-expansao.tech {` até a
-chave que a fecha**. As primeiras linhas do template são comentário explicando decisões do projeto:
+Agora monte o arquivo novo **numa cópia**, não no `Caddyfile` —
+`cp Caddyfile.antes-do-p19 ~/Caddyfile.novo` — e, nessa cópia, substitua o bloco de
+`piloto.ultra-expansao.tech` pelo bloco `piloto.ultra-expansao.tech { … }` do template —
+**da linha `piloto.ultra-expansao.tech {` até a chave que a fecha**. As primeiras linhas do template são comentário explicando decisões do projeto:
 elas são explicação, não configuração, e não vão para o servidor.
 
 > **NÃO TOQUE no bloco `piloto-ar.ultra-expansao.tech`.** Ele continua apontando para
@@ -565,18 +766,43 @@ elas são explicação, não configuração, e não vão para o servidor.
 
 **No terminal da VPS:**
 ```bash
+cd /opt/motor-expansao/app
+cat ~/Caddyfile.novo > Caddyfile    # grava no MESMO inode; nunca mv, nem editor que troque o arquivo
+docker exec motor_expansao_caddy cat /etc/caddy/Caddyfile | cmp - Caddyfile && echo "o container ve o arquivo novo"
 docker compose -f docker-compose.prod.yml exec caddy caddy validate --config /etc/caddy/Caddyfile
 docker compose -f docker-compose.prod.yml exec caddy caddy reload --config /etc/caddy/Caddyfile
 ```
 
-**Esperado:** `Valid configuration` e o reload sem erro.
+**Esperado:** `o container ve o arquivo novo`, `Valid configuration` e o reload sem erro. **Se o
+`validate` reprovar,** devolva o arquivo (`cat Caddyfile.antes-do-p19 > Caddyfile`) e pare: sem o
+reload, o Caddy segue servindo o bloco antigo.
 
-**Atualize o backup cifrado**, senão um restore desfaz o corte em silêncio:
+**Atualize os backups cifrados — o do `Caddyfile` e o do `.env` —**, senão um restore desfaz o
+corte em silêncio, ou junta um `Caddyfile` de depois do corte com um `.env` sem a chave (apagão).
+**Pela sua máquina, não pela VPS:** o `sops` e a chave age ficam na estação do Vinicius (até
+24/10/2026 este passo mandava rodar o `sops` no servidor). O texto em claro sai da VPS por `ssh` e
+entra direto no `sops`, sem passar pela tela nem pelo disco. Numa branch nova criada da `main`, na raiz
+do repositório:
 
-**No terminal da VPS:**
+**Na sua máquina (Git Bash):**
 ```bash
-sops secrets/Caddyfile.enc   # cole o Caddyfile novo
+set -o pipefail
+ssh -i ~/.ssh/id_ultra_deploy deploy@<vps> 'docker exec motor_expansao_caddy cat /etc/caddy/Caddyfile' \
+  | sops encrypt --input-type binary --output-type binary --filename-override secrets/Caddyfile.enc \
+  > secrets/Caddyfile.enc.novo && mv secrets/Caddyfile.enc.novo secrets/Caddyfile.enc
+ssh -i ~/.ssh/id_ultra_deploy deploy@<vps> "grep -E '^[A-Za-z_][A-Za-z0-9_]*=' /opt/motor-expansao/app/.env" \
+  | sops encrypt --input-type dotenv --output-type dotenv --filename-override secrets/env.enc.env \
+  > secrets/env.enc.env.novo 2>/dev/null && mv secrets/env.enc.env.novo secrets/env.enc.env
+sops -d --input-type binary --output-type binary secrets/Caddyfile.enc | grep -c 'forward_auth @protegido web:8899'   # 1
+grep -c '^MOTOR_AUTENTICACAO_PROPRIA=ENC\[' secrets/env.enc.env                                               # 1
 ```
+
+Só as linhas `VAR=valor` do `.env` vão para o cifrado: o `sops` guardaria comentário em texto puro. O
+erro do segundo `sops` vai para `/dev/null` de propósito: a mensagem dele pode repetir uma linha do
+`.env`, com senha; se ele falhar, o `mv` não roda e a última conferência sai `0`. O
+PR toca `secrets/`, que o guard trata como CRÍTICO (`critica-aprovada`). O `secrets/env.enc.env` da
+`main` é de 17/10/2026 e não tem nem a `MOTOR_DATABASE_URL` de 23/10, então refazê-lo é devido mesmo
+antes do corte.
 
 ---
 
@@ -602,6 +828,12 @@ sops secrets/Caddyfile.enc   # cole o Caddyfile novo
 2. **Entre com uma conta de teste.**
    **Esperado:** o piloto abre. Se a pessoa nunca trocou a senha, aparece o convite para trocar —
    com um botão "Agora não", porque a troca é **recomendada**, não obrigatória.
+   **Confira também o que só existe com a chave ligada (código de 24/10/2026):** o convite abre para
+   quem o 0.c alinhou; o cadeado **"Trocar a minha senha"** aparece no menu; e, no painel de Acessos,
+   **"Redefinir senha"** e **"Exigir troca"** aparecem nas linhas dos outros (na sua, desabilitados), na tabela
+   com a coluna **"Senha (banco)"**. Se você trocar a sua senha agora, a troca derruba a sessão desta
+   aba: a tela de sucesso diz **"Entre de novo com a senha nova"**, e o botão leva à tela de entrar —
+   é o esperado, não erro.
    > **Mas para quem recebeu uma senha TEMPORÁRIA de um admin, o "Agora não" é armadilha:**
    > essa senha vence em **2 horas**, e depois disso ela não entra mais — precisa de outra
    > redefinição. Quem receber temporária tem de trocar dentro do prazo. Diga isso ao
@@ -665,6 +897,17 @@ sops secrets/Caddyfile.enc   # cole o Caddyfile novo
    >
    > O que ainda vale conferir ali: que o `auth.` responde (a AR depende dele) e que o apex
    > **redireciona**. Se algum dos dois vier diferente, pare e chame quem repassou.
+6. **Confira a API com uma sessão falsa** — é o que o check `auth` do healthcheck da `main` repete a
+   cada 5 min:
+   ```bash
+   curl -s -o /dev/null -w '%{http_code}\n' -H 'Cookie: __Host-motor_sessao=sonda-do-healthcheck' \
+     https://piloto.ultra-expansao.tech/api/me
+   ```
+   **Esperado:** `401`. `200` quer dizer que a API respondeu sem sessão válida — volte atrás. `503`
+   quer dizer que o `/api/verify` não conseguiu consultar o banco, e então ninguém entra — volte
+   atrás. O cookie falso é o que faz este item conferir o banco: sem cookie, o `/api/verify`
+   responde 401 sem consultá-lo, e um banco fora também daria `401`. O valor do cookie não é
+   segredo: não existe sessão com ele.
 
 **Se o item 1 der outra coisa** — a tela do Authelia, ou o piloto abrindo usável sem pop-up, ou erro
 que nenhum item previu —, **ou se o item 2 não conseguir entrar:** vá direto para *Se precisar voltar
@@ -676,18 +919,27 @@ atrás*, abaixo. O pop-up "Sessão encerrada" do item 1 **não** é esse caso: e
 
 **A ordem é o INVERSO da de ligar. Invertê-la derruba o piloto inteiro.**
 
-1. **Primeiro o Caddy:** devolva o bloco antigo copiando-o de **`Caddyfile.antes-do-p19`** — a cópia
-   que você fez no começo do Passo 5. É o bloco com `forward_auth authelia:9091` cobrindo tudo,
-   **sem** o matcher `@protegido`. Depois recarregue, com os mesmos dois comandos do Passo 5:
+1. **Primeiro o Caddy:** devolva o bloco antigo **inteiro**, copiando-o de **`Caddyfile.antes-do-p19`**
+   — a cópia que você fez no começo do Passo 5. É o bloco com `forward_auth authelia:9091` cobrindo
+   tudo, **sem** o matcher `@protegido`. Reapontar só a linha do `forward_auth` deixaria o
+   `@protegido` de pé — a raiz e os estáticos servidos a quem não entrou —, e o `caddy validate`
+   aprova isso sem reclamar. Quem executa é quem executou o Passo 5, e a escrita é no mesmo inode,
+   pela mesma razão. Se nada mais mudou no arquivo desde o Passo 5, devolva-o inteiro, como abaixo;
+   se outro bloco mudou nesse meio-tempo, monte uma cópia em que só o bloco
+   `piloto.ultra-expansao.tech { … }` volta ao de antes e grave-a do mesmo jeito. Depois recarregue:
 
    ```bash
    cd /opt/motor-expansao/app
+   cat Caddyfile.antes-do-p19 > Caddyfile    # mesmo inode
+   docker exec motor_expansao_caddy cat /etc/caddy/Caddyfile | cmp - Caddyfile && echo "o container ve o arquivo devolvido"
    docker compose -f docker-compose.prod.yml exec caddy caddy validate --config /etc/caddy/Caddyfile
    docker compose -f docker-compose.prod.yml exec caddy caddy reload --config /etc/caddy/Caddyfile
    ```
 
-2. **Só então a chave:** `MOTOR_AUTENTICACAO_PROPRIA=` (vazia) e
-   `docker compose -f docker-compose.prod.yml up -d web`.
+2. **Só então a chave:** `MOTOR_AUTENTICACAO_PROPRIA=` (vazia),
+   `unset MOTOR_DATABASE_URL MOTOR_SENHA_INICIAL MOTOR_AUTENTICACAO_PROPRIA` e
+   `docker compose -f docker-compose.prod.yml up -d web` — **`up -d`, NÃO `restart`**: o `restart` não
+   relê o `.env`, e o `web` voltaria com a chave ligada.
 
 > **A `MOTOR_DATABASE_URL` FICA preenchida — não a esvazie.** Ela não tem nada a ver com quem
 > autentica; esvaziá-la devolveria o controle de abas ao `acesso_abas.json` e é uma segunda mudança
@@ -695,6 +947,10 @@ atrás*, abaixo. O pop-up "Sessão encerrada" do item 1 **não** é esse caso: e
 > segue no RBAC do banco, então quem ainda não tem perfil continua **abrindo o piloto vazio** mesmo
 > com o Authelia de volta. Isso **não** é rollback malfeito — é o Passo 3 ainda em vigor, e se
 > resolve dando perfil à pessoa pelo painel de Acessos.
+>
+> **E depois do corte o interruptor do banco deixa de existir:** sem banco ninguém entra. Para
+> desligar o banco, desfaça primeiro o P19 (esta seção) e só então esvazie a URL (§8 do
+> `docs/banco_deploy.md`).
 
 > Na ordem contrária, você fica com a chave desligada e o Caddy ainda perguntando ao
 > `/api/verify` — que responde 404 com a chave desligada. O Caddy nega tudo que não for uma
@@ -714,7 +970,8 @@ atrás*, abaixo. O pop-up "Sessão encerrada" do item 1 **não** é esse caso: e
 
 **A mitigação, e ela custa pouco:** enquanto durar a janela de observação, **continue cadastrando
 toda pessoa nova no `users_database.yml` do Authelia**, como se o corte não tivesse acontecido. É
-esse cadastro paralelo que torna o rollback sobrevivível.
+esse cadastro paralelo que torna o rollback sobrevivível — e o recado da tela de Acessos, depois de
+criar alguém com a chave ligada, lembra disso.
 
 **Para saber quem seria afetado**, o banco responde:
 
@@ -735,28 +992,32 @@ docker compose -f docker-compose.prod.yml exec postgres \
 
 | Coisa | Antes | Depois |
 |---|---|---|
-| **Tirar acesso de alguém** | remover do `users_database.yml` + restart do Authelia | **desativar a linha em `usuarios`** pelo painel de Acessos — a sessão morre na requisição seguinte |
-| **Postgres fora do ar** | o piloto continua servindo (só o banco fica indisponível) | **o piloto inteiro fica fora** — sem banco não há sessão, e o Caddy nega tudo |
+| **Tirar acesso de alguém** | remover do `users_database.yml` + restart do Authelia, e desativar a linha em `usuarios` pelo painel (desde 23/10/2026 as abas do BR vêm do banco) | **desativar a linha em `usuarios`** pelo painel de Acessos — a sessão morre na requisição seguinte. Durante a janela de observação, tire também do `users_database.yml`: senão um rollback devolve o acesso. Nos dois casos, o bot sai à parte (`bot_allowlist.json`; `docs/infra_producao.md`, "Revogar usuário") |
+| **Postgres fora do ar** | o piloto continua no ar, com o RBAC degradado (desde 23/10/2026 as abas vêm do banco; detalhe no Runbook de incidente do `docs/infra_producao.md`) | **o piloto inteiro fica fora** — sem banco não há sessão, e o Caddy nega tudo |
 | **Sessão expirada** | o Authelia redireciona | a SPA abre o pop-up "Sessão encerrada" e, no clique, leva à nossa tela de entrar |
 
 > **O item do meio é o mais importante para quem recebe alerta de madrugada.** O comentário do
 > `healthcheck_vps.sh` já separa as duas fases (antes do corte o `web` não cai junto com o Postgres) — a segunda passa a valer
-> aqui. Postgres fora = piloto BR indisponível.
+> aqui. Postgres fora = piloto BR indisponível. Por isso o healthcheck da `main` tem de estar
+> instalado antes (ver *Antes de marcar a janela*): o que rodava na VPS em 24/10/2026 não vigia o
+> Postgres.
 
 ---
 
-## Instalar o cron de expurgo (pode ser depois, mas não esqueça)
+## O cron de expurgo (instalado em 17/10/2026)
 
 Ele apaga IP e user-agent das sessões com mais de 90 dias — prazo decidido, não higiene opcional.
 
-**No terminal da VPS:**
-```bash
-cp /opt/motor-expansao/app/scripts/cron/run_expurgo_sessoes.sh /opt/motor-expansao-infra/
-chmod +x /opt/motor-expansao-infra/run_expurgo_sessoes.sh
-```
+**Já está instalado, e fora do caminho de root que o cabeçalho do script descreve** (decisão de
+17/10/2026): roda às 04:40 UTC no crontab da conta `deploy`, por `~/motor-infra/run_expurgo_sessoes.sh`,
+com log em `~/logs/expurgo_sessoes.log` — 30 min antes do backup das 05:10, que é a ordem que a
+retenção exige (`docs/banco_deploy.md` §9.1). Até o corte ele não tem o que fazer: sessão só nasce no
+login próprio. **Depois do corte**, confira no log que ele segue rodando; o subcomando `banco` do
+healthcheck da `main` vigia isso.
 
-O restante (o smoke com `--simular` e a linha do crontab) está no cabeçalho do próprio script.
-Rode o `--simular` primeiro: ele conta e não escreve nada.
+> **Risco declarado:** o offboarding padrão da conta `deploy` (`userdel -r`) apagaria em silêncio este
+> cron, o do backup e os dumps em `/home/deploy/backups/banco`. Quem revogar essa conta tem de mover os
+> dois crons antes.
 
 ---
 
@@ -765,5 +1026,6 @@ Rode o `--simular` primeiro: ele conta e não escreve nada.
 - **Durante a janela:** quem repassou este documento.
 - **Se o piloto ficar fora e o rollback não resolver:** o bloco antigo do Caddy está em
   **`/opt/motor-expansao/app/Caddyfile.antes-do-p19`** (a cópia do Passo 5) e, se ela tiver se
-  perdido, no backup cifrado (`sops -d secrets/Caddyfile.enc`). **Não procure no histórico do git:**
-  o `Caddyfile` é gitignored e nunca esteve versionado.
+  perdido, no backup cifrado **de antes do corte** — o `secrets/Caddyfile.enc` anterior ao commit que
+  o refez no Passo 5, decifrado na estação do Vinicius (`sops -d`; é lá que ficam o `sops` e a chave).
+  **O `Caddyfile` em claro nunca esteve versionado:** é gitignored.

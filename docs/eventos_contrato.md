@@ -61,8 +61,10 @@ um valor é editar esta tabela primeiro.
 > **`login.recusado` entrou em 18/09/2026**, e o que ele pode carregar é pequeno por decisões
 > alheias a esta seção — vale escrever para ninguém procurar o que não está lá:
 >
-> - **o IP fica FORA.** O **P15** (base legal e prazo) segue aberto, e há teste de contrato no
->   motor que recusa qualquer `INSERT` em `eventos` mencionando a coluna. Quem guarda o IP da
+> - **o IP fica FORA.** O **P15** teve o prazo fechado em 23/09/2026 — 90 dias, aplicados à
+>   origem das sessões (`ip_sessao`/`user_agent_sessao`, em `sessoes`) e precedente para quando
+>   `eventos.ip` tiver produtor — e segue aberto só na base legal; há teste de contrato no motor que
+>   recusa qualquer `INSERT` em `eventos` mencionando a coluna. Quem guarda o IP da
 >   tentativa é a **trilha da DEC-027**, em arquivo, sem prazo desde a emenda 2 (era 90 dias)
 >   — e ela **já grava** o `POST /api/login` hoje (`relevante()` só exclui `/api/health`, `/api/verify`,
 >   `/assets/` e estáticos);
@@ -88,7 +90,8 @@ um valor é editar esta tabela primeiro.
 >   janela manteria a conta da vítima trancada para sempre e o contador nunca drenaria: a trava
 >   viraria a arma que ela existe para impedir. Fica só o aviso no log do operador;
 > - **a varredura de nomes inexistentes continua sem trava.** Sem `id_usuario` não há o que
->   contar, e o IP — que resolveria — está fora pelo **P15**. Limitar por origem de rede segue
+>   contar, e o IP — que resolveria — está fora de `eventos` (o **P15** deu o IP à `sessoes`, não a
+>   `eventos`). Limitar por origem de rede segue
 >   em aberto; o que entrou foi a trava **por conta**.
 >
 > A trava **não é** nenhuma das cinco decisões numeradas da epic (a 3 é 2FA) — a nota anterior
@@ -349,13 +352,14 @@ recomendação que este contrato pressupõe.
 - **Sem PII em `metadados`** (convenções §5): nada de nome, CPF, e-mail. Só parâmetros técnicos,
   ids e valores de campo. O `solicitante` de um relatório é **texto digitado pelo usuário** e não
   deve ser copiado para cá.
-- **Ninguém escreve `ip`, e passar a escrever exige fechar o **P15** antes.** A coluna existe na
+- **Ninguém escreve `ip`, e passar a escrever exige antes a base legal do **P15**.** A coluna existe na
   `005` para segurança/auditoria e **nunca teve produtor**: todo `INSERT` deste contrato lista
   `id_usuario, tipo, entidade, entidade_id, metadados`, e toda linha tem `ip` nulo. Até 16/09 esta
   linha dizia "`ip` é PII retida por prazo indeterminado", afirmando uma exposição que não existe —
-  o que é pior que o silêncio, porque manda a auditoria procurar dado que nunca foi gravado. Base
-  legal e prazo seguem abertos, e `tests/contracts/test_ip_nao_entra_em_eventos.py` barra o
-  `INSERT` enquanto isso.
+  o que é pior que o silêncio, porque manda a auditoria procurar dado que nunca foi gravado. A base
+  legal segue aberta — o prazo foi fechado em 23/09/2026 (90 dias, aplicados à origem das
+  sessões, em `sessoes`, e precedente para quando `eventos.ip` tiver produtor) —, e
+  `tests/contracts/test_ip_nao_entra_em_eventos.py` barra o `INSERT` enquanto isso.
 - **Append-only**: `eventos` não tem `atualizado_em` e nunca é atualizado (§4).
 - **Todo `relatorio.gerado` carrega `report_id`.** Sem ele, o D17 não fecha.
 - **`tipo` fora deste documento é defeito**, não estilo — o D11 alerta que texto livre fragmenta
@@ -376,6 +380,14 @@ deste contrato cujo vocabulário está inteiramente implementado.
 **Cuidado com a frase acima:** ela diz que os sete tipos *declarados* têm produtor, não que tudo o
 que acontece com `usuarios` vira evento. Um `UPDATE` feito à mão, fora da tela, continua sem deixar
 rastro — ver *"O que continua descoberto"* no fim da §2.7.
+
+**Três dos sete dependem da chave do P19 desde 24/10/2026** (no código; na produção, a partir do
+deploy da imagem que o traz). `usuario.senha_definida`,
+`usuario.senha_redefinida` e `usuario.troca_exigida` saem de `PATCH /api/me/senha` e das rotas
+`redefinir-senha` e `exigir-troca` do painel, que respondem **404** enquanto
+`MOTOR_AUTENTICACAO_PROPRIA` estiver vazia — decisão do dono: com a entrada pelo Authelia, a senha do
+banco não abre porta nenhuma. É a situação de `login`/`logout` no fim desta seção: produtor e chamador
+existem, e as linhas aparecem com a chave ligada. `usuario.criado` segue gravando nos dois estados.
 
 **Grava (desde 16/09):** `dossie.baixado` (§2.2), pelo **`GET` do PDF** — e não pelo gesto
 `abrir-dossie`, que dispara mesmo quando o imóvel não tem dossiê (ver a correção no fim da §2.4).

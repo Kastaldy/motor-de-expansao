@@ -1,5 +1,15 @@
 # Bloco do Caddy para a instancia ARGENTINA do piloto (Bloco E / BLK-INTL-08).
 #
+# ============================================================================
+# NAO TOQUE NESTE ARQUIVO NO CORTE DO P19. Ele NAO muda: a Argentina continua
+# autenticando pelo Authelia, e trocar isto aqui derruba o acesso dela. O porque
+# esta' no bloco cercado de tracos, umas 20 linhas abaixo -- leia antes de mexer.
+# O procedimento numerado logo abaixo e' da APLICACAO ORIGINAL deste bloco, feita
+# em 2026-09-03; nao e' passo do corte. Marcado aqui porque o aviso so' existia
+# em outros arquivos (o runbook do corte, Passo 5), e quem abrisse este direto
+# encontrava apenas instrucoes acionaveis (achado de 05/10/2026).
+# ============================================================================
+#
 # TEMPLATE versionado: o Caddyfile REAL e' gitignored (backup cifrado em
 # secrets/Caddyfile.enc) e vive na VPS em /opt/motor-expansao/app/Caddyfile.
 # Aplicacao (cada comando na VPS com aprovacao do Felipe, comando a comando —
@@ -27,7 +37,7 @@
 # O corte do P19 (DEC-067, D4) troca o alvo do `forward_auth` do Authelia para o nosso
 # `/api/verify` — mas SO' NO BR. O motivo e' medido e e' de dependencia: a sessao propria
 # vive em TABELA (D1/migration 018), e o `web_ar` NAO TEM BANCO — `docker-compose.ar.yml`
-# lista seis variaveis de ambiente e nenhuma e' `MOTOR_DATABASE_URL`. Sem banco nao ha'
+# lista sete variaveis de ambiente (24/10/2026) e nenhuma e' `MOTOR_DATABASE_URL`. Sem banco nao ha'
 # tabela de sessao, logo o motor nao teria como autenticar ninguem deste lado.
 #
 # Apontar este bloco para o `web_ar` derrubaria a AR INTEIRA: a rota responderia 404 (a

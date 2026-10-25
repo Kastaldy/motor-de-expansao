@@ -11,6 +11,15 @@
 >
 > **Tudo aqui foi medido em 16/09/2026**, salvo o que estiver marcado como **proposta** ou
 > **em aberto**. Onde eu não medi, está escrito que não medi.
+>
+> **Estado em 24/10/2026** (não é medição de 16/09): o código da epic está na imagem no ar; o banco
+> foi criado em 17/10/2026 (21 migrations) e ligado no site em 23/10/2026 — desde então o RBAC do BR
+> vem do banco —; e `MOTOR_AUTENTICACAO_PROPRIA` segue **desligada**, então quem autentica continua
+> sendo o Authelia. Duas decisões de Vinicius, de 24/10/2026, fecham o que faltava para o dia do
+> corte: (1) a senha do dia é a **compartilhada** do Authelia, que passa a ser a
+> `MOTOR_SENHA_INICIAL` (ver o §4); (2) o cadeado "Trocar a minha senha", "Redefinir senha" e "Exigir
+> troca" só aparecem, e só funcionam, com a chave ligada — código de 24/10/2026, que vale a partir da
+> imagem que o traz. O roteiro do corte é o `docs/repasse_corte_p19.md`.
 
 ## 1. O que já existe (e é mais do que parece)
 
@@ -23,7 +32,9 @@ A leitura corrente — inclusive a do próprio P19 — subestima o que está pro
 - `usuarios.senha_hash` guarda PHC de verdade; `senha_definida_em_usuario` e
   `deve_trocar_senha_usuario` dão o ciclo de vida.
 - `PATCH /api/me/senha` (a pessoa troca a própria) e, na tela de administração, criar usuário,
-  redefinir senha e exigir troca.
+  redefinir senha e exigir troca. *(Desde 24/10/2026, trocar, redefinir e exigir troca respondem
+  **404** enquanto `MOTOR_AUTENTICACAO_PROPRIA` estiver desligada: com a entrada pelo Authelia, a
+  senha do banco não abre porta nenhuma — decisão de Vinicius. Criar usuário segue nos dois estados.)*
 - `acesso.login_da_requisicao` é o **funil único** de identidade: hoje lê o header e, no vazio, cai
   na identidade de desenvolvimento (travada em produção por `MOTOR_CADASTRO_DIR`).
 
@@ -99,14 +110,25 @@ Medido, e as duas já estão disponíveis:
    No lugar dela entra `db alinhar-senhas`, que é mais barato e resolve o problema real —
    garantir que o hash guardado corresponde à senha compartilhada que a equipe digita. Ver
    `docs/repasse_corte_p19.md`, passo 0.
+
+   **A exceção do dono fica resolvida pela decisão de 24/10/2026** (Vinicius): a senha do dia do
+   corte é a compartilhada, que passa a ser a `MOTOR_SENHA_INICIAL`, e o `alinhar-senhas` grava o
+   hash dela nos 20 e remarca a troca. Quem usa senha pessoal no Authelia (como o Felipe) entra com
+   a compartilhada e define a dele no convite do primeiro acesso — então não é preciso medir quem usa
+   senha pessoal lá.
 2. **Esvaziar a fila antes.** As pessoas podem definir senha própria **desde já**, e
    `senha_definida_em_usuario` é literalmente a fila: nulo = ainda na senha inicial. O P19 diz, com
    estas palavras, que essa coluna "é a fila que a epic precisa zerar".
+   *(Desde 24/10/2026 o "desde já" não vale: com a chave desligada, o cadeado fica escondido e o
+   `PATCH /api/me/senha` responde 404. A fila só anda depois do corte, e antes dele o
+   `alinhar-senhas` (Passo 0 do roteiro) cobre todo mundo.)*
 
 As duas se combinam: o `alinhar-senhas` cobre quem não agiu, a fila mede quem já agiu.
 
 **Não medido:** quantas pessoas já têm senha própria hoje. Isso exige consultar o banco em produção,
-o que não foi feito daqui.
+o que não foi feito daqui. **Depois da instalação, ninguém:** os 20 nasceram em 17/10/2026 com o hash
+da senha inicial sorteada (`senha_definida_em_usuario` nula), e o cadeado, que pedia essa senha,
+recusava todos.
 
 ## 5. Obrigações que a epic herda
 
@@ -120,7 +142,9 @@ o que não foi feito daqui.
   gatilho por si, e o texto do P14 ainda não diz isso.
 - **`BLK-SEC-03-FU2`** (revisão de acesso e offboarding) é pré-requisito prático: é dele que sai a
   conciliação entre `users_database.yml` e as linhas de `usuarios`. Já separado do FU1 em
-  16/09/2026 justamente por sobreviver ao corte.
+  16/09/2026 justamente por sobreviver ao corte. A conciliação mínima foi feita com o conferidor na
+  instalação do banco e antes de ligá-lo (17 e 23/10/2026); seguem abertas a política de saída nos dois cadastros e a
+  periodicidade da revisão.
 - **`BLK-SEC-03-FU1`** (forçar TOTP no Authelia) está **SEM OBJETO desde 22/09/2026**: a decisão 3
   (§7) fechou que 2FA não entra no projeto por agora. Até aquela data ele estava só **adiado**, com
   a ressalva de que "se a epic ganhar data distante, ele volta à mesa" — a decisão do dono substitui
@@ -170,7 +194,7 @@ Todas as cinco foram tomadas até 25/09/2026 (a DEC-067 as dá por fechadas); ca
    5 min ficam, e o pior caso da trava vira sair aos 120 min em vez de ~125. O texto acima fica como
    registro do que foi decidido em 17/09. Enquanto o Authelia autentica, a mudança que o usuário
    sente é **manual na VPS** (`inactivity: 2h`, nunca `0`, + restart do `authelia`), com runbook em
-   `docs/repasse_logout_2h.md`.
+   `docs/repasse_logout_2h.md` — feita na VPS em 17/10/2026.
    **Duas consequências para o front, que esta decisão já resolve:** (i) "lembrar de mim" é
    **caixinha nova** no formulário de login — medido, não existe nada hoje (`lembrar`/`remember`:
    zero ocorrências em `web/src`); (ii) a **sonda de `lib/sessao.ts` deixa de ser necessária para o
@@ -234,7 +258,7 @@ Todas as cinco foram tomadas até 25/09/2026 (a DEC-067 as dá por fechadas); ca
    do corte deixa de estar travada por decisão** — o que resta é execução manual na VPS, e
    um pré-requisito medido, já resolvido: `MOTOR_AUTENTICACAO_PROPRIA` não chegava ao container até o #416 (merge `f5b5e9b`, 28/09/2026)
    (`banco-de-reservas/decisoes-pendentes.md:39`). Continua sendo decisão de infraestrutura, com
-   execução na VPS sob o §6.
+   execução na VPS sob o §6. O roteiro é o `docs/repasse_corte_p19.md`.
    **Sobre os headers `Remote-*` que o RBAC lê hoje, a resposta já está no código e não depende da
    borda:** com o portão ligado, o motor **apaga** `remote-user`/`remote-email` de toda requisição e
    reinjeta `remote-user` a partir do COOKIE (`_sem_headers_de_identidade` e `_portao_de_sessao`, em `web/server/app.py`), e
