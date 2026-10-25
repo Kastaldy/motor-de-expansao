@@ -5538,8 +5538,10 @@ def _identidade_do_admin(remote_user: str | None) -> Any:
         # `warning` e SEM `exc_info`: banco ausente nao e' incidente, e' ESCOLHA declarada
         # (§4), entao traceback aqui seria ruido a cada requisicao de um deploy que roda assim
         # de proposito. O que interessa e' a FREQUENCIA -- quanta gente tenta administrar
-        # usuario num deploy sem banco e' a evidencia que o BLK-SAUDE-10 precisa para decidir
-        # entre provisionar o Postgres e assumir o piloto sem ele.
+        # usuario num deploy sem banco era a evidencia que o BLK-SAUDE-10 pedia para decidir
+        # entre provisionar o Postgres e assumir o piloto sem ele. Decidido na pratica em
+        # 23/10/2026 (provisionar: o banco esta' ligado na producao BR); a linha fica para o
+        # deploy que roda sem banco por construcao.
         #
         # ERA `info`, E `info` NAO APARECIA. Medido no container de producao em 2026-10-05,
         # logo depois de subir: o nivel efetivo e' WARNING na raiz e em todo logger que dela
@@ -5584,7 +5586,8 @@ def _minha_identidade(remote_user: str | None) -> Any:
         #
         # `warning` e sem `exc_info`, pela mesma razao do ramo gemeo acima: estado
         # declarado nao e' incidente, e o sinal util e' a frequencia -- quanta gente QUER
-        # trocar a propria senha num deploy sem banco pesa na decisao do BLK-SAUDE-10.
+        # trocar a propria senha num deploy sem banco pesava na decisao do BLK-SAUDE-10
+        # (decidida em 23/10/2026; ver o ramo gemeo).
         # Era `info`, que o nivel de producao (WARNING) engolia; ver o ramo gemeo.
         _LOG_FALHA.warning("troca da propria senha pedida em deploy sem banco configurado")
         raise HTTPException(

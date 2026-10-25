@@ -1287,9 +1287,9 @@ def classificar_para_alinhar(
 ) -> dict[str, list[tuple[int, str]]]:
     """Separa as linhas de `SQL_ESTADO_DA_SENHA_INICIAL` nas QUATRO classes do alinhamento.
 
-    FUNCAO PROPRIA, e nao um laco dentro do comando, por um motivo de COBERTURA: o CI nao tem
-    Postgres (`.github/workflows/ci.yml` roda `pytest -q` e nao sobe servico de banco), e o
-    unico teste do `alinhar-senhas` era de integracao -- pulava sem banco. Ou seja, o comando
+    FUNCAO PROPRIA, e nao um laco dentro do comando, por um motivo de COBERTURA: ate' 24/10/2026
+    o CI nao tinha Postgres (`.github/workflows/ci.yml` rodava `pytest -q` sem servico de banco),
+    e o unico teste do `alinhar-senhas` era de integracao -- pulava sem banco. Ou seja, o comando
     que se roda contra o banco de PRODUCAO, no passo que o runbook chama de o unico que nao da'
     para desfazer, chegava a' VPS sem uma linha de verificacao automatica. Extraida, a decisao
     inteira vira testavel sem banco nenhum.

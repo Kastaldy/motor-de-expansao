@@ -129,6 +129,10 @@ TETO_USER_AGENT = 200
 #: mesmo prazo que a DEC-027 ja' pratica para a trilha de acesso em arquivo, que guarda o
 #: MESMO dado (IP e user-agent). Dois prazos diferentes para o mesmo dado seriam duas
 #: politicas de privacidade no mesmo sistema.
+#:
+#: A igualdade ACABOU em 20/10/2026: a emenda 2 da DEC-027 tirou o prazo da trilha em arquivo
+#: e deixou este como estava (o escopo dela era so' a trilha). Sao duas politicas desde entao,
+#: divergencia declarada na propria emenda; os 90 dias daqui seguem valendo pelo P15.
 RETENCAO_ORIGEM_DIAS = 90
 
 #: ANONIMIZA, nao apaga. O que tem prazo e' o DADO PESSOAL, nao o registro da sessao: zeradas
