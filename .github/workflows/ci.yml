@@ -57,6 +57,13 @@ jobs:
         # producao, que roda o mesmo `-c`. Fechar isso e' o refresh do lock acima.
         run: pip install -e ".[dev,api_mvp,db,auth]" -c constraints.txt
 
+      # Banco de ensaio, parte 1 de 2 (so' velocidade): o pull da imagem do PostGIS
+      # (~240 MB comprimidos) corre em segundo plano enquanto lint, mypy e a suite
+      # unitaria rodam (~10 min). A parte 2 nao depende disto para ficar CERTA: se o pull
+      # ainda nao terminou, o `docker run` dela espera; se falhou, baixa de novo.
+      - name: Banco de ensaio — baixar a imagem do PostGIS em segundo plano
+        run: bash scripts/ci/banco_de_ensaio.sh pre-baixar
+
       # ruff/mypy sao steps de qualidade BLOQUEANTES desde BLK-OPS-02b: a divida
       # latente de lint/tipos (286 ruff + 23 mypy) foi zerada naquele ciclo, sem
       # alterar logica de scoring, artefatos M1 nem semantica de testes M1. A
@@ -70,6 +77,51 @@ jobs:
 
       - name: Testes (suite completa)
         run: python -m pytest -q
+
+      # Banco de ensaio, parte 2 de 2: Postgres DE VERDADE no check obrigatorio.
+      #
+      # Ate' 24/10/2026 o CI nao tinha Postgres: as migrations passavam so' pelo parser
+      # (`pglast`), o login inteiro por dubles, e tests/integration/test_login_ponta_a_ponta.py
+      # PULAVA aqui sempre. Uma migration com SQL que o PostGIS 18 recusa so' apareceria no
+      # `db aplicar` ja' na VPS -- o passo que o runbook declara sem volta.
+      #
+      # DENTRO do job `test`, e nao num job proprio: `test` e' um dos 4 checks obrigatorios
+      # da DEC-016 (test, guard, claude-review, review-gate), e um job novo nao barraria
+      # merge nenhum sem mexer na protecao da main. DEPOIS da suite unitaria, que segue
+      # identica e sem variavel de banco: a URL so' existe dentro do processo deste passo.
+      #
+      # O script (cabecalho de scripts/ci/banco_de_ensaio.sh) sobe a MESMA imagem do
+      # docker-compose.prod.yml -- tag, shm_size, POSTGRES_INITDB_ARGS e o tmpfs sobre o
+      # initdb sao LIDOS de la' --, com banco `banco_de_reservas_ensaio`, dono
+      # `reservas_owner` e senha aleatoria mascarada; roda `db aplicar` do zero, `db estado`
+      # sem pendencia, `db aplicar` de novo (no-op) e o teste de integracao com
+      # MOTOR_BANCO_DE_ENSAIO_OBRIGATORIO=1. Pular, aqui, e' FALHAR: o proprio teste troca o
+      # pulo por ambiente ausente por falha, e o junit e' conferido (zero pulados). Sem isso
+      # o passo ficaria verde sem ter testado nada.
+      #
+      # FICA DE FORA o D20 (papeis app/auditoria/etl, GRANTs, REVOKEs, ENABLE ALWAYS): ele
+      # vive no `banco-de-reservas` (sql/papeis-e-privilegios.md), e um D20 recriado aqui
+      # provaria o recriado, nao o real. Consequencias, ambas travadas no teste:
+      #   - `db conferir` roda e reprova SO' nas duas triggers de auditoria em 'O' (o
+      #     fail-closed do #447); qualquer outro problema reprova o CI;
+      #   - `db privilegios` roda com a credencial de DONO (sem D20 nao ha' `app`), e a
+      #     reprovacao tem de ser EXATAMENTE a que o dono e a falta do D20 explicam. O
+      #     VEREDITO de verdade, conectado como `app`, segue manual: runbook §1.2 e VPS.
+      #
+      # FICA DE FORA tambem o banco COM DADOS: a cadeia roda num banco VAZIO, entao uma
+      # migration que so' falha com linhas na tabela (NOT NULL sem default, CHECK que o
+      # dado antigo viola) passa aqui e quebra no `db aplicar` da VPS.
+      #
+      # Custo medido em 24/10/2026 (maquina local, imagem ja' baixada -- o caso do CI depois
+      # da parte 1): 35 a 50 s neste passo (cinco medicoes: 33, 39, 42, 45 e 49 s; duas delas
+      # no Python 3.11 deste job). Subida 4-8 s, migrations 1-3 s, estado e no-op 1 s, pytest
+      # 25-31 s (o grosso e' o argon2 dos testes de `alinhar-senhas`). O pull (~240 MB
+      # comprimidos; 37 s medidos fora do CI) corre atras da suite unitaria, de ~9,5 min.
+      # Reproduzir na maquina: o mesmo comando, com CI_BANCO_NOME=ci_banco_ensaio_local e o
+      # PYTHONPATH no src/ da arvore (ver o cabecalho do script).
+      - name: Banco de ensaio — migrations do zero e integração contra o PostGIS de produção
+        timeout-minutes: 10
+        run: bash scripts/ci/banco_de_ensaio.sh verificar
 
       # BLK-SEC-02: gitleaks como gate BLOQUEANTE (qualquer segredo reprova o CI).
       # Reusa .gitleaks.toml/.gitleaksignore (BLK-OPS-01). Imagem pinada por digest.
