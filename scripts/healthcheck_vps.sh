@@ -36,6 +36,11 @@ AVISO_REMIND_SECS="${MONITOR_AVISO_REMIND_SECS:-604800}"
 DISK_PCT_MAX="${MONITOR_DISK_PCT_MAX:-80}"
 MEM_AVAIL_PCT_MIN="${MONITOR_MEM_AVAIL_PCT_MIN:-10}"
 EDGE_URL="${MONITOR_EDGE_URL:-https://piloto.ultra-expansao.tech}"
+# Cookie de sessão FALSO da sonda `auth` (ver `check_auth`). O NOME tem de ser o de produção
+# (`COOKIE_SESSAO` em web/server/acesso.py; travado por teste): com outro nome, o `/api/verify`
+# volta a ver "sem cookie" e responde 401 sem consultar o banco. O VALOR não importa — não
+# existe sessão com ele.
+COOKIE_SONDA_AUTH="__Host-motor_sessao=sonda-do-healthcheck"
 GYM_REPORT_DIR="${MONITOR_GYM_REPORT_DIR:-/opt/gymscraping-infra}"
 GYM_LOG_HINT="/var/log/gymscraping/weekly_latest.log"
 # Série de snapshots de concorrentes (BLK-MA-21). O cron SEMANAL dos agregadores (terça 02:00
@@ -266,20 +271,36 @@ check_containers() {
         report edge FAIL "Dashboard fora do ar: $EDGE_URL respondeu HTTP $code"
     fi
 
-    # AUTENTICACAO, e este check existe porque o de cima DEIXA DE MEDI-LA no corte do P19.
-    # A raiz do `EDGE_URL` esta' hoje atras do `forward_auth`, entao o codigo dela reflete a
-    # autenticacao. Depois do corte o matcher `@protegido` cobre so' `/api/*`: a raiz passa a
-    # servir o SPA com 200 SEMPRE, com ou sem ninguem conseguindo entrar -- o check acima
-    # ficaria verde para sempre, que e' pior que nao existir.
-    #
-    # `/api/me` SEM cookie tem de ser 401. Se vier 200, a borda parou de proteger e a API esta'
-    # aberta; se vier 503, o banco caiu e ninguem entra (ver o comentario do `postgres` acima).
-    # ANTES do corte tambem vale: o Authelia responde 302 ou 401, e os dois sao aceitos.
-    code=$(curl -s -o /dev/null -m 15 -w '%{http_code}' "$EDGE_URL/api/me" || echo "000")
+    check_auth
+}
+
+# AUTENTICACAO, e este check existe porque o `edge` (em `check_containers`) DEIXA DE MEDI-LA no
+# corte do P19. A raiz do `EDGE_URL` esta' hoje atras do `forward_auth`, entao o codigo dela
+# reflete a autenticacao. Depois do corte o matcher `@protegido` cobre so' `/api/*`: a raiz
+# passa a servir o SPA com 200 SEMPRE, com ou sem ninguem conseguindo entrar -- o `edge`
+# ficaria verde para sempre, que e' pior que nao existir.
+#
+# `/api/me` com um cookie de sessao INVALIDO tem de ser 401. Se vier 200, a API esta' aberta
+# (a borda deixou passar e, depois do corte, o portao de sessao tambem); se vier 503, o banco
+# nao respondeu e ninguem entra (ver o comentario do `postgres` acima). ANTES do corte tambem
+# vale: o Authelia responde 302 ou 401, e os dois sao aceitos.
+#
+# POR QUE O COOKIE (achado de 24/10/2026). A sonda ia SEM cookie, e assim o ramo do 503 nunca
+# disparava: sem token, o `/api/verify` responde 401 ANTES de abrir conexao
+# (`sessoes.validar("")` sai com `None`), entao banco fora passava como "auth OK" -- inclusive
+# depois do corte, quando banco fora e' o piloto BR inteiro fora. Com um token qualquer, ele
+# faz a MESMA consulta que faz para uma pessoa: token que nao existe = 401; banco que nao
+# responde = 503. O token nao abre nada nem escreve nada: e' um SELECT que nao acha linha.
+# Antes do corte, nada muda: o Authelia ignora este cookie (o dele e' outro), e o `auth` nao
+# acusa banco fora -- ali, banco fora e' degradacao, e quem acusa e' o `containers`.
+check_auth() {
+    local code
+    code=$(curl -s -o /dev/null -m 15 -w '%{http_code}' -H "Cookie: ${COOKIE_SONDA_AUTH}" \
+        "$EDGE_URL/api/me" || echo "000")
     case "$code" in
         401|30*) report auth OK "" ;;
-        200)     report auth FAIL "GRAVE: $EDGE_URL/api/me respondeu 200 SEM sessao -- a borda parou de proteger a API" ;;
-        503)     report auth FAIL "$EDGE_URL/api/me respondeu 503: banco fora do ar. Com o P19 ligado, ninguem entra" ;;
+        200)     report auth FAIL "GRAVE: $EDGE_URL/api/me respondeu 200 a uma sonda sem sessão válida — a API está aberta" ;;
+        503)     report auth FAIL "$EDGE_URL/api/me respondeu 503 a uma sonda com cookie inválido: o banco não respondeu (fora do ar ou saturado). Com o P19 ligado, ninguém entra" ;;
         *)       report auth FAIL "$EDGE_URL/api/me respondeu HTTP $code (esperado 401)" ;;
     esac
 }
