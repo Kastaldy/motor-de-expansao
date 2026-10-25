@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import socket
 import sys
 import types
 from pathlib import Path
@@ -1077,7 +1078,9 @@ def test_falha_de_conexao_no_privilegios_vira_mensagem(monkeypatch: pytest.Monke
     def _falha(_url: str) -> None:
         raise _Erro("FATAL: autenticacao do tipo senha falhou para o usuario 'app'")
 
-    falso = types.SimpleNamespace(connect=_falha, OperationalError=_Erro)
+    # `Error` e' a base que o `except` pega desde 25/10/2026: URL malformada e'
+    # `ProgrammingError`, nao `OperationalError`, e antes escapava como traceback.
+    falso = types.SimpleNamespace(connect=_falha, Error=_Erro, OperationalError=_Erro)
     monkeypatch.setitem(sys.modules, "psycopg", falso)
     monkeypatch.setenv(postgres.ENV_URL, "postgresql://app:x@localhost/banco")
 
@@ -1086,6 +1089,410 @@ def test_falha_de_conexao_no_privilegios_vira_mensagem(monkeypatch: pytest.Monke
     texto = str(caiu.value)
     assert "nao consegui conectar" in texto
     assert "PGPASSWORD" in texto, "a dica do caractere especial na URL precisa aparecer"
+
+
+# --------------------------------------------------------------------------------------
+# A falha de CONEXAO nao leva a senha do DONO para a tela (25/10/2026)
+#
+# A revisao de seguranca do kit do P19 achou que `_conectar_com_diagnostico` limpava a
+# mensagem com `postgres._sem_segredo`, que so' conhece a URL do PILOTO -- e o CLI conecta,
+# na pratica, com a do DONO. Medido contra o CLI real, com psycopg 3.3.4 e sete URLs do dono
+# malformadas de jeitos diferentes: as SETE puseram a senha na tela, seis como traceback cru
+# (`ProgrammingError`, que o `except` nem pegava) e uma dentro do proprio `SystemExit`.
+# --------------------------------------------------------------------------------------
+
+#: Senha FALSA do dono, com marcadores que nao existem em mensagem nenhuma. Leva `@`, `/` e
+#: `#` de proposito: na URL ela vai CODIFICADA, e a mensagem pode citar qualquer das formas.
+_SENHA_DO_DONO = "Qx7@Vw9/Kp3#Zj"
+_SENHA_DO_DONO_NA_URL = "Qx7%40Vw9%2FKp3%23Zj"
+_URL_DO_DONO = (
+    f"postgresql://reservas_owner:{_SENHA_DO_DONO_NA_URL}@10.0.0.1:5432/banco_de_reservas"
+)
+_SENHA_DO_APP = "Ht5-app-Lm2"
+_URL_DO_APP = f"postgresql://app:{_SENHA_DO_APP}@10.0.0.1:5432/banco_de_reservas"
+
+
+class _ErroDoDriver(Exception):
+    """O `psycopg.Error` do duble: a base das outras duas, como no driver real."""
+
+
+class _OperationalErrorFalso(_ErroDoDriver):
+    pass
+
+
+class _ProgrammingErrorFalso(_ErroDoDriver):
+    pass
+
+
+def _driver_que_falha(erro: Exception) -> Any:
+    def _connect(_url: str) -> Any:
+        raise erro
+
+    return types.SimpleNamespace(
+        connect=_connect,
+        Error=_ErroDoDriver,
+        OperationalError=_OperationalErrorFalso,
+        ProgrammingError=_ProgrammingErrorFalso,
+    )
+
+
+def _saida_do_cli_ao_falhar(
+    monkeypatch: pytest.MonkeyPatch,
+    erro: Exception,
+    *,
+    url_do_dono: str,
+    url_do_app: str | None = None,
+    pgpassword: str | None = None,
+) -> str:
+    """Roda `estado`, que conecta pela credencial de DDL, com o driver falhando com `erro`."""
+    monkeypatch.setitem(sys.modules, "psycopg", _driver_que_falha(erro))
+    monkeypatch.setenv(cli.ENV_URL_ADMIN, url_do_dono)
+    for env, valor in ((postgres.ENV_URL, url_do_app), ("PGPASSWORD", pgpassword)):
+        if valor is None:
+            monkeypatch.delenv(env, raising=False)
+        else:
+            monkeypatch.setenv(env, valor)
+    with pytest.raises(SystemExit) as caiu:
+        cli.main(["estado"])
+    return str(caiu.value)
+
+
+@pytest.mark.parametrize(
+    "classe", [_OperationalErrorFalso, _ProgrammingErrorFalso], ids=["operational", "programming"]
+)
+def test_falha_que_cita_a_URL_INTEIRA_do_dono_nao_a_mostra(
+    monkeypatch: pytest.MonkeyPatch, classe: type[Exception]
+) -> None:
+    """Com o esquema em maiuscula (ou o colchete do IPv6 aberto) o libpq cita a string de
+    conexao INTEIRA -- medido, e e' a forma desta mensagem. O `ProgrammingError` e' o caso
+    real, e antes nem era pego: saia como traceback, com a URL dentro."""
+    erro = classe(f'missing "=" after "{_URL_DO_DONO}" in connection info string')
+    texto = _saida_do_cli_ao_falhar(monkeypatch, erro, url_do_dono=_URL_DO_DONO)
+
+    assert "nao consegui conectar" in texto
+    for segredo in (_URL_DO_DONO, _SENHA_DO_DONO_NA_URL, _SENHA_DO_DONO):
+        assert segredo not in texto
+    assert f'missing "=" after "<{cli.ENV_URL_ADMIN}>"' in texto, (
+        "o resto da mensagem tem de sobreviver, e o rotulo diz QUAL env esta' quebrada"
+    )
+
+
+@pytest.mark.parametrize(
+    "citada", [_SENHA_DO_DONO_NA_URL, _SENHA_DO_DONO], ids=["codificada", "decodificada"]
+)
+def test_falha_que_cita_SO_a_senha_do_dono_nao_a_mostra(
+    monkeypatch: pytest.MonkeyPatch, citada: str
+) -> None:
+    """O parse do libpq cita o trecho CRU (`invalid percent-encoded token: "..."`, medido); a
+    mensagem sobre o VALOR cita o decodificado (o host volta decodificado, medido). Nenhuma
+    das duas formas pode passar."""
+    erro = _ProgrammingErrorFalso(f'invalid percent-encoded token: "{citada}"')
+    texto = _saida_do_cli_ao_falhar(monkeypatch, erro, url_do_dono=_URL_DO_DONO)
+
+    assert citada not in texto
+    assert 'invalid percent-encoded token: "<senha>"' in texto
+
+
+def test_falha_que_cita_um_PEDACO_da_senha_do_dono_nao_o_mostra(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """`@` sem codificar na senha: o libpq corta no PRIMEIRO `@`, e o resto vira HOST. Medido
+    com psycopg 3.3.4: a senha `Ab12@<resto>` da' `failed to resolve host '<resto>@...'`. A
+    senha INTEIRA nao aparece -- mascarar so' ela nao pegava nada."""
+    url = "postgresql://reservas_owner:Ab12@Vw9Kp3Zj@10.0.0.1:5432/banco_de_reservas"
+    erro = _OperationalErrorFalso(
+        "failed to resolve host 'Vw9Kp3Zj@10.0.0.1': [Errno 11003] getaddrinfo failed"
+    )
+    texto = _saida_do_cli_ao_falhar(monkeypatch, erro, url_do_dono=url)
+
+    assert "Vw9Kp3Zj" not in texto
+    assert "failed to resolve host '<senha>@10.0.0.1'" in texto, (
+        "o host de verdade, que vem depois do pedaco, e' o que orienta o operador"
+    )
+
+
+def test_url_SEM_senha_com_PGPASSWORD_nao_quebra_a_mensagem(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A forma que a propria dica do CLI recomenda: a senha fora da URL, em `PGPASSWORD`.
+
+    Sem senha na URL nao ha' forma dela a mascarar, e a mensagem do libpq tem de passar
+    INTEIRA. Uma forma VAZIA seria o desastre silencioso: o pedaco vazio casa em toda posicao.
+    """
+    url = "postgresql://reservas_owner@10.0.0.1:5432/banco_de_reservas"
+    mensagem = (
+        'connection failed: connection to server at "10.0.0.1", port 5432 failed: '
+        'FATAL:  password authentication failed for user "reservas_owner"'
+    )
+    texto = _saida_do_cli_ao_falhar(
+        monkeypatch, _OperationalErrorFalso(mensagem), url_do_dono=url, pgpassword="Xk7-pgpw-Q9vT"
+    )
+
+    assert mensagem in texto, "sem segredo citado, a mensagem do libpq passa intacta"
+    assert "<senha>" not in texto
+
+    # Sem PGPASSWORD e sem senha na URL nao ha' forma nenhuma -- e a senha VAZIA na URL
+    # (`reservas_owner:@`) tambem nao vira forma. E' aqui que a guarda contra a forma
+    # vazia e' exercitada: com a PGPASSWORD definida, nenhuma bruta nasce vazia.
+    monkeypatch.delenv("PGPASSWORD", raising=False)
+    assert cli._formas_da_senha(url) == set()
+    assert cli._formas_da_senha("postgresql://reservas_owner:@10.0.0.1:5432/banco") == set()
+
+
+def test_PGPASSWORD_citada_na_mensagem_tambem_some(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Defesa: o libpq nao cita a `PGPASSWORD` em mensagem conhecida. Mas com a URL sem senha
+    e' ELA a senha da conexao, e a limpeza nao pode depender de o libpq se comportar."""
+    url = "postgresql://reservas_owner@10.0.0.1:5432/banco_de_reservas"
+    erro = _OperationalErrorFalso("senha recusada: Xk7-pgpw-Q9vT")
+    texto = _saida_do_cli_ao_falhar(monkeypatch, erro, url_do_dono=url, pgpassword="Xk7-pgpw-Q9vT")
+
+    assert "Xk7-pgpw-Q9vT" not in texto
+    assert "senha recusada: <senha>" in texto
+
+
+def test_falha_com_as_DUAS_urls_limpa_as_duas(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A camada nova roda ANTES de `_sem_segredo`, e nao no lugar dela: conectando com a URL
+    do dono, uma mensagem que cite tambem a do piloto sai sem nenhuma das duas."""
+    erro = _OperationalErrorFalso(f"dono={_URL_DO_DONO} piloto={_URL_DO_APP}")
+    texto = _saida_do_cli_ao_falhar(
+        monkeypatch, erro, url_do_dono=_URL_DO_DONO, url_do_app=_URL_DO_APP
+    )
+
+    segredos = (_URL_DO_DONO, _SENHA_DO_DONO_NA_URL, _SENHA_DO_DONO, _URL_DO_APP, _SENHA_DO_APP)
+    for segredo in segredos:
+        assert segredo not in texto
+    assert f"dono=<{cli.ENV_URL_ADMIN}> piloto=<{postgres.ENV_URL}>" in texto
+
+
+def test_a_URL_do_dono_sai_ANTES_da_limpeza_do_piloto(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A ORDEM importa: `_sem_segredo` troca a senha do piloto em TODO lugar, e com uma senha
+    curta (`x`, a dos outros testes deste arquivo) ele mexeria em letras DENTRO da URL do
+    dono -- que deixaria de casar inteira e perderia o rotulo da env."""
+    erro = _ProgrammingErrorFalso(f'missing "=" after "{_URL_DO_DONO}" in connection info string')
+    texto = _saida_do_cli_ao_falhar(
+        monkeypatch,
+        erro,
+        url_do_dono=_URL_DO_DONO,
+        url_do_app="postgresql://app:x@10.0.0.1:5432/banco_de_reservas",
+    )
+
+    assert "x" in _URL_DO_DONO, "sem a letra em comum o teste nao prova nada"
+    assert f'missing "=" after "<{cli.ENV_URL_ADMIN}>"' in texto
+
+
+def test_falha_de_conexao_do_privilegios_segue_limpando_a_URL_do_piloto(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """`privilegios` conecta com a URL do PILOTO. A limpeza dela ja' existia, e a camada nova
+    nao pode te-la desfeito."""
+    erro = _OperationalErrorFalso(f"could not parse {_URL_DO_APP}; senha {_SENHA_DO_APP}")
+    monkeypatch.setitem(sys.modules, "psycopg", _driver_que_falha(erro))
+    monkeypatch.setenv(postgres.ENV_URL, _URL_DO_APP)
+    monkeypatch.delenv(cli.ENV_URL_ADMIN, raising=False)
+    monkeypatch.delenv("PGPASSWORD", raising=False)
+
+    with pytest.raises(SystemExit) as caiu:
+        cli.cmd_privilegios(argparse.Namespace())
+    texto = str(caiu.value)
+
+    assert _URL_DO_APP not in texto and _SENHA_DO_APP not in texto
+    assert f"could not parse <{postgres.ENV_URL}>; senha <senha>" in texto
+
+
+def test_o_SystemExit_da_conexao_nao_carrega_o_erro_original(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """`from None` so' esconde o contexto do traceback IMPRESSO. Levantado DENTRO do
+    `except`, o `SystemExit` guarda o erro original em `__context__`, com a mensagem crua --
+    e quem o capturar (este arquivo, um script que chame `main()`) chega a senha por ali.
+
+    Chama a funcao direto e sem env nenhuma: a URL nao veio de env conhecida, e o rotulo
+    tem de ser generico em vez de afirmar o nome de uma.
+    """
+    monkeypatch.delenv(cli.ENV_URL_ADMIN, raising=False)
+    monkeypatch.delenv(postgres.ENV_URL, raising=False)
+    monkeypatch.delenv("PGPASSWORD", raising=False)
+    erro = _ProgrammingErrorFalso(f'missing "=" after "{_URL_DO_DONO}" in connection info string')
+
+    with pytest.raises(SystemExit) as caiu:
+        cli._conectar_com_diagnostico(_driver_que_falha(erro), _URL_DO_DONO)
+
+    assert caiu.value.__context__ is None, "o erro original, com a mensagem CRUA, ficou pendurado"
+    assert caiu.value.__cause__ is None
+    assert 'missing "=" after "<URL de conexao>"' in str(caiu.value)
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        "postgresql://reservas_owner:Ab%zzQx7Vw9Kp3@127.0.0.1:1/banco",
+        "postgresql://reservas_owner:Ab Qx7Vw9Kp3@127.0.0.1:1/banco",
+        "POSTGRESQL://reservas_owner:Qx7Vw9Kp3@127.0.0.1:1/banco",
+        "postgresql://reservas_owner:Qx7Vw9Kp3@[::1/banco",
+        "postgresql://reservas_owner@127.0.0.1:1/banco?password=Ab%zzQx7Vw9Kp3",
+        "host=127.0.0.1 port=1 user=reservas_owner password=Ab12 Qx7Vw9Kp3 dbname=banco",
+    ],
+    ids=["pct_invalido", "espaco", "esquema_maiusculo", "ipv6_aberto", "query", "chave_valor"],
+)
+def test_url_malformada_do_dono_com_o_driver_REAL_nao_vaza(
+    monkeypatch: pytest.MonkeyPatch, url: str
+) -> None:
+    """O duble prova a regra; este a prova contra as mensagens de VERDADE do libpq. Todas
+    estas URLs morrem no PARSE, antes de qualquer conexao -- nada sai da maquina. Antes da
+    correcao, as seis saiam como traceback cru de `ProgrammingError`, com a senha dentro (e,
+    em duas delas, a URL inteira)."""
+    monkeypatch.setenv(cli.ENV_URL_ADMIN, url)
+    monkeypatch.delenv(postgres.ENV_URL, raising=False)
+    monkeypatch.delenv("PGPASSWORD", raising=False)
+
+    with pytest.raises(SystemExit) as caiu:
+        cli.main(["estado"])
+    texto = str(caiu.value)
+
+    assert "nao consegui conectar" in texto
+    assert "Qx7Vw9Kp3" not in texto
+
+
+# --------------------------------------------------------------------------------------
+# Revisao adversarial do mesmo dia (25/10/2026): o que a janela de 4 nao alcancava
+#
+# Medido com psycopg 3.3.4 e libpq 18, com o DNS desligado no proprio teste: a janela de
+# `TRECHO_MINIMO_DA_SENHA` deixava na tela o pedaco CURTO que o libpq cita como componente
+# (`Mudar@123` dava `failed to resolve host '123@127.0.0.1'`), o parametro da query sem `=`
+# (a senha INTEIRA) e a barra invertida que o `repr` do host dobra. E tres guardas da
+# primeira versao sobreviviam a mutacao: as leituras da URI sem diferenca de caixa, a busca
+# que sobrepoe ocorrencias e o rotulo da env com espaco em volta.
+# --------------------------------------------------------------------------------------
+
+
+def _sem_dns(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A resolucao de nome falha AQUI, sem consulta nenhuma: o psycopg resolve o host em
+    Python (`_conninfo_attempts`) antes de chamar o libpq, e e' a mensagem DELE que o teste
+    quer ver. Nada sai da maquina."""
+
+    def _falha(*_args: Any, **_kwargs: Any) -> Any:
+        raise OSError(11001, "getaddrinfo failed")
+
+    monkeypatch.setattr(socket, "getaddrinfo", _falha)
+
+
+def _saida_do_cli_real(monkeypatch: pytest.MonkeyPatch, url: str) -> str:
+    """Roda `estado` com o driver REAL e a URL do dono; devolve o texto do `SystemExit`.
+
+    `PGHOSTADDR` sai junto: com ela, o psycopg pularia a resolucao de nome e o libpq tentaria
+    conectar no endereco dela.
+    """
+    monkeypatch.setenv(cli.ENV_URL_ADMIN, url)
+    for env in (postgres.ENV_URL, "PGPASSWORD", "PGHOSTADDR"):
+        monkeypatch.delenv(env, raising=False)
+    with pytest.raises(SystemExit) as caiu:
+        cli.main(["estado"])
+    return str(caiu.value)
+
+
+@pytest.mark.parametrize(
+    ("url", "segredo", "citacao"),
+    [
+        (
+            "postgresql://reservas_owner:Mudar@123@127.0.0.1:1/banco",
+            "123",
+            "failed to resolve host '<senha>@127.0.0.1': [Errno 11001] getaddrinfo failed",
+        ),
+        (
+            "postgresql://reservas_owner:Senha@1@127.0.0.1:1/banco",
+            "'1@",
+            "failed to resolve host '<senha>@127.0.0.1': [Errno 11001] getaddrinfo failed",
+        ),
+        (
+            "postgresql://reservas_owner:Ab12@Qx7,Vw9@127.0.0.1:1/banco",
+            "Vw9",
+            "failed to resolve host '<senha>@127.0.0.1'",
+        ),
+        (
+            "postgresql://reservas_owner:Ab:cd@ef@127.0.0.1:1/banco",
+            "'ef@",
+            "failed to resolve host '<senha>@127.0.0.1'",
+        ),
+        (
+            "postgresql://reservas_owner:Ab12@Qx\\7Vw9@127.0.0.1:1/banco",
+            "Qx",
+            "failed to resolve host '<senha>@127.0.0.1'",
+        ),
+    ],
+    ids=["cauda_de_3", "cauda_de_1", "lista_de_hosts", "dois_pontos", "barra_invertida"],
+)
+def test_pedaco_CURTO_da_senha_citado_como_host_nao_aparece(
+    monkeypatch: pytest.MonkeyPatch, url: str, segredo: str, citacao: str
+) -> None:
+    """O libpq corta no PRIMEIRO `@` e o resto da senha vira HOST. Abaixo de
+    `TRECHO_MINIMO_DA_SENHA` a janela nao o alcanca -- e `Mudar@123` e' o formato mais comum
+    de senha fraca com `@`. A ficha o tira por estar entre delimitadores, e SO' ali: o `1` de
+    `127.0.0.1` e do `[Errno 11001]` tem de ficar, senao a mensagem vira lixo, e o lixo diria
+    qual letra era."""
+    _sem_dns(monkeypatch)
+    texto = _saida_do_cli_real(monkeypatch, url)
+
+    assert segredo not in texto
+    assert citacao in texto
+
+
+def test_parametro_da_query_SEM_igual_nao_mostra_a_senha(monkeypatch: pytest.MonkeyPatch) -> None:
+    """`?password<a senha>` digitado sem o `=` nao casa `_SENHA_EM_PARAMETRO`, e o libpq cita
+    o parametro INTEIRO -- era a senha toda na tela. Morre no parse: nada sai da maquina."""
+    url = "postgresql://reservas_owner@127.0.0.1:1/banco?sslmode=disable&passwordQx7Vw9Kp3"
+    texto = _saida_do_cli_real(monkeypatch, url)
+
+    assert "Qx7Vw9Kp3" not in texto
+    assert 'missing key/value separator "=" in URI query parameter: "<senha>"' in texto
+
+
+def test_esquema_em_MAIUSCULA_com_espaco_na_senha_nao_mostra_o_comeco_dela(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Com o esquema em maiuscula o libpq le a URL como chave=valor e, com espaco na senha,
+    cita so' o PRIMEIRO token: o comeco da senha, sem a URL inteira que o rotulo pegaria. Sao
+    as leituras da URI SEM diferenca de caixa que o tiram -- e a mutacao que tirava o
+    `re.IGNORECASE` delas sobrevivia a todos os testes."""
+    url = "POSTGRESQL://reservas_owner:Qx7Vw9 Kp3@127.0.0.1:1/banco"
+    texto = _saida_do_cli_real(monkeypatch, url)
+
+    assert "Qx7Vw9" not in texto
+    assert 'missing "=" after "POSTGRESQL://reservas_owner:<senha>"' in texto
+
+
+def test_senha_PERIODICA_sai_inteira() -> None:
+    """Cada ocorrencia e' buscada a partir da posicao SEGUINTE, nao do fim da anterior. Numa
+    senha que se repete, pular o tamanho da janela deixava o ultimo `Qx7` na tela -- e a
+    mutacao que fazia isso sobrevivia a todos os testes."""
+    limpo = cli._sem_trechos_da_senha('token: "Qx7Qx7Qx7"', {"Qx7Qx7Qx7"}, set())
+    assert limpo == 'token: "<senha>"'
+
+
+def test_env_do_dono_com_espaco_em_volta_ainda_e_nomeada(monkeypatch: pytest.MonkeyPatch) -> None:
+    """`_url_de_ddl` tira o espaco em volta da env, e o rotulo tem de comparar do mesmo jeito:
+    senao a env do dono colada com espaco no fim viraria `<URL de conexao>`, e o operador
+    perderia QUAL das duas esta' quebrada."""
+    erro = _ProgrammingErrorFalso(f'missing "=" after "{_URL_DO_DONO}" in connection info string')
+    texto = _saida_do_cli_ao_falhar(monkeypatch, erro, url_do_dono=f"  {_URL_DO_DONO}  ")
+
+    assert f'missing "=" after "<{cli.ENV_URL_ADMIN}>"' in texto
+
+
+def test_limpeza_que_falha_nao_encadeia_o_erro_CRU(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A limpeza roda FORA do `except`. Se ela propria levantasse la' dentro, o traceback
+    impresso encadearia o erro original ("During handling of the above exception..."), com a
+    mensagem crua, senha e tudo."""
+
+    def _limpeza_quebrada(_texto: str, _url: str) -> str:
+        raise RuntimeError("defeito na limpeza")
+
+    monkeypatch.setattr(cli, "_sem_segredo_da_conexao", _limpeza_quebrada)
+    erro = _ProgrammingErrorFalso(f'missing "=" after "{_URL_DO_DONO}" in connection info string')
+
+    with pytest.raises(RuntimeError) as caiu:
+        cli._conectar_com_diagnostico(_driver_que_falha(erro), _URL_DO_DONO)
+
+    assert caiu.value.__context__ is None, "o erro original, com a mensagem CRUA, ficou encadeado"
 
 
 # --------------------------------------------------------------------------------------
