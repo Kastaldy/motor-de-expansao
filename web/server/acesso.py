@@ -694,16 +694,54 @@ def capacidade_necessaria(path: str, metodo: str) -> str | None:
 #: Throttle do log de RBAC indisponivel: UMA linha por episodio, como o `_fail_closed_logado`
 #: do JSON. Sem ele, cada pedido degradado gravava um ERROR -- milhares por segundo num mapa
 #: com o banco fora, e o erro que importa se perdia no meio. Volta a `False` quando o banco
-#: responde de novo (`motivo_bloqueio_por_banco`).
+#: responde de novo, no gate ou no `/api/me` (`_rbac_respondeu`).
 _rbac_indisponivel_logado = False
+
+#: O que o `/api/me` ja' disse no log sobre o RBAC sem resposta NESTE episodio: `None` (nada --
+#: o RBAC respondeu desde a ultima linha), `"sem_prova"` (a rota respondeu 503) ou
+#: `"degradado"` (escondeu as abas sensiveis). Sem isto, cada abertura de SPA durante um
+#: incidente gravava um ERROR (#463, follow-up A) -- a mesma inundacao que o
+#: `_rbac_indisponivel_logado` acima resolveu no gate. Guarda o CASO, e nao um bool: a passagem
+#: de um para o outro muda o que a pessoa recebe (503 x abas escondidas) e merece a sua linha;
+#: repetir o mesmo caso, nao.
+_episodio_rbac_no_me: str | None = None
+
+
+def primeira_vez_no_episodio_do_me(caso: str) -> bool:
+    """`True` se o `/api/me` ainda nao registrou ESTE caso no episodio corrente: quem chama loga.
+
+    Uma linha por episodio, no molde do `_rbac_indisponivel_logado`. O episodio acaba quando o
+    RBAC responde de novo, no `/api/me` ou no gate (`_rbac_respondeu`).
+    """
+    global _episodio_rbac_no_me
+    if _episodio_rbac_no_me == caso:
+        return False
+    _episodio_rbac_no_me = caso
+    return True
+
+
+def _rbac_respondeu() -> None:
+    """O banco respondeu ao RBAC: o proximo episodio de indisponibilidade volta a logar.
+
+    Zera os DOIS throttles, o do gate e o do `/api/me`. Um so' teria o defeito de esquecer o
+    outro: o banco volta, a pessoa navega sem recarregar a SPA (so' o gate ve' a volta), e a
+    proxima queda chegava muda no `/api/me` porque o episodio anterior nunca tinha fechado ali.
+    """
+    global _rbac_indisponivel_logado, _episodio_rbac_no_me
+    _rbac_indisponivel_logado = False
+    _episodio_rbac_no_me = None
 
 
 class RbacSemProvaDeQueda(RuntimeError):
-    """O RBAC nao respondeu, e nada prova que o banco caiu: o gate responde 503, nao degrada.
+    """O RBAC nao respondeu, e nada prova que o banco caiu: 503, nao degradacao.
 
     A degradacao (`motivo_bloqueio_banco_indisponivel`) LIBERA as rotas nao sensiveis sem
     checar permissao -- aceitavel com o banco FORA, um furo com ele no ar. Sem prova de
     queda, toda rota controlada recebe 503: nenhuma capacidade e' presumida.
+
+    Vale tambem para o `/api/me` desde 24/10/2026 (#463, follow-up A): la' a degradacao
+    ESCONDE abas, e com o banco vivo e ocupado isso tirava de quem as tem a executiva, a
+    imobiliaria e a viabilidade -- enquanto o gate, pela mesma falha, respondia 503.
     """
 
 
@@ -763,8 +801,7 @@ def motivo_bloqueio_por_banco(path: str, metodo: str, usuario: object) -> str | 
     except (db.BancoIndisponivel, db.BancoNaoConfigurado) as erro:
         return motivo_bloqueio_banco_indisponivel(path, metodo, erro)
 
-    global _rbac_indisponivel_logado
-    _rbac_indisponivel_logado = False  # banco respondeu: o proximo episodio volta a logar
+    _rbac_respondeu()  # banco respondeu: o proximo episodio volta a logar
 
     if quem is None or not quem.pode(necessaria):
         return "Seu usuário não tem acesso a esta área do piloto. Fale com o Felipe."
@@ -794,22 +831,35 @@ CAPACIDADE_QUE_SUSTENTA_A_ABA: dict[str, str] = {
 
 
 def abas_do_usuario_por_banco(usuario: object) -> frozenset[str]:
-    """Abas derivadas das capacidades do RBAC. Mesma degradação do caminho por JSON.
+    """Abas derivadas das capacidades do RBAC. Mesma degradação -- e mesma régua de PROVA -- do gate.
 
     `ABA_ACESSOS` fica de fora aqui, como no outro caminho: ela vem da allowlist de env e
     é somada pela rota. A capacidade `acesso.painel_ver` existe no banco e governa a ROTA,
     mas não anuncia a aba — as duas camadas são independentes de propósito (DEC-027).
+
+    SEM PROVA DE QUEDA, LEVANTA `RbacSemProvaDeQueda` (#463, follow-up A). `BancoSemProvaDeQueda`
+    e' SUBCLASSE de `BancoIndisponivel` (`db/postgres.py`), e o `except` generico que estava aqui
+    a pegava como "banco fora": com o banco VIVO mas ocupado (pool saturado, lock, statement
+    timeout), o `/api/me` escondia executiva, imobiliaria e viabilidade de quem as tem -- e a
+    SPA ainda tirava a pessoa da tela em que ela estava --, enquanto o gate
+    (`motivo_bloqueio_por_banco`), pela MESMA falha, respondia 503. A interface e o portao
+    contavam historias diferentes sobre a mesma pessoa. A regra agora e' a do gate: degradar so'
+    com a queda PROVADA (`banco_em_falha`); sem ela, quem chama responde 503.
     """
     from motor_expansao import db
     from motor_expansao.db import rbac
 
     try:
         quem = rbac.identidade(normalizar_usuario(usuario))
+    except db.BancoSemProvaDeQueda as erro:
+        # A MESMA decisao do gate, na mesma ordem: so' degrada se OUTRA chamada ja' provou a
+        # queda e nenhuma terminou bem desde entao.
+        if not banco_em_falha():
+            raise RbacSemProvaDeQueda(str(erro)) from erro
+        return _abas_com_o_rbac_fora(erro)
     except (db.BancoIndisponivel, db.BancoNaoConfigurado) as erro:
-        if not _fail_closed_ativo():
-            return ABAS_VALIDAS  # dev: fail-open histórico
-        _LOG.error("RBAC indisponivel no /api/me (%s) — escondendo abas sensiveis", erro)
-        return ABAS_VALIDAS - ABAS_SENSIVEIS
+        return _abas_com_o_rbac_fora(erro)
+    _rbac_respondeu()
     if quem is None:
         return frozenset()
     return frozenset(
@@ -817,3 +867,17 @@ def abas_do_usuario_por_banco(usuario: object) -> frozenset[str]:
         for aba, capacidade in CAPACIDADE_QUE_SUSTENTA_A_ABA.items()
         if quem.pode(capacidade)
     )
+
+
+def _abas_com_o_rbac_fora(erro: object) -> frozenset[str]:
+    """A degradação do `/api/me` com o banco FORA -- a mesma do gate, em abas.
+
+    Em produção esconde as sensíveis e mantém Mapa e Oportunidades; em dev, fail-open
+    histórico. O log sai UMA vez por episódio (`primeira_vez_no_episodio_do_me`): antes era um
+    ERROR a cada abertura de SPA durante o incidente.
+    """
+    if not _fail_closed_ativo():
+        return ABAS_VALIDAS  # dev: fail-open histórico
+    if primeira_vez_no_episodio_do_me("degradado"):
+        _LOG.error("RBAC indisponivel no /api/me (%s) — escondendo abas sensiveis", erro)
+    return ABAS_VALIDAS - ABAS_SENSIVEIS

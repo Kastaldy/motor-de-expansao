@@ -31,9 +31,13 @@ import './styles/global.css'
  *
  * O 404 É SINAL DECLARADO, não palpite: está escrito no docstring da própria rota ("SÓ
  * ATENDE COM A AUTENTICAÇÃO PRÓPRIA LIGADA... responde 404 -- e não 501 ou 403"). E
- * SOMENTE o 404 cai para o Authelia — 401 é credencial recusada e 429 é trava de
- * tentativas, os dois do nosso backend depois do corte. Cair no Authelia num 401
- * gastaria uma tentativa da trava DELE com uma senha que o nosso servidor já recusou.
+ * SOMENTE o 404 cai para o Authelia — 401 é credencial recusada, do nosso backend
+ * depois do corte, e a TRAVA DE TENTATIVAS responde o MESMO 401, com a mesma mensagem,
+ * de propósito: dizer "conta bloqueada" avisaria a quem varre nomes que acertou um — é
+ * por isso que a tela conta as falhas sozinha (`falhas`, em `Entrada`). Até 24/10/2026
+ * este bloco dizia que a trava era um 429, que o nosso backend nunca mandou. Cair no
+ * Authelia num 401 gastaria uma tentativa da trava DELE com uma senha que o nosso
+ * servidor já recusou.
  *
  * A SENHA CHEGA A SER ENVIADA DUAS VEZES antes do corte, e isso é aceito com razão
  * medida: hoje o primeiro POST cai no nosso próprio Authelia (o catch-all do host de

@@ -564,12 +564,21 @@ async def _no_banco(
         fila.release()
 
 
+#: O texto e o `Retry-After` do 503 "o RBAC nao respondeu e nada prova que o banco caiu". UMA
+#: redacao para as duas portas que o dao -- o gate (`_piloto_ocupado`) e o `/api/me` (#463,
+#: follow-up A) --, porque a SPA mostra a mesma frase venha ela de onde vier, e duas copias da
+#: mesma resposta desencontram em silencio (DEC-044). Os 2 s sao tambem a espera que o
+#: `repetirEm503` de `web/src/lib/api.ts` usa antes de pedir o `/api/me` de novo.
+DETALHE_PILOTO_OCUPADO = "Piloto ocupado no momento. Tente novamente em instantes."
+RETRY_AFTER_PILOTO_OCUPADO_S = "2"
+
+
 def _piloto_ocupado() -> JSONResponse:
     """503 do gate quando o RBAC nao respondeu e nada prova que o banco caiu."""
     return JSONResponse(
-        {"detail": "Piloto ocupado no momento. Tente novamente em instantes."},
+        {"detail": DETALHE_PILOTO_OCUPADO},
         status_code=503,
-        headers={"Retry-After": "2"},
+        headers={"Retry-After": RETRY_AFTER_PILOTO_OCUPADO_S},
     )
 
 
@@ -613,7 +622,8 @@ async def _controle_de_acesso_por_aba(request: Request, call_next):  # type: ign
     # propria rota, que e' `def` e roda no pool padrao, disputando as 4 conexoes com o gate:
     # sob contencao, uma espera de 5 s ali da' `PoolTimeout` -- que SO' arma o disjuntor e
     # vira evidencia de queda se o servidor tambem estiver RECUSANDO conexao. Pool apenas
-    # saturado e' `BancoSemProvaDeQueda`, e o gate responde 503, nunca a degradacao.)
+    # saturado e' `BancoSemProvaDeQueda`, e o gate responde 503, nunca a degradacao -- e o
+    # `/api/me` tambem, desde 24/10/2026: ate' la' ele escondia as abas sensiveis (#463).)
     # As threads sao as do `_no_banco`, com limite proprio: ver `LIMITE_THREADS_BANCO`.
     if acesso.banco_no_comando():
         if acesso.capacidade_necessaria(request.url.path, request.method) is None:
@@ -5110,9 +5120,12 @@ def me(
 ) -> dict[str, Any]:
     """Quem sou eu + que abas posso usar (controle temporario, ver `acesso.py`).
 
-    A SPA chama uma vez na abertura e esconde as abas fora da lista; quem chamar a
-    API por fora ve o mesmo contrato. O bloqueio de verdade e' do middleware — esta
-    rota so' informa.
+    A SPA chama na abertura e esconde as abas fora da lista; quem chamar a API por fora
+    ve o mesmo contrato. O bloqueio de verdade e' do middleware — esta rota so' informa.
+
+    503 (banco vivo mas ocupado, sem prova de queda) e' a MESMA resposta do gate, e a SPA a
+    repete depois do `Retry-After` (`repetirEm503`). A chave `senha` so' sai com o login
+    proprio LIGADO (`_estado_da_minha_senha`).
     """
     usuario = acesso.normalizar_usuario(remote_user)
     # A FONTE das abas depende do banco; o TETO da instancia vale nos dois casos.
@@ -5122,7 +5135,27 @@ def me(
     # enquanto a rota respondia so' pelo JSON e o gate ja' decidia pelo banco, a
     # interface OFERECIA aba que o backend negava.
     if acesso.banco_no_comando():
-        abas = set(acesso.abas_do_usuario_por_banco(remote_user))
+        try:
+            abas = set(acesso.abas_do_usuario_por_banco(remote_user))
+        except acesso.RbacSemProvaDeQueda as erro:
+            # O RBAC nao respondeu e NADA prova que o banco caiu (pool saturado, lock,
+            # statement timeout): a MESMA resposta do gate, e nao a degradacao (#463,
+            # follow-up A). Esconder as abas aqui tirava a pessoa da tela dela por causa de um
+            # banco OCUPADO. O 503 nao esconde nada: a SPA tenta de novo depois do
+            # `Retry-After` (`repetirEm503`, `web/src/lib/api.ts`) e, enquanto nao sabe,
+            # mostra o que mostraria sem `/api/me` -- quem barra de verdade segue sendo o gate.
+            #
+            # UMA linha de log por episodio: sem o throttle, cada abertura de SPA durante o
+            # incidente gravava a sua.
+            if acesso.primeira_vez_no_episodio_do_me("sem_prova"):
+                _LOG_FALHA.warning(
+                    "/api/me: o RBAC nao respondeu e nada prova queda do banco -- 503 (%s)", erro
+                )
+            raise HTTPException(
+                503,
+                DETALHE_PILOTO_OCUPADO,
+                headers={"Retry-After": RETRY_AFTER_PILOTO_OCUPADO_S},
+            ) from erro
     else:
         # A MESMA resolucao do gate (`motivo_bloqueio`): header, ou identidade de dev no vazio.
         # Com o header cru aqui e `login_da_requisicao` la', a tela e o portao voltariam a ler a
@@ -5175,6 +5208,15 @@ def me(
 def _estado_da_minha_senha(remote_user: object) -> dict[str, bool] | None:
     """`{"deve_trocar", "propria"}` de quem esta' logado, ou `None` quando nao da' para saber.
 
+    SO' COM O LOGIN PROPRIO LIGADO (decisao do dono, 24/10/2026). Com `MOTOR_AUTENTICACAO_PROPRIA`
+    desligada quem confere a senha na entrada e' o Authelia, e a senha do BANCO nao abre porta
+    nenhuma -- mas este campo saia para todo mundo com cadastro, e o Dock mostrava o cadeado
+    "Trocar a minha senha". O cadeado pedia a senha INICIAL do banco, que em producao foi
+    SORTEADA e ninguem conhece: recusava todas as tentativas, de todas as pessoas. Sem a chave o
+    campo some, e com ele o cadeado e o convite (`App.tsx`). No dia do corte a senha inicial
+    passa a ser a compartilhada do Authelia (o `db alinhar-senhas` remarca a troca), e o
+    convite volta a ser verdadeiro.
+
     ENGOLE A FALHA DE PROPOSITO, e este e' o ponto do helper. `/api/me` e' a PRIMEIRA chamada da
     SPA: e' dela que saem as abas e o perfil do pais. Deixar uma consulta acessoria derrubar essa
     rota apagaria o piloto inteiro por causa de um campo que so' serve para OFERECER a troca de
@@ -5192,9 +5234,12 @@ def _estado_da_minha_senha(remote_user: object) -> dict[str, bool] | None:
     desenvolve -- onde nao ha Authelia para injetar o header -- a SPA nunca recebia o campo e
     nunca oferecia a troca, enquanto o endpoint por tras dela funcionava.
     """
-    # A ordem e' de proposito: `banco_no_comando()` nao importa nada, e `login_da_requisicao`
-    # importa o `rbac`. Sem banco no comando, a identidade nem precisa ser resolvida.
+    # A ordem e' de proposito: `banco_no_comando()` e `_login_proprio_ligado()` nao consultam o
+    # banco (a chave e' uma env), e `login_da_requisicao` importa o `rbac`. Sem banco no comando,
+    # ou com o login proprio desligado, a identidade nem precisa ser resolvida.
     if not acesso.banco_no_comando():
+        return None
+    if not _login_proprio_ligado():
         return None
     login = acesso.login_da_requisicao(remote_user)
     if not login:
@@ -5447,9 +5492,10 @@ class UsuarioNovoIn(BaseModel):
     """Pessoa nova (D26). Os quatro campos sao OBRIGATORIOS, ao contrario dos de alteracao.
 
     Nao ha campo `senha` de proposito: quem nasce pela tela recebe a senha INICIAL
-    compartilhada (`MOTOR_SENHA_INICIAL`) e troca no primeiro acesso. Um campo de senha aqui
-    faria o admin conhecer a senha de outra pessoa, e qualquer acao daquela conta viraria
-    contestavel -- o oposto do que o D17 existe para sustentar.
+    compartilhada (`MOTOR_SENHA_INICIAL`) e, com o login proprio ligado, e' convidada a
+    troca-la no primeiro acesso. Um campo de senha aqui faria o admin conhecer a senha de
+    outra pessoa, e qualquer acao daquela conta viraria contestavel -- o oposto do que o D17
+    existe para sustentar.
     """
 
     login: str
@@ -5558,6 +5604,44 @@ def _minha_identidade(remote_user: str | None) -> Any:
     return eu
 
 
+#: As recusas dos gestos de SENHA com o login proprio DESLIGADO (decisao do dono, 24/10/2026).
+#: Status 404, o mesmo do `/api/login` com a chave desligada ("neste deploy a porta nao existe");
+#: o texto, ao contrario do "Not Found" de la', e' em portugues, porque aqui quem o le' e' gente
+#: -- por uma tela aberta antes de a chave mudar, ou por uma SPA de outra versao.
+LOGIN_PROPRIO_DESLIGADO_TROCA = (
+    "A troca de senha só funciona com o login próprio do piloto ligado. Hoje a entrada é pelo "
+    "Authelia, e a senha de lá continua valendo."
+)
+LOGIN_PROPRIO_DESLIGADO_ADMIN = (
+    "Redefinir senha e exigir troca só funcionam com o login próprio do piloto ligado. Hoje a "
+    "entrada é pelo Authelia, e a senha do banco ainda não é usada para entrar."
+)
+
+
+def _login_proprio_ligado() -> bool:
+    """`MOTOR_AUTENTICACAO_PROPRIA` ligada neste deploy? A leitura e' a de `sessoes.ligada`."""
+    from motor_expansao.db import sessoes as db_sessoes
+
+    return db_sessoes.ligada()
+
+
+def _exigir_login_proprio(detalhe: str) -> None:
+    """404 com `detalhe` enquanto o login proprio estiver DESLIGADO (decisao do dono, 24/10/2026).
+
+    Os tres gestos sobre senha -- trocar a propria, redefinir e exigir troca de outra pessoa --
+    mexem numa credencial que so' o login proprio confere. Com a chave desligada quem confere e'
+    o Authelia, e o efeito era pior que nulo: a temporaria de 2 h que o admin repassava nao
+    abria nada, e a troca da propria senha pedia a inicial do banco, que em producao foi
+    sorteada e ninguem conhece.
+
+    Vem ANTES de resolver identidade, de proposito: recusar por configuracao nao precisa ir ao
+    banco. Nas rotas do painel vem DEPOIS da allowlist, para o texto proprio nao anunciar a
+    rota a quem nao a administra -- o "Not Found" cru da allowlist e' o que a esconde.
+    """
+    if not _login_proprio_ligado():
+        raise HTTPException(404, detalhe)
+
+
 def _erro_de_usuarios(erro: Exception) -> HTTPException:
     """Traduz as excecoes do modulo de dados para o status certo.
 
@@ -5595,8 +5679,10 @@ def _erro_de_usuarios(erro: Exception) -> HTTPException:
         # (`MOTOR_DATABASE_URL` vazia devolve o piloto ao comportamento pre-banco -- §4). Sem
         # este ramo a excecao chegava ao `raise erro` do fim e o card "Administracao de
         # usuarios" mostrava um 500 CRU num deploy sem banco, que e' o estado PADRAO do
-        # compose. A tela ja' sabe dizer "Indisponivel — nada foi alterado" quando recebe 503
-        # (`PainelUsuarios.tsx`); faltava mandar o 503.
+        # compose. A tela ja' sabe enquadrar o 503 (`mensagemDeErroDoPainel`, em
+        # `web/src/lib/painel-usuarios.ts`); faltava mandar o 503. Ela NAO afirma mais "nada
+        # foi alterado" desde 24/10/2026 (#463, follow-up B): numa escrita isso nao e' garantia
+        # -- um COMMIT interrompido tem desfecho ambiguo --, entao o recado manda conferir.
         return HTTPException(
             503,
             "Administração de usuários indisponível: este deploy está sem banco configurado.",
@@ -5633,6 +5719,11 @@ def acessos_usuarios_listar(
         # A tela desabilita a propria linha. O backend recusa de todo jeito
         # (`AlvoEhOAutor`); isto e' para o botao nao prometer o que sera negado.
         "eu": eu.id_usuario,
+        # Se o login proprio esta' LIGADO neste deploy. Sem ele a tela esconde "Redefinir senha"
+        # e "Exigir troca" -- o backend recusa de todo jeito (`_exigir_login_proprio`) -- e
+        # escolhe por ele os recados de criacao e o rodape, que mentiam com a chave desligada
+        # (decisao do dono, 24/10/2026).
+        "login_proprio": _login_proprio_ligado(),
     }
 
 
@@ -5642,11 +5733,14 @@ def acessos_usuarios_alterar(
     body: UsuarioAdminIn,
     remote_user: str | None = Header(default=None, alias="Remote-User"),
 ) -> dict[str, Any]:
-    """Troca o perfil e/ou o status. Cada mudanca grava seu evento na MESMA transacao.
+    """Troca o perfil e/ou o status numa transacao SO', com um evento por mudanca.
 
-    Os dois campos sao independentes e podem vir juntos; quando vem, sao DUAS transacoes
-    e DOIS eventos, porque sao duas decisoes distintas — "virou Growth" e "foi desativado"
-    respondem a perguntas diferentes na auditoria e nao devem colapsar numa linha so'.
+    Os dois campos sao independentes e podem vir juntos. Quando vem, sao DOIS eventos, porque
+    sao duas decisoes distintas -- "virou Growth" e "foi desativado" respondem a perguntas
+    diferentes na auditoria e nao devem colapsar numa linha so'. Mas e' UMA transacao (#463,
+    follow-up B): ate' 24/10/2026 eram duas, e se a segunda falhasse a primeira ficava gravada
+    sob um 503 que nao dizia isso -- a tela mostrava "Indisponivel" e a pessoa tinha mudado de
+    perfil mesmo assim. Ver `usuarios.alterar_acesso`.
     """
     _exigir_admin_acessos(remote_user)
     from motor_expansao.db import usuarios as db_usuarios
@@ -5655,19 +5749,12 @@ def acessos_usuarios_alterar(
         raise HTTPException(422, "Informe `perfil`, `ativo`, ou os dois.")
 
     eu = _identidade_do_admin(remote_user)
-    resultado: dict[str, Any] = {"id_usuario": id_usuario}
     try:
-        if body.perfil is not None:
-            resultado["perfil"] = db_usuarios.alterar_perfil(
-                id_usuario, body.perfil, autor=eu.id_usuario
-            )
-        if body.ativo is not None:
-            resultado["status"] = db_usuarios.definir_ativo(
-                id_usuario, body.ativo, autor=eu.id_usuario
-            )
+        return db_usuarios.alterar_acesso(
+            id_usuario, perfil=body.perfil, ativo=body.ativo, autor=eu.id_usuario
+        )
     except Exception as erro:  # noqa: BLE001 - traduzido logo abaixo
         raise _erro_de_usuarios(erro) from erro
-    return resultado
 
 
 @app.post("/api/acessos/usuarios", include_in_schema=False)
@@ -5681,16 +5768,18 @@ def acessos_usuarios_criar(
     de acesso casa: `acesso.py` reserva `POST` ali para `acesso.usuario_gerir`, antes da regra
     generica de `acesso.painel_ver`. Ver a pessoa e criar pessoa sao capacidades diferentes.
 
-    A senha entregue e' a INICIAL compartilhada, e a resposta traz `falta_cadastrar_no_authelia`
-    para a tela poder dizer o passo que ainda e' manual: enquanto o Authelia autenticar, uma
-    linha em `usuarios` sem a entrada no `users_database.yml` nao deixa a pessoa entrar.
+    A senha entregue e' a INICIAL compartilhada. A resposta traz `falta_cadastrar_no_authelia`
+    (o passo que continua manual) e `login_proprio` (a chave deste deploy), porque o recado da
+    tela depende dos dois -- ver `usuarios.criar`: com a chave desligada, sem a entrada no
+    `users_database.yml` a pessoa NAO ENTRA; ligada, ela entra com a senha inicial, e a entrada
+    no Authelia e' o que mantem o rollback possivel durante a janela de observacao do corte.
     """
     _exigir_admin_acessos(remote_user)
     from motor_expansao.db import usuarios as db_usuarios
 
     eu = _identidade_do_admin(remote_user)
     try:
-        return db_usuarios.criar(
+        criado = db_usuarios.criar(
             login=body.login,
             nome=body.nome,
             email=body.email,
@@ -5699,6 +5788,7 @@ def acessos_usuarios_criar(
         )
     except Exception as erro:  # noqa: BLE001 - traduzido logo abaixo
         raise _erro_de_usuarios(erro) from erro
+    return {**criado, "login_proprio": _login_proprio_ligado()}
 
 
 @app.post("/api/acessos/usuarios/{id_usuario}/redefinir-senha", include_in_schema=False)
@@ -5728,8 +5818,13 @@ def acessos_usuarios_redefinir_senha(
     Mesmo portao das outras escritas daqui: a allowlist do painel no middleware e na rota, e
     `acesso.usuario_gerir` pela regra de `POST` em `/api/acessos/usuarios`, que casa por prefixo e
     por isso ja' cobre este caminho.
+
+    SO' COM O LOGIN PROPRIO LIGADO (decisao do dono, 24/10/2026): a temporaria vale so' no banco,
+    e com a chave desligada quem confere a senha e' o Authelia -- o admin repassava uma senha que
+    nao abria nada. 404, como o `/api/login` com a chave desligada (`_exigir_login_proprio`).
     """
     _exigir_admin_acessos(remote_user)
+    _exigir_login_proprio(LOGIN_PROPRIO_DESLIGADO_ADMIN)
     from motor_expansao.db import usuarios as db_usuarios
 
     eu = _identidade_do_admin(remote_user)
@@ -5759,8 +5854,12 @@ def acessos_usuarios_exigir_troca(
     de `TRUE` para `FALSE`. Serve depois de uma suspeita de vazamento, ou quando alguem conta ter
     compartilhado a senha. `mudou: false` quando a troca ja' estava pedida -- sucesso sem evento,
     como nas outras escritas desta tela.
+
+    SO' COM O LOGIN PROPRIO LIGADO (24/10/2026), pela mesma razao do `redefinir-senha`: a marca
+    so' convida a trocar a senha do BANCO, e com a chave desligada ela nao e' usada para entrar.
     """
     _exigir_admin_acessos(remote_user)
+    _exigir_login_proprio(LOGIN_PROPRIO_DESLIGADO_ADMIN)
     from motor_expansao.db import usuarios as db_usuarios
 
     eu = _identidade_do_admin(remote_user)
@@ -6187,10 +6286,15 @@ def me_trocar_senha(
     so' aceita `autor`, e escreve so' na linha dele. Nao existe forma de chamar isto para outra
     pessoa, nem passando id, nem passando login.
 
-    ENQUANTO O AUTHELIA AUTENTICAR, esta rota nao muda como ninguem entra: ela prepara a coluna
-    para o dia da virada do P19. E' o que permite as pessoas irem definindo senha propria ANTES
-    do corte, em vez de todo mundo redefinir no mesmo dia.
+    SO' ATENDE COM O LOGIN PROPRIO LIGADO (decisao do dono, 24/10/2026), no padrao do
+    `/api/login`: 404 com `MOTOR_AUTENTICACAO_PROPRIA` desligada. Ate' entao esta docstring dizia
+    que, enquanto o Authelia autenticasse, a rota "preparava a coluna para o dia da virada" -- e
+    na pratica ela recusava todo mundo: a senha atual que ela confere e', para quem nunca trocou,
+    a INICIAL do banco, que em producao foi sorteada e ninguem conhece. No dia do corte a
+    inicial passa a ser a compartilhada do Authelia (`db alinhar-senhas`), e a troca volta a ter
+    sentido. Com a chave desligada o `/api/me` nem manda o estado da senha, e a SPA nao a oferece.
     """
+    _exigir_login_proprio(LOGIN_PROPRIO_DESLIGADO_TROCA)
     from motor_expansao.db import usuarios as db_usuarios
 
     eu = _minha_identidade(remote_user)
@@ -6205,7 +6309,8 @@ def me_trocar_senha(
     # Decisao 2 do P19: a senha nova invalida as sessoes abertas com a ANTIGA. Aqui quem
     # age e quem sofre sao a mesma pessoa -- inclusive a sessao DESTA requisicao cai, e e'
     # o comportamento certo: trocar senha e continuar logado com a credencial velha e'
-    # exatamente o que a revogacao existe para impedir. A tela pede login de novo.
+    # exatamente o que a revogacao existe para impedir. A tela pede login de novo
+    # (`TEXTO_SENHA_DEFINIDA` em `web/src/lib/troca-de-senha.ts`).
     _derrubar_sessoes(eu.id_usuario, autor=eu.id_usuario, motivo="troca da propria senha")
     return resultado
 

@@ -223,12 +223,29 @@ describe('criar', () => {
     expect(texto).toContain('ana@ultraacademia.com.br')
   })
 
-  it('avisa da senha inicial e do passo do Authelia', () => {
-    /* Sao as duas coisas que a pessoa nao adivinha: que a senha nasce
-       compartilhada, e que criar aqui NAO deixa ninguem entrar. */
+  it('com o login próprio DESLIGADO não promete a senha inicial: a entrada é o Authelia', () => {
+    /* O estado de produção até o corte do P19 (decisão do dono, 24/10/2026). Quem confere a
+       senha é o Authelia, então "nasce com a senha inicial e é levada a trocá-la" era falso —
+       e o que a pessoa não adivinha é que criar aqui NÃO a deixa entrar. */
     const texto = montarConfirmacao(novo).apoio.join(' ')
-    expect(texto).toContain('senha inicial compartilhada')
     expect(texto).toContain('Authelia')
+    expect(texto).toContain('grava só no banco')
+    expect(texto).not.toContain('senha inicial compartilhada')
+    expect(texto).not.toContain('primeiro acesso')
+  })
+
+  it('com o login próprio LIGADO avisa da senha inicial — e do Authelia como caminho de volta', () => {
+    /* No dia do corte a inicial do banco passa a ser a compartilhada do Authelia, e a frase
+       volta a ser verdadeira. O Authelia segue no texto, mas por outra razão: o rollback. */
+    const texto = montarConfirmacao({ ...novo, loginProprio: true }).apoio.join(' ')
+    expect(texto).toContain('senha inicial compartilhada')
+    expect(texto).toContain('primeiro acesso')
+    expect(texto).toContain('rollback')
+    expect(texto).not.toContain('grava só no banco')
+  })
+
+  it('sem dizer a chave, a confirmação é a do login próprio desligado — o lado conservador', () => {
+    expect(montarConfirmacao(novo)).toEqual(montarConfirmacao({ ...novo, loginProprio: false }))
   })
 
   it('avisa que criar nao se desfaz por esta tela', () => {
@@ -307,10 +324,13 @@ describe('redefinir a senha de alguem (15/09)', () => {
     )
   })
 
-  it('nao promete o que ainda nao vale: o Authelia segue autenticando', () => {
-    expect(montarConfirmacao({ ...alvo, senhaPropria: true }).apoio.join(' ')).toContain(
-      'Authelia',
-    )
+  it('não fala mais do Authelia: o gesto só existe com o login próprio ligado', () => {
+    /* Até 24/10/2026 a confirmação dizia "enquanto o Authelia autenticar, isto não muda como
+       a pessoa entra hoje". O botão passou a existir só com a chave LIGADA (e o servidor
+       recusa sem ela), e aí a temporária É a senha de entrada — a frase ficou falsa. */
+    const texto = montarConfirmacao({ ...alvo, senhaPropria: true }).apoio.join(' ')
+    expect(texto).not.toContain('Authelia')
+    expect(texto).not.toContain('prepara o dia')
   })
 
   it('nao exige digitar o login — esse atrito e so para conceder poder de administrador', () => {

@@ -31,11 +31,14 @@ import { useUfsDaBase } from '../lib/base-contexto'
 /**
  * Tela de ENTRAR do piloto — o cartão flutuante do mockup "Login · cartão flutuante".
  *
- * O QUE ELA AINDA NÃO É. Ela não autentica ninguém. Quem autentica hoje é o Authelia,
- * na borda, com a própria tela dele; esta aqui existe pronta para o momento em que essa
- * decisão for tomada — seja apontando o `submit` para a API do Authelia, seja para o
- * motor depois do corte do P19. O `onEntrar` chega por prop exatamente por isso: é o
- * único ponto que muda entre os dois destinos.
+ * QUEM AUTENTICA NÃO É ELA: é o `onEntrar`, que chega por prop. Quem o passa é o
+ * `entrar.tsx`, e ele fala com os DOIS destinos, nesta ordem: tenta o NOSSO
+ * `POST /api/login` e, se ele responder 404 (login próprio desligado, ou a borda nem
+ * entrega a rota ao backend), cai no primeiro fator do Authelia. Hoje, com a chave
+ * desligada, quem confere a senha é o Authelia; depois do corte do P19, o motor. Até
+ * 24/10/2026 este bloco dizia que a tela "não autentica ninguém" e esperava a decisão
+ * do destino — ela já tinha sido tomada, e o envio já ia aos dois. A prop continua
+ * sendo o único ponto que conhece o destino.
  *
  * As decisões de segurança que a tela já respeita, e que não são pintura:
  *

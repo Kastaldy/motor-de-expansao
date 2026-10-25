@@ -24,7 +24,9 @@ export interface MePayload {
   viabilidade_moeda?: unknown
   /** Estado da senha de quem esta' logado (D26, 11/09). Opcional pelo MESMO motivo do
    *  `perfil`: backend anterior nao manda o campo, e ausencia significa "nao sei" --
-   *  nunca "nao precisa trocar". Quem le' e estreita e' `estadoDaSenhaDoPayload`. */
+   *  nunca "nao precisa trocar". Quem le' e estreita e' `estadoDaSenhaDoPayload`.
+   *  Desde 24/10/2026 so' vem com o login proprio LIGADO: desligado, a senha do banco nao
+   *  e' a de entrada, e sem o campo a SPA nao mostra o cadeado nem o convite de troca. */
   senha?: unknown
   /** Os alcances do ponto que esta instância oferece (DEC-074): `raio_1km`, `raio_2km` e,
    *  só com o serviço de rotas configurado, `carro_5min` e `carro_10min`. Ausente em backend anterior.
@@ -2595,8 +2597,9 @@ export interface AdminUsuario {
   email: string
   perfil: string
   ativo: boolean
-  /** Se a pessoa já definiu a senha dela alguma vez (016). `false` = ainda na inicial
-   *  compartilhada. Nunca vem hash nenhum no payload — só este booleano. */
+  /** Se a pessoa já definiu a senha DO BANCO alguma vez (016) — a que o login próprio
+   *  confere, não a do Authelia. `false` = ainda na inicial do banco. Nunca vem hash
+   *  nenhum no payload — só este booleano. */
   senha_propria: boolean
   /** Se a próxima entrada dela deve pedir troca (016). Não é o inverso do de cima: um
    *  admin pode forçar troca de quem já definiu, e aí os dois são verdadeiros. */
@@ -2617,6 +2620,12 @@ export interface AdminUsuariosPayload {
   /** `id_usuario` de quem está olhando: a tela desabilita a própria linha. O backend
    *  recusa de todo jeito (403) — isto é para o botão não prometer o que será negado. */
   eu: number
+  /** Se o login próprio (`MOTOR_AUTENTICACAO_PROPRIA`) está LIGADO neste deploy. Sem ele a
+   *  tela esconde "Redefinir senha" e "Exigir troca" (o backend recusa de todo jeito, com
+   *  404) e troca os recados de criação e o rodapé, que mentiam com a chave desligada.
+   *  Opcional por defesa: ausente conta como desligado, o lado conservador
+   *  (`loginProprioDoPayload`, em `lib/painel-usuarios.ts`). */
+  login_proprio?: boolean
 }
 
 /** Resposta do PATCH. Cada bloco só vem se o campo correspondente foi enviado, e
@@ -2628,9 +2637,10 @@ export interface AdminAlteracao {
 }
 
 /** Corpo do POST de criação (D26). Sem campo de senha DE PROPÓSITO: quem nasce pela
- *  tela recebe a senha inicial compartilhada e troca no primeiro acesso. Um campo de
- *  senha aqui faria o admin conhecer a senha de outra pessoa, e qualquer ação daquela
- *  conta ficaria contestável — o oposto do que o D17 sustenta. */
+ *  tela recebe a senha inicial compartilhada e, com o login próprio ligado, é convidada
+ *  a trocá-la no primeiro acesso. Um campo de senha aqui faria o admin conhecer a senha
+ *  de outra pessoa, e qualquer ação daquela conta ficaria contestável — o oposto do que
+ *  o D17 sustenta. */
 export interface AdminUsuarioNovo {
   login: string
   nome: string
@@ -2638,15 +2648,18 @@ export interface AdminUsuarioNovo {
   perfil: string
 }
 
-/** Resposta do POST. `falta_cadastrar_no_authelia` é sempre `true` enquanto o P19 não
- *  for executado, e a tela PRECISA mostrá-lo: uma linha em `usuarios` sem a entrada no
- *  `users_database.yml` não deixa a pessoa entrar, e sem esse recado criar usuário
- *  viraria uma armadilha silenciosa. */
+/** Resposta do POST. `falta_cadastrar_no_authelia` vem `true` nos DOIS estados do login
+ *  próprio, por razões diferentes: desligado, uma linha em `usuarios` sem a entrada no
+ *  `users_database.yml` não deixa a pessoa entrar — sem esse recado, criar usuário viraria
+ *  uma armadilha silenciosa —; ligado, durante a janela de observação do corte, a entrada
+ *  no Authelia é o que mantém o rollback possível. Quem diz qual recado vale é
+ *  `login_proprio` (`recadoDaCriacao`, em `lib/painel-usuarios.ts`). */
 export interface AdminCriacao {
   id_usuario: number
   login: string
   perfil: string
   falta_cadastrar_no_authelia: boolean
+  login_proprio?: boolean
 }
 
 /** Resposta da troca da própria senha (D26). `primeira_vez` distingue "saiu da senha
