@@ -7,7 +7,8 @@
 >
 > Quem mantem: Felipe Silva (Estrategia / Growth — Ultra Academia).
 > Atualizado em: 2026-05-28 (ciclo BLK-OPS-01); revisado em 2026-08-03 (DEC-022 —
-> Streamlit aposentado, app de producao passa a ser o piloto web).
+> Streamlit aposentado, app de producao passa a ser o piloto web); revisado em
+> 2026-10-24 (o restore do servidor zerado passa a incluir o banco Postgres — §10.7-bis).
 
 ---
 
@@ -23,7 +24,14 @@
 
 **NAO cobre:**
 - Backup remoto automatizado (rclone, S3, Backblaze). Anexo opcional, nao
-  implementado neste ciclo.
+  implementado neste ciclo. **Ressalva (2026-10-24):** isto vale para os segredos,
+  cuja copia fora do servidor e' o proprio git (cifrado). O banco Postgres (§2) tem
+  copia off-box prevista no `scripts/cron/run_backup_banco.sh` (restic), e ela esta'
+  DESLIGADA em producao: destino e custo sao decisao pendente do Felipe. O BLK-SEC-04
+  aceitou o risco em 2026-07-13 porque quase tudo era regeneravel, e o gatilho de
+  reabertura dele inclui o crescimento de dado NAO regeneravel — que e' o banco. Ate'
+  la', os dumps ficam no MESMO disco do banco; a unica copia externa e' o snapshot
+  semanal da Hostinger (servidor inteiro, mesmo provedor), se ainda estiver ativo.
 - Alteracoes em `docker-compose.prod.yml`, `Dockerfile.web`, pipeline
   M1, `config.py` ou parametros canonicos (`score_priorizacao`,
   `hex_score_estrutural`).
@@ -46,7 +54,7 @@
 | `/opt/motor-expansao/app/authelia/users_database.yml`   | YAML       | Usuarios + hashes argon2 das senhas                         |
 | `/opt/motor-expansao/app/authelia/db.sqlite3`           | binario    | Sessoes Authelia (muda a cada login — drift esperado)       |
 | `/opt/motor-expansao/cadastro/` (`cadastro_unidades.json`, `cadastro_log.jsonl`, `acesso_abas.json`, `bot_allowlist.json`) | JSON | Cadastro operacional (DEC-023), abas do piloto e allowlist do bot — editados em producao, SEM copia cifrada |
-| volume `postgres_data` (`motor_expansao_postgres`) | Postgres | Usuarios, RBAC, sessoes e eventos — nenhum pipeline regenera; backup por `scripts/cron/run_backup_banco.sh` (restore: `docs/banco_deploy.md` §10) |
+| volume `postgres_data` (`motor_expansao_postgres`) | Postgres | Usuarios, RBAC, sessoes e eventos — nenhum pipeline regenera; backup por `scripts/cron/run_backup_banco.sh`, que em producao roda no crontab da conta `deploy` com os dumps em `/home/deploy/backups/banco` (restore: §10.7-bis e `docs/banco_deploy.md` §10) |
 
 > Esses arquivos estao no `.gitignore` da raiz do repo (linhas 135-139 atuais).
 > Nenhuma versao em claro pode entrar no git.
@@ -426,6 +434,13 @@ sops --input-type binary --output-type binary -d secrets/authelia.db.sqlite3.enc
   > authelia/db.sqlite3
 ```
 
+> **O `secrets/env.enc.env` da `main` e' de 2026-10-17 e NAO tem a linha `MOTOR_DATABASE_URL`**
+> (o banco foi ligado no site em 2026-10-23). Restaurado como esta', o web sobe com o banco
+> DESLIGADO, e nada acusa o banco. Ate' ele ser refeito, acrescente a linha no formato do §8 do
+> `docs/banco_deploy.md` (`postgresql://app:<senha>@postgres:5432/banco_de_reservas`), com a
+> senha que esta' em `MOTOR_APP_DB_PASSWORD` no proprio `.env`. Os pins `WEB_IMAGE`/`API_IMAGE`
+> dele tambem sao os de 2026-10-17: confira o digest vigente antes do `pull` (§10.8).
+
 ### 10.7. Recolocar dados de parquets
 
 Opcoes:
@@ -438,6 +453,31 @@ mkdir -p /opt/motor-expansao/data/outputs/ /opt/motor-expansao/data/ultra/ /opt/
 # (Transferir conteudo via SCP ou regenerar — §13)
 ```
 
+### 10.7-bis. Restaurar o banco (Postgres) ANTES de subir o resto
+
+O volume do Postgres nao existe num servidor novo, e nenhum pipeline regenera o que mora
+nele (usuarios, perfis e RBAC, sessoes, eventos): ele volta do **dump**. O passo a passo e'
+o §10 do `docs/banco_deploy.md`, secao "Restaurar num servidor novo" — nao repetido aqui.
+Em resumo, nesta ordem:
+
+1. **O dump mais novo** (`banco_de_reservas_<carimbo>.dump` e o `.sha256` ao lado, conferido com
+   `sha256sum -c` dentro da pasta, porque o `.sha256` guarda so' o nome): de
+   `/home/deploy/backups/banco/diario/` do servidor antigo, se o disco sobreviveu, ou da
+   copia off-box quando ela existir. **Em 2026-10-24, com a copia off-box desligada (§1), perder o
+   disco e' perder os dumps junto** — sobra o snapshot semanal da Hostinger, que restaura o
+   servidor inteiro, se ainda estiver ativo.
+2. `docker compose -f docker-compose.prod.yml up -d postgres` — so' ele. O `.env`
+   restaurado precisa dos `POSTGRES_*`, e a senha do dono e' gravada no primeiro boot.
+3. **D20 secao 1** (os papeis `app`, `auditoria` e `etl`; as senhas dos dois primeiros sao
+   `MOTOR_APP_DB_PASSWORD` e `MOTOR_AUDITORIA_DB_PASSWORD` no `.env`), depois o
+   `pg_restore --no-owner` direto no `banco_de_reservas`, depois a **D20 secao 2**, e por fim
+   `conferir` e `privilegios` com os dois OK e as contagens batendo com as de origem. O D20
+   vive no repositorio `banco-de-reservas` (`sql/papeis-e-privilegios.md`), fora deste:
+   tenha-o em maos.
+
+Sem dump nenhum, o banco recomeca vazio pelos §5 a §7 do `docs/banco_deploy.md`
+(migrations, D20 e os usuarios semeados de novo), e cada pessoa precisa de perfil outra vez.
+
 ### 10.8. Subir o stack
 
 O compose nao builda nada no servidor (modo PULL por digest — DEC-022): o `.env`
@@ -448,6 +488,7 @@ for privado, `docker login ghcr.io` antes).
 ```bash
 cd /opt/motor-expansao/app/
 docker compose -f docker-compose.prod.yml pull
+unset MOTOR_DATABASE_URL   # a do shell, mesmo vazia, venceria a do .env (o postgres ja' subiu no §10.7-bis)
 docker compose -f docker-compose.prod.yml up -d
 docker compose -f docker-compose.prod.yml ps
 ```
@@ -530,10 +571,16 @@ git push
 # No VPS, regenerar o .env (o checkout /opt/motor-expansao/app esta parado: levar secrets/env.enc.env por scp em vez de git pull):
 ssh root@2.25.137.241
 cd /opt/motor-expansao/app/
-git pull
 sops --input-type dotenv --output-type dotenv -d secrets/env.enc.env > .env
-docker compose -f docker-compose.prod.yml restart authelia
+docker compose -f docker-compose.prod.yml up -d authelia   # restart NAO rele o .env; so' o up -d aplica o segredo novo
 ```
+
+> **Ressalva (2026-10-24): a metade do VPS nao funciona na producao de hoje.** O `sops -d` no VPS
+> exige a chave age NO VPS, e ela nao esta' la' (o sops e a chave ficam na estacao do Vinicius). O
+> fluxo vigente e' o inverso: trocar o valor direto no `.env` do VPS, sem imprimi-lo; `up -d` do
+> servico que o le'; e, por ultimo, refazer o `secrets/env.enc.env` na estacao, lendo o `.env` do
+> VPS por `ssh` direto para o `sops` (nunca em claro no disco nem na tela). Senha de papel do banco:
+> secao "Trocar a senha de um papel" do `docs/banco_deploy.md`.
 
 > **NUNCA** edite `secrets/*.enc*` com editor de texto direto — quebra o
 > envelope SOPS. Sempre `sops <arquivo>`.
@@ -636,6 +683,10 @@ docker compose -f docker-compose.prod.yml logs --tail=50 web
 docker compose -f docker-compose.prod.yml logs --tail=50 api
 docker compose -f docker-compose.prod.yml logs --tail=50 caddy
 docker compose -f docker-compose.prod.yml logs --tail=50 authelia
+
+# 6. Banco ligado no web, com a URL do papel `app` (o .env restaurado pode ter vindo sem ela —
+#    §10.6). Conta a linha sem imprimir a senha: tem de dar 1. NUNCA tire o -c.
+docker inspect -f '{{range .Config.Env}}{{println .}}{{end}}' motor_expansao_web | grep -c '^MOTOR_DATABASE_URL=postgresql://app:'
 ```
 
 ### 14.1. Validacao de dados M1
@@ -717,6 +768,7 @@ git check-ignore -v .sops.yaml           # esperado: NAO ignorado
 | Tempo de regen Parquets dependente de IBGE (~45-75 min)            | Cache em `data/raw/ibge/`; rodar em janela de baixa latencia |
 | **Plano B com `keys.txt` esquecido no disco local**                | **NEGRITO: apos copiar para cofre, executar `Remove-Item` imediatamente. Se ficar no disco, anula todo o ganho de seguranca do Plano B.** |
 | Perda do unico recipient (sem rotacao multi-recipient)             | Manter copias da chave privada em 2 cofres distintos (gestor + pen drive offline) |
+| Dumps do banco no MESMO disco do banco (copia off-box desligada)   | Decisao pendente do Felipe (destino e custo do restic); ate' la', o snapshot semanal da Hostinger. O monitor `banco` do healthcheck, quando instalado, lembra toda semana (`banco_offbox`) |
 
 ---
 
@@ -724,6 +776,7 @@ git check-ignore -v .sops.yaml           # esperado: NAO ignorado
 
 - `CLAUDE.md` §6 — Guardrails de VPS.
 - `docs/infra_producao.md` — Acesso, monitoramento, atualizacao de codigo/parquets.
+- `docs/banco_deploy.md` §10 — Backup e restore do banco, inclusive num servidor novo.
 - `docs/m1_outputs_oficiais.md` — Contrato dos artefatos oficiais do M1.
 - `scripts/setup_secrets_vps.sh` — Setup idempotente do tooling no VPS.
 - `scripts/secrets_roundtrip_test.{sh,ps1}` — Validacao de roundtrip dummy.

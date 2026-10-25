@@ -256,7 +256,9 @@ Regras de operação:
   `tests/unit/test_piloto_web_acesso.py` (cobertura obrigatória).
 - Solução **temporária** até o banco de identidade (plano de 2026-08-07). **O banco já existe no código:** com
   `MOTOR_DATABASE_URL` preenchida, o RBAC por capacidade do banco (`REGRAS_POR_CAPACIDADE`, `web/server/acesso.py`)
-  passa a mandar e este JSON deixa de ser consultado — conferir com `grep '^MOTOR_DATABASE_URL=' .env`.
+  passa a mandar e este JSON deixa de ser consultado. É o estado da produção BR desde 23/10/2026; o JSON segue
+  valendo na AR (sem banco) e volta a valer no BR se a URL for esvaziada (§8 do `docs/banco_deploy.md`). Conferir
+  com `grep -c '^MOTOR_DATABASE_URL=.' .env` — `1` é preenchida; o `-c` conta a linha sem imprimir a senha.
 
 ---
 
@@ -416,9 +418,19 @@ No `.env` da VPS (`/opt/motor-expansao/app/.env`), pinar:
 ```
 WEB_IMAGE=ghcr.io/kastaldy/motor-de-expansao/motor-expansao-web@sha256:<digest-do-passo-1>
 ```
+
+> **Com o banco ligado (produção BR desde 23/10/2026):** antes de pinar, o `estado` com a imagem nova diz
+> se ela traz migration — roteiro no §9.0 do `docs/banco_deploy.md`, que deixa o pin por último: a
+> migration entra **antes** do `up` que troca o container, e não tem `down`. E **todo `up` que alcance o
+> `web` começa com `unset MOTOR_DATABASE_URL`** — inclusive o `up -d caddy` abaixo, que recria o `web`
+> junto se a config dele divergir: uma variável com esse nome no shell, mesmo vazia, vence a do `.env`
+> na interpolação do compose, e o `web` sobe sem banco — depois do corte do P19, isso tranca todo mundo
+> para fora.
+
 Depois:
 ```bash
 cd /opt/motor-expansao/app
+unset MOTOR_DATABASE_URL
 docker compose -f docker-compose.prod.yml pull web
 docker compose -f docker-compose.prod.yml up -d web
 # Caddy pega a nova rota (se editou o Caddyfile, recarregue — §3)
@@ -427,10 +439,13 @@ docker compose -f docker-compose.prod.yml up -d caddy
 # conferir saúde
 docker compose -f docker-compose.prod.yml ps
 docker compose -f docker-compose.prod.yml exec web curl -fsS http://127.0.0.1:8899/api/health
+# banco ligado: o web subiu com a URL do papel `app`? Conta sem imprimir a senha — tem de dar 1
+docker inspect -f '{{range .Config.Env}}{{println .}}{{end}}' motor_expansao_web | grep -c '^MOTOR_DATABASE_URL=postgresql://app:'
 ```
 Abrir `https://piloto.ultra-expansao.tech` → login Authelia → piloto.
 
-**Rollback**: apontar `WEB_IMAGE` para o digest anterior e repetir `pull` + `up -d web`.
+**Rollback**: apontar `WEB_IMAGE` para o digest anterior e repetir `unset` + `pull` + `up -d web`. Migration
+aplicada não volta com a imagem (§8 do `docs/banco_deploy.md`).
 
 > **Com a stack AR no ar (§8):** o mesmo bump de `WEB_IMAGE` precisa recriar TAMBÉM a
 > AR — `docker compose -f docker-compose.ar.yml pull web_ar && docker compose -f
@@ -575,7 +590,9 @@ ordem:
     container ausente) e observar 24 h: RSS em regime abaixo de 70% do `mem_limit`
     medido e CPU sem briga com o BR — **e a memória livre do HOST** com as duas
     stacks em regime (`free -m` nos picos): a soma dos tetos rígidos fecha os 16 GB
-    (api 6g + web BR 8g + web_ar 2g) com caddy/authelia/bot/tileserver **sem teto**;
+    (api 6g + web BR 8g + web_ar 2g) — e passa deles desde que o `postgres` (2g) entrou no
+    compose (#376, 17/09/2026): 18 GB, §11 do `docs/banco_deploy.md` — com caddy/authelia/bot
+    **sem teto** (o tileserver declara 1500m na stack dele);
     se `available` cair abaixo de ~2 GB nos picos, rever os tetos **antes** do fim da
     observação — num aperto, o OOM killer escolhe uma vítima sem teto (Authelia ou
     Caddy) e derruba o edge das **duas** stacks.
