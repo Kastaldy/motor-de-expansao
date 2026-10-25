@@ -10,6 +10,13 @@ PERMITIDOS e virou CRITICO — nao por se chamar `config.py` (o regex e ancorado
 e o guardrail original segue valido para qualquer outro modulo), mas pelo CONTEUDO: ele carrega
 as premissas financeiras do motor de viabilidade e a lista anti-PII `PII_COLUNAS_PROIBIDAS`
 (DEC-009/DEC-012). Os demais arquivos de `dimensionamento/` continuam permitidos.
+
+ATUALIZADO na epic do banco (2026-10-24): o pacote `src/motor_expansao/db/` (migrations,
+autenticacao/autorizacao, trilha de eventos) e os crons que operam o banco com a senha do
+papel dono (os dois de hoje e o proximo que levar `banco`/`sessoes` no nome) passaram a
+ABORTAR o loop -- loop-safe nao persiste PII nem toca segredo. Os instrumentos de veredito
+(`conferir_usuarios_banco.py`, `rastrear_arquivo.py`) sao GOVERNANCA, isto e, so' AVISO aqui;
+o extrator de migrations e os testes do banco seguem livres.
 """
 from __future__ import annotations
 
@@ -61,6 +68,22 @@ def _bloqueado(path: str) -> bool:
         "data/raw/ibge/malha_brasil.geojson",
         "iniciar-loop.cmd",
         "scripts/iniciar_loop.ps1",
+        # Banco de producao (autoriza o piloto; autentica no P19): o pacote inteiro e os crons
+        # que o operam com a senha do papel dono abortam o loop.
+        "src/motor_expansao/db/rbac.py",
+        "src/motor_expansao/db/sessoes.py",
+        "src/motor_expansao/db/senhas.py",
+        "src/motor_expansao/db/usuarios.py",
+        "src/motor_expansao/db/postgres.py",
+        "src/motor_expansao/db/cli.py",
+        "src/motor_expansao/db/eventos.py",
+        "src/motor_expansao/db/migracoes/018-sessoes.sql",
+        "src/motor_expansao/db/migracoes/manifesto.json",
+        "scripts/cron/run_backup_banco.sh",
+        "scripts/cron/run_expurgo_sessoes.sh",
+        "scripts/cron/run_restore_banco.sh",  # o proximo cron do banco nasce coberto
+        # Banco de ensaio do CI: o job `test` o executa a partir do HEAD do PR (arma o check).
+        "scripts/ci/banco_de_ensaio.sh",
     ],
 )
 def test_caminhos_proibidos_sao_bloqueados(path: str) -> None:
@@ -90,6 +113,15 @@ def test_caminhos_proibidos_sao_bloqueados(path: str) -> None:
         "scripts/housekeeping_move_block.py",
         "data/osm_cache/bbox_ok_test.json",
         ".streamlit/config.toml",
+        # Banco: os instrumentos de veredito sao GOVERNANCA (AVISO no ralph, label no PR); o
+        # extrator de migrations e os testes do banco seguem limpos. Nenhum deles aborta o loop.
+        "scripts/conferir_usuarios_banco.py",
+        "scripts/rastrear_arquivo.py",
+        "scripts/extrair_migracoes.py",
+        "tests/unit/test_db_rbac.py",
+        "tests/integration/test_login_ponta_a_ponta.py",
+        # Cron de outra frente: a regra do banco casa o NOME, e este nao o leva.
+        "scripts/cron/run_regen_mercado.sh",
     ],
 )
 def test_caminhos_permitidos_nao_sao_bloqueados(path: str) -> None:
