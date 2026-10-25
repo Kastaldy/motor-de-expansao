@@ -51,7 +51,7 @@ Hoje o **Authelia** confere quem entra, na porta da rua. Depois deste corte, que
 |---|---|
 | Acesso SSH à VPS | já configurado: a conta `deploy` (`ssh -i ~/.ssh/id_ultra_deploy deploy@<vps>`, grupos `docker` e `motor-ops`, sem `sudo`; o endereço está em `docs/infra_producao.md`). O que exige root fica com o Felipe: o healthcheck e, se a conta não puder escrever no `Caddyfile`, o Passo 5 e o rollback |
 | `WEB_IMAGE` (digest da imagem nova) | job `publish-web` no Actions, depois do merge do código de 24/10/2026 — o que esconde o cadeado e os gestos de senha enquanto a chave estiver desligada (Passos 0.c e 2) |
-| Senha do dono do banco (`reservas_owner`) | no `.env` do compose, em `POSTGRES_OWNER_PASSWORD` |
+| Senha do dono do banco (`reservas_owner`) | no `.env` do compose, em `POSTGRES_OWNER_PASSWORD` — o 0.c a lê de lá sem imprimi-la, e você não precisa copiá-la |
 | Senha do papel `app` | **não precisa mais:** a `MOTOR_DATABASE_URL` está preenchida desde 23/10/2026 (o Passo 3 virou conferência), e a senha do `app` fica no `.env` em `MOTOR_APP_DB_PASSWORD` — o compose não lê essa variável; a senha vai dentro da URL. Até 24/10/2026 esta linha mandava pedir a senha a quem repassou e citava o `.env` só como exceção: desde a instalação de 17/10/2026 ela está lá (#462) |
 | **Seu login na allowlist do painel de Acessos** | a env `MOTOR_ACESSOS_ADMIN_USUARIOS` do `.env`. Sem o seu login lá, o painel responde **404** para você — e é a única ferramenta de criar gente e destravar conta |
 | **Uma conta sua no Authelia**, com senha | **com quem repassou.** Estar na allowlist acima não basta: **hoje** o Caddy exige sessão do Authelia no host inteiro, então sem conta no `users_database.yml` o navegador nunca chega no painel de Acessos. Peça que o seu login seja a **mesma string** nos dois lugares |
@@ -285,13 +285,22 @@ unset S
 **Agora suba o `web` — antes do 0.c:**
 ```bash
 unset MOTOR_DATABASE_URL MOTOR_SENHA_INICIAL MOTOR_AUTENTICACAO_PROPRIA   # no terminal, mesmo vazia, uma delas venceria o .env
-docker compose -f docker-compose.prod.yml up -d web
+docker compose -f docker-compose.prod.yml up -d --no-deps web
 ```
 
-> **A ordem não é opcional, e a falha é muda.** O comando do 0.c usa `run --rm`, que relê o `.env` a
-> cada invocação, então **os hashes ficariam alinhados com o valor novo enquanto o container no ar
-> continua criando gente com o antigo**. Quem fosse criado pela tela de Acessos até o próximo `up -d`
-> receberia a senha velha. E `restart` não serve: ele não relê o `.env` — nem o diário das 06:30 UTC.
+> **A ordem não é opcional.** O 0.c roda **dentro do `web` no ar** (`docker exec`) e alinha os hashes
+> com a `MOTOR_SENHA_INICIAL` do processo dele — a mesma com que a tela de Acessos cria gente. Sem este
+> `up`, o container segue com a senha sorteada: o `--simular` do 0.c sai com `c` = 0 e `b` = `N` (os
+> hashes ainda conferem com ela), o que se lê fácil como "nada a fazer", e quem fosse criado pela tela
+> continuaria recebendo a senha velha. E `restart` não serve: ele não relê o `.env` — nem o diário das
+> 06:30 UTC. (Até 25/10/2026 o 0.c rodava num `run --rm`, que relia o `.env` sozinho, e o risco era o
+> inverso: hashes da senha nova com o container no ar criando gente com a velha.)
+>
+> **O `--no-deps` recria só o `web`.** O `web` declara `depends_on: postgres`, e sem ele o `up`
+> converge o `postgres` junto: se a config do banco tiver mudado — uma `POSTGRES_OWNER_PASSWORD`
+> trocada no `.env` basta —, o compose recria o `postgres` no meio do passo (medido em 25/10/2026, no
+> Compose 2.33 e no 5.6). É a forma do kit (`p19c-senha.sh`) e vale para todo `up` deste documento; até
+> 25/10/2026 os comandos daqui não a tinham.
 
 **Confira, sem imprimir, que o `web` recebeu exatamente a senha que você digitou:**
 ```bash
@@ -300,8 +309,9 @@ IFS= read -rs S; printf '%s' "$S" | docker compose -f docker-compose.prod.yml ex
 ```
 
 **Esperado:** `IGUAIS`. **Se vier `DIFERENTES`,** devolva o `.env` (no mesmo dia,
-`cat .env.bak-$(date +%F)-antes-senha-p19 > .env`), suba o `web` de novo e **pare**: o 0.c
-gravaria um hash que não abre com a senha que a equipe digita.
+`cat .env.bak-$(date +%F)-antes-senha-p19 > .env`), suba o `web` de novo (o `unset` e o
+`up -d --no-deps web` acima) e **pare**: o 0.c gravaria um hash que não abre com a senha que a equipe
+digita.
 
 ### 0.c — Alinhar os hashes e ver quem sobra
 
@@ -318,72 +328,150 @@ gravaria um hash que não abre com a senha que a equipe digita.
 > Maior que `0`: é a imagem certa. `0` (ou erro): faça o Passo 2 antes — ele só esconde o que hoje não
 > funciona — ou deixe o 0.c para a janela, logo antes do Passo 4.
 
-Antes dos dois comandos abaixo, **exporte a credencial do DONO do schema** — e isto não é
-formalidade:
+**O alinhar escreve com a credencial do DONO do schema (`reservas_owner`) — e o jeito de entregá-la
+não é formalidade.** O `alinhar-senhas` procura primeiro a `MOTOR_DATABASE_URL_ADMIN` e, sem ela, cai
+**em silêncio** para a `MOTOR_DATABASE_URL`, que é a credencial do papel **`app`** — a que o `web` no
+ar tem no ambiente desde 23/10/2026, com `UPDATE` em `usuarios` por desenho. O passo que este
+documento chama de "o único que não dá para desfazer" reescreveria hashes pela credencial da
+aplicação, sem uma linha de aviso, e a saída do comando **não nomeia o papel conectado**.
+
+Por isso ele não é chamado direto. Dois programas pequenos, **os mesmos do kit** (`p19c-senha.sh`),
+fazem a entrega:
+
+- o `url_dono.py` monta a URL do dono a partir do `.env` (`POSTGRES_DB`, `POSTGRES_OWNER_USER` e
+  `POSTGRES_OWNER_PASSWORD`) e a escreve **só no pipe** da função `alinhar`, nunca na tela. Por isso
+  ele **nunca se roda sozinho**: fora do pipe, a saída dele é a tela, e a URL sairia nela com a senha
+  do dono (medido em 25/10/2026);
+- o `alinhar.py` roda **dentro do `web` no ar** (`docker exec -i`), com a `MOTOR_SENHA_INICIAL` que o
+  0.b pôs lá. Ele lê a URL da **entrada padrão** e recusa se ela não chegou, em vez de deixar o comando
+  cair na do `app`; conecta, **imprime o papel** e recusa se ele não for `reservas_owner`; e só então
+  chama o `alinhar-senhas`.
+
+A senha do dono não vai para argumento de comando (que o `ps` mostra), variável exportada, ambiente do
+`docker exec`, arquivo nem tela. **Até 25/10/2026 este passo mandava
+`export MOTOR_DATABASE_URL_ADMIN=...` e `docker compose run --rm -e MOTOR_DATABASE_URL_ADMIN ...`**, e
+a revisão de segurança mediu no laboratório (`strace` e `docker inspect`) que assim a URL do dono
+ficava no ambiente do processo `docker compose` e na `Config.Env` do container descartável: um
+`docker inspect` dele a imprimiria — o modo exato do vazamento de 17/10/2026.
+
+**Prepare os dois programas uma vez por terminal** (se a sessão cair, refaça este bloco). A pasta
+temporária guarda só código, nunca a senha:
 
 **No terminal da VPS:**
 ```bash
-export MOTOR_DATABASE_URL_ADMIN='postgresql://reservas_owner:<senha-do-dono>@postgres:5432/banco_de_reservas'
-```
+cd /opt/motor-expansao/app
+P19=$(mktemp -d)
+cat > "$P19/url_dono.py" <<'PY'
+# Monta a URL do DONO do schema a partir do .env e a escreve SO' na saida padrao (que vai direto para um pipe).
+# Valida o formato antes; se reprovar, nao escreve nada e sai com 3.
+import re
+import sys
 
-> **Se a senha do dono tiver `@`, `:`, `/` ou `?`, ela precisa de percent-encoding** aqui (`@` vira
-> `%40`, `:` vira `%3A`, `/` vira `%2F`, `?` vira `%3F`). Sem isso o erro sai como "autenticação
-> falhou" ou "host não encontrado", nunca como "URL malformada".
+v = {}
+for linha in open(".env", encoding="utf-8").read().split("\n"):
+    if "=" in linha and not linha.lstrip().startswith("#"):
+        k, x = linha.split("=", 1)
+        v.setdefault(k, []).append(x)
+db, papel, pw = v.get("POSTGRES_DB", []), v.get("POSTGRES_OWNER_USER", []), v.get("POSTGRES_OWNER_PASSWORD", [])
+if (len(pw) != 1 or not re.fullmatch(r"[0-9a-f]{48}", pw[0]) or db != ["banco_de_reservas"]
+        or len(papel) != 1 or not re.fullmatch(r"[a-z_][a-z0-9_]*", papel[0])):
+    sys.exit(3)
+sys.stdout.write("postgresql://%s:%s@postgres:5432/%s\n" % (papel[0], pw[0], db[0]))
+PY
+cat > "$P19/alinhar.py" <<'PY'
+# Roda DENTRO do container do web no ar: `db alinhar-senhas` com a credencial do DONO, que chega pela ENTRADA
+# PADRAO (1a linha) e so' existe dentro deste processo -- nao vai para argumento, para o ambiente do `docker
+# exec` nem para arquivo. Usa a MOTOR_SENHA_INICIAL do proprio container: a mesma com que o site cria gente.
+# Antes de alinhar, prova que a credencial e' mesmo a do dono (sem a do dono, o runner cairia para a
+# MOTOR_DATABASE_URL do `app` em silencio). Uso: alinhar.py <papel do dono> [--simular]
+import os
+import sys
+
+dono, args = sys.argv[1], sys.argv[2:]
+url = sys.stdin.readline().strip()
+if not url.startswith("postgresql://"):
+    print("ALINHAR_ERRO=sem-credencial-do-dono")
+    sys.exit(97)
+os.environ["MOTOR_DATABASE_URL_ADMIN"] = url
+del url
+try:
+    import psycopg
+
+    with psycopg.connect(os.environ["MOTOR_DATABASE_URL_ADMIN"], connect_timeout=10) as con:
+        papel = con.execute("select current_user").fetchone()[0]
+except Exception as erro:  # o tipo basta: a mensagem poderia citar a conexao
+    print("ALINHAR_ERRO=conexao:" + type(erro).__name__)
+    sys.exit(96)
+print("PAPEL_ALINHAR=" + str(papel))
+if papel != dono:
+    print("ALINHAR_ERRO=papel-errado")
+    sys.exit(96)
+from motor_expansao.db import cli
+
+try:
+    rc = cli.main(["alinhar-senhas"] + args)
+except SystemExit as saida:
+    print("ALINHAR_ERRO=saida:" + type(saida.code).__name__)
+    rc = 95
+print("RC_ALINHAR=%d" % rc)
+sys.exit(rc)
+PY
+alinhar() { python3 -I "$P19/url_dono.py" | docker exec -i motor_expansao_web python -c "$(cat "$P19/alinhar.py")" reservas_owner "$@"; }
+```
 
 > **Na produção a senha do dono está no `.env`** (`POSTGRES_OWNER_PASSWORD`, gerada em hexadecimal na
-> instalação, então sem percent-encoding). Para não digitá-la nem deixá-la no histórico do terminal:
-> `export MOTOR_DATABASE_URL_ADMIN="postgresql://reservas_owner:$(sed -n 's/^POSTGRES_OWNER_PASSWORD=//p' .env)@postgres:5432/banco_de_reservas"`
-> (na pasta `/opt/motor-expansao/app`).
+> instalação). O `url_dono.py` só aceita a forma da instalação — uma linha de cada, a senha com 48
+> caracteres hexadecimais e o banco `banco_de_reservas` —, e por isso a URL nunca precisa de
+> percent-encoding; fora dessa forma ele não escreve nada, e o `alinhar.py` recusa. Até 25/10/2026
+> este passo ensinava a codificar `@ : / ?` na senha, para a URL digitada à mão.
 
-> **Se você esquecer o `export`, o comando NÃO reclama — ele roda com a credencial errada.** Medido:
-> sem essa variável, o runner cai para `MOTOR_DATABASE_URL`, que é a credencial do papel **`app`** —
-> e o `app` tem `UPDATE` em `usuarios` por desenho. Ou seja, o passo que este documento chama de "o
-> único que não dá para desfazer" reescreveria hashes pela credencial da aplicação, em silêncio,
-> sem uma linha de aviso.
->
-> **A saída do comando NÃO nomeia o papel conectado** — não há como descobrir pela tela com qual
-> credencial ele escreveu. Por isso a conferência é **antes** de rodar, sobre a variável:
->
-> **No terminal da VPS:**
-> ```bash
-> echo "$MOTOR_DATABASE_URL_ADMIN" | cut -d@ -f1 | cut -d: -f1,2
-> ```
-> Tem de imprimir **`postgresql://reservas_owner`**. Se sair **vazio**, o `export` não pegou neste
-> terminal — refaça antes de continuar. (Até 24/10/2026 o `cut` parava no `@` e imprimia a senha
-> junto; o segundo `cut` corta o que vem depois do usuário.)
->
-> **Duas formas são válidas aqui, e o teste aceita as duas:**
-> `postgresql://reservas_owner:<a senha>@…` (senha na URL) e `postgresql://reservas_owner@…` (sem
-> senha, com ela em `PGPASSWORD`). A segunda é a que o `scripts/cron/run_expurgo_sessoes.sh` monta,
-> **de propósito e documentado lá**, para a senha não precisar de percent-encoding. Até 01/10/2026
-> esta linha exigia ver `:<a senha>`, e quem tivesse copiado a forma do cron concluiria que o
-> `export` falhou quando estava correto. **O que importa é o PAPEL ser `reservas_owner`**, não a
-> senha aparecer.
->
-> **Se vier `ERRO: defina MOTOR_DATABASE_URL_ADMIN (ou MOTOR_DATABASE_URL) com a credencial do DONO
-> do schema`:** nem a variável nem o fallback existem. Exporte e repita — nada foi escrito.
->
-> Ao terminar o 0.c, `unset MOTOR_DATABASE_URL_ADMIN`. Ela é a credencial que aplica DDL; deixá-la
-> no ambiente de uma sessão que continua aberta é o que este repositório evita de propósito.
+**Rode primeiro o `--simular`, que não escreve nada — sempre:**
 
 **No terminal da VPS:**
 ```bash
-docker compose -f docker-compose.prod.yml run --rm \
-  -e MOTOR_DATABASE_URL_ADMIN -e MOTOR_SENHA_INICIAL \
-  web python -m motor_expansao.db alinhar-senhas --simular
+alinhar --simular
 ```
 
-> `--simular` **não escreve nada**. Rode assim primeiro, sempre.
-
-**Esperado:** quatro contagens, e o que interessa são as duas últimas:
+**Esperado:** o papel, as contagens e o código de saída:
 
 ```
+PAPEL_ALINHAR=reservas_owner
 usuarios ativos: <N>
   ja' escolheram a propria senha, hash ok : <a>
   na senha inicial e JA' CONFEREM         : <b>
   na senha inicial e NAO conferem         : <c>
   escolheram, mas o hash esta' QUEBRADO   : <d>
+
+(--simular: nada foi escrito) seriam alinhadas:
+    <um login por linha: as c pessoas>
+RC_ALINHAR=0
 ```
+
+> **A primeira linha é a conferência do papel, e ela vem antes de qualquer escrita:** tem de ser
+> `PAPEL_ALINHAR=reservas_owner`. O `alinhar.py` faz a mesma conferência por conta própria e não chama
+> o `alinhar-senhas` com outro papel — mas leia a linha: é ela que diz com qual credencial este passo
+> vai escrever. (Até 25/10/2026 a conferência era um `echo` da variável exportada passado por `cut`.)
+>
+> **Se vier outra coisa, nada foi escrito.** O que cada saída quer dizer:
+>
+> | Se vier | Quer dizer | O que fazer |
+> |---|---|---|
+> | `PAPEL_ALINHAR=<outro>` e `ALINHAR_ERRO=papel-errado` | a credencial montada do `.env` conectou, mas com outro papel: a linha `POSTGRES_OWNER_USER` não é `reservas_owner` | pare e chame quem repassou; a conferência das linhas do dono, logo abaixo, mostra qual delas |
+> | `ALINHAR_ERRO=sem-credencial-do-dono` | o `url_dono.py` não montou a URL: o terminal não está em `/opt/motor-expansao/app` (aí vem antes um `FileNotFoundError` do `.env`), ou uma das três linhas `POSTGRES_*` falta, se repete ou saiu da forma da instalação | `cd /opt/motor-expansao/app` e repita; persistindo, a conferência das linhas do dono, logo abaixo |
+> | `ALINHAR_ERRO=conexao:OperationalError` | o banco não respondeu: o `postgres` está fora do ar, ou recusou a senha | `docker compose -f docker-compose.prod.yml ps postgres`: sem ele na lista, é o incidente "banco fora" do `docs/infra_producao.md`; com ele `(healthy)`, a senha do `.env` não é a do banco — pare e chame quem repassou |
+> | `Error response from daemon: container ... is not running` (ou `No such container`), seguido de um `BrokenPipeError` do `url_dono.py`, que ficou sem ter para quem entregar a URL | o `web` está fora do ar, e o alinhar roda dentro dele | suba-o como no 0.b (o `unset` e o `up -d --no-deps web`) e repita |
+>
+> **A conferência das linhas do dono** — as três que o `url_dono.py` lê, cada uma uma vez só e na forma da
+> instalação. Imprime só contagens, nunca a linha:
+>
+> **No terminal da VPS:**
+> ```bash
+> cd /opt/motor-expansao/app
+> for r in '^POSTGRES_DB=' '^POSTGRES_DB=banco_de_reservas$' '^POSTGRES_OWNER_USER=' '^POSTGRES_OWNER_USER=reservas_owner$' '^POSTGRES_OWNER_PASSWORD=' '^POSTGRES_OWNER_PASSWORD=[0-9a-f]{48}$'; do printf '%s ' "$(grep -cE "$r" .env)"; done; echo
+> ```
+> Tem de imprimir `1 1 1 1 1 1`, na ordem: banco, banco com o nome certo, dono, dono `reservas_owner`, senha,
+> senha com 48 caracteres hexadecimais. Um `0` aponta a linha que falta ou saiu da forma; um `2` (ou mais), a
+> linha repetida — por exemplo, a `POSTGRES_DB=motor_expansao` legada do `.env.example` (`docs/banco_deploy.md` §3).
 
 > **Olhe o `N` primeiro, porque é ele que denuncia o pior cenário.** `usuarios ativos` tem de ser
 > **igual ao número de logins que você conciliou no 0.a** (20 em 24/10/2026), e `d` tem de ser 0.
@@ -393,16 +481,17 @@ usuarios ativos: <N>
 
 - **`c` maior que zero:** são pessoas que estão na senha compartilhada mas cujo hash guardado não
   corresponde a ela — elas **não entrariam**. **Depois da troca do 0.b, `c` deve sair igual a `N` −
-  `a`:** os hashes guardados são da senha sorteada, então ninguém na senha inicial confere com a nova.
-  Rode o comando **sem** `--simular` para consertar:
+  `a`:** os hashes guardados são da senha sorteada, então ninguém na senha inicial confere com a nova
+  (se sair `0`, com `b` = `N`, o `web` no ar ainda tem a senha sorteada: volte ao `up` e à conferência
+  do 0.b). Rode o comando **sem** `--simular` para consertar:
 
   ```bash
-  docker compose -f docker-compose.prod.yml run --rm \
-    -e MOTOR_DATABASE_URL_ADMIN -e MOTOR_SENHA_INICIAL \
-    web python -m motor_expansao.db alinhar-senhas
+  alinhar
   ```
 
-  Ele nomeia cada pessoa que alinhou. Rode o `--simular` de novo e confira que `c` virou **0**.
+  Ele confere o papel de novo, nomeia cada pessoa que alinhou (`alinhada: <login>`) e termina com
+  `ALINHADAS: <c>` e `RC_ALINHAR=0`. Rode `alinhar --simular` de novo e confira que `c` virou **0**
+  (`nada a alinhar`).
 
 - **`d` maior que zero:** o comando **lista os logins e não os toca**, de propósito. Essas pessoas
   escolheram uma senha e o hash dela está inválido; consertar significaria **apagar a senha que
@@ -435,6 +524,17 @@ não", porque a troca é recomendada, não obrigatória (decisão de 25/09/2026)
 pessoa da senha compartilhada. Quem já conferia (`b`) não é tocado e fica com a marca que tinha. Com
 a chave desligada nada disso aparece: é a razão da conferência da imagem no começo deste passo.
 
+**Ao terminar o 0.c, limpe o terminal:**
+
+**No terminal da VPS:**
+```bash
+rm -rf "$P19"; unset -f alinhar; unset P19
+```
+
+Não há senha para apagar — ela só existiu no pipe e no processo do container, que termina com cada
+comando —, mas a pasta e a função não têm por que ficar. (Até 25/10/2026 o passo terminava com
+`unset MOTOR_DATABASE_URL_ADMIN`.)
+
 ---
 
 ## Onde fica o painel de Acessos (você vai usá-lo quatro vezes)
@@ -464,7 +564,7 @@ cd /opt/motor-expansao/app && grep '^MOTOR_ACESSOS_ADMIN_USUARIOS=' .env
 ```
 
 **Se o seu login não estiver ali**, acrescente-o (separado por vírgula) e, com o `unset` do 0.b
-antes, `docker compose -f docker-compose.prod.yml up -d web`. **Depois do corte** o painel passa a
+antes, `docker compose -f docker-compose.prod.yml up -d --no-deps web`. **Depois do corte** o painel passa a
 identificar você pela sessão, então o seu login também precisa existir em `usuarios` — o Passo 0.a
 cobre isso se você se incluir na conciliação.
 
@@ -524,7 +624,7 @@ cp -n .env .env.bak-$(date +%F)  # -n = NÃO sobrescreve se já existir (leia o 
 grep '^WEB_IMAGE=' .env          # anote esta linha
 # edite o .env: WEB_IMAGE=<digest novo>
 unset MOTOR_DATABASE_URL MOTOR_SENHA_INICIAL MOTOR_AUTENTICACAO_PROPRIA   # ver o 0.b
-docker compose -f docker-compose.prod.yml up -d web
+docker compose -f docker-compose.prod.yml up -d --no-deps web
 ```
 
 > **Não há `git pull` aqui** (até 24/10/2026 havia): o checkout da VPS é do root, está num commit
@@ -558,7 +658,7 @@ senha" e "Exigir troca" (os três voltam no Passo 4), e a coluna da senha passa 
 >
 > **No terminal da VPS:**
 > ```bash
-> docker compose -f docker-compose.ar.yml up -d web_ar
+> docker compose -f docker-compose.ar.yml up -d --no-deps web_ar
 > ```
 > **Esperado:** reinicia e continua atrás do Authelia, sem mudança visível.
 
@@ -640,13 +740,13 @@ grep -c '^MOTOR_AUTENTICACAO_PROPRIA=' .env   # 1 = a linha existe; 0 = não exi
 # 0: acrescente-a no fim:  printf '\nMOTOR_AUTENTICACAO_PROPRIA=1\n' >> .env
 grep '^MOTOR_AUTENTICACAO_PROPRIA=' .env      # UMA linha: MOTOR_AUTENTICACAO_PROPRIA=1 (este valor não é segredo)
 unset MOTOR_DATABASE_URL MOTOR_SENHA_INICIAL MOTOR_AUTENTICACAO_PROPRIA
-docker compose -f docker-compose.prod.yml up -d web
+docker compose -f docker-compose.prod.yml up -d --no-deps web
 ```
 
 > **A linha pode não existir no `.env`:** a da `MOTOR_DATABASE_URL` não existia em 23/10/2026 e foi
 > acrescentada no fim. Os dois casos estão acima; o que importa é sair com **uma** linha só.
 
-> **`up -d web`, NÃO `restart web`.** O `restart` não relê o `.env` — o container voltaria com o
+> **`up -d --no-deps web`, NÃO `restart web`.** O `restart` não relê o `.env` — o container voltaria com o
 > ambiente antigo e nada mudaria. Este é o erro mais fácil de cometer aqui.
 
 **Esperado — e isto NÃO é "nada muda": o corte fica visível agora.** Até 25/09/2026 este
@@ -938,7 +1038,7 @@ atrás*, abaixo. O pop-up "Sessão encerrada" do item 1 **não** é esse caso: e
 
 2. **Só então a chave:** `MOTOR_AUTENTICACAO_PROPRIA=` (vazia),
    `unset MOTOR_DATABASE_URL MOTOR_SENHA_INICIAL MOTOR_AUTENTICACAO_PROPRIA` e
-   `docker compose -f docker-compose.prod.yml up -d web` — **`up -d`, NÃO `restart`**: o `restart` não
+   `docker compose -f docker-compose.prod.yml up -d --no-deps web` — **`up -d`, NÃO `restart`**: o `restart` não
    relê o `.env`, e o `web` voltaria com a chave ligada.
 
 > **A `MOTOR_DATABASE_URL` FICA preenchida — não a esvazie.** Ela não tem nada a ver com quem

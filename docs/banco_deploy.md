@@ -19,7 +19,7 @@ indisponibilidade real:
 > nenhuma. Ligar a variável com a tabela vazia tranca **todo mundo para fora**, inclusive você.
 
 O caminho de volta é curto e vale saber de antemão: esvaziar `MOTOR_DATABASE_URL` e recriar
-o `web` (`up -d web`; um `restart` não relê o `.env`) devolve o piloto ao comportamento pré-banco em
+o `web` (`up -d --no-deps web`; um `restart` não relê o `.env`) devolve o piloto ao comportamento pré-banco em
 segundos, sem rebuild. Ver §8. **Esse interruptor só existe até o corte do P19:** com a autenticação
 própria ligada, sem banco ninguém entra.
 
@@ -640,7 +640,7 @@ não entra.
 **No terminal da VPS:**
 ```bash
 unset MOTOR_DATABASE_URL     # com o banco ligado, todo `up` começa assim (§9.0)
-docker compose -f docker-compose.prod.yml up -d web
+docker compose -f docker-compose.prod.yml up -d --no-deps web
 docker compose -f docker-compose.prod.yml exec -T web printenv MOTOR_SENHA_INICIAL | grep -c .   # 1, sem imprimir a senha
 ```
 
@@ -788,7 +788,7 @@ MOTOR_DATABASE_URL=postgresql://app:<senha>@postgres:5432/banco_de_reservas
 **No terminal da VPS:**
 ```bash
 unset MOTOR_DATABASE_URL     # esquecida no terminal, mesmo vazia, ela venceria o .env (§9.0)
-docker compose -f docker-compose.prod.yml up -d web
+docker compose -f docker-compose.prod.yml up -d --no-deps web
 docker inspect -f '{{range .Config.Env}}{{println .}}{{end}}' motor_expansao_web | grep -c '^MOTOR_DATABASE_URL=postgresql://app:'   # 1, sem imprimir a URL
 ```
 
@@ -834,7 +834,11 @@ docker compose -f docker-compose.prod.yml run --rm web \
 E então, na tela: entre com um usuário de cada perfil e confirme que as abas aparecem e somem como
 a matriz manda.
 
-**Rollback (segundos, sem rebuild):** esvaziar `MOTOR_DATABASE_URL` e `docker compose up -d web`.
+**Rollback (segundos, sem rebuild):** esvaziar `MOTOR_DATABASE_URL` no `.env`,
+`unset MOTOR_DATABASE_URL` no terminal e `docker compose -f docker-compose.prod.yml up -d --no-deps web`.
+Sem o `unset`, uma `MOTOR_DATABASE_URL` com valor esquecida no terminal (a do §10, por exemplo) vence o
+`.env`, e o `web` volta com o banco ligado, sem erro nenhum. Sem o `--no-deps`, o `up` mexe também no
+`postgres`: liga o que estiver parado e recria o que tiver a config mudada.
 O piloto volta ao `acesso_abas.json` e serve exatamente como antes do banco. O container `postgres`
 pode continuar de pé — nada no piloto o consulta enquanto a variável estiver vazia. É o interruptor
 de incidente, e ele existe justamente para que "o banco está estranho" nunca vire "o piloto caiu".
@@ -1051,10 +1055,10 @@ WEB_IMAGE="$NOVA" docker compose -f docker-compose.prod.yml run --rm \
 ```bash
 unset MOTOR_DATABASE_URL
 docker compose -f docker-compose.prod.yml pull web
-docker compose -f docker-compose.prod.yml up -d web
+docker compose -f docker-compose.prod.yml up -d --no-deps web
 docker inspect -f '{{range .Config.Env}}{{println .}}{{end}}' motor_expansao_web | grep -c '^MOTOR_DATABASE_URL=postgresql://app:'   # tem de dar 1
 docker compose -f docker-compose.ar.yml pull web_ar
-docker compose -f docker-compose.ar.yml up -d web_ar
+docker compose -f docker-compose.ar.yml up -d --no-deps web_ar
 unset MOTOR_DATABASE_URL_ADMIN
 ```
 
@@ -1066,6 +1070,14 @@ vence a linha do `.env`, e o `web` sobe sem banco, sem erro nenhum — antes do 
 contagem confere sem imprimir a URL, que carrega a senha do `app`. E `restart` não relê o `.env`: ele
 mantém o ambiente do container — é o que faz o `docker restart` diário da ingestão da Growth (06:30
 UTC); para reler, é `up -d <serviço>`.
+
+**E todo `up` do `web` e do `web_ar` leva `--no-deps`, que recria só o serviço pedido.** O `web`
+declara `depends_on: postgres`, e sem o `--no-deps` o `up -d web` converge o `postgres` junto: se a
+config dele tiver mudado — uma `POSTGRES_OWNER_PASSWORD` trocada no `.env` (§12) basta, mesmo sem
+efeito nenhum no cluster (§3) —, o compose recria o `postgres` no meio do deploy. O `up -d caddy` sem
+`--no-deps` vai mais longe: alcança o `web` e, por ele, o `postgres`. Medido no laboratório em
+25/10/2026 (Compose 2.33 e 5.6). É a forma dos kits de deploy em todo `up`; até 25/10/2026 os
+comandos deste runbook não a tinham.
 
 ## 9.0.1 O molde: aplicar as migrations do P19 (018, 019, 020) — ORDEM QUE IMPORTA
 
@@ -1448,7 +1460,7 @@ docker exec -it motor_expansao_postgres psql -U reservas_owner -d banco_de_reser
 | Papel | No `.env` | E depois |
 |---|---|---|
 | dono (`reservas_owner`) | `POSTGRES_OWNER_PASSWORD` | nada a recriar: backup e expurgo releem o `.env` a cada execução, e o `POSTGRES_PASSWORD` do compose só vale no initdb (§3). Quem exportar a `MOTOR_DATABASE_URL_ADMIN` daí em diante usa a nova |
-| `app` | `MOTOR_APP_DB_PASSWORD` **e** a senha dentro da `MOTOR_DATABASE_URL` | edite o `.env` **antes** do `\password`, para a janela ficar curta; logo depois dele, `unset MOTOR_DATABASE_URL`, `up -d web` e a contagem do §9.0. Até o `web` ser recriado, conexão nova do pool falha na senha, e o RBAC pode ficar indisponível por alguns segundos (`banco_conexao.md` §3); depois do corte do P19, o login e as sessões também |
+| `app` | `MOTOR_APP_DB_PASSWORD` **e** a senha dentro da `MOTOR_DATABASE_URL` | edite o `.env` **antes** do `\password`, para a janela ficar curta; logo depois dele, `unset MOTOR_DATABASE_URL`, `up -d --no-deps web` e a contagem do §9.0. Até o `web` ser recriado, conexão nova do pool falha na senha, e o RBAC pode ficar indisponível por alguns segundos (`banco_conexao.md` §3); depois do corte do P19, o login e as sessões também |
 | `auditoria` | `MOTOR_AUDITORIA_DB_PASSWORD` | nada: nenhum serviço a usa |
 
 Depois de qualquer troca, refaça o backup cifrado do `.env` (`secrets/env.enc.env`, §3); senão um

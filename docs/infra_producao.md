@@ -83,10 +83,11 @@ cd /opt/motor-expansao/app
 #    No .env: WEB_IMAGE=ghcr.io/kastaldy/motor-de-expansao/motor-expansao-web@sha256:<digest>
 
 # 2. Pull + up -d SOMENTE do web (SEM --build). O `unset` vem antes de TODO `up` do web: uma
-#    MOTOR_DATABASE_URL no shell, mesmo vazia, vence a do .env, e o web subiria sem banco.
+#    MOTOR_DATABASE_URL no shell, mesmo vazia, vence a do .env, e o web subiria sem banco. O
+#    --no-deps recria so' o web: sem ele, o compose converge tambem o postgres (depends_on).
 unset MOTOR_DATABASE_URL
 docker compose -f docker-compose.prod.yml pull web
-docker compose -f docker-compose.prod.yml up -d web
+docker compose -f docker-compose.prod.yml up -d --no-deps web
 
 # 3. Conferir saude (o web NAO expoe porta no host — checar de dentro do container)
 docker compose -f docker-compose.prod.yml ps
@@ -104,8 +105,14 @@ docker inspect -f '{{range .Config.Env}}{{println .}}{{end}}' motor_expansao_web
   vazia no shell, o `up -d caddy` recriou o `web` sem a URL). Depois do corte do P19, subir o `web`
   sem a URL tranca todo mundo para fora. O `docker restart` diario das 06:30 UTC (ingestao da Growth) mantem o ambiente do
   container: mudanca no `.env` so' vale depois de um `up -d web`.
+- **`--no-deps` em todo `up` do `web` e do `web_ar`** (aqui, no rollback abaixo e em qualquer
+  recriação): ele recria só o serviço pedido. O `web` declara `depends_on: postgres`, e sem o
+  `--no-deps` o `up -d web` converge o `postgres` junto e o recria se a config dele tiver mudado — uma
+  `POSTGRES_OWNER_PASSWORD` trocada no `.env` basta —, tirando o banco do ar no meio do deploy. O
+  `up -d caddy` sem `--no-deps` alcança o `web` e, por ele, o `postgres`. Medido no laboratório em
+  25/10/2026 (Compose 2.33 e 5.6); é a forma dos kits de deploy.
 - **A stack AR usa o MESMO `WEB_IMAGE`**: o `up -d web` do BR nao recria o `web_ar`. Rodar tambem
-  `docker compose -f docker-compose.ar.yml pull web_ar` e `docker compose -f docker-compose.ar.yml up -d web_ar`
+  `docker compose -f docker-compose.ar.yml pull web_ar` e `docker compose -f docker-compose.ar.yml up -d --no-deps web_ar`
   (idem no rollback abaixo) — ver `docs/deploy_piloto_web.md` §5.
 - API e bot seguem o mesmo modelo com `API_IMAGE` — ver `docs/deploy_api_bot.md`.
 - Dados em `/opt/motor-expansao/data/outputs/` sao preservados (bind mount read-only).
@@ -125,10 +132,10 @@ cd /opt/motor-expansao/app
 #    vigente antes de atualizar; ou recupere via imagetools inspect da tag sha-<commit_anterior>)
 #    No .env: WEB_IMAGE=ghcr.io/kastaldy/motor-de-expansao/motor-expansao-web@sha256:<digest_anterior>
 
-# 2. Pull + up -d (SEM --build), com o mesmo `unset` da atualizacao
+# 2. Pull + up -d --no-deps (SEM --build), com o mesmo `unset` da atualizacao
 unset MOTOR_DATABASE_URL
 docker compose -f docker-compose.prod.yml pull web
-docker compose -f docker-compose.prod.yml up -d web
+docker compose -f docker-compose.prod.yml up -d --no-deps web
 
 # 3. Conferir
 docker compose -f docker-compose.prod.yml ps
@@ -1070,9 +1077,9 @@ Detalhe e verificação em `valhalla-infra/README.md`.
    (rascunho → rename atômico → `up -d` → smoke de dentro do `motor_expansao_web`; reprovado,
    volta o anterior sozinho).
 5. Só com o smoke verde: `MOTOR_ROTAS_URL=http://motor_expansao_valhalla:8002` no `.env` do
-   motor e `unset MOTOR_DATABASE_URL && docker compose -f docker-compose.prod.yml up -d web`
-   (recriar, não `restart`: env nova só entra na recriação; o `unset` é o de todo `up` do `web`,
-   seção "Atualizar o web").
+   motor e `unset MOTOR_DATABASE_URL && docker compose -f docker-compose.prod.yml up -d --no-deps web`
+   (recriar, não `restart`: env nova só entra na recriação; o `unset` e o `--no-deps` são os de todo
+   `up` do `web`, seção "Atualizar o web").
 
 **Monitor:** o subcomando `containers` do healthcheck só vigia `motor_expansao_valhalla` quando
 `MOTOR_ROTAS_URL` está preenchida no `.env`. Com a variável vazia, a stack ausente é o estado
@@ -1576,7 +1583,7 @@ o nome do serviço). Quando o banco volta, o web se recupera sozinho em segundos
 cache —, e quem estava com a tela aberta recarrega a página para recuperar as abas. Mudança feita
 na tela de Acessos durante o incidente tem desfecho ambíguo num 503 de escrita: recarregar a lista
 e conferir antes de repetir. Se o banco não volta logo e a degradação atrapalha o time, o
-interruptor é o §8 do `docs/banco_deploy.md`: esvaziar a `MOTOR_DATABASE_URL` e `up -d web` (com o
+interruptor é o §8 do `docs/banco_deploy.md`: esvaziar a `MOTOR_DATABASE_URL` e `up -d --no-deps web` (com o
 `unset` antes), e o BR volta ao `acesso_abas.json`. Duas ressalvas: o JSON parou no estado de
 23/10/2026 — quem foi criado ou mudado pela tela depois disso perde ou muda de acesso (o kit da
 estação do Vinicius tem o desfazer simulado, que mostra quem muda antes de desligar) —, e migration
