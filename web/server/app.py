@@ -5475,7 +5475,7 @@ def acessos_usuario(
 # escritas (regra propria em `acesso.py`, antes da generica). Ver o `/api/rede/cadastro`,
 # que separa leitura de escrita do mesmo jeito.
 #
-# O SQL nao mora aqui: `motor_expansao.db.usuarios`. O CI nao tem Postgres, entao o SQL
+# O SQL nao mora aqui: `motor_expansao.db.usuarios`. A suite unitaria nao tem Postgres, entao o SQL
 # precisa ser localizavel para o gate de sintaxe offline alcancar e para haver o que
 # revisar antes de rodar contra banco real.
 # ---------------------------------------------------------------------------

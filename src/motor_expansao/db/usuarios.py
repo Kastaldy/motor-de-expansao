@@ -8,7 +8,8 @@ REGRESSAO de operabilidade, e e' o que este modulo existe para desfazer.
 
 Por que o SQL mora aqui, e nao no `app.py`
 ------------------------------------------
-O CI nao tem Postgres (decisao de 25/08) e quem executa contra banco real e' o Vinicius. Isso impoe
+A suite unitaria nao tem Postgres (decisao de 25/08; desde 24/10/2026 o CI sobe um banco de ensaio
+so' para a integracao) e quem executa contra banco real e' o Vinicius. Isso impoe
 uma consequencia de arquitetura: o SQL precisa ser LOCALIZAVEL -- em arquivos ou num modulo de
 queries nomeadas, nunca interpolado no meio da logica de rota. Sem isso, nem o gate de sintaxe
 offline (`pglast`) alcanca tudo, nem ha o que revisar antes de rodar.
