@@ -5306,3 +5306,57 @@ cita o banco (decidir se toda mudança no banco pede DEC ou só a label); o text
 `tests/integration/test_login_ponta_a_ponta.py`, que decide o passo do banco de ensaio no CI, segue
 livre; e, fora do banco, `scripts/aplicar_criticidade_label.py` e `scripts/auditor_prs.py` rodam nos
 workflows com `AUTO_MERGE_PAT` e `API_TELEGRAM_TOKEN` e seguem livres.
+
+---
+
+### BLK-BANCO-09 — Higiene dos roteiros do banco: credencial do dono pela entrada padrão e `--no-deps` em todo `compose`
+
+| Campo | Valor |
+|---|---|
+| **Criticidade** | **Alta** — roteiros de deploy e da credencial do dono; READ-ONLY sobre o M1. Os menores do fim tocam `src/motor_expansao/db/`: no mesmo PR, ele sobe para Crítica pelo guard. |
+| **Prioridade** | Média — antes do próximo deploy com migration feito pelo roteiro, e não por um kit (o do deploy3 e o do corte já fazem do jeito certo). |
+| **Esteira** | docs → simulacro de cada comando novo no laboratório (conta `deploy`, `strace` e varredura de segredo plantado) → PR próprio |
+| **Quem** | qualquer um; o que roda na VPS segue manual |
+| **Status** | Pendente |
+| **Depende de** | merge da branch `feat/banco-completo` |
+| **Autonomia** | **manual (NÃO loop-safe)** — roteiros de deploy e de credencial. |
+
+O que as revisões dos kits do deploy3 e do corte deixaram aberto em 25/10/2026. Os kits já fazem do
+jeito certo; falta o texto dos roteiros manuais. Nenhum item entrega a senha a quem já não a alcança:
+por desenho, ela está no `.env` e na `Config.Env` do `motor_expansao_postgres`. O que eles acrescentam
+são lugares onde um diagnóstico de rotina a imprime por acidente.
+
+1. **`docker compose run --rm` sem `--no-deps`** recria o `postgres` quando a config dele mudou (uma
+   `POSTGRES_OWNER_PASSWORD` trocada basta), o mesmo risco que o `--no-deps` tirou dos `up` em
+   25/10/2026. Medido no Compose 2.33 e no 5.6. Aparece no Passo 3 do `docs/repasse_corte_p19.md`, no
+   `docs/banco_deploy.md` (§5, §7, §8, §9.0, §9.0.1 e §10) e no `docs/repasse_migracoes_p19.md`. Os
+   kits usam `run --rm --no-deps -T`.
+2. **Credencial do dono por `export` + `-e MOTOR_DATABASE_URL_ADMIN`.** Assim a URL do dono fica no
+   ambiente do `docker compose` e na `Config.Env` do container descartável, onde um `docker inspect`
+   dele a imprime (o modo do vazamento de 17/10/2026), e o `export` com a senha fica no
+   `~/.bash_history`. Trocar pelo mecanismo da entrada padrão (moldes: o 0.c do roteiro do corte e o
+   `estado_com` do kit do deploy3, na estação do Vinicius), começando pelo §9.0 do `banco_deploy.md`,
+   que é o roteiro que a skill de deploy manda seguir quando a imagem traz migration; depois §5, §8 e
+   §9.0.1 e o `repasse_migracoes_p19.md`. O `-e PGPASSWORD` do `scripts/cron/run_expurgo_sessoes.sh`
+   fica: sem humano e sem impressão, dura segundos por dia, e o público é o mesmo.
+3. **O Passo 3 do `docs/repasse_migracoes_p19.md` IMPRIME a senha do dono**
+   (`grep -E '^POSTGRES_(DB|OWNER_USER|OWNER_PASSWORD)=' .env`). O documento não se aplica à produção
+   atual (o banco nasceu com as 21 migrations), mas o comando está lá: trocar pela conferência só de
+   contagens do 0.c do roteiro do corte, ou marcar o passo como obsoleto.
+4. **0.b do roteiro do corte: a senha compartilhada vai ao `python3` por variável de ambiente**
+   (`S="$S" python3 -I -`). O `strace` a viu no ambiente do processo; em tela, logs, `docker
+   inspect`, eventos e histórico, nada. O público é o mesmo do `.env`. O kit (`p19c-senha.sh`) usa a
+   entrada padrão, e o roteiro pode fazer igual.
+5. **`up -d web` (e `up -d caddy`) sem `--no-deps` fora dos cinco documentos corrigidos em
+   25/10/2026:** `docs/deploy.md`, `docs/runbook_atualizacao_renda.md`, `docs/handoff_repositorio.md`,
+   `README.md`, `.env.example` (linhas 204 e 246; a 231 ainda traz o 0.c antigo, com `-e`) e o
+   primeiro deploy do portal (`docs/infra_producao.md` e `docs/spec_portal_selecao_pais.md`).
+
+Menores, no código do banco:
+- `postgres._sem_segredo`, que limpa as mensagens do piloto (`_falha` e `saude`), não ganhou a forma
+  decodificada nem os pedaços que a limpeza do CLI ganhou em 25/10/2026. É a mesma classe de limite;
+  com a senha do `app` em hexadecimal, como o `banco_deploy.md` manda gerar, o risco é baixo;
+- o logger `psycopg` registra em DEBUG a mensagem crua do erro de conexão. Só aparece com logging em
+  DEBUG, que o CLI não configura;
+- a dica do CLI diz que `@ : / # ou %` quebram a URL. Medido: quebram `@`, `/`, `%` inválido e
+  espaço; `:`, `#` e `?` não.
