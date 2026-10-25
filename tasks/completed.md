@@ -15869,3 +15869,66 @@ guardrail reprova), XLSX por `openpyxl`, PDF da carteira e da ficha sobre `pdf_b
 **Guardrail.** `pdf_base.py` extrai as primitivas `_UltraPDF`; os dois geradores legados
 (`censo_report.py`, `relatorio_municipal.py`) **não** são reapontados neste epic — são
 geradores em produção com testes de regressão de bytes.
+
+---
+
+### BLK-SAUDE-10 — Decisão do dono: provisionar o Postgres, ou assumir o piloto sem banco
+
+| Campo | Valor |
+|---|---|
+| **Criticidade** | **Alta** — decide se a Administração de usuários existe em produção, e é pré-requisito do corte do P19 (DEC-067). |
+| **Prioridade** | **Média** — nada trava hoje; o `02` deixa a falha honesta. Mas a decisão não pode ficar implícita. |
+| **Esteira** | `[DECISÃO DE FELIPE]` → DEC → `[aplicação na VPS: passo MANUAL — §6]` |
+| **Status** | **Feito — decidido na prática: provisionar.** O Postgres foi instalado na VPS em 17/10/2026 (registrado no PR #462, backup cifrado do `.env`) e ligado no site em 23/10/2026; o compose foi corrigido pela DEC-069 (PR #449). O monitor incondicional segue no **BLK-BANCO-03** |
+| **Depende de** | **BLK-SAUDE-02** (a falha precisa estar honesta antes de a decisão ser tomada sem pressa) |
+| **Autonomia** | **manual (NÃO loop-safe)** — decisão de dono + VPS. NUNCA marcar loop-safe. |
+
+**O estado, medido:** `MOTOR_DATABASE_URL` **não existe** (nem vazia) no ambiente de
+`motor_expansao_web` e `motor_expansao_web_ar`, e **não há container Postgres** na VPS (`docker ps -a`
+lista 7, nenhum é banco). A fase 2 do banco já está prevista no compose (`docs/banco_deploy.md`), e o
+CLAUDE.md §4 declara o banco OPCIONAL por construção.
+
+**Junto, um sintoma de processo que o bloco tem de fechar:** o `healthcheck_vps.sh` (cron de 5 min)
+checava um container `motor_expansao_postgres` **que nunca foi implantado**, e disparou **FAIL a cada
+5 minutos por mais de 1 h em 22/09** (16 ocorrências). A checagem foi **removida do script** — hoje
+`grep postgres` nele não retorna nada. **O alarme foi calado, a causa não.** Se a decisão for não
+provisionar, o monitor certo é **condicional** (só alerta se `MOTOR_DATABASE_URL` estiver setada e o
+container faltando); se for provisionar, o monitor volta incondicional.
+
+**Duas saídas, e as duas são legítimas:** (a) subir o Postgres → a Administração de usuários passa a
+funcionar e o corte do P19 destrava; (b) assumir o piloto sem banco → o 503 do `02` é o estado
+permanente, e a tela deveria dizer isso de forma mais definitiva do que "indisponível".
+
+**Fechamento (24/10/2026).** Venceu a saída (a), sem DEC própria: a decisão ficou registrada pela
+execução — a instalação pelo `docs/banco_deploy.md` até o §7, em 17/10/2026, e o §8 (ligar), em
+23/10/2026; ver o marco logo abaixo. Desde então o RBAC do piloto BR vem do banco, e o 503 do `02`
+só volta se o banco cair. O "estado, medido" acima é o de 29/09. Sobre o monitor: o
+`scripts/healthcheck_vps.sh` do repositório vigia o `motor_expansao_postgres` sem condição desde o
+#376 (17/09/2026), mas a cópia instalada na VPS é antiga e não o vigia. Trocá-la pela da `main`, que
+ganha o subcomando `banco` com a branch `feat/banco-completo`, é o **BLK-BANCO-03**.
+
+---
+
+## Marco — Banco de produção instalado (17/10/2026) e ligado no site (23/10/2026); código do P19 no ar, com a chave desligada
+
+> Registro curto. Passo a passo e estado vivo em `docs/banco_deploy.md`; o corte do P19 em
+> `docs/repasse_corte_p19.md`; o que falta na epic BLK-BANCO do `tasks/backlog.md`.
+
+- **Código, na `main`:** o sistema do banco entrou pelo PR #376 (17/09/2026); o código do P19, pelos
+  #400 (22/09), #417 e #416 (28/09). Antes de instalar entraram o #447 (o `conferir` e o
+  `privilegios` aprovavam bancos quebrados, 13/10), o #449 (compose do `postgres`, DEC-069, 14/10) e
+  o #455 (conferidor Authelia × abas × banco, 16/10); antes de ligar, o #463 (RBAC fora do event
+  loop, 19/10).
+- **17/10/2026, instalação** (`docs/banco_deploy.md` até o §7): container `motor_expansao_postgres`
+  (`postgis/postgis:18-3.6`), banco `banco_de_reservas` com dono `reservas_owner`, 21 migrations (000
+  a 020), D20 aplicado (`CONFERENCIA OK` e `PRIVILEGIOS OK`), 20 usuários em 4 perfis e o conferidor
+  sem pendência. O backup cifrado do `.env` desse dia entrou pelo PR #462 (19/10). Backup diário
+  (05:10 UTC) e expurgo da origem das sessões (04:40 UTC) rodam no crontab da conta `deploy`, com a
+  cópia off-box desligada.
+- **23/10/2026, banco ligado no site** (§8): a linha `MOTOR_DATABASE_URL` entrou no `.env` e o `web`
+  foi recriado na mesma imagem (`d1cc438e…`, `main` `84429f3e`). Desde então o RBAC do piloto BR vem
+  do banco, e o `acesso_abas.json` deixou de valer para o BR. Desfazer é esvaziar a URL e recriar só
+  o `web` (§8); depois do corte do P19 esse interruptor deixa de existir, porque sem banco ninguém
+  entra.
+- **P19 (DEC-067):** o código está pronto e na imagem do ar, com `MOTOR_AUTENTICACAO_PROPRIA`
+  desligada; o login segue 100% pelo Authelia. A execução do corte é o BLK-BANCO-01.

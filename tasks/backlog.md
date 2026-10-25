@@ -810,6 +810,15 @@ cadência de revisão valem igual no Authelia de hoje e no motor de amanhã — 
 de verdade. Fazer agora é trabalho que conta duas vezes; adiar é deixar parada a única metade que
 não depende de cronograma nenhum.
 
+**Estado em 24/10/2026.** Com o banco ligado no site em 23/10, desligar alguém do piloto BR passou
+a ter três gestos: desativar no painel de Acessos (o RBAC só resolve usuário ativo, então as abas
+zeram), tirar do `authelia/users_database.yml` (até o corte do P19, é ele que autentica) e tirar do
+`bot_allowlist.json` (o bot não consulta o banco). A conciliação mínima entre o Authelia e o banco
+foi feita pelo conferidor (`scripts/conferir_usuarios_banco.py`, PR #455) na instalação de 17/10 e
+de novo antes de ligar, em 23/10; ele ainda cruza também o `acesso_abas.json`, que deixou de valer
+para o BR. Faltam a política de offboarding escrita e a periodicidade da revisão. É pré-requisito
+prático do corte (BLK-BANCO-01).
+
 **Risco:** baixo e de outra natureza que o FU1 — não vira policy nem tranca ninguém; o erro possível
 é remover acesso de quem ainda precisa, que se desfaz com um `INSERT` de volta.
 
@@ -3732,32 +3741,8 @@ misturar erro de borda nela confunde duas coisas.
 
 ---
 
-### BLK-SAUDE-10 — Decisão do dono: provisionar o Postgres, ou assumir o piloto sem banco
+- BLK-SAUDE-10 (concluído 2026-10-23) — ver tasks/completed.md
 
-| Campo | Valor |
-|---|---|
-| **Criticidade** | **Alta** — decide se a Administração de usuários existe em produção, e é pré-requisito do corte do P19 (DEC-067). |
-| **Prioridade** | **Média** — nada trava hoje; o `02` deixa a falha honesta. Mas a decisão não pode ficar implícita. |
-| **Esteira** | `[DECISÃO DE FELIPE]` → DEC → `[aplicação na VPS: passo MANUAL — §6]` |
-| **Status** | **Decidido na prática: provisionar** — o Postgres foi instalado na VPS em 17/10/2026 (commit `5da6332`, PR #462) e o compose corrigido pela DEC-069 (PR #449); falta registrar a decisão e religar o monitor incondicional |
-| **Depende de** | **BLK-SAUDE-02** (a falha precisa estar honesta antes de a decisão ser tomada sem pressa) |
-| **Autonomia** | **manual (NÃO loop-safe)** — decisão de dono + VPS. NUNCA marcar loop-safe. |
-
-**O estado, medido:** `MOTOR_DATABASE_URL` **não existe** (nem vazia) no ambiente de
-`motor_expansao_web` e `motor_expansao_web_ar`, e **não há container Postgres** na VPS (`docker ps -a`
-lista 7, nenhum é banco). A fase 2 do banco já está prevista no compose (`docs/banco_deploy.md`), e o
-CLAUDE.md §4 declara o banco OPCIONAL por construção.
-
-**Junto, um sintoma de processo que o bloco tem de fechar:** o `healthcheck_vps.sh` (cron de 5 min)
-checava um container `motor_expansao_postgres` **que nunca foi implantado**, e disparou **FAIL a cada
-5 minutos por mais de 1 h em 22/09** (16 ocorrências). A checagem foi **removida do script** — hoje
-`grep postgres` nele não retorna nada. **O alarme foi calado, a causa não.** Se a decisão for não
-provisionar, o monitor certo é **condicional** (só alerta se `MOTOR_DATABASE_URL` estiver setada e o
-container faltando); se for provisionar, o monitor volta incondicional.
-
-**Duas saídas, e as duas são legítimas:** (a) subir o Postgres → a Administração de usuários passa a
-funcionar e o corte do P19 destrava; (b) assumir o piloto sem banco → o 503 do `02` é o estado
-permanente, e a tela deveria dizer isso de forma mais definitiva do que "indisponível".
 
 ---
 
@@ -5066,3 +5051,258 @@ São José dos Campos "Setor Socioeconômico 14" -> "Jardim Satélite"; Jacareí
 Campinas 0% -> 77,0%. **Pendente:** (1) aprovação da DEC-076; (2) decisão do dono sobre quem move o
 artefato para o `staging/` — recomendado um `install -d` de root, uma vez, e o resto pelo `deploy` do
 Vinicius (avaliação na DEC); (3) deploy das imagens `web`/`api` e `restart web` depois do artefato.
+
+---
+
+## Epic BLK-BANCO — O banco de produção ligado: corte do P19, operação e dívidas (24/10/2026)
+
+> **Estado de partida.** O Postgres de produção foi instalado na VPS em 17/10/2026
+> (`docs/banco_deploy.md` até o §7: 21 migrations, D20 com `conferir` e `privilegios` OK, 20
+> usuários em 4 perfis) e ligado no site em 23/10/2026 (§8): desde então o RBAC do piloto BR vem
+> do banco. O código do P19 (DEC-067) está pronto e no ar, com `MOTOR_AUTENTICACAO_PROPRIA`
+> desligada: o login segue 100% pelo Authelia. Backup (05:10 UTC) e expurgo (04:40 UTC) rodam no
+> crontab da conta `deploy`, com a cópia off-box desligada. Registro do marco em
+> `tasks/completed.md`.
+>
+> **Nenhum bloco desta epic é loop-safe:** cada um exige VPS ou decisão de dono, ou mexe em caminho
+> que o `scripts/loop_guard.py` trata como crítico (banco, `secrets/`, CI).
+
+### BLK-BANCO-01 — Corte do P19: o banco passa a autenticar o piloto BR
+
+| Campo | Valor |
+|---|---|
+| **Criticidade** | **Crítica** — troca quem autentica o piloto BR (DEC-067); depois do corte, banco fora = ninguém entra. READ-ONLY sobre o M1. |
+| **Prioridade** | Alta — o código do P19 já está no ar; faltam a imagem nova (merge da `feat/banco-completo`) e a execução. |
+| **Esteira** | kit conferir/ligar/desfazer, simulado antes → `[aplicação na VPS: passo MANUAL, comando a comando — §6]` |
+| **Quem** | Vinicius (conta `deploy`); Felipe (root) no que a conta `deploy` não alcançar |
+| **Status** | Pendente |
+| **Depende de** | **BLK-BANCO-03** (o monitor tem de vigiar o banco antes de ele virar o ponto único do login), **BLK-SEC-03-FU2** (conciliação Authelia × banco) e o merge da branch `feat/banco-completo` (a imagem nova do Passo 2 do runbook, que esconde o cadeado e o convite de troca enquanto a chave estiver desligada) |
+| **Autonomia** | **manual (NÃO loop-safe)** — VPS, Caddy e credenciais. NUNCA marcar loop-safe. |
+
+Referência: `docs/repasse_corte_p19.md`, adaptado em 24/10/2026 ao estado de 23/10: conta `deploy`,
+template do Caddy por `scp` e nenhum `git pull`, porque o checkout de `/opt/motor-expansao/app` é do
+root, num commit antigo, com o compose trocado à mão. Falta virar kit de scripts simulados (item 2).
+Antes de marcar a janela valem os pré-requisitos que o runbook lista, entre eles um restore testado
+a partir de um dump real (`docs/banco_deploy.md` §10).
+
+1. **Passo 0, antes da janela** (decisão do Vinicius em 24/10/2026). Trocar no `.env` a
+   `MOTOR_SENHA_INICIAL` (sorteada na instalação) pela senha compartilhada do Authelia, sem
+   imprimir, e rodar `up -d web`. Depois, `python -m motor_expansao.db alinhar-senhas` nos 20, pelo
+   container do `web` (`docker compose run --rm`, como no 0.c do runbook), com a
+   `MOTOR_DATABASE_URL_ADMIN` do dono: `--simular` (20 usuários ativos, nenhum hash quebrado), de
+   verdade, `--simular` de novo (nada a alinhar) e `unset`. O alinhar remarca a troca
+   recomendada no primeiro acesso (o convite tem "Agora não"); quem usa senha pessoal no Authelia (o Felipe) entra com a
+   compartilhada e define a dele na hora. Com a chave desligada o cadeado e o convite de troca
+   ficam escondidos, então isso pode rodar dias antes, sem efeito visível, **desde que a imagem
+   nova (Passo 2) já esteja no ar**: com a do ar em 24/10/2026 (`main` `84429f3e`), o convite
+   abriria para os 20. Sem a imagem nova, o alinhar fica para a janela, logo antes do Passo 4.
+2. **Kit simulado**, no molde do que ligou o banco em 23/10 (conferir, ligar, desfazer): template do
+   Caddy por `scp`; Caddyfile editado no MESMO inode, porque o Caddy o monta por bind de arquivo;
+   conferência dentro do container antes do `reload`. Dono e modo do Caddyfile estão em medição: se
+   a conta `deploy` não puder editá-lo, o Passo 5 e o rollback ficam com o Felipe (root), ou ele
+   ajusta antes (`chgrp motor-ops` + `chmod 664`).
+3. **Janela** (marcada e avisada à equipe no Passo 1): Passo 4 (`MOTOR_AUTENTICACAO_PROPRIA=1` e
+   `up -d web`, nunca `restart`, que não relê o `.env`), Passo 5 (só o bloco BR do Caddy passa a
+   apontar o `forward_auth` para `/api/verify`) e Passo 6 (conferir). A chave vem ANTES do Caddy: o
+   inverso derruba o piloto inteiro. O rollback, em ordem inversa, fica pronto antes de começar.
+4. **Observação:** gente nova é cadastrada também no Authelia, o que mantém o rollback possível;
+   decidir quando tirar os logins BR do `users_database.yml`. O serviço `authelia` não sai, porque
+   a AR depende dele. Depois, re-cifrar o Caddyfile e o `.env` (BLK-BANCO-04).
+
+**Evidência:** `docs/repasse_corte_p19.md`; `docs/decisions/DEC-067.md`;
+`deploy/caddy/piloto-br.Caddyfile.template`; `alinhar-senhas` em `src/motor_expansao/db/cli.py`;
+fumaça do dia: `tests/integration/test_login_ponta_a_ponta.py`. Recomendada antes da janela, sem
+travá-la: a cópia off-box (BLK-BANCO-02).
+
+---
+
+### BLK-BANCO-02 — Cópia do backup do banco fora da máquina (restic): decisão do Felipe
+
+| Campo | Valor |
+|---|---|
+| **Criticidade** | **Alta** — o banco é dado de produção que nenhum pipeline regenera, e em 24/10/2026 banco e dumps ficam no mesmo disco. |
+| **Prioridade** | Alta — recomendada antes do corte do P19, quando o banco passa a guardar também a credencial de login. |
+| **Esteira** | `[DECISÃO DE FELIPE]` (destino e custo) → `[aplicação na VPS: passo MANUAL — §6]` |
+| **Quem** | Felipe (decisão; instalar o `restic` pede root) + Vinicius |
+| **Status** | Pendente — aguardando decisão |
+| **Depende de** | — |
+| **Autonomia** | **manual (NÃO loop-safe)** — VPS, segredos e dado pessoal. |
+
+**O estado:** `scripts/cron/run_backup_banco.sh` já tem o ramo off-box (restic, que cifra antes de
+sair da máquina), desligado enquanto `BACKUP_RESTIC_REPOSITORY`/`BACKUP_RESTIC_PASSWORD` não
+estiverem no `.env`: cada execução termina "somente local", com o aviso
+`!! AVISO: copia off-box DESLIGADA`. O BLK-SEC-04 aceitou em 13/07/2026 ficar só com o snapshot
+semanal da Hostinger porque quase tudo era regenerável, e deixou como gatilho de reabertura o
+crescimento de dado não regenerável — que é o caso do banco.
+
+**A decidir:** destino (bucket compatível com S3), custo e quem guarda a senha do restic. O dump
+leva dado pessoal (nome, e-mail, hash de senha, eventos), então o destino entra na mesma decisão.
+**Depois:** `BACKUP_RESTIC_*` e `BACKUP_S3_*` no `.env`, `restic` instalado, `restic init` uma vez,
+um teste manual, o SOPS refeito (BLK-BANCO-04) e o restore pelo restic escrito no runbook do banco.
+Enquanto a cópia estiver desligada, o monitor `banco` avisa com lembrete semanal (BLK-BANCO-03).
+
+---
+
+### BLK-BANCO-03 — Instalar na VPS o healthcheck da `main`, com o subcomando `banco`
+
+| Campo | Valor |
+|---|---|
+| **Criticidade** | **Alta** — sem ele, a queda do banco não gera alerta; depois do corte do P19, essa queda é indisponibilidade total do piloto BR. |
+| **Prioridade** | Alta — pré-requisito do corte (BLK-BANCO-01). |
+| **Esteira** | `[aplicação na VPS: passo MANUAL do root, comando a comando — §6]` |
+| **Quem** | Felipe (root) |
+| **Status** | Pendente |
+| **Depende de** | merge do subcomando `banco` (branch `feat/banco-completo`) na `main`, só para a linha do `banco`: o `containers` da `main` já vigia o postgres desde o #376 e pode ser instalado antes |
+| **Autonomia** | **manual (NÃO loop-safe)** — VPS. |
+
+**O estado:** a cópia em `/opt/motor-monitoring/healthcheck_vps.sh` (crontab do root) é antiga e não
+vigia o postgres. A da `main` vigia 8 containers no `containers` (a cada 5 min), entre eles o
+`motor_expansao_postgres`, e o subcomando `banco` (diário) vem com a branch `feat/banco-completo`:
+idade e sha256 do dump, cópia semanal, última execução do backup, cópia off-box (aviso), expurgo das
+sessões e, por `docker exec`, tamanho do banco, conexões, transação parada e espera por lock.
+
+**Fazer:** trocar a cópia pela da `main`, levada por `scp` (o checkout de `/opt/motor-expansao/app`
+está parado num commit antigo); rodar `healthcheck_vps.sh containers` e `test` uma vez;
+acrescentar ao crontab do root a linha diária do `banco` às 12:00 UTC, com os três caminhos da conta
+`deploy` (a linha pronta está no comentário das variáveis `MONITOR_BANCO_*`, em
+`scripts/healthcheck_vps.sh`).
+**Atenção:** a troca traz junto o que a `main` acrescentou depois daquela cópia (a lista exata
+depende de quando ela foi feita; o levantamento de 23/10/2026 aponta ao menos a sonda `auth` do
+`/api/me`, o `web_ar` e o Valhalla condicional), que pode começar em FAIL, e o `banco_offbox` avisa
+desde a primeira rodada enquanto o restic estiver desligado (BLK-BANCO-02). Testes:
+`tests/unit/test_healthcheck_banco.py`.
+
+---
+
+### BLK-BANCO-04 — SOPS: refazer o backup cifrado do `.env` e, depois do corte, o do Caddyfile
+
+| Campo | Valor |
+|---|---|
+| **Criticidade** | **Crítica** — PR em `secrets/` é crítico no guard (`critica-aprovada`). |
+| **Prioridade** | Média-alta — um restore pelo backup cifrado de 17/10 subiria o site com o banco desligado, sem erro nenhum. |
+| **Esteira** | `[estação do Vinicius: sops + chave age]` → PR em `secrets/` |
+| **Quem** | Vinicius (o `sops` e a chave age ficam na estação dele, não na VPS) |
+| **Status** | Pendente |
+| **Depende de** | — para o `.env` de 23/10; **BLK-BANCO-01** para o Caddyfile e o `.env` do pós-corte |
+| **Autonomia** | **manual (NÃO loop-safe)** — segredos. |
+
+**O estado:** `secrets/env.enc.env` foi cifrado em 17/10/2026 e entrou na `main` pelo PR #462
+(19/10); não tem a linha `MOTOR_DATABASE_URL`, acrescentada ao `.env` em 23/10. O `.env` muda de
+novo com o Passo 0 do corte (a nova `MOTOR_SENHA_INICIAL`) e com o próprio corte (a chave
+`MOTOR_AUTENTICACAO_PROPRIA`), e o `secrets/Caddyfile.enc` de antes do corte devolveria o bloco BR do
+Authelia e desfaria o corte sem avisar. **Fazer:** re-cifrar o `.env` de 23/10 sem esperar o
+corte; depois do corte, o Caddyfile e o `.env` outra vez. Conferir sem decifrar (nomes e contagem
+de valores em `ENC[]`), como no #462.
+
+---
+
+### BLK-BANCO-05 — Backup e expurgo na conta pessoal `deploy`: decidir se saem dela
+
+| Campo | Valor |
+|---|---|
+| **Criticidade** | **Alta** — o único backup do banco depende de uma conta pessoal. |
+| **Prioridade** | Média |
+| **Esteira** | `[DECISÃO DE FELIPE E VINICIUS]` → `[aplicação na VPS: passo MANUAL — §6]` |
+| **Quem** | Felipe e Vinicius (decisão); Felipe (root) se os crons forem para o root |
+| **Status** | Pendente — aguardando decisão |
+| **Depende de** | — |
+| **Autonomia** | **manual (NÃO loop-safe)** — VPS. |
+
+**O estado (desvio decidido em 17/10/2026):** os dois crons rodam no crontab da conta `deploy`,
+fora da receita genérica dos cabeçalhos dos scripts (`/opt/...` e crontab do root; o desvio está
+registrado no `docs/banco_deploy.md` §9.1 e §10):
+backup às 05:10 UTC por `~/motor-infra/run_backup_banco.sh`, com dumps `-Fc` e `.sha256` em
+`/home/deploy/backups/banco/diario` e `semanal` (7 diários + 4 semanais) e log em
+`~/logs/backup_banco.log`; expurgo às 04:40 UTC por `~/motor-infra/run_expurgo_sessoes.sh`, com log
+em `~/logs/expurgo_sessoes.log`. **O risco:** o offboarding padrão da conta (`userdel -r`, em
+`docs/acesso_deploy_colaborador.md`) apagaria os crons e os dumps em silêncio. **Decidir:** manter
+na `deploy`, mover para o root ou para uma conta de serviço. Em qualquer caso, a linha do monitor
+`banco` só troca os três caminhos (BLK-BANCO-03).
+
+---
+
+### BLK-BANCO-06 — Reabrir ou não o P14: `senha_hash` isolada por GRANT de coluna
+
+| Campo | Valor |
+|---|---|
+| **Criticidade** | **Crítica** se for adiante (migration, D20 e o caminho do login); a decisão em si não muda código. |
+| **Prioridade** | Baixa — não trava o corte. |
+| **Esteira** | `[DECISÃO DO VINICIUS]` → se reabrir, bloco de código do banco |
+| **Quem** | Vinicius |
+| **Status** | Pendente — aguardando decisão |
+| **Depende de** | — (o gatilho registrado é o corte do P19, BLK-BANCO-01) |
+| **Autonomia** | **manual (NÃO loop-safe)** — banco e credencial. |
+
+Antes do corte, `senha_hash` é dado que ninguém lê; depois dele, vira a credencial de acesso. A
+opção (c) do P14 (restringir a coluna por `GRANT` e conferir a senha por uma função de login
+`SECURITY DEFINER`) foi adiada nomeando só "requisito de LGPD/auditoria" como gatilho, e a DEC-067
+registra que o corte é gatilho por si e que isso é "bloco próprio". **Evidência:**
+`docs/decisions/DEC-067.md` (seção "O que NÃO está nesta DEC"); `docs/autenticacao_propria_p19.md`
+§5; o P14 vive em `banco-de-reservas/decisoes-pendentes.md`.
+
+---
+
+### BLK-BANCO-07 — `/api/login` público sem limite de volume: aceitar ou limitar
+
+| Campo | Valor |
+|---|---|
+| **Criticidade** | **Alta** — a superfície pública de login depois do corte; READ-ONLY sobre o M1. |
+| **Prioridade** | Baixa — piloto de 20 pessoas; decidir antes do corte ou logo depois. |
+| **Esteira** | `[DECISÃO DO VINICIUS]` → se limitar: código (`web/server/`) ou borda (Caddy) |
+| **Quem** | Vinicius |
+| **Status** | Pendente — aguardando decisão |
+| **Depende de** | — |
+| **Autonomia** | **manual (NÃO loop-safe)** |
+
+Depois do corte, o `/api/login` fica fora do `@protegido` do Caddy
+(`deploy/caddy/piloto-br.Caddyfile.template`) e o `regulation` do Authelia sai do caminho do BR. A
+trava de 5 recusas em 15 min (`MAX_TENTATIVAS`/`JANELA_TENTATIVAS_MIN`, em
+`src/motor_expansao/db/sessoes.py`) conta por CONTA: login inexistente não tranca nada e ainda paga
+uma verificação Argon2id de 64 MiB (`MEMORIA_KIB`, em `src/motor_expansao/db/senhas.py`), e não há
+limite por IP nem de concorrência no processo (a DEC-067 declara a falta da camada por IP). Que uma
+rajada de logins inexistentes esgote a memória é inferência, não medida. **Opções:** aceitar, pôr
+um semáforo no Argon2 ou um rate-limit na borda.
+
+---
+
+### BLK-BANCO-08 — Follow-ups do guard do banco: CODEOWNERS, Rede 1, healthcheck e renomeação
+
+| Campo | Valor |
+|---|---|
+| **Criticidade** | **Crítica** — mexe no próprio portão (`guard.yml`, `CODEOWNERS`) e nas redes de segurança do loop. |
+| **Prioridade** | Média |
+| **Esteira** | `[DECISÃO DOS DONOS]` (itens 1 e 3) → PR próprio |
+| **Quem** | Felipe e Vinicius (donos); o código, qualquer um |
+| **Status** | Pendente |
+| **Depende de** | merge das regras do banco no `scripts/loop_guard.py` (branch `feat/banco-completo`) |
+| **Autonomia** | **manual (NÃO loop-safe)** — governança do portão. |
+
+Os quatro pontos que a revisão das regras de 24/10/2026 deixou abertos:
+
+1. **CODEOWNERS para o banco.** O `guard` só confere que a `critica-aprovada` veio de um dono, que
+   pode ser o autor do PR, e num bloco Baixa/Média o `review-gate` não pede `aprovado-humano`: PR de
+   banco aberto por um dono pode ser liberado só por ele. Revisão nativa de outra pessoa exige
+   `/src/motor_expansao/db/` (com os crons do banco e `/scripts/ci/`) no `.github/CODEOWNERS`; o
+   precedente é misto (M1 e deploy estão nele; `authelia/`, `renda/` e `recomendacao/` não).
+2. **Rede 1 do `run-ralph-loop.sh`.** A regex que aborta o loop com credencial no ambiente não pega
+   as do banco (`POSTGRES_*`, `MOTOR_DATABASE_URL`, `MOTOR_DATABASE_URL_ADMIN`, `PGPASSWORD`,
+   `BACKUP_RESTIC_*`, `BACKUP_S3_*` e as senhas `MOTOR_SENHA_INICIAL`, `MOTOR_APP_DB_PASSWORD` e
+   `MOTOR_AUDITORIA_DB_PASSWORD`). Acrescentar e estender `tests/unit/test_ralph_loop_guard.py`,
+   que lê a regex real do script.
+3. **Classe do `scripts/healthcheck_vps.sh`.** Segue livre, mas o subcomando `banco` roda `psql` no
+   container com o `POSTGRES_USER`/`POSTGRES_PASSWORD` dele, que no `docker-compose.prod.yml` são os
+   do papel dono: um PR Média que mude o SQL mergeia sozinho e passa a rodar todo dia como dono na
+   próxima instalação. Decidir junto com os outros 8 crons de `scripts/cron/`, que também leem o
+   `.env` de produção e seguem livres.
+4. **Renomeação esconde a origem.** `git diff --name-only` (ralph) e `gh pr diff --name-only` (CI)
+   listam só o destino: mover `db/rbac.py` para fora de `db/`, ou renomear o cron do backup para um
+   nome sem `banco`, sai livre. Receita: `--no-renames` em `_changed_paths` e, no `guard.yml`,
+   `filename` e `previous_filename` pela API de arquivos do PR. Corrigir só um lado criaria dois
+   juízes diferentes.
+
+Menores, registrados na mesma revisão: a mensagem "Como destravar" do crítico no `guard.yml` não
+cita o banco (decidir se toda mudança no banco pede DEC ou só a label); o texto do
+`RELATORIO-BLOQUEIO.md` no `run-ralph-loop.sh` lista caminhos defasados;
+`tests/integration/test_login_ponta_a_ponta.py`, que decide o passo do banco de ensaio no CI, segue
+livre; e, fora do banco, `scripts/aplicar_criticidade_label.py` e `scripts/auditor_prs.py` rodam nos
+workflows com `AUTO_MERGE_PAT` e `API_TELEGRAM_TOKEN` e seguem livres.
