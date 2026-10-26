@@ -7,6 +7,8 @@ import {
   mensagemDoErro,
   podeEnviar,
   problemasDaSenha,
+  ROTULO_ENTRAR_DE_NOVO,
+  TEXTO_SENHA_DEFINIDA,
   textoDaTroca,
 } from './troca-de-senha'
 
@@ -183,5 +185,32 @@ describe('OFERECE, e não OBRIGA', () => {
 
   it('quem não deve trocar nunca vê o pop-up', () => {
     expect(deveOferecerTroca({ deveTrocar: false, propria: true }, false)).toBe(false)
+  })
+})
+
+describe('depois da troca: entrar de novo (login próprio ligado)', () => {
+  /* A tela só existe com o login próprio LIGADO (decisão do dono, 24/10/2026), e com ele a
+     troca derruba as sessões abertas — inclusive a desta aba. Até essa data o fim dizia que
+     "enquanto a entrada continuar pelo Authelia, é ele que pede a senha" e oferecia "Voltar
+     ao piloto", que com a sessão revogada dava na tela de sessão encerrada. */
+
+  it('diz que a sessão caiu e manda entrar com a senha nova', () => {
+    expect(TEXTO_SENHA_DEFINIDA).toContain('encerra as sessões abertas')
+    expect(TEXTO_SENHA_DEFINIDA).toContain('inclusive esta')
+    expect(TEXTO_SENHA_DEFINIDA).toContain('Entre de novo com a senha nova')
+    expect(ROTULO_ENTRAR_DE_NOVO).toBe('Entrar com a senha nova')
+  })
+
+  it('não fala mais do Authelia nem promete "voltar ao piloto"', () => {
+    for (const texto of [TEXTO_SENHA_DEFINIDA, ROTULO_ENTRAR_DE_NOVO]) {
+      expect(texto).not.toContain('Authelia')
+      expect(texto.toLowerCase()).not.toContain('voltar ao piloto')
+    }
+  })
+
+  it('a recusa por login próprio desligado (404) tem recado próprio quando o servidor não manda texto', () => {
+    expect(mensagemDoErro(404)).toContain('login próprio')
+    // O texto do servidor continua tendo precedência, como nos outros status.
+    expect(mensagemDoErro(404, 'Texto do servidor.')).toBe('Texto do servidor.')
   })
 })

@@ -46,7 +46,7 @@ INDICES_ESPERADOS = 35  # +1 na D23 (login), +3 na D24 (metadados) e +2 na D30 (
 FUNCOES_ESPERADAS = 8  # +1 na D29 (`exige_geom_coerente`, uma so' para as duas tabelas)
 
 #: Os `CHECK` que as migrations criam. Ate' 18/09/2026 NADA neste arquivo os contava: os seis
-#: numeros da §0 so' eram conferidos por `db.cli` contra um banco VIVO, e o CI nao tem Postgres.
+#: numeros da §0 so' eram conferidos por `db.cli` contra um banco VIVO, e o CI nao tinha Postgres.
 #: Medido: a migration 019 acrescentou um `CHECK` e a suite inteira seguiu verde, deixando o
 #: `NUMEROS_DA_SECAO_ZERO` do `cli.py` afirmar 13 contra um banco com 14 -- divergencia que so'
 #: apareceria na mao do operador, como um `DIVERGENTE` sem causa aparente.
@@ -200,7 +200,7 @@ def test_o_ramo_de_DROP_derruba_de_verdade() -> None:
 def test_os_checks_das_migracoes_batem_com_o_numero_que_o_cli_cobra() -> None:
     """Fecha a lacuna achada em 18/09/2026: NADA conferia os `CHECK` sem um Postgres vivo.
 
-    `db.cli` cobra os seis numeros da §0 contra `pg_constraint`, e o CI nao tem banco -- entao a
+    `db.cli` cobra os seis numeros da §0 contra `pg_constraint`, e a suite unitaria nao tem banco -- entao a
     019 pode acrescentar um `CHECK` e deixar o `cli.py` afirmando o numero velho com a suite
     inteira verde. O operador descobriria como um `DIVERGENTE` sem causa aparente, que e' a pior
     forma de um contrato falhar: ele vira ruido e para de ser levado a serio.

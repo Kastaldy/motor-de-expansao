@@ -365,6 +365,190 @@ def test_sem_mudanca_de_status_nao_gera_evento(monkeypatch: pytest.MonkeyPatch) 
 
 
 # --------------------------------------------------------------------------------------
+# Perfil e status JUNTOS: uma transacao, dois eventos (#463, follow-up B)
+# --------------------------------------------------------------------------------------
+
+
+class _PoolQueRegistraDesfecho(FakePool):
+    """`FakePool` que diz como cada transacao TERMINOU: commit (saida limpa) ou rollback.
+
+    E' o que o pool de verdade faz no `with conn:` da saida, e e' exatamente o que o follow-up B
+    precisa provar: com DUAS transacoes a falha da segunda deixava a primeira commitada; com
+    uma, nada commita.
+    """
+
+    def __init__(self, con: FakeConexao) -> None:
+        super().__init__(con)
+        self.desfechos: list[str] = []
+
+    @contextmanager
+    def connection(self):  # type: ignore[no-untyped-def]
+        try:
+            yield self._con
+        except BaseException:
+            self.desfechos.append("rollback")
+            raise
+        self.desfechos.append("commit")
+
+
+class _ConexaoQueFalhaNoStatus(FakeConexao):
+    """Responde como a `FakeConexao`, mas a escrita do STATUS falha: o banco caindo no meio."""
+
+    def execute(self, sql: str, params: Any = None) -> FakeConexao:
+        if "UPDATE usuarios SET ativo" in sql:
+            self.executados.append((sql, params))
+            raise RuntimeError("server closed the connection unexpectedly")
+        return super().execute(sql, params)
+
+
+def _respostas_padrao(perfil: str = "expansao", ativo: bool = True) -> dict[str, Any]:
+    return {
+        "FOR UPDATE OF u": [(9, "alvo", perfil, ativo)],
+        "FROM perfis WHERE nome_perfil": [(3,)],
+    }
+
+
+def _instalar_com_desfecho(
+    monkeypatch: pytest.MonkeyPatch, con: FakeConexao
+) -> _PoolQueRegistraDesfecho:
+    pool = _PoolQueRegistraDesfecho(con)
+    monkeypatch.setattr(postgres, "_driver", lambda: lambda **_k: pool)
+    monkeypatch.setenv(postgres.ENV_URL, "postgresql://fake/motor")
+    return pool
+
+
+def test_perfil_e_status_juntos_sao_UMA_transacao_com_DOIS_eventos(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    con = FakeConexao(_respostas_padrao())
+    pool = _instalar_com_desfecho(monkeypatch, con)
+    saida = mod.alterar_acesso(9, perfil="growth", ativo=False, autor=7)
+
+    assert saida == {
+        "id_usuario": 9,
+        "perfil": {"id_usuario": 9, "de": "expansao", "para": "growth", "mudou": True},
+        "status": {"id_usuario": 9, "ativo": False, "mudou": True},
+    }
+    assert pool.desfechos == ["commit"], "virou mais de uma transacao"
+    # Um carimbo de autor (uma transacao) e uma trava so': os dois passos leem o MESMO estado.
+    assert [s for s, _p in con.executados].count(postgres.SQL_DEFINIR_AUTOR) == 1
+    assert len(con.sql_que_contem("FOR UPDATE OF u")) == 1
+    # Os DOIS eventos, na ordem de sempre: atomicidade nao e' colapsar a trilha.
+    assert [e[1] for e in con.eventos] == [mod.EVENTO_PERFIL_ALTERADO, mod.EVENTO_DESATIVADO]
+    assert all(e[0] == 7 and e[3] == 9 for e in con.eventos), "autor e alvo trocaram de lugar"
+
+
+def test_se_o_status_falha_o_perfil_NAO_fica_gravado(monkeypatch: pytest.MonkeyPatch) -> None:
+    """O defeito no ponto exato: a segunda escrita falha DEPOIS de a primeira rodar. A troca de
+    perfil chegou a ser escrita -- e vai junto no rollback, porque e' a mesma transacao."""
+    con = _ConexaoQueFalhaNoStatus(_respostas_padrao())
+    pool = _instalar_com_desfecho(monkeypatch, con)
+    with pytest.raises(RuntimeError, match="server closed"):
+        mod.alterar_acesso(9, perfil="growth", ativo=False, autor=7)
+    assert con.sql_que_contem("UPDATE usuarios SET id_perfil"), "o perfil nem chegou a ser escrito"
+    assert pool.desfechos == ["rollback"], "alguma escrita foi commitada antes da falha"
+
+
+def test_contraprova_o_desenho_antigo_DEIXAVA_o_perfil_gravado(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """As duas funcoes de sempre, em sequencia (o que a rota fazia ate' 24/10/2026), reproduzem
+    o defeito: o perfil commitado, o status no rollback, e a rota devolvendo erro. Sem esta
+    contraprova o teste de cima poderia passar por um duble que nunca commita nada."""
+    con = _ConexaoQueFalhaNoStatus(_respostas_padrao())
+    pool = _instalar_com_desfecho(monkeypatch, con)
+    mod.alterar_perfil(9, "growth", autor=7)
+    with pytest.raises(RuntimeError):
+        mod.definir_ativo(9, False, autor=7)
+    assert pool.desfechos == ["commit", "rollback"]
+
+
+def test_perfil_inexistente_nao_deixa_o_status_mudar(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A recusa de um campo derruba a mudanca inteira: nada de meio pedido aplicado."""
+    con = FakeConexao(
+        {"FOR UPDATE OF u": [(9, "alvo", "expansao", True)], "FROM perfis WHERE nome_perfil": []}
+    )
+    pool = _instalar_com_desfecho(monkeypatch, con)
+    with pytest.raises(mod.PerfilDesconhecido):
+        mod.alterar_acesso(9, perfil="inventado", ativo=False, autor=7)
+    assert con.sql_que_contem("UPDATE usuarios") == []
+    assert con.eventos == []
+    assert pool.desfechos == ["rollback"]
+
+
+def test_perfil_igual_e_status_novo_grava_so_o_evento_do_status(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A regra de "sem mudanca, sem evento" vale por PASSO, como nas funcoes de sempre."""
+    con = FakeConexao(_respostas_padrao(perfil="growth", ativo=True))
+    _instalar_com_desfecho(monkeypatch, con)
+    saida = mod.alterar_acesso(9, perfil="growth", ativo=False, autor=7)
+    assert saida["perfil"]["mudou"] is False
+    assert saida["status"]["mudou"] is True
+    assert [e[1] for e in con.eventos] == [mod.EVENTO_DESATIVADO]
+    assert con.sql_que_contem("UPDATE usuarios SET id_perfil") == []
+
+
+def _sem_embrulho(con: FakeConexao) -> list[tuple[str, Any]]:
+    """`executados` com o `Jsonb` dos metadados aberto: o embrulho do psycopg nao tem `__eq__`,
+    e dois embrulhos do MESMO dicionario comparariam diferentes."""
+
+    def valor(v: Any) -> Any:
+        return ("jsonb", v.obj) if hasattr(v, "obj") else v
+
+    return [
+        (s, tuple(valor(v) for v in p) if isinstance(p, tuple) else p) for s, p in con.executados
+    ]
+
+
+@pytest.mark.parametrize(
+    ("campos", "funcao", "args"),
+    [
+        ({"perfil": "growth"}, "alterar_perfil", ("growth",)),
+        ({"ativo": False}, "definir_ativo", (False,)),
+    ],
+)
+def test_um_campo_so_faz_exatamente_o_que_a_funcao_de_sempre_faz(
+    monkeypatch: pytest.MonkeyPatch, campos: dict[str, Any], funcao: str, args: tuple[Any, ...]
+) -> None:
+    """A rota passou a ter UM caminho (`alterar_acesso`) para os tres casos. Com um campo so',
+    o SQL, os parametros, os eventos e a resposta tem de ser os de `alterar_perfil` /
+    `definir_ativo` -- os passos sao os mesmos (`_aplicar_*`), e isto trava que continuem."""
+    novo = FakeConexao(_respostas_padrao())
+    _instalar_com_desfecho(monkeypatch, novo)
+    saida_nova = mod.alterar_acesso(9, autor=7, **campos)
+
+    db.fechar_pool()
+    antigo = FakeConexao(_respostas_padrao())
+    _instalar_com_desfecho(monkeypatch, antigo)
+    saida_antiga = getattr(mod, funcao)(9, *args, autor=7)
+
+    assert _sem_embrulho(novo) == _sem_embrulho(antigo)
+    chave = "perfil" if "perfil" in campos else "status"
+    assert saida_nova == {"id_usuario": 9, chave: saida_antiga}
+
+
+def test_ninguem_muda_o_proprio_acesso_nem_pelos_dois_campos(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A trava de auto-alvo vale aqui tambem, e ANTES de abrir transacao."""
+    con = FakeConexao(_respostas_padrao())
+    _instalar_com_desfecho(monkeypatch, con)
+    with pytest.raises(mod.AlvoEhOAutor):
+        mod.alterar_acesso(7, perfil="expansao", ativo=False, autor=7)
+    assert con.executados == []
+
+
+def test_sem_campo_nenhum_e_erro_de_quem_chamou(monkeypatch: pytest.MonkeyPatch) -> None:
+    """`ValueError` vira 422 na rota (`_erro_de_usuarios`), e nada vai ao banco."""
+    con = FakeConexao(_respostas_padrao())
+    _instalar_com_desfecho(monkeypatch, con)
+    with pytest.raises(ValueError):
+        mod.alterar_acesso(9, autor=7)
+    assert con.executados == []
+
+
+# --------------------------------------------------------------------------------------
 # A trava de auto-alvo
 # --------------------------------------------------------------------------------------
 

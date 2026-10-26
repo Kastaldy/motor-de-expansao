@@ -1,6 +1,6 @@
 """Rotas de entrada e saida (`POST /api/login` e `/api/logout`) — sem tocar banco nenhum.
 
-As rotas sao invocadas DIRETO, como o resto da suite do piloto faz: o CI nao tem Postgres, e
+As rotas sao invocadas DIRETO, como o resto da suite do piloto faz: a suite unitaria nao tem Postgres, e
 o que precisa ser guardado aqui e' decisao de contrato, nao integracao.
 
 O que mais importa neste arquivo, em ordem:

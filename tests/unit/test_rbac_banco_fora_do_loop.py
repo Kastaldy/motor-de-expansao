@@ -370,6 +370,56 @@ def test_gate_com_lock_ou_statement_timeout_responde_503_e_nao_degrada(
     assert not acesso.banco_em_falha()
 
 
+@pytest.mark.parametrize("erro", ERROS_SEM_PROVA)
+def test_me_com_lock_ou_statement_timeout_responde_503_como_o_gate(
+    monkeypatch: pytest.MonkeyPatch, erro: Exception
+) -> None:
+    """#463, follow-up A, ponta a ponta pelo `rbac` REAL.
+
+    `BancoSemProvaDeQueda` e' SUBCLASSE de `BancoIndisponivel`, e o `except` generico de
+    `abas_do_usuario_por_banco` a lia como banco fora: com o banco VIVO e ocupado, o `/api/me`
+    escondia executiva, imobiliaria e viabilidade -- e a SPA tirava a pessoa da tela dela --,
+    enquanto o gate respondia 503 pela mesma falha. Agora o `/api/me` da' o MESMO 503 (frase e
+    `Retry-After` do gate) e a evidencia de queda continua limpa.
+    """
+    import json
+
+    from fastapi import HTTPException
+
+    _instalar(monkeypatch, _ConexaoQueFalha(erro))
+    monkeypatch.setenv("MOTOR_CADASTRO_DIR", "/app/cadastro")
+
+    with pytest.raises(HTTPException) as caiu:
+        pilot.me(remote_user="ana")
+    gate = pilot._piloto_ocupado()
+    assert caiu.value.status_code == 503
+    assert caiu.value.detail == json.loads(bytes(gate.body))["detail"]
+    assert caiu.value.headers == {"Retry-After": gate.headers["retry-after"]}
+    assert not acesso.banco_em_falha()
+
+    # A interface e o portao, para a MESMA falha e a mesma pessoa, dizem a mesma coisa.
+    resposta = asyncio.run(
+        pilot._controle_de_acesso_por_aba(_Requisicao("/api/rede/carteira"), _proximo)
+    )
+    assert resposta.status_code == 503
+
+
+@pytest.mark.parametrize("erro", ERROS_COM_PROVA)
+def test_me_com_queda_provada_degrada_como_o_gate(
+    monkeypatch: pytest.MonkeyPatch, erro: Exception
+) -> None:
+    """O outro lado da mesma regua: com a queda PROVADA (conexao perdida, servidor saindo), o
+    `/api/me` degrada como sempre -- so' as nao sensiveis -- e o gate nega so' as sensiveis."""
+    _instalar(monkeypatch, _ConexaoQueFalha(erro))
+    monkeypatch.setenv("MOTOR_CADASTRO_DIR", "/app/cadastro")
+
+    payload = pilot.me(remote_user="ana")
+    esperadas = (acesso.ABAS_VALIDAS - acesso.ABAS_SENSIVEIS) & set(pilot.PERFIL.superficies)
+    assert set(payload["abas"]) == esperadas
+    assert not set(payload["abas"]) & acesso.ABAS_SENSIVEIS
+    assert acesso.banco_em_falha()
+
+
 def test_gate_com_erro_de_programacao_nao_vira_fail_open(monkeypatch: pytest.MonkeyPatch) -> None:
     """Tabela ausente (schema fora de sincronia) NAO e' engolida como "banco fora"."""
     _instalar(monkeypatch, _ConexaoQueFalha(psycopg.errors.UndefinedTable("usuarios")))

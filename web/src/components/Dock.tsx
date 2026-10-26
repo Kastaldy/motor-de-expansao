@@ -396,7 +396,9 @@ export default function Dock({
           pedido do Felipe). A ORDEM é por quão definitivo é o gesto: o SAIR fica por
           último, no canto, longe da navegação, e o cadeado encabeça porque é o único
           que pode nem aparecer — sem `onSenha` o rodapé volta a ser a dupla de antes,
-          e um buraco no meio da pilha leria como controle que sumiu. */}
+          e um buraco no meio da pilha leria como controle que sumiu. E ele não aparece
+          com o login próprio desligado (decisão do dono, 24/10/2026): o `/api/me` nem
+          manda o estado da senha, porque a do banco ainda não abre porta nenhuma. */}
       <div style={{ marginTop: 'auto', display: 'flex', flexDirection: 'column', gap: 8 }}>
         {onSenha && (
           <button

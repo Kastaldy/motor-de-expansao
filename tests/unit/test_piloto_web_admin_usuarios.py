@@ -30,6 +30,7 @@ if str(_SERVER) not in sys.path:
 
 import app as pilot_app  # noqa: E402
 
+from motor_expansao.db import sessoes as db_sessoes  # noqa: E402
 from motor_expansao.db import usuarios as db_usuarios  # noqa: E402
 
 ADMIN = "vinicius"
@@ -44,6 +45,23 @@ def _sou_admin(monkeypatch: pytest.MonkeyPatch) -> Any:
     """Allowlist do painel liberada — cada teste que quiser o contrário desfaz."""
     monkeypatch.setattr(pilot_app.acesso, "pode_ver_acessos", lambda _u: True)
     yield
+
+
+@pytest.fixture(autouse=True)
+def _login_proprio_desligado_por_padrao(monkeypatch: pytest.MonkeyPatch) -> Any:
+    """O estado de PRODUCAO ate' o corte do P19 -- e o default de todos os testes daqui.
+
+    Sem isto, um `MOTOR_AUTENTICACAO_PROPRIA` exportado na maquina de quem roda a suite mudaria
+    o resultado de metade dela. Quem precisa da chave LIGADA pede a fixture `login_proprio`.
+    """
+    monkeypatch.delenv(db_sessoes.ENV_AUTENTICACAO_PROPRIA, raising=False)
+    yield
+
+
+@pytest.fixture
+def login_proprio(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Liga a chave: os tres gestos de senha so' existem com ela (decisao do dono, 24/10/2026)."""
+    monkeypatch.setenv(db_sessoes.ENV_AUTENTICACAO_PROPRIA, "1")
 
 
 def _identidade(monkeypatch: pytest.MonkeyPatch, eu: Any) -> None:
@@ -108,6 +126,29 @@ def test_listagem_devolve_usuarios_perfis_e_quem_sou_eu(monkeypatch: pytest.Monk
     assert saida["perfis"][0]["capacidades"] == 15
 
 
+@pytest.mark.parametrize(("valor", "esperado"), [(None, False), ("1", True), ("", False)])
+def test_a_listagem_diz_se_o_login_proprio_esta_ligado(
+    monkeypatch: pytest.MonkeyPatch, valor: str | None, esperado: bool
+) -> None:
+    """A tela esconde "Redefinir senha" e "Exigir troca" e escolhe os recados por este campo.
+
+    Um booleano DE VERDADE nos dois estados, e nao "ausente quando desligado": a tela trata a
+    ausencia como desligado (o conservador), mas o backend deste repo sempre diz qual e' -- e a
+    leitura e' a mesma de `sessoes.ligada`, sem segunda redacao da regra da env.
+    """
+    if valor is None:
+        monkeypatch.delenv(db_sessoes.ENV_AUTENTICACAO_PROPRIA, raising=False)
+    else:
+        monkeypatch.setenv(db_sessoes.ENV_AUTENTICACAO_PROPRIA, valor)
+    _identidade(monkeypatch, _Eu())
+    monkeypatch.setattr(db_usuarios, "listar", lambda: [])
+    monkeypatch.setattr(db_usuarios, "perfis", lambda: [])
+
+    saida = pilot_app.acessos_usuarios_listar(remote_user=ADMIN)
+    assert saida["login_proprio"] is esperado
+    assert saida["login_proprio"] is db_sessoes.ligada()
+
+
 # --------------------------------------------------------------------------------------
 # Escrita
 # --------------------------------------------------------------------------------------
@@ -120,26 +161,58 @@ def test_corpo_vazio_e_422_e_nao_uma_escrita_a_toa(monkeypatch: pytest.MonkeyPat
     assert caiu.value.status_code == 422
 
 
-def test_perfil_e_status_juntos_viram_duas_chamadas(monkeypatch: pytest.MonkeyPatch) -> None:
-    """São duas decisões — 'virou Growth' e 'foi desativado' respondem a perguntas
-    diferentes na auditoria e não devem colapsar numa linha só."""
+def test_perfil_e_status_juntos_vao_numa_unidade_de_trabalho_so(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Uma chamada, uma transacao (#463, follow-up B).
+
+    Ate' 24/10/2026 a rota fazia DUAS chamadas -- `alterar_perfil` e `definir_ativo`, cada uma
+    com a sua transacao --, e a falha da segunda deixava a primeira gravada sob um 503 que nao
+    dizia isso. Os dois EVENTOS continuam separados ("virou Growth" e "foi desativado"
+    respondem a perguntas diferentes na auditoria) -- isso e' guardado em `test_db_usuarios.py`.
+    Aqui se guarda que a rota entrega os dois campos JUNTOS a uma unica unidade de trabalho.
+    """
     _identidade(monkeypatch, _Eu())
-    chamadas: list[str] = []
-    monkeypatch.setattr(
-        db_usuarios,
-        "alterar_perfil",
-        lambda i, p, *, autor: chamadas.append(f"perfil:{i}:{p}:{autor}") or {"mudou": True},
-    )
-    monkeypatch.setattr(
-        db_usuarios,
-        "definir_ativo",
-        lambda i, a, *, autor: chamadas.append(f"ativo:{i}:{a}:{autor}") or {"mudou": True},
-    )
+    chamadas: list[dict[str, Any]] = []
+
+    def _alterar_acesso(
+        i: int, *, autor: int, perfil: Any = None, ativo: Any = None
+    ) -> dict[str, Any]:
+        chamadas.append({"alvo": i, "autor": autor, "perfil": perfil, "ativo": ativo})
+        return {"id_usuario": i, "perfil": {"mudou": True}, "status": {"mudou": True}}
+
+    def _proibido(*_a: Any, **_k: Any) -> None:
+        raise AssertionError("a rota voltou a abrir uma transacao por campo")
+
+    monkeypatch.setattr(db_usuarios, "alterar_acesso", _alterar_acesso)
+    monkeypatch.setattr(db_usuarios, "alterar_perfil", _proibido)
+    monkeypatch.setattr(db_usuarios, "definir_ativo", _proibido)
     saida = pilot_app.acessos_usuarios_alterar(
         9, pilot_app.UsuarioAdminIn(perfil="growth", ativo=False), remote_user=ADMIN
     )
-    assert chamadas == ["perfil:9:growth:7", "ativo:9:False:7"]
+    assert chamadas == [{"alvo": 9, "autor": 7, "perfil": "growth", "ativo": False}]
     assert "perfil" in saida and "status" in saida
+
+
+@pytest.mark.parametrize(
+    ("corpo", "esperado"),
+    [({"perfil": "growth"}, ("growth", None)), ({"ativo": True}, (None, True))],
+)
+def test_um_campo_so_tambem_passa_pela_mesma_unidade_de_trabalho(
+    monkeypatch: pytest.MonkeyPatch, corpo: dict[str, Any], esperado: tuple[Any, Any]
+) -> None:
+    """Um caminho so' na rota: o campo que nao veio chega como `None`, e nao como "nao mexer"
+    inventado na rota -- quem decide o que aplicar e' `alterar_acesso`."""
+    _identidade(monkeypatch, _Eu())
+    vistos: list[tuple[Any, Any]] = []
+    monkeypatch.setattr(
+        db_usuarios,
+        "alterar_acesso",
+        lambda i, *, autor, perfil=None, ativo=None: vistos.append((perfil, ativo))
+        or {"id_usuario": i},
+    )
+    pilot_app.acessos_usuarios_alterar(9, pilot_app.UsuarioAdminIn(**corpo), remote_user=ADMIN)
+    assert vistos == [esperado]
 
 
 @pytest.mark.parametrize(
@@ -158,7 +231,7 @@ def test_cada_recusa_do_dominio_tem_seu_status(
     def _falha(*_a: Any, **_k: Any) -> None:
         raise erro
 
-    monkeypatch.setattr(db_usuarios, "alterar_perfil", _falha)
+    monkeypatch.setattr(db_usuarios, "alterar_acesso", _falha)
     with pytest.raises(HTTPException) as caiu:
         pilot_app.acessos_usuarios_alterar(
             9, pilot_app.UsuarioAdminIn(perfil="x"), remote_user=ADMIN
@@ -174,7 +247,7 @@ def test_banco_fora_do_ar_e_503(monkeypatch: pytest.MonkeyPatch) -> None:
     def _falha(*_a: Any, **_k: Any) -> None:
         raise BancoIndisponivel("sem rota para o host")
 
-    monkeypatch.setattr(db_usuarios, "alterar_perfil", _falha)
+    monkeypatch.setattr(db_usuarios, "alterar_acesso", _falha)
     with pytest.raises(HTTPException) as caiu:
         pilot_app.acessos_usuarios_alterar(
             9, pilot_app.UsuarioAdminIn(perfil="x"), remote_user=ADMIN
@@ -198,7 +271,7 @@ def test_deploy_sem_banco_e_503_e_nao_500(monkeypatch: pytest.MonkeyPatch) -> No
     def _falha(*_a: Any, **_k: Any) -> None:
         raise BancoNaoConfigurado("sem MOTOR_DATABASE_URL")
 
-    monkeypatch.setattr(db_usuarios, "alterar_perfil", _falha)
+    monkeypatch.setattr(db_usuarios, "alterar_acesso", _falha)
     with pytest.raises(HTTPException) as caiu:
         pilot_app.acessos_usuarios_alterar(
             9, pilot_app.UsuarioAdminIn(perfil="x"), remote_user=ADMIN
@@ -303,6 +376,36 @@ def test_a_criacao_passa_o_autor_e_devolve_o_id(monkeypatch: pytest.MonkeyPatch)
     assert saida["falta_cadastrar_no_authelia"] is True
 
 
+@pytest.mark.parametrize("ligada", [False, True])
+def test_a_criacao_diz_a_chave_e_o_authelia_segue_pendente_nos_dois_estados(
+    monkeypatch: pytest.MonkeyPatch, ligada: bool
+) -> None:
+    """O recado depois de criar depende da chave, e a resposta tem de dizer qual e'.
+
+    `falta_cadastrar_no_authelia` fica `True` nos DOIS estados, por razoes diferentes:
+    desligada, sem a entrada no `users_database.yml` a pessoa nao entra; ligada, durante a
+    janela de observacao do corte, a entrada no Authelia e' o que mantem o rollback possivel.
+    O que muda e' o recado -- e quem o escolhe e' `login_proprio`.
+    """
+    if ligada:
+        monkeypatch.setenv(db_sessoes.ENV_AUTENTICACAO_PROPRIA, "1")
+    _identidade(monkeypatch, _Eu())
+    monkeypatch.setattr(
+        db_usuarios,
+        "criar",
+        lambda **_k: {
+            "id_usuario": 42,
+            "login": "ana",
+            "perfil": "expansao",
+            "falta_cadastrar_no_authelia": True,
+        },
+    )
+    saida = pilot_app.acessos_usuarios_criar(_corpo_novo(), remote_user=ADMIN)
+    assert saida["login_proprio"] is ligada
+    assert saida["falta_cadastrar_no_authelia"] is True
+    assert saida["id_usuario"] == 42
+
+
 def test_o_corpo_da_criacao_nao_aceita_senha() -> None:
     """Sem campo de senha, de propósito: o admin não deve conhecer a senha de outra pessoa.
 
@@ -389,6 +492,7 @@ def test_extra_auth_ausente_e_503(monkeypatch: pytest.MonkeyPatch) -> None:
 # --------------------------------------------------------------------------------------
 
 
+@pytest.mark.usefixtures("login_proprio")
 def test_trocar_a_propria_senha_nao_exige_a_allowlist_do_painel(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -409,6 +513,7 @@ def test_trocar_a_propria_senha_nao_exige_a_allowlist_do_painel(
     assert saida["primeira_vez"] is True
 
 
+@pytest.mark.usefixtures("login_proprio")
 def test_a_rota_de_senha_nao_aceita_alvo(monkeypatch: pytest.MonkeyPatch) -> None:
     """O alvo não é parâmetro em lugar nenhum do caminho — nem no path, nem no corpo.
 
@@ -454,6 +559,7 @@ def test_a_rota_de_senha_esta_fora_do_prefixo_de_acessos() -> None:
     ("erro", "status"),
     [("SenhaAtualIncorreta", 403), ("UsuarioDesconhecido", 404)],
 )
+@pytest.mark.usefixtures("login_proprio")
 def test_cada_recusa_da_troca_tem_seu_status(
     monkeypatch: pytest.MonkeyPatch, erro: str, status: int
 ) -> None:
@@ -472,6 +578,7 @@ def test_cada_recusa_da_troca_tem_seu_status(
     assert caiu.value.status_code == status
 
 
+@pytest.mark.usefixtures("login_proprio")
 def test_senha_fraca_e_422(monkeypatch: pytest.MonkeyPatch) -> None:
     """A mensagem da política vai para a tela — ela é escrita para a pessoa, não para o log."""
     from motor_expansao.db import senhas
@@ -500,6 +607,7 @@ def test_senha_fraca_e_422(monkeypatch: pytest.MonkeyPatch) -> None:
     assert f"{piso} caracteres" in str(caiu.value.detail)
 
 
+@pytest.mark.usefixtures("login_proprio")
 def test_sem_cadastro_no_banco_a_mensagem_nao_fala_da_allowlist(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -547,6 +655,7 @@ def test_fora_da_allowlist_as_rotas_de_senha_alheia_nao_existem(
 
 
 @pytest.mark.parametrize(("rota", "funcao"), _ROTAS_DE_SENHA_ALHEIA)
+@pytest.mark.usefixtures("login_proprio")
 def test_as_rotas_de_senha_alheia_passam_o_alvo_e_o_autor(
     monkeypatch: pytest.MonkeyPatch, rota: str, funcao: str
 ) -> None:
@@ -563,6 +672,7 @@ def test_as_rotas_de_senha_alheia_passam_o_alvo_e_o_autor(
 
 @pytest.mark.parametrize(("rota", "funcao"), _ROTAS_DE_SENHA_ALHEIA)
 @pytest.mark.parametrize(("erro", "status"), [("UsuarioDesconhecido", 404), ("AlvoEhOAutor", 403)])
+@pytest.mark.usefixtures("login_proprio")
 def test_cada_recusa_da_senha_alheia_tem_seu_status(
     monkeypatch: pytest.MonkeyPatch, rota: str, funcao: str, erro: str, status: int
 ) -> None:
@@ -578,6 +688,7 @@ def test_cada_recusa_da_senha_alheia_tem_seu_status(
     assert caiu.value.status_code == status
 
 
+@pytest.mark.usefixtures("login_proprio")
 def test_redefinir_sem_senha_inicial_e_503_com_o_recado_do_operador(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -593,6 +704,104 @@ def test_redefinir_sem_senha_inicial_e_503_com_o_recado_do_operador(
         pilot_app.acessos_usuarios_redefinir_senha(9, remote_user=ADMIN)
     assert caiu.value.status_code == 503
     assert "MOTOR_SENHA_INICIAL" in str(caiu.value.detail)
+
+
+# --------------------------------------------------------------------------------------
+# Login proprio DESLIGADO: os tres gestos de senha recusam (decisao do dono, 24/10/2026)
+# --------------------------------------------------------------------------------------
+# Com `MOTOR_AUTENTICACAO_PROPRIA` desligada quem confere a senha e' o Authelia. A troca da
+# propria senha pedia a INICIAL do banco -- sorteada em producao, ninguem a conhece -- e
+# recusava todo mundo; a temporaria de 2 h que o admin repassava nao abria nada.
+
+_GESTOS_DE_SENHA = [
+    pytest.param(
+        lambda: pilot_app.me_trocar_senha(
+            pilot_app.MinhaSenhaIn(senha_atual="x", nova_senha="uma frase bem longa"),
+            remote_user=ADMIN,
+        ),
+        "LOGIN_PROPRIO_DESLIGADO_TROCA",
+        id="trocar-a-propria",
+    ),
+    pytest.param(
+        lambda: pilot_app.acessos_usuarios_redefinir_senha(9, remote_user=ADMIN),
+        "LOGIN_PROPRIO_DESLIGADO_ADMIN",
+        id="redefinir-senha",
+    ),
+    pytest.param(
+        lambda: pilot_app.acessos_usuarios_exigir_troca(9, remote_user=ADMIN),
+        "LOGIN_PROPRIO_DESLIGADO_ADMIN",
+        id="exigir-troca",
+    ),
+]
+
+
+@pytest.mark.parametrize(("chamar", "constante"), _GESTOS_DE_SENHA)
+def test_com_o_login_proprio_desligado_os_gestos_de_senha_recusam_sem_tocar_o_banco(
+    monkeypatch: pytest.MonkeyPatch, chamar: Any, constante: str
+) -> None:
+    """404, o status do `/api/login` com a chave desligada -- e ANTES de qualquer ida ao banco.
+
+    Recusar por configuracao nao precisa de identidade: os dubles abaixo explodem se a rota
+    tentar resolver quem pediu ou escrever alguma coisa.
+    """
+
+    def _explode(*_a: Any, **_k: Any) -> None:
+        raise AssertionError("a rota foi ao banco com o login proprio desligado")
+
+    for nome in ("_identidade_do_admin", "_minha_identidade", "_derrubar_sessoes"):
+        monkeypatch.setattr(pilot_app, nome, _explode)
+    for nome in ("trocar_a_propria_senha", "redefinir_senha", "exigir_troca"):
+        monkeypatch.setattr(db_usuarios, nome, _explode)
+
+    with pytest.raises(HTTPException) as caiu:
+        chamar()
+    assert caiu.value.status_code == 404
+    assert caiu.value.detail == getattr(pilot_app, constante)
+
+
+def test_a_recusa_segue_o_STATUS_do_login_mas_fala_portugues() -> None:
+    """O padrao e' o do `/api/login` com a chave desligada -- o mesmo 404 --, mas o texto nao e'
+    o "Not Found" de la': aqui quem le' e' gente, numa tela aberta antes de a chave mudar."""
+    with pytest.raises(HTTPException) as no_login:
+        pilot_app.login(pilot_app.LoginIn(login="ana", senha="x"), request=None)  # type: ignore[arg-type]
+    for texto in (pilot_app.LOGIN_PROPRIO_DESLIGADO_TROCA, pilot_app.LOGIN_PROPRIO_DESLIGADO_ADMIN):
+        assert no_login.value.status_code == 404
+        assert texto != no_login.value.detail
+        assert "login próprio" in texto, "a recusa tem de dizer o que esta' desligado"
+        assert "Authelia" in texto, "a recusa tem de dizer por onde se entra hoje"
+
+
+@pytest.mark.parametrize("rota", ["acessos_usuarios_redefinir_senha", "acessos_usuarios_exigir_troca"])
+def test_fora_da_allowlist_a_recusa_continua_o_not_found_cru(
+    monkeypatch: pytest.MonkeyPatch, rota: str
+) -> None:
+    """A allowlist vem ANTES da chave. Ao contrario, o texto proprio da recusa anunciaria a rota
+    a quem nao administra o painel -- e o "Not Found" cru e' o que a esconde (emenda da DEC-027)."""
+    monkeypatch.setattr(pilot_app.acesso, "pode_ver_acessos", lambda _u: False)
+    with pytest.raises(HTTPException) as caiu:
+        getattr(pilot_app, rota)(9, remote_user="qualquer")
+    assert caiu.value.status_code == 404
+    assert caiu.value.detail == "Not Found"
+
+
+@pytest.mark.usefixtures("login_proprio")
+@pytest.mark.parametrize(("chamar", "_constante"), _GESTOS_DE_SENHA)
+def test_com_o_login_proprio_ligado_os_gestos_chegam_ao_banco(
+    monkeypatch: pytest.MonkeyPatch, chamar: Any, _constante: str
+) -> None:
+    """A outra metade: com a chave ligada, nenhum dos tres para na recusa de configuracao."""
+    monkeypatch.setattr(pilot_app, "_identidade_do_admin", lambda _u: _Eu())
+    monkeypatch.setattr(pilot_app, "_minha_identidade", lambda _u: _Eu())
+    monkeypatch.setattr(pilot_app, "_derrubar_sessoes", lambda *_a, **_k: None)
+    chegou: list[str] = []
+    for nome in ("trocar_a_propria_senha", "redefinir_senha", "exigir_troca"):
+        monkeypatch.setattr(
+            db_usuarios,
+            nome,
+            lambda *_a, _n=nome, **_k: chegou.append(_n) or {"id_usuario": 9, "mudou": True},
+        )
+    chamar()
+    assert len(chegou) == 1
 
 
 @pytest.mark.parametrize("gesto", ["redefinir-senha", "exigir-troca"])
@@ -619,6 +828,7 @@ def test_as_rotas_de_senha_alheia_nao_recebem_corpo_e_exigem_gerir(gesto: str) -
 # --------------------------------------------------------------------------------------
 
 
+@pytest.mark.usefixtures("login_proprio")
 def test_a_rota_devolve_a_senha_para_o_admin_repassar(monkeypatch: pytest.MonkeyPatch) -> None:
     """A senha sai no CORPO, e e' a unica vez que um segredo faz isso aqui.
 
@@ -647,6 +857,7 @@ def test_a_rota_devolve_a_senha_para_o_admin_repassar(monkeypatch: pytest.Monkey
     assert corpo["validade_horas"] == 2
 
 
+@pytest.mark.usefixtures("login_proprio")
 def test_a_resposta_com_a_senha_NAO_pode_ser_cacheada(monkeypatch: pytest.MonkeyPatch) -> None:
     """`no-store`, e nao `no-cache`: o corpo carrega uma senha VIVA.
 
@@ -665,6 +876,7 @@ def test_a_resposta_com_a_senha_NAO_pode_ser_cacheada(monkeypatch: pytest.Monkey
     assert resposta.headers.get("cache-control") == "no-store"
 
 
+@pytest.mark.usefixtures("login_proprio")
 def test_a_senha_nova_nao_vai_para_o_LOG(monkeypatch: pytest.MonkeyPatch, caplog: Any) -> None:
     """O log da trilha e' lido por operador e vive 90 dias. Senha viva ali seria vazamento
     com prazo maior que o da propria senha."""
@@ -745,6 +957,7 @@ _ROTAS_DO_ADMIN = [
 
 
 @pytest.mark.parametrize("chamar", _ROTAS_DO_ADMIN)
+@pytest.mark.usefixtures("login_proprio")
 def test_deploy_sem_banco_na_identidade_do_admin_e_503_e_nao_500(
     chamar: Any, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -757,6 +970,7 @@ def test_deploy_sem_banco_na_identidade_do_admin_e_503_e_nao_500(
     assert "banco" in str(caiu.value.detail).lower()
 
 
+@pytest.mark.usefixtures("login_proprio")
 def test_deploy_sem_banco_na_troca_da_propria_senha_e_503_e_nao_500(
     monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -771,6 +985,7 @@ def test_deploy_sem_banco_na_troca_da_propria_senha_e_503_e_nao_500(
     assert "banco" in str(caiu.value.detail).lower()
 
 
+@pytest.mark.usefixtures("login_proprio")
 def test_as_duas_mensagens_de_sem_banco_sao_DIFERENTES(monkeypatch: pytest.MonkeyPatch) -> None:
     """E é por isso que `_minha_identidade` existe separada de `_identidade_do_admin`.
 

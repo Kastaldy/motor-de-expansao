@@ -97,6 +97,10 @@ export function mensagemDoErro(status: number, doServidor?: string | null): stri
       return 'A senha atual não confere.'
     case 422:
       return 'A senha nova não atende à política.'
+    case 404:
+      // O login próprio DESLIGADO (decisão do dono, 24/10/2026). O servidor manda texto
+      // próprio, que tem precedência; isto é só para resposta sem corpo.
+      return 'A troca de senha só funciona com o login próprio do piloto ligado.'
     case 409:
       return 'Você não tem cadastro no banco, então não há senha sua para trocar.'
     case 503:
@@ -137,6 +141,22 @@ export function textoDaTroca(estado: EstadoDaSenha): { titulo: string; chamada: 
     chamada: 'Foi pedido que você defina uma senha nova. A atual continua valendo até você trocar.',
   }
 }
+
+/**
+ * O que a tela diz DEPOIS da troca, e o botão que a acompanha.
+ *
+ * Esta tela só existe com o login próprio LIGADO — o `/api/me` só manda o estado da senha nesse
+ * caso (decisão do dono, 24/10/2026) —, e com ele a troca DERRUBA as sessões abertas, inclusive
+ * a desta aba (decisão 2 do P19, `_derrubar_sessoes` em `web/server/app.py`). Até essa data a
+ * frase dizia que "enquanto a entrada continuar pelo Authelia, é ele que pede a senha" e
+ * oferecia "Voltar ao piloto": com a sessão revogada, a volta dava na tela de sessão encerrada.
+ * O certo é mandar a pessoa entrar de novo, e já com a senha nova.
+ */
+export const TEXTO_SENHA_DEFINIDA =
+  'Por segurança, trocar a senha encerra as sessões abertas — inclusive esta. Entre de novo ' +
+  'com a senha nova.'
+
+export const ROTULO_ENTRAR_DE_NOVO = 'Entrar com a senha nova'
 
 /**
  * A tela deve OFERECER a troca agora?

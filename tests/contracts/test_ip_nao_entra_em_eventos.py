@@ -7,8 +7,10 @@ entidade_id, metadados`. Toda linha de `eventos` tem `ip` nulo.
 POR QUE ISTO E' TESTE, E NAO COMENTARIO
 --------------------------------------
 O `ip` e' dado pessoal (LGPD) e a retencao de `eventos` NAO esta' configurada: a §8.2 do
-esquema define o MECANISMO de expurgo, e o prazo -- com a base legal -- e' decisao juridica
-ainda aberta (`banco-de-reservas/decisoes-pendentes.md`, **P15**). Acrescentar `ip` ao `INSERT`
+esquema define o MECANISMO de expurgo, e a base legal e' decisao juridica ainda aberta
+(`banco-de-reservas/decisoes-pendentes.md`, **P15**). O PRAZO do P15 fechou em 23/09/2026 --
+90 dias, aplicados a' origem das sessoes (`sessoes`) e precedente para `eventos.ip` --, mas
+prazo sem base legal nao autoriza gravar. Acrescentar `ip` ao `INSERT`
 custa uma palavra, nao quebra nada, nao muda DDL e por isso nao aparece em revisao de esquema
 -- e a partir dela o banco passa a acumular PII sem prazo e sem base legal declarada, numa
 tabela de onde apagar e' operacao a' parte. O defeito seria SILENCIOSO nos dois sentidos: nada
@@ -22,8 +24,8 @@ O teste e' deliberadamente BURRO: varre TEXTO, nao AST. Quem montar o `INSERT` e
 escapa dele -- e tambem tera' escapado da regra do proprio contrato, que manda o SQL de escrita
 morar em constante localizavel justamente para ser varrivel.
 
-QUANDO O P15 FECHAR: se a decisao for gravar, este arquivo sai no mesmo commit que criar o
-produtor; se for nao gravar, ele fica e vira a trava definitiva.
+QUANDO A BASE LEGAL DO P15 FECHAR: se a decisao for gravar, este arquivo sai no mesmo commit
+que criar o produtor; se for nao gravar, ele fica e vira a trava definitiva.
 """
 
 from __future__ import annotations

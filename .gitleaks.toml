@@ -26,6 +26,14 @@ paths = [
     '''^\.ruff_cache/''',
     '''^node_modules/''',
     '''^htmlcov/''',
+    # Pasta temporaria da suite de testes: o `tmp_path` do conftest.py da raiz e' local ao
+    # workspace (tmp_codex_runtime/manual_pytest/<id>/), e ha' testes que plantam ali segredos
+    # FALSOS de proposito, para provar que nada vaza (ex.: o `env` de mentira de
+    # tests/unit/test_healthcheck_banco.py). O passo do gitleaks no CI roda DEPOIS do pytest,
+    # com --no-git, e varria esses arquivos: 8 achados generic-api-key no #488, todos do
+    # `env` falso. A pasta e' gitignored e nunca entra no repositorio -- mesma familia do
+    # .pytest_cache/ acima.
+    '''^tmp_codex_runtime/''',
     '''^concorrentes/''',
     '''.*\.parquet$''',
     '''.*\.csv$''',

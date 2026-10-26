@@ -86,6 +86,9 @@ export type AcaoAdmin =
       email: string
       perfil: string
       capacidades?: number
+      /** O login próprio está LIGADO? Muda o que a confirmação pode prometer sobre a senha.
+       *  Ausente = desligado, o estado de produção até o corte do P19. */
+      loginProprio?: boolean
     }
   | {
       tipo: 'trocar-perfil'
@@ -162,10 +165,22 @@ export function montarConfirmacao(
           ? `${rot(acao.perfil)} administra o acesso das outras pessoas: pode criar, ` +
             'desativar e trocar o perfil de quem já existe.'
           : `Perfil ${rot(acao.perfil)}.` + contagem(undefined, acao.capacidades),
-        'A pessoa nasce com a senha inicial compartilhada do piloto e é levada a trocá-la ' +
-          'no primeiro acesso.',
-        'Esta tela não apaga ninguém: para desfazer, o caminho é desativar. E ela ainda ' +
-          'precisa ser cadastrada no Authelia para conseguir entrar.',
+        // A promessa sobre a senha depende do login próprio (decisão do dono, 24/10/2026).
+        // Desligado, quem confere a senha é o Authelia: "nasce com a senha inicial e é
+        // levada a trocá-la" era falso, e o passo do Authelia é o que deixa a pessoa entrar.
+        // Ligado, a frase volta a valer, e o Authelia vira o caminho de volta do corte.
+        ...(acao.loginProprio
+          ? [
+              'A pessoa nasce com a senha inicial compartilhada do piloto e é levada a ' +
+                'trocá-la no primeiro acesso.',
+              'Durante a janela de observação do corte, cadastre-a também no Authelia, para ' +
+                'o rollback continuar possível.',
+            ]
+          : [
+              'Isto grava só no banco: para entrar, a pessoa ainda precisa ser cadastrada no ' +
+                'Authelia, que é quem confere a senha hoje.',
+            ]),
+        'Esta tela não apaga ninguém: para desfazer, o caminho é desativar.',
       ],
       rotuloConfirmar: `Criar ${acao.nome}`,
       gravidade: ehAdmin ? 'alta' : 'media',
@@ -226,8 +241,9 @@ export function montarConfirmacao(
           'depois. Ela vale poucas horas: avise que a pessoa precisa criar a própria DENTRO ' +
           'desse prazo, porque o piloto oferece a troca mas não obriga, e depois disso a ' +
           'temporária para de funcionar. Fica registrado com o seu nome e a data.',
-        'Enquanto o Authelia autenticar, isto não muda como a pessoa entra hoje — prepara o dia ' +
-          'em que o próprio sistema autenticar.',
+        // "Enquanto o Authelia autenticar, isto não muda como a pessoa entra hoje" saiu em
+        // 24/10/2026: o gesto só existe com o login próprio LIGADO (o botão some sem ele, e o
+        // servidor recusa), e aí a temporária É a senha de entrada.
       ],
       rotuloConfirmar: `Redefinir a senha de ${acao.nome}`,
       // Apagar uma senha escolhida é o caminho destrutivo; regravar a inicial de quem nunca

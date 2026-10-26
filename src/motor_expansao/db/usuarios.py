@@ -8,7 +8,8 @@ REGRESSAO de operabilidade, e e' o que este modulo existe para desfazer.
 
 Por que o SQL mora aqui, e nao no `app.py`
 ------------------------------------------
-O CI nao tem Postgres (decisao de 25/08) e quem executa contra banco real e' o Vinicius. Isso impoe
+A suite unitaria nao tem Postgres (decisao de 25/08; desde 24/10/2026 o CI sobe um banco de ensaio
+so' para a integracao) e quem executa contra banco real e' o Vinicius. Isso impoe
 uma consequencia de arquitetura: o SQL precisa ser LOCALIZAVEL -- em arquivos ou num modulo de
 queries nomeadas, nunca interpolado no meio da logica de rota. Sem isso, nem o gate de sintaxe
 offline (`pglast`) alcanca tudo, nem ha o que revisar antes de rodar.
@@ -20,6 +21,10 @@ correspondente. Se as duas nao forem atomicas, o sistema fica com estados que ni
 explicar depois -- perfil trocado sem registro de quem trocou, ou registro de uma troca que nao
 aconteceu. O `transacao(id_usuario=...)` carimba o autor para as triggers do D19 (§8.1) e o mesmo
 autor vai no `id_usuario` do evento.
+
+Quando a tela muda perfil E status de uma vez, os dois passos vao numa transacao SO'
+(`alterar_acesso`), com um evento cada: atomicidade nao e' colapsar a trilha. Ate' 24/10/2026 eram
+duas transacoes, e a falha da segunda deixava a primeira gravada sob um 503 (#463, follow-up B).
 
 As duas pessoas de cada linha
 -----------------------------
@@ -350,32 +355,60 @@ def _registrar(con: Any, *, autor: int, tipo: str, id_alvo: int, metadados: Any)
     )
 
 
+def _aplicar_perfil(
+    con: Any, id_alvo: int, perfil_antes: str, novo_perfil: str, *, autor: int
+) -> dict[str, Any]:
+    """O passo da troca de perfil, DENTRO de uma transacao aberta e com a linha ja' travada.
+
+    Redacao UNICA da regra, usada por `alterar_perfil` e por `alterar_acesso`: duas copias do
+    mesmo passo desencontram em silencio (DEC-044).
+    """
+    linha = con.execute(SQL_ID_DO_PERFIL, (novo_perfil,)).fetchone()
+    if linha is None:
+        raise PerfilDesconhecido(f"perfil '{novo_perfil}' não existe")
+
+    # Nada a fazer e' sucesso, nao erro -- mas NAO gera evento: a trilha registra mudanca, e
+    # uma linha `de: growth, para: growth` polui a auditoria com ruido que parece sinal.
+    if perfil_antes == novo_perfil:
+        return {"id_usuario": id_alvo, "de": perfil_antes, "para": novo_perfil, "mudou": False}
+
+    con.execute(SQL_TROCAR_PERFIL, (linha[0], id_alvo))
+    _registrar(
+        con,
+        autor=autor,
+        tipo=EVENTO_PERFIL_ALTERADO,
+        id_alvo=id_alvo,
+        metadados={"de": perfil_antes, "para": novo_perfil},
+    )
+    return {"id_usuario": id_alvo, "de": perfil_antes, "para": novo_perfil, "mudou": True}
+
+
+def _aplicar_ativo(
+    con: Any, id_alvo: int, ativo_antes: bool, ativo: bool, *, autor: int
+) -> dict[str, Any]:
+    """O passo de desativar/reativar, DENTRO de uma transacao aberta. Mesma razao do de cima."""
+    if ativo_antes == ativo:
+        return {"id_usuario": id_alvo, "ativo": ativo, "mudou": False}
+
+    con.execute(SQL_DEFINIR_ATIVO, (ativo, id_alvo))
+    _registrar(
+        con,
+        autor=autor,
+        tipo=EVENTO_REATIVADO if ativo else EVENTO_DESATIVADO,
+        id_alvo=id_alvo,
+        metadados=None,
+    )
+    return {"id_usuario": id_alvo, "ativo": ativo, "mudou": True}
+
+
 def alterar_perfil(id_alvo: int, novo_perfil: str, *, autor: int) -> dict[str, Any]:
     """Troca o perfil e registra `usuario.perfil_alterado`. Devolve o de-para aplicado."""
     _recusar_auto_alvo(id_alvo, autor)
 
     with transacao(id_usuario=autor) as con:
         perfil_antes, _ = _estado_atual(con, id_alvo)
-
-        linha = con.execute(SQL_ID_DO_PERFIL, (novo_perfil,)).fetchone()
-        if linha is None:
-            raise PerfilDesconhecido(f"perfil '{novo_perfil}' não existe")
-
-        # Nada a fazer e' sucesso, nao erro -- mas NAO gera evento: a trilha registra mudanca, e
-        # uma linha `de: growth, para: growth` polui a auditoria com ruido que parece sinal.
-        if perfil_antes == novo_perfil:
-            return {"id_usuario": id_alvo, "de": perfil_antes, "para": novo_perfil, "mudou": False}
-
-        con.execute(SQL_TROCAR_PERFIL, (linha[0], id_alvo))
-        _registrar(
-            con,
-            autor=autor,
-            tipo=EVENTO_PERFIL_ALTERADO,
-            id_alvo=id_alvo,
-            metadados={"de": perfil_antes, "para": novo_perfil},
-        )
-
-    return {"id_usuario": id_alvo, "de": perfil_antes, "para": novo_perfil, "mudou": True}
+        resultado = _aplicar_perfil(con, id_alvo, perfil_antes, novo_perfil, autor=autor)
+    return resultado
 
 
 def definir_ativo(id_alvo: int, ativo: bool, *, autor: int) -> dict[str, Any]:
@@ -390,20 +423,41 @@ def definir_ativo(id_alvo: int, ativo: bool, *, autor: int) -> dict[str, Any]:
 
     with transacao(id_usuario=autor) as con:
         _, ativo_antes = _estado_atual(con, id_alvo)
+        resultado = _aplicar_ativo(con, id_alvo, ativo_antes, ativo, autor=autor)
+    return resultado
 
-        if ativo_antes == ativo:
-            return {"id_usuario": id_alvo, "ativo": ativo, "mudou": False}
 
-        con.execute(SQL_DEFINIR_ATIVO, (ativo, id_alvo))
-        _registrar(
-            con,
-            autor=autor,
-            tipo=EVENTO_REATIVADO if ativo else EVENTO_DESATIVADO,
-            id_alvo=id_alvo,
-            metadados=None,
-        )
+def alterar_acesso(
+    id_alvo: int, *, autor: int, perfil: str | None = None, ativo: bool | None = None
+) -> dict[str, Any]:
+    """Perfil e/ou status de UMA pessoa numa transacao SO', com um evento por mudanca.
 
-    return {"id_usuario": id_alvo, "ativo": ativo, "mudou": True}
+    E' o que o `PATCH /api/acessos/usuarios/{id}` chama (#463, follow-up B). Ate' 24/10/2026 a
+    rota chamava `alterar_perfil` e `definir_ativo` em sequencia -- DUAS transacoes. Se a
+    segunda falhasse (o banco caiu entre as duas, um lock timeout), a primeira ja' estava
+    gravada e a resposta era um 503 que nao dizia isso: a tela mostrava "Indisponivel" e a
+    pessoa tinha mudado de perfil mesmo assim. Aqui as duas mudancas e os dois eventos
+    commitam juntos, ou nada commita.
+
+    OS EVENTOS CONTINUAM SEPARADOS, de proposito: "virou Growth" e "foi desativado" respondem a
+    perguntas diferentes na auditoria. UMA trava (`_estado_atual`), lida uma vez: os dois passos
+    partem do MESMO estado anterior, e a ordem (perfil, depois status) e' a de sempre.
+
+    `alterar_perfil` e `definir_ativo` ficam com a assinatura de sempre; as tres compartilham os
+    passos (`_aplicar_perfil`, `_aplicar_ativo`), entao cada regra tem UMA redacao.
+    """
+    if perfil is None and ativo is None:
+        raise ValueError("Informe `perfil`, `ativo`, ou os dois.")
+    _recusar_auto_alvo(id_alvo, autor)
+
+    resultado: dict[str, Any] = {"id_usuario": id_alvo}
+    with transacao(id_usuario=autor) as con:
+        perfil_antes, ativo_antes = _estado_atual(con, id_alvo)
+        if perfil is not None:
+            resultado["perfil"] = _aplicar_perfil(con, id_alvo, perfil_antes, perfil, autor=autor)
+        if ativo is not None:
+            resultado["status"] = _aplicar_ativo(con, id_alvo, ativo_antes, ativo, autor=autor)
+    return resultado
 
 
 # ---------------------------------------------------------------------------
@@ -452,8 +506,11 @@ def criar(*, login: str, nome: str, email: str, perfil: str, autor: int) -> dict
     ninguem sabe qual e' seria pior que nao criar.
 
     O que esta funcao NAO faz, e a tela precisa dizer: cadastrar a pessoa no
-    `authelia/users_database.yml`. Enquanto o Authelia autenticar, uma linha em `usuarios` sem a
-    entrada de la' nao deixa ninguem entrar.
+    `authelia/users_database.yml`. Com o login proprio DESLIGADO, uma linha em `usuarios` sem a
+    entrada de la' nao deixa ninguem entrar; LIGADO, a pessoa entra com a senha inicial, e a
+    entrada no Authelia e' o que mantem o rollback possivel durante a janela de observacao do
+    corte. Por isso `falta_cadastrar_no_authelia` sai `True` nos DOIS estados da chave -- o que
+    muda e' o recado, e a rota acrescenta `login_proprio` para a tela escolher qual.
     """
     from . import senhas
 
@@ -502,7 +559,8 @@ def criar(*, login: str, nome: str, email: str, perfil: str, autor: int) -> dict
         "id_usuario": id_novo,
         "login": login,
         "perfil": perfil,
-        # A tela usa isto para mostrar o recado do Authelia, que e' o passo que falta.
+        # O passo que continua manual, nos DOIS estados da chave (ver o docstring): desligada,
+        # sem ele a pessoa nao entra; ligada, sem ele um rollback do corte a deixaria de fora.
         "falta_cadastrar_no_authelia": True,
     }
 
@@ -569,7 +627,8 @@ def estado_da_senha(login: str) -> dict[str, bool] | None:
     E' o que falta ao `/api/me` para a tela poder OFERECER a troca: ate' 11/09 o payload trazia
     usuario, abas e perfil, e nada dizia que a pessoa ainda esta' na senha inicial compartilhada.
     Sem este campo a tela nao tem como saber a quem oferecer, e o `deve_trocar_senha_usuario` da
-    016 ficava sendo uma coluna que ninguem le'.
+    016 ficava sendo uma coluna que ninguem le'. Desde 24/10/2026 o `/api/me` so' pergunta com o
+    login proprio LIGADO (`_estado_da_minha_senha`): desligado, a senha do banco nao abre porta.
 
     Os DOIS campos, e nao so' o primeiro: `deve_trocar` e' a INTENCAO (o admin pode forca-la de
     novo um dia) e `propria` e' o FATO (a pessoa ja' definiu senha alguma vez). Eles se separam

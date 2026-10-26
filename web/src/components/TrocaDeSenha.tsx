@@ -4,6 +4,8 @@ import {
   MINIMO_DE_CARACTERES,
   podeEnviar,
   problemasDaSenha,
+  ROTULO_ENTRAR_DE_NOVO,
+  TEXTO_SENHA_DEFINIDA,
   textoDaTroca,
   type EstadoDaSenha,
 } from '../lib/troca-de-senha'
@@ -16,9 +18,16 @@ import { Botao, Campo, Eyebrow, Glass, Spinner } from './primitives'
    o que faltava era a ponta: nenhum componente chamava, então os seis cadastros
    ficavam presos em `deve_trocar_senha = true` sem caminho para sair.
 
-   OFERECE, NÃO OBRIGA. Este pop-up não é parede: enquanto o P19 não acontecer,
-   quem autentica é o Authelia e a senha do banco não abre porta nenhuma. A
+   OFERECE, NÃO OBRIGA. Este pop-up não é parede (decisão do dono, 25/09/2026): a
    decisão mora em `deveOferecerTroca`, que é testado — aqui é só o casulo.
+
+   SÓ EXISTE COM O LOGIN PRÓPRIO LIGADO (decisão do dono, 24/10/2026). Com ele desligado
+   quem confere a senha é o Authelia e a do banco não abre porta nenhuma — e o cadeado
+   pedia a senha inicial do banco, que em produção foi sorteada: recusava todo mundo.
+   Desde então o `/api/me` só manda o estado da senha com a chave ligada, e sem ele o App
+   não monta este pop-up nem o cadeado do Dock. Com a chave ligada, trocar a senha
+   DERRUBA as sessões abertas, inclusive a desta aba — daí o fim ser "entre de novo"
+   (`TEXTO_SENHA_DEFINIDA`), e não "voltar ao piloto".
 
    O TEXTO NÃO MORA AQUI. Vem de `lib/troca-de-senha.ts`, que é módulo puro e
    testado, pela mesma razão do `Confirmacao.tsx`: o projeto testa com Vitest em
@@ -34,11 +43,14 @@ export default function TrocaDeSenha({
   estado,
   onTrocar,
   onDispensar,
+  onEntrarDeNovo,
 }: {
   estado: EstadoDaSenha
   /** Devolve `null` em sucesso, ou a mensagem a exibir. Quem chama faz a chamada. */
   onTrocar: (senhaAtual: string, nova: string) => Promise<string | null>
   onDispensar: () => void
+  /** Leva à tela de entrar depois da troca: a sessão desta aba caiu junto com as outras. */
+  onEntrarDeNovo: () => void
 }) {
   const [atual, setAtual] = useState('')
   const [nova, setNova] = useState('')
@@ -132,12 +144,10 @@ export default function TrocaDeSenha({
         {pronto ? (
           <>
             <p style={{ font: '400 13px/1.55 var(--f-ui)', color: 'var(--tx-soft)', margin: 0 }}>
-              Guarde-a. Enquanto a entrada no piloto continuar pelo Authelia, é ele que pede a
-              senha para entrar — esta aqui fica pronta para o dia em que o próprio sistema
-              passar a autenticar.
+              {TEXTO_SENHA_DEFINIDA}
             </p>
             <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: 2 }}>
-              <Botao onClick={onDispensar}>Voltar ao piloto</Botao>
+              <Botao onClick={onEntrarDeNovo}>{ROTULO_ENTRAR_DE_NOVO}</Botao>
             </div>
           </>
         ) : (

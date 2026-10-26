@@ -21,7 +21,7 @@ Por que o SQL mora aqui, e nao na rota
 --------------------------------------
 Dois guardrails de AST batem em `web/server/app.py` se o INSERT subir para la':
 `test_backend_read_only_por_ast` e `test_backend_nao_tem_sql_de_escrita_embutido`. Nao e'
-burocracia: o CI nao tem Postgres, entao o SQL precisa ser LOCALIZAVEL para haver o que
+burocracia: a suite unitaria nao tem Postgres, entao o SQL precisa ser LOCALIZAVEL para haver o que
 revisar antes de rodar contra banco real. Mesmo raciocinio do `usuarios.py`.
 
 O que este modulo NAO decide

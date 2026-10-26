@@ -159,7 +159,7 @@ def test_contagens_conferem_com_os_seis_numeros_da_secao_zero() -> None:
         # sem ela a pessoa veria "sessao expirada" logo apos digitar a senha certa, que e' o pior
         # diagnostico possivel). Desde 18/09/2026 este numero tambem e' conferido contra as
         # MIGRATIONS, e nao so' contra um banco vivo, por `test_migracoes.py` -- ate' entao nada
-        # o cobria no CI, que nao tem Postgres.
+        # o cobria no CI, que ate' 24/10/2026 nao tinha Postgres.
         "constraints CHECK": 14,
         # 12 desde a D30: `sessoes.id_usuario`, a UNICA FK do modelo com ON DELETE CASCADE
         # (sessao nao e' registro a preservar, e sessao orfa decidindo acesso e' o que nao
@@ -2025,7 +2025,8 @@ def test_o_sentinela_de_ausente_nao_e_False() -> None:
 # `alinhar-senhas`: a classificacao, SEM banco (25/09/2026)
 # --------------------------------------------------------------------------------------
 #
-# O CI nao tem Postgres, e o unico teste do comando era de integracao -- pulava sem banco.
+# Ate' 24/10/2026 o CI nao tinha Postgres, e o unico teste do comando era de integracao -- pulava sem
+# banco.
 # Ou seja, o comando que se roda contra o banco de PRODUCAO, no passo que o runbook chama de
 # "o unico que nao da' para desfazer depois", chegava a' VPS sem verificacao automatica.
 # A decisao foi extraida para `classificar_para_alinhar` e e' o que estes testes cobrem.

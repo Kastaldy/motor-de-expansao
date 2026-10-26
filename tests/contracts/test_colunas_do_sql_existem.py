@@ -1,6 +1,6 @@
 """Toda coluna citada no SQL do motor existe nas migrations. Offline, sem Postgres.
 
-POR QUE ELE EXISTE. O CI nao tem banco (decisao de 25/08), entao nenhuma consulta parte do
+POR QUE ELE EXISTE. A suite unitaria nao tem banco (decisao de 25/08), entao nenhuma consulta parte do
 desenvolvimento: o `test_migracoes.py` ja' passa o parser real do PostgreSQL em cada
 migration, mas **sintaxe valida nao e' coluna existente**. Duas vezes em setembro escrevi
 SQL que o parser aceitaria e o banco recusa -- `eventos.id` (a coluna e' `id_evento`) e

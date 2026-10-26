@@ -20,7 +20,8 @@ import {
   mensagemDoErro,
   type EstadoDaSenha,
 } from './lib/troca-de-senha'
-import { api, ApiError } from './lib/api'
+import { api, ApiError, repetirEm503 } from './lib/api'
+import { definirAlcances } from './lib/alcance'
 import { assinarQuedaDeSessao, entrarNovamente } from './lib/sessao'
 import type { AlvoCaptura } from './lib/captura-mapa'
 import {
@@ -90,7 +91,8 @@ export default function App() {
   const [cienteConfidencialidade, setCienteConfidencialidade] = useState(false)
 
   /* Troca da própria senha (D26). Três estados, e cada um responde outra pergunta:
-     `estadoSenha` é o FATO vindo de `/api/me` (`null` = não sei, e não sei nunca vira
+     `estadoSenha` é o FATO vindo de `/api/me`, que desde 24/10/2026 só o manda com o
+     login próprio LIGADO (`null` = não sei, e não sei nunca vira
      oferta); `senhaDispensada` é o "agora não" DESTA carga, no molde do aviso de
      confidencialidade — sem depósito no navegador, porque a oferta deve voltar na
      próxima entrada de quem ainda não trocou; `senhaAberta` é a pessoa tendo clicado
@@ -118,9 +120,28 @@ export default function App() {
    */
   const [abas, setAbas] = useState<Set<Aba> | null>(null)
   useEffect(() => {
-    api
-      .me()
+    /* `vivo` corta as novas tentativas se o App desmontar no meio da espera — o StrictMode
+       do dev monta, desmonta e monta de novo, e a resposta tardia da primeira montagem não
+       pode escrever no estado da segunda. */
+    let vivo = true
+    /* NOVA TENTATIVA EM 503 (#463, follow-up A). Com o banco vivo mas OCUPADO, o `/api/me`
+       responde 503 — o mesmo do gate — em vez de esconder as abas sensíveis. Uma chamada só
+       deixaria a pessoa sem saber as próprias abas até recarregar a página; `repetirEm503`
+       tenta de novo depois do `Retry-After`, sem segurar a tela: enquanto não sabe, `abas`
+       segue `null` e o app abre como abriria sem `/api/me`. */
+    repetirEm503(() => api.me(), { vivo: () => vivo })
       .then((r) => {
+        if (!vivo) return
+        /* Os alcances do ponto (DEC-074) DE NOVO, e não é redundância. Se o `/api/me` do
+           `main.tsx` caiu num 503 (banco vivo mas ocupado) e a nova tentativa daqui acertou,
+           o bootstrap deixou só o raio de 1 km: o de 2 km e os de carro sumiam do seletor
+           até recarregar a página — até 24/10/2026 o `/api/me` respondia 200 nesse caso, e
+           o defeito não existia. Com o bootstrap bem-sucedido, a memo de `api.me` devolve o
+           MESMO payload e instalar de novo não muda nada. Perfil, aviso e moeda da
+           viabilidade ficam FORA de propósito: são do país, e o país só vale antes de a
+           árvore ser importada (ver `main.tsx`) — instalá-los agora misturaria dois países
+           numa instância cujo bootstrap falhou. */
+        definirAlcances(r.alcances)
         const s = abasDoPayload(r)
         setAbas(s)
         setEstadoSenha(estadoDaSenhaDoPayload(r))
@@ -129,12 +150,22 @@ export default function App() {
         if (s) setTela((t) => (telaLiberada(t, s) ? t : telaInicial(s)))
       })
       .catch(() => {
-        /* Sem `/api/me` -> segue sem controle; o backend é quem barra de verdade, rota a
-           rota. NÃO há desvio para tela de entrada aqui, e isso é a arquitetura da main:
-           quem não entrou não chega à SPA — o `forward_auth` do Caddy barra na BORDA e
-           manda para `entrar.html`. A DEC-067 mantém esse desenho depois do corte,
-           trocando só para onde o `forward_auth` aponta. */
+        /* Sem `/api/me` (ou com um 503 que não passou nas tentativas) -> segue sem controle;
+           o backend é quem barra de verdade, rota a rota.
+
+           NÃO HÁ DESVIO PARA A TELA DE ENTRAR AQUI, e não pode haver: este `catch` recebe
+           qualquer falha — rede, 503, tempo esgotado —, e só uma delas é sessão. Quem leva à
+           tela de entrar é `lib/sessao.ts`: um 401 em `/api/*` vira `relatarAcessoNegado()`
+           dentro do `pedir`, o App monta o `AvisoSessao`, e o botão dele vai a
+           `/entrar.html`. Isso importa DEPOIS do corte (DEC-067,
+           `deploy/caddy/piloto-br.Caddyfile.template`): o matcher `@protegido` cobre só
+           `/api/*`, então quem não entrou RECEBE a SPA, e é o 401 do primeiro `/api/me` que o
+           manda entrar. Antes do corte o `forward_auth` do Authelia cobre o host inteiro, e
+           quem não entrou nem chega aqui. */
       })
+    return () => {
+      vivo = false
+    }
   }, [])
 
   /**
@@ -678,8 +709,12 @@ export default function App() {
         tema={tema}
         onTema={trocarTema}
         pais={pais}
-        /* Sem `estadoSenha` não há atalho: o banco não respondeu, ou a pessoa não tem
-           cadastro. Um cadeado que abre um formulário fadado a 409 é pior que nenhum. */
+        /* Sem `estadoSenha` não há atalho: o login próprio está desligado, o banco não
+           respondeu, ou a pessoa não tem cadastro. O primeiro é o estado de produção até o
+           corte do P19 (decisão do dono, 24/10/2026): com a entrada pelo Authelia, o
+           cadeado pedia a senha inicial do banco — sorteada, ninguém a conhece — e recusava
+           todo mundo; o backend deixou de mandar o campo. Um cadeado que abre um formulário
+           fadado à recusa é pior que nenhum. */
         onSenha={estadoSenha ? () => setSenhaAberta(true) : undefined}
       />
 
@@ -943,6 +978,9 @@ export default function App() {
         (senhaAberta || deveOferecerTroca(estadoSenha, senhaDispensada)) && (
           <TrocaDeSenha
             estado={estadoSenha}
+            /* Esta tela só aparece com o login próprio ligado, e com ele a troca derruba as
+               sessões abertas — inclusive a desta aba: o fim é entrar de novo. */
+            onEntrarDeNovo={entrarNovamente}
             onDispensar={() => {
               setSenhaAberta(false)
               setSenhaDispensada(true)
@@ -957,6 +995,15 @@ export default function App() {
                    trocar. A memo existe de propósito (DEC-027: duas chamadas inflariam a
                    trilha), então quem se ajusta é o estado, não o cliente. */
                 setEstadoSenha({ deveTrocar: false, propria: true })
+                /* E o pop-up FICA MONTADO até a pessoa sair por ele. Aberto pelo convite
+                   (`senhaAberta` falso), o `deveTrocar: false` acima o desmontava no MESMO
+                   render, e a tela de sucesso — "Entre de novo com a senha nova" — nunca
+                   aparecia: com o login próprio ligado a troca derruba a sessão desta aba, e
+                   a pessoa só descobria no clique seguinte, pelo aviso de "Sessão encerrada"
+                   ("Seu acesso expirou"), logo depois de trocar a senha. `senhaAberta` é o
+                   estado de quem pediu o formulário; Esc e o clique no fundo continuam
+                   fechando pelo `onDispensar`. */
+                setSenhaAberta(true)
                 return null
               } catch (e) {
                 const erro = e as { status?: number; message?: string }

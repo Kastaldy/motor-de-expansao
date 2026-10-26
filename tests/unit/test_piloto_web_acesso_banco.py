@@ -22,12 +22,16 @@ if str(_SERVER) not in sys.path:
 import acesso  # noqa: E402
 
 from motor_expansao.db import rbac  # noqa: E402
+from motor_expansao.db import sessoes as db_sessoes  # noqa: E402
 
 
 @pytest.fixture(autouse=True)
 def _sem_producao(monkeypatch: pytest.MonkeyPatch) -> Any:
     monkeypatch.delenv("MOTOR_CADASTRO_DIR", raising=False)
     monkeypatch.delenv("MOTOR_ACESSO_FAIL_CLOSED", raising=False)
+    # Login proprio DESLIGADO por padrao: e' o estado de producao ate' o corte do P19, e um
+    # `MOTOR_AUTENTICACAO_PROPRIA` exportado na maquina de quem roda mudaria os testes de senha.
+    monkeypatch.delenv(db_sessoes.ENV_AUTENTICACAO_PROPRIA, raising=False)
     yield
 
 
@@ -463,6 +467,7 @@ def test_o_estado_da_senha_NUNCA_derruba_o_me(monkeypatch: pytest.MonkeyPatch) -
 
     monkeypatch.setattr(acesso, "banco_no_comando", lambda: True)
     monkeypatch.setattr(acesso, "abas_do_usuario_por_banco", lambda _u: ["mapa"])
+    monkeypatch.setenv(db_sessoes.ENV_AUTENTICACAO_PROPRIA, "1")
 
     for explosao in (
         RuntimeError("banco fora"),
@@ -494,6 +499,9 @@ def test_sem_banco_no_comando_nem_consulta_o_estado(monkeypatch: pytest.MonkeyPa
 
     monkeypatch.setattr(acesso, "banco_no_comando", lambda: False)
     monkeypatch.setattr(acesso, "abas_do_usuario", lambda _u: ["mapa"])
+    # Chave LIGADA de proposito: o que este teste isola e' a guarda do banco, e com a chave
+    # desligada a outra guarda pararia a consulta antes -- o teste passaria pela razao errada.
+    monkeypatch.setenv(db_sessoes.ENV_AUTENTICACAO_PROPRIA, "1")
 
     consultas: list[str] = []
     monkeypatch.setattr(db_usuarios, "estado_da_senha", lambda login: consultas.append(login))
@@ -519,6 +527,7 @@ def test_em_DEV_o_estado_da_senha_sai_sem_Remote_User(monkeypatch: pytest.Monkey
     monkeypatch.delenv(rbac.ENV_DEV_IDENTIDADE, raising=False)
     monkeypatch.setattr(acesso, "banco_no_comando", lambda: True)
     monkeypatch.setattr(acesso, "abas_do_usuario_por_banco", lambda _u: ["mapa"])
+    monkeypatch.setenv(db_sessoes.ENV_AUTENTICACAO_PROPRIA, "1")
     vistos: list[str] = []
 
     def _estado(login: str) -> dict[str, bool]:
@@ -546,6 +555,7 @@ def test_o_header_VENCE_a_env_de_dev(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv(rbac.ENV_SINAL_PRODUCAO, raising=False)
     monkeypatch.setattr(acesso, "banco_no_comando", lambda: True)
     monkeypatch.setattr(acesso, "abas_do_usuario_por_banco", lambda _u: ["mapa"])
+    monkeypatch.setenv(db_sessoes.ENV_AUTENTICACAO_PROPRIA, "1")
     vistos: list[str] = []
 
     def _estado(login: str) -> None:
@@ -555,3 +565,202 @@ def test_o_header_VENCE_a_env_de_dev(monkeypatch: pytest.MonkeyPatch) -> None:
 
     pilot_app.me(remote_user="will.lindo")
     assert vistos == ["will.lindo"]
+
+
+# --------------------------------------------------------------------------------------
+# O estado da senha so' com o login proprio LIGADO (decisao do dono, 24/10/2026)
+# --------------------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("banco", "chave", "manda"),
+    [(True, True, True), (True, False, False), (False, True, False), (False, False, False)],
+)
+def test_o_estado_da_senha_so_sai_com_o_banco_no_comando_E_o_login_proprio_ligado(
+    monkeypatch: pytest.MonkeyPatch, banco: bool, chave: bool, manda: bool
+) -> None:
+    """O cadeado do Dock e o convite de troca nascem desta chave -- e com o login proprio
+    desligado eles mentiam: quem confere a senha e' o Authelia, e o cadeado pedia a senha
+    INICIAL do banco, que em producao foi SORTEADA. Recusava todo mundo.
+
+    O duble REGISTRA as consultas: sem a chave, o banco nem e' perguntado (uma ida a menos por
+    abertura de app, no ramo em que ela seria inutil).
+    """
+    import app as pilot_app
+
+    from motor_expansao.db import usuarios as db_usuarios
+
+    monkeypatch.setattr(acesso, "banco_no_comando", lambda: banco)
+    monkeypatch.setattr(acesso, "abas_do_usuario_por_banco", lambda _u: ["mapa"])
+    monkeypatch.setattr(acesso, "abas_do_usuario", lambda _u: ["mapa"])
+    if chave:
+        monkeypatch.setenv(db_sessoes.ENV_AUTENTICACAO_PROPRIA, "1")
+    consultas: list[str] = []
+
+    def _estado(login: str) -> dict[str, bool]:
+        consultas.append(login)
+        return {"deve_trocar": True, "propria": False}
+
+    monkeypatch.setattr(db_usuarios, "estado_da_senha", _estado)
+
+    payload = pilot_app.me(remote_user="ana")
+    assert ("senha" in payload) is manda
+    assert consultas == (["ana"] if manda else [])
+
+
+# --------------------------------------------------------------------------------------
+# /api/me SEM PROVA DE QUEDA: a regua do gate (#463, follow-up A)
+# --------------------------------------------------------------------------------------
+
+
+def _sem_prova(monkeypatch: pytest.MonkeyPatch) -> None:
+    """`rbac.identidade` com o banco VIVO e ocupado: pool saturado, sem recusa de conexao."""
+    from motor_expansao import db
+
+    def ocupado(_remote_user: object) -> Any:
+        raise db.BancoSemProvaDeQueda("PoolTimeout: couldn't get a connection after 5.00 sec")
+
+    monkeypatch.setattr(rbac, "identidade", ocupado)
+
+
+def _fora(monkeypatch: pytest.MonkeyPatch) -> None:
+    """`rbac.identidade` com o banco FORA, e a queda provada."""
+    from motor_expansao import db
+
+    def fora(_remote_user: object) -> Any:
+        raise db.BancoIndisponivel("connection refused")
+
+    monkeypatch.setattr(rbac, "identidade", fora)
+
+
+@pytest.mark.parametrize("producao", [True, False])
+def test_sem_prova_de_queda_o_me_nao_esconde_aba_nenhuma(
+    monkeypatch: pytest.MonkeyPatch, producao: bool
+) -> None:
+    """O defeito: `BancoSemProvaDeQueda` e' SUBCLASSE de `BancoIndisponivel`, e o `except`
+    generico pegava as duas como "banco fora". Com o banco VIVO e ocupado, o `/api/me` escondia
+    executiva, imobiliaria e viabilidade de quem as tem -- e a SPA tirava a pessoa da tela dela.
+    A regra agora e' a do gate, nos dois ambientes: sem prova, levanta; quem chama responde 503.
+    """
+    _sem_prova(monkeypatch)
+    if producao:
+        monkeypatch.setenv("MOTOR_CADASTRO_DIR", "/app/cadastro")
+    monkeypatch.setattr(acesso, "banco_em_falha", lambda: False)
+    with pytest.raises(acesso.RbacSemProvaDeQueda):
+        acesso.abas_do_usuario_por_banco("ana")
+
+
+def test_sem_prova_nesta_chamada_mas_com_a_queda_ja_provada_o_me_degrada(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A mesma excecao do gate: se OUTRA chamada ja' provou a queda (e nenhuma terminou bem
+    desde entao), o `PoolTimeout` seguinte nao precisa provar de novo -- degradacao de sempre."""
+    _sem_prova(monkeypatch)
+    monkeypatch.setenv("MOTOR_CADASTRO_DIR", "/app/cadastro")
+    monkeypatch.setattr(acesso, "banco_em_falha", lambda: True)
+    assert acesso.abas_do_usuario_por_banco("ana") == acesso.ABAS_VALIDAS - acesso.ABAS_SENSIVEIS
+
+
+def test_a_interface_e_o_portao_contam_a_MESMA_historia(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A razao de existir do follow-up A. Para a mesma falha e a mesma pessoa, o gate e o
+    `/api/me` decidem igual: sem prova, os dois levantam; com a queda provada, os dois degradam."""
+    _sem_prova(monkeypatch)
+    monkeypatch.setenv("MOTOR_CADASTRO_DIR", "/app/cadastro")
+
+    monkeypatch.setattr(acesso, "banco_em_falha", lambda: False)
+    with pytest.raises(acesso.RbacSemProvaDeQueda):
+        acesso.motivo_bloqueio_por_banco("/api/rede/carteira", "GET", "ana")
+    with pytest.raises(acesso.RbacSemProvaDeQueda):
+        acesso.abas_do_usuario_por_banco("ana")
+
+    monkeypatch.setattr(acesso, "banco_em_falha", lambda: True)
+    assert acesso.motivo_bloqueio_por_banco("/api/rede/carteira", "GET", "ana") is not None
+    assert "executiva" not in acesso.abas_do_usuario_por_banco("ana")
+
+
+def test_o_me_responde_o_MESMO_503_do_gate(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Mesmo status, mesma frase, mesmo `Retry-After` -- a SPA mostra a mesma coisa venha a
+    resposta de onde vier, e e' pelo `Retry-After` que ela sabe quanto esperar para tentar."""
+    import json
+
+    import app as pilot_app
+    from fastapi import HTTPException
+
+    _sem_prova(monkeypatch)
+    monkeypatch.setattr(acesso, "banco_no_comando", lambda: True)
+    monkeypatch.setattr(acesso, "banco_em_falha", lambda: False)
+    with pytest.raises(HTTPException) as caiu:
+        pilot_app.me(remote_user="ana")
+    gate = pilot_app._piloto_ocupado()
+    assert caiu.value.status_code == gate.status_code == 503
+    assert caiu.value.detail == json.loads(bytes(gate.body))["detail"]
+    assert caiu.value.headers == {"Retry-After": gate.headers["retry-after"]}
+
+
+def test_o_log_do_me_e_UMA_linha_por_episodio(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    """Antes, um ERROR a cada abertura de SPA durante o incidente. Agora: uma linha por CASO no
+    episodio -- outra so' se ele muda de caso, porque ai' muda o que a pessoa recebe (503 x abas
+    escondidas) -- e o episodio acaba quando o RBAC responde de novo."""
+    import logging
+
+    import app as pilot_app
+    from fastapi import HTTPException
+
+    monkeypatch.setattr(acesso, "_episodio_rbac_no_me", None)
+    monkeypatch.setenv("MOTOR_CADASTRO_DIR", "/app/cadastro")
+    monkeypatch.setattr(acesso, "banco_no_comando", lambda: True)
+    for nome in ("piloto.acesso", "piloto.falha"):
+        caplog.set_level(logging.WARNING, logger=nome)
+
+    def linhas(trecho: str) -> int:
+        return sum(1 for r in caplog.records if trecho in r.getMessage())
+
+    # Banco ocupado, sem prova: 503 a cada pedido, UMA linha.
+    _sem_prova(monkeypatch)
+    monkeypatch.setattr(acesso, "banco_em_falha", lambda: False)
+    for _ in range(20):
+        with pytest.raises(HTTPException):
+            pilot_app.me(remote_user="ana")
+    assert linhas("/api/me: o RBAC nao respondeu") == 1
+
+    # A queda fica provada: a resposta MUDA (degradacao), e isso vale UMA linha a mais.
+    _fora(monkeypatch)
+    for _ in range(20):
+        pilot_app.me(remote_user="ana")
+    assert linhas("RBAC indisponivel no /api/me") == 1
+
+    # O banco volta e cai de novo: novo episodio, nova linha.
+    _identidade(monkeypatch, {"territorio.explorar"})
+    pilot_app.me(remote_user="ana")
+    _fora(monkeypatch)
+    pilot_app.me(remote_user="ana")
+    assert linhas("RBAC indisponivel no /api/me") == 2
+    assert linhas("/api/me: o RBAC nao respondeu") == 1
+
+
+def test_o_episodio_do_me_fecha_tambem_quando_o_GATE_ve_o_banco_voltar(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    """Quem navega sem recarregar a SPA so' toca o gate. Se so' o `/api/me` fechasse o episodio
+    dele, o banco voltaria, cairia de novo, e a nova queda chegaria MUDA ao log do `/api/me`."""
+    import logging
+
+    monkeypatch.setattr(acesso, "_episodio_rbac_no_me", None)
+    monkeypatch.setenv("MOTOR_CADASTRO_DIR", "/app/cadastro")
+    caplog.set_level(logging.ERROR, logger="piloto.acesso")
+
+    def linhas() -> int:
+        return sum(1 for r in caplog.records if "RBAC indisponivel no /api/me" in r.getMessage())
+
+    _fora(monkeypatch)
+    acesso.abas_do_usuario_por_banco("ana")
+    assert linhas() == 1
+
+    _identidade(monkeypatch, {"territorio.explorar"})
+    assert acesso.motivo_bloqueio_por_banco("/api/uf/SP", "GET", "ana") is None  # o gate ve' a volta
+
+    _fora(monkeypatch)
+    acesso.abas_do_usuario_por_banco("ana")
+    assert linhas() == 2

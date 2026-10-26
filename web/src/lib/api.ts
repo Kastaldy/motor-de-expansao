@@ -323,6 +323,64 @@ export function baixar(blob: Blob, filename: string): void {
   }, VIDA_DA_BLOB_URL_MS)
 }
 
+/**
+ * Quanto esperar antes de repetir um pedido que voltou **503**: os 2 s do `Retry-After` que o
+ * servidor manda com o 503 de "piloto ocupado" (`RETRY_AFTER_PILOTO_OCUPADO_S`, em
+ * `web/server/app.py`). `pedir` não expõe os cabeçalhos, então o número é ESPELHO — mude os
+ * dois juntos.
+ */
+export const ESPERA_NOVA_TENTATIVA_503_MS = 2_000
+
+/** Quantas vezes repetir depois do primeiro 503: três tentativas no total, ~4 s de espera. */
+export const NOVAS_TENTATIVAS_503 = 2
+
+/**
+ * Repete `pedido` enquanto ele responder **503**, com uma espera curta entre as tentativas.
+ *
+ * POR QUE EXISTE (#463, follow-up A). Com o banco VIVO mas ocupado (pool saturado, lock), o
+ * `/api/me` passou a responder o mesmo 503 do gate em vez de esconder as abas sensíveis — e a
+ * SPA, que pedia `/api/me` uma vez só, ficaria sem saber as abas até recarregar a página. Banco
+ * ocupado passa em segundos; repetir é o que o `Retry-After` pede.
+ *
+ * SÓ 503, de propósito. 401 é sessão (quem cuida é `lib/sessao.ts`), 403 e 404 são respostas
+ * definitivas, e falha de rede já dispara a sonda de sessão — repetir qualquer um deles seria
+ * insistir numa resposta que não muda em 2 s.
+ *
+ * NÃO SEGURA A TELA. Quem chama desenha com o que já tem enquanto espera — no `App`, `abas`
+ * segue `null` ("não sei", o mesmo de sem `/api/me`), e o backend continua barrando rota a
+ * rota. `vivo` corta as novas tentativas se quem pediu desmontou no meio da espera; desistir
+ * devolve o último 503, para quem chama tratar como sempre tratou.
+ */
+export async function repetirEm503<T>(
+  pedido: () => Promise<T>,
+  {
+    tentativas = NOVAS_TENTATIVAS_503,
+    esperaMs = ESPERA_NOVA_TENTATIVA_503_MS,
+    esperar = (ms: number) => new Promise<void>((resolver) => setTimeout(resolver, ms)),
+    vivo = () => true,
+  }: {
+    tentativas?: number
+    esperaMs?: number
+    esperar?: (ms: number) => Promise<void>
+    vivo?: () => boolean
+  } = {},
+): Promise<T> {
+  let ultimo: unknown
+  for (let feitas = 0; feitas <= tentativas; feitas++) {
+    if (feitas > 0) {
+      await esperar(esperaMs)
+      if (!vivo()) break
+    }
+    try {
+      return await pedido()
+    } catch (e) {
+      if (!(e instanceof ApiError) || e.status !== 503) throw e
+      ultimo = e
+    }
+  }
+  throw ultimo
+}
+
 /** Resolução única de `/api/me` por carga de página — ver o comentário em `api.me`. */
 let _me: Promise<MePayload> | null = null
 
@@ -344,7 +402,10 @@ export const api = {
    *  do `App.tsx`, que lê as abas. Sem a memo seriam duas requisições por carga — e
    *  `/api/me` é gravada na trilha de acesso (DEC-027), então a duplicata inflaria a
    *  contagem de ações que a aba Acessos publica. Falha NÃO é memoizada: o `catch`
-   *  limpa, para um erro de rede na abertura não condenar a sessão inteira. */
+   *  limpa, para um erro de rede na abertura não condenar a sessão inteira.
+   *
+   *  **503** é banco vivo mas ocupado (#463, follow-up A): o servidor não esconde aba
+   *  nenhuma, e quem chama repete com `repetirEm503` — é o que o `App` faz. */
   me: (): Promise<MePayload> =>
     (_me ??= pedir<MePayload>('/api/me', {}, 10_000).catch((e) => {
       _me = null
@@ -474,12 +535,15 @@ export const api = {
    * Cria uma pessoa (D26). O path é sem barra final: é ele que o mapa de acesso casa.
    *
    * Não há campo de senha — quem nasce aqui recebe a senha inicial compartilhada
-   * (`MOTOR_SENHA_INICIAL` no servidor) e troca no primeiro acesso.
+   * (`MOTOR_SENHA_INICIAL` no servidor). A resposta diz se o login próprio está ligado
+   * (`login_proprio`), e é por ele que a tela escolhe o recado: desligado, a pessoa só
+   * entra depois do cadastro no Authelia; ligado, entra com a inicial e é levada a trocá-la.
    *
    * Erros que a tela precisa distinguir: **409** é login ou e-mail já em uso por
    * alguém ATIVO (e a saída costuma ser reativar quem saiu, não criar outro), **422**
    * é perfil inexistente ou campo malformado, e **503** é o servidor sem
-   * `MOTOR_SENHA_INICIAL` ou sem o extra `auth` — nos dois casos, nada foi criado.
+   * `MOTOR_SENHA_INICIAL`, sem o extra `auth` ou sem banco — os dois primeiros recusam
+   * antes de gravar; o banco caindo no meio não dá essa garantia.
    */
   adminCriarUsuario: (novo: AdminUsuarioNovo) =>
     pedir<AdminCriacao>(
@@ -501,7 +565,9 @@ export const api = {
    *
    * Erros: **403** é senha atual errada, **422** é a nova reprovada pela política
    * (`MINIMO_DE_CARACTERES` de `lib/troca-de-senha.ts`, e não pode ser a inicial
-   * compartilhada), **409** é não ter cadastro no banco.
+   * compartilhada), **409** é não ter cadastro no banco, e **404** é o login próprio
+   * DESLIGADO neste ambiente (decisão do dono, 24/10/2026) — com ele desligado a SPA nem
+   * oferece a troca, porque o `/api/me` não manda o estado da senha.
    */
   trocarMinhaSenha: (senhaAtual: string, novaSenha: string) =>
     pedir<MinhaSenhaTrocada>(
@@ -520,6 +586,9 @@ export const api = {
    * Os dois campos são independentes: mandar só `perfil` não mexe no status, e
    * vice-versa. Cada um vira seu próprio evento no banco, porque "virou Growth" e
    * "foi desativado" respondem a perguntas diferentes na auditoria.
+   *
+   * Os dois juntos vão numa transação só no servidor (#463, follow-up B): ou as duas
+   * mudanças ficam gravadas, ou nenhuma.
    *
    * Erros que a tela precisa distinguir: **403** é a trava de auto-alvo (ninguém muda
    * o próprio acesso), **409** é estar na allowlist do painel sem ter cadastro no
@@ -540,12 +609,14 @@ export const api = {
     ),
 
   /**
-   * Devolve UMA pessoa à senha inicial compartilhada e liga a marca de troca (15/09).
+   * Gera uma senha TEMPORÁRIA só desta pessoa e liga a marca de troca (15/09; aleatória
+   * desde a D31, 18/09 — antes devolvia a inicial compartilhada).
    *
-   * Sem corpo de propósito: o admin não escolhe nem conhece a senha nova de ninguém.
+   * Sem corpo de propósito: o admin não escolhe a senha nova de ninguém.
    * Erros: **403** é a trava de auto-alvo (a própria senha se troca em `/api/me/senha`),
-   * **404** é gente que não existe, **503** é banco fora do ar ou o servidor sem
-   * `MOTOR_SENHA_INICIAL` — nos dois casos, nada foi alterado.
+   * **404** é gente que não existe OU o login próprio desligado neste ambiente (aí com
+   * texto próprio, e a tela nem mostra o botão), **503** é banco fora do ar ou o servidor
+   * sem o extra de hash.
    */
   adminRedefinirSenha: (idUsuario: number) =>
     pedir<AdminSenhaRedefinida>(
@@ -556,7 +627,8 @@ export const api = {
 
   /**
    * Liga a marca de troca de UMA pessoa sem mexer na senha dela (15/09). `mudou: false`
-   * quando a troca já estava pedida. Mesmos erros de auto-alvo e de banco do redefinir.
+   * quando a troca já estava pedida. Mesmos erros de auto-alvo, de login próprio
+   * desligado (404 com texto próprio) e de banco do redefinir.
    */
   adminExigirTroca: (idUsuario: number) =>
     pedir<AdminTrocaExigida>(

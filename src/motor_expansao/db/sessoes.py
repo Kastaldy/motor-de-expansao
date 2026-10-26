@@ -1,11 +1,18 @@
 """Sessao propria do piloto: abrir, validar, tocar e revogar (D30 + decisao 2 do P19).
 
-O QUE ESTE MODULO E', E O QUE ELE AINDA NAO E'
----------------------------------------------
+O QUE ESTE MODULO E', E QUEM O CHAMA
+------------------------------------
 E' a camada de banco da sessao, e NADA MAIS. Nao ha' rota, nao ha' middleware e nao ha'
-cookie aqui -- quem chama e' que decide isso. Enquanto o Authelia autentica (ate' o corte
-do P19), este modulo existe, e' testado e NAO E' CHAMADO POR NINGUEM no caminho de
-requisicao. E' o mesmo recorte da D26, que entregou `senhas.py` antes de existir login.
+cookie aqui -- quem chama e' que decide isso. Quem chama, no caminho de requisicao, mora em
+`web/server/app.py`: o portao de sessao (`_portao_de_sessao`), as rotas `/api/login`,
+`/api/logout` e `/api/verify`, e as duas que trocam CREDENCIAL -- `PATCH /api/me/senha` e o
+`redefinir-senha` do painel --, que derrubam as sessoes da pessoa por `_derrubar_sessoes`.
+Com a chave abaixo DESLIGADA -- o estado de producao ate' o corte do P19 --, TODOS param na
+leitura dela: o unico contato de uma requisicao com este modulo e' `ligada()`, que e' uma
+env e nao toca o banco. (Ate' 24/10/2026 as duas de credencial eram a excecao: chamavam
+`revogar_todas_do_usuario` com a chave desligada; desde entao recusam antes, com 404.) Fora
+da requisicao, o expurgo da origem roda pelo CLI do dono do schema
+(`python -m motor_expansao.db expurgar`, cron diario).
 
 A CHAVE DORMENTE, e por que ela e' obrigatoria
 ----------------------------------------------
@@ -47,10 +54,12 @@ RISCO DECLARADO: DUAS REDACOES DA MESMA REGRA
 mesmos JOINs, mais a juncao com `sessoes` e o filtro de sessao viva. Duas redacoes da mesma
 regra nao dao erro -- desencontram em SILENCIO, que e' a licao da DEC-044 ("tres redacoes
 da mesma regra... a terceira estava para nascer"). Escolhi NAO mexer no `rbac.py` hoje,
-porque ele esta' no caminho de autorizacao VIVO e este modulo nao e' chamado por ninguem
-ainda. O preco disso e' uma trava por teste: `test_db_sessoes.py` compara a lista de SELECT
-e os JOINs das duas constantes e falha se uma mudar sem a outra. No dia em que o portao
-entrar, a unificacao e' o primeiro passo -- e ai a trava sai junto.
+porque ele esta' no caminho de autorizacao VIVO, e este modulo, com a chave DESLIGADA, nao
+passa da leitura de `ligada()` em requisicao nenhuma (ver o topo). O preco disso e' uma
+trava por teste: `test_db_sessoes.py` compara a lista de SELECT e os JOINs das duas
+constantes e falha se uma mudar sem a outra. No dia em que o portao for LIGADO -- o codigo
+ja' existe (`_portao_de_sessao`), dormente atras da chave --, a unificacao e' o primeiro
+passo, e ai a trava sai junto.
 """
 
 from __future__ import annotations
@@ -66,8 +75,8 @@ from .rbac import Identidade
 
 _LOG = logging.getLogger("motor.db.sessoes")
 
-#: Liga a autenticacao propria. AUSENTE ou vazia = Authelia segue autenticando, e este
-#: modulo nao e' consultado por ninguem. Ver "A CHAVE DORMENTE" no topo.
+#: Liga a autenticacao propria. AUSENTE ou vazia = Authelia segue autenticando, e nenhuma
+#: requisicao passa da leitura desta chave. Ver "A CHAVE DORMENTE" no topo.
 ENV_AUTENTICACAO_PROPRIA = "MOTOR_AUTENTICACAO_PROPRIA"
 
 #: Decisao 2 do P19 (17/09/2026) reproduzia o Authelia (`expiration: 8h`, `inactivity: 30m`).
@@ -120,6 +129,10 @@ TETO_USER_AGENT = 200
 #: mesmo prazo que a DEC-027 ja' pratica para a trilha de acesso em arquivo, que guarda o
 #: MESMO dado (IP e user-agent). Dois prazos diferentes para o mesmo dado seriam duas
 #: politicas de privacidade no mesmo sistema.
+#:
+#: A igualdade ACABOU em 20/10/2026: a emenda 2 da DEC-027 tirou o prazo da trilha em arquivo
+#: e deixou este como estava (o escopo dela era so' a trilha). Sao duas politicas desde entao,
+#: divergencia declarada na propria emenda; os 90 dias daqui seguem valendo pelo P15.
 RETENCAO_ORIGEM_DIAS = 90
 
 #: ANONIMIZA, nao apaga. O que tem prazo e' o DADO PESSOAL, nao o registro da sessao: zeradas
@@ -270,9 +283,11 @@ def abrir(
     vulnerabilidade real no pentest de 19/08/2026). Reimplementar a resolucao aqui seria uma
     segunda redacao da mesma regra -- e a segunda e' a que esquece a licao.
 
-    **O `ip` e' dado pessoal e a retencao segue em aberto (P15)**, com janela declarada no
-    1o deploy. Agrava: revogar sessao e' `UPDATE`, nunca `DELETE`, entao nenhuma linha sai
-    daqui sozinha. Ver a 020.
+    **O `ip` e' dado pessoal, e tem PRAZO desde 23/09/2026**: o P15 fechou a retencao em
+    `RETENCAO_ORIGEM_DIAS` (90 dias), aplicada pelo expurgo diario (`SQL_EXPURGAR_ORIGEM`), que
+    ANONIMIZA as duas colunas em vez de apagar a linha -- revogar sessao e' `UPDATE`, nunca
+    `DELETE`, entao nenhuma linha sai daqui sozinha. O que segue em aberto no P15 e' a BASE
+    LEGAL, que e' decisao juridica e nao tecnica. Ver a 020 e `docs/banco_deploy.md` §9.1.
     """
     token = novo_token()
     agente = (user_agent or "").strip()[:TETO_USER_AGENT] or None

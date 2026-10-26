@@ -61,7 +61,10 @@ export function alcancesDisponiveis(): readonly Alcance[] {
 }
 
 /**
- * Instala a lista vinda do `/api/me` (`alcances`). Chamado UMA vez, pelo `main.tsx`.
+ * Instala a lista vinda do `/api/me` (`alcances`). Chamado pelo `main.tsx` no bootstrap e,
+ * de novo, pelo `App` quando a nova tentativa do `/api/me` acerta depois de um 503 (banco
+ * vivo mas ocupado): sem a segunda chamada, o 503 da abertura deixava só o raio de 1 km até
+ * recarregar a página. Idempotente — a mesma lista instalada duas vezes não muda nada.
  *
  * Defensivo: chave ausente ou malformada deixa só o raio de 1 km e não derruba o app;
  * valor desconhecido é ignorado (um servidor mais novo pode oferecer um alcance que esta

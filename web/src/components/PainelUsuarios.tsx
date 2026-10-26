@@ -1,8 +1,19 @@
-import { type CSSProperties, useCallback, useEffect, useState } from 'react'
+import { type CSSProperties, Fragment, useCallback, useEffect, useState } from 'react'
 
 import { api, ApiError } from '../lib/api'
 import type { AcaoAdmin } from '../lib/confirmacao-admin'
 import { montarConfirmacao, rotuloPerfil } from '../lib/confirmacao-admin'
+import {
+  ARQUIVO_AUTHELIA,
+  COLUNA_SENHA,
+  dicaDoFormulario,
+  loginProprioDoPayload,
+  mensagemDeErroDoPainel,
+  recadoDaCriacao,
+  rodapeDoPainel,
+  tituloDoBotaoCriar,
+  tituloDoSeloDaSenha,
+} from '../lib/painel-usuarios'
 import {
   AJUDA_GERAR_OUTRA,
   ROTULO_GERAR_OUTRA,
@@ -33,11 +44,19 @@ import { Aviso, Botao, Chip, Spinner } from './primitives'
    propósito: o admin não deve conhecer a senha de outra pessoa, senão qualquer ação
    daquela conta fica contestável — o oposto do que o D17 sustenta.
 
-   O QUE AINDA NÃO ESTÁ RESOLVIDO, e a tela diz em voz alta DEPOIS DE CRIAR: enquanto
-   o Authelia autenticar (P19 decidido, não executado), a pessoa também precisa nascer
-   no `users_database.yml` do servidor. Uma linha em `usuarios` sem a entrada de lá não
-   deixa ninguém entrar. Sem esse recado, criar usuário seria uma armadilha silenciosa
-   — a pessoa apareceria na lista e não entraria, sem pista do porquê.
+   O PASSO DO AUTHELIA, e a tela diz em voz alta DEPOIS DE CRIAR. Com o login próprio
+   DESLIGADO (o estado de produção até o corte do P19), a pessoa também precisa nascer no
+   `users_database.yml` do servidor: uma linha em `usuarios` sem a entrada de lá não deixa
+   ninguém entrar, e sem esse recado criar usuário seria uma armadilha silenciosa — a pessoa
+   apareceria na lista e não entraria, sem pista do porquê. Com a chave LIGADA ela já entra
+   com a senha inicial, e o cadastro no Authelia vira o caminho de volta do corte, durante a
+   janela de observação. A listagem diz qual dos dois vale (`login_proprio`); os textos que
+   dependem disso moram em `lib/painel-usuarios.ts`, com teste.
+
+   OS GESTOS DE SENHA SÓ EXISTEM COM A CHAVE LIGADA (decisão do dono, 24/10/2026).
+   "Redefinir senha" e "Exigir troca" mexem na senha do BANCO, que com a entrada pelo
+   Authelia não abre porta nenhuma: a temporária não servia para nada. Sem a chave os
+   botões somem, e o servidor recusa os dois com 404.
 
    CADA MUDANÇA É UM EVENTO. O backend grava `usuario.criado`,
    `usuario.perfil_alterado`, `usuario.desativado`, `usuario.reativado`,
@@ -47,9 +66,9 @@ import { Aviso, Botao, Chip, Spinner } from './primitives'
    acontecer — mas precisa não mentir sobre o que aconteceu, e é por isso que ela
    recarrega do servidor depois de cada ação em vez de adivinhar o novo estado.
 
-   A COLUNA SENHA mostra `senha_propria`, não hash nenhum: o payload nunca carrega
-   `senha_hash`, nem mascarado. O que a tela precisa saber é se a pessoa já saiu da
-   senha inicial, e isso é um booleano.
+   A COLUNA "SENHA (BANCO)" mostra `senha_propria` — a senha do BANCO, que o login próprio
+   confere —, não hash nenhum: o payload nunca carrega `senha_hash`, nem mascarado. O que a
+   tela precisa saber é se a pessoa já saiu da senha inicial, e isso é um booleano.
    --------------------------------------------------------------------------- */
 
 /** Tom do chip por perfil. Segue a hierarquia da D22: quanto mais alcance, mais quente. */
@@ -64,12 +83,23 @@ const TOM_DO_PERFIL: Record<string, 'blue' | 'green' | 'amber' | 'gray'> = {
    escrever o MESMO nome para a mesma pessoa, e lá ele ganhou teste e o fallback para a
    descrição do banco (um quinto perfil não pode sair como slug cru num texto de usuário). */
 
-/** Mensagem por status. O backend já manda texto útil; aqui só os casos que a tela
- *  precisa enquadrar de outro jeito. */
-function mensagemDeErro(e: ApiError): string {
-  if (e.status === 404) return 'O painel de acessos não está habilitado para este usuário.'
-  if (e.status === 503) return `Indisponível — nada foi alterado. ${e.message}`
-  return e.message
+/** Mensagem por status. O texto mora em `lib/painel-usuarios.ts` (`mensagemDeErroDoPainel`),
+ *  com teste: foi lá que o 503 deixou de afirmar "nada foi alterado" — na escrita isso não é
+ *  garantia — e que o 404 da allowlist se separou do 404 com texto do servidor. `escrita` =
+ *  a falha veio de um gesto que grava, em que o banco pode ter caído no meio. */
+function mensagemDeErro(e: unknown, escrita = false): string {
+  if (!(e instanceof ApiError)) return String(e)
+  return mensagemDeErroDoPainel(e.status, e.message, { escrita })
+}
+
+/** O corpo de um recado com o caminho do Authelia em fonte de código, como sempre foi. */
+function comArquivo(texto: string) {
+  return texto.split(ARQUIVO_AUTHELIA).map((parte, i) => (
+    <Fragment key={i}>
+      {i > 0 && <code style={{ font: '500 11px var(--f-num)' }}>{ARQUIVO_AUTHELIA}</code>}
+      {parte}
+    </Fragment>
+  ))
 }
 
 /** Campos vazios do formulário de criação. Fica fora do componente para o
@@ -126,9 +156,10 @@ export default function PainelUsuarios() {
   /** `null` = formulário fechado. Aberto começa com os quatro campos vazios. */
   const [novo, setNovo] = useState<AdminUsuarioNovo | null>(null)
   const [criando, setCriando] = useState(false)
-  /** Login de quem acabou de ser criado, para o recado do Authelia ficar na tela até
-   *  ser fechado à mão. Some junto com um novo `criar`, não com o próximo clique. */
-  const [criado, setCriado] = useState<string | null>(null)
+  /** Quem acabou de ser criado — e se o login próprio estava ligado na hora —, para o
+   *  recado ficar na tela até ser fechado à mão. Some junto com um novo `criar`, não com o
+   *  próximo clique. */
+  const [criado, setCriado] = useState<{ login: string; loginProprio: boolean } | null>(null)
   /**
    * A escrita que está esperando confirmação. `null` = nenhum pop-up aberto.
    *
@@ -190,7 +221,7 @@ export default function PainelUsuarios() {
           setRecado(`${alvo.login} já estava assim — nada foi alterado.`)
         }
       } catch (e) {
-        setErro(e instanceof ApiError ? mensagemDeErro(e) : String(e))
+        setErro(mensagemDeErro(e, true))
       } finally {
         setSalvando(null)
       }
@@ -232,7 +263,7 @@ export default function PainelUsuarios() {
           )
         }
       } catch (e) {
-        setErro(e instanceof ApiError ? mensagemDeErro(e) : String(e))
+        setErro(mensagemDeErro(e, true))
       } finally {
         setSalvando(null)
       }
@@ -265,9 +296,9 @@ export default function PainelUsuarios() {
       })
       await carregar()
       setNovo(null)
-      setCriado(r.login)
+      setCriado({ login: r.login, loginProprio: r.login_proprio === true })
     } catch (e) {
-      setErro(e instanceof ApiError ? mensagemDeErro(e) : String(e))
+      setErro(mensagemDeErro(e, true))
     } finally {
       setCriando(false)
     }
@@ -334,6 +365,11 @@ export default function PainelUsuarios() {
   if (!dados) return null
 
   const { usuarios, perfis, eu } = dados
+  /* A chave do login próprio deste deploy. Ausente conta como desligada — o lado
+     conservador: esconde gestos que o servidor recusaria e mostra o recado de quem ainda
+     depende do Authelia. */
+  const loginProprio = loginProprioDoPayload(dados)
+  const recadoCriado = criado ? recadoDaCriacao(criado.login, criado.loginProprio) : null
 
   /* A ação em texto, montada AGORA a partir de `dados` — nunca congelada quando o
      pop-up abriu. Se a linha sumir da lista no meio, isto vira `null` e o pop-up
@@ -351,6 +387,7 @@ export default function PainelUsuarios() {
       email: novo.email.trim(),
       perfil: novo.perfil,
       capacidades: capacidadesDe(novo.perfil),
+      loginProprio,
     }
   } else if (pendente && pendente.tipo !== 'criar') {
     const alvo = usuarios.find((u) => u.id_usuario === pendente.id_usuario)
@@ -403,9 +440,19 @@ export default function PainelUsuarios() {
             border: '1px solid rgba(255,90,110,.3)',
             borderRadius: 'var(--r-md)',
             padding: '8px 11px',
+            display: 'flex',
+            gap: 10,
+            alignItems: 'center',
           }}
         >
-          {erro}
+          <div style={{ flex: 1, minWidth: 0 }}>{erro}</div>
+          {/* Serve a qualquer falha, e é o gesto que o recado de 503 pede: depois de uma
+              escrita que falhou, a tabela pode estar velha, e só o servidor diz o que ficou
+              gravado. `carregar` limpa o erro se a leitura der certo, e troca a tabela pelo
+              aviso se não der. */}
+          <Botao variante="ghost" disabled={carregando} onClick={() => void carregar()}>
+            Recarregar a lista
+          </Botao>
         </div>
       )}
       {senhaNova && (
@@ -509,7 +556,7 @@ export default function PainelUsuarios() {
         </div>
       )}
 
-      {criado && (
+      {recadoCriado && (
         <div
           style={{
             font: '400 11.5px/1.5 var(--f-ui)',
@@ -524,12 +571,12 @@ export default function PainelUsuarios() {
           }}
         >
           <div style={{ flex: 1, minWidth: 0 }}>
-            <strong>{criado} foi criado no banco, mas ainda não consegue entrar.</strong>
+            {/* O recado depende do login próprio (`recadoDaCriacao`, com teste). Até 24/10/2026
+                ele dizia, com a chave desligada, que "a pessoa será levada a trocá-la no
+                primeiro acesso" — falso enquanto quem confere a senha é o Authelia. */}
+            <strong>{recadoCriado.titulo}</strong>
             <br />
-            Falta cadastrar o login <strong>{criado}</strong> no{' '}
-            <code style={{ font: '500 11px var(--f-num)' }}>authelia/users_database.yml</code> do
-            servidor — é o Authelia que autentica hoje. A senha inicial é a compartilhada do
-            piloto, e a pessoa será levada a trocá-la no primeiro acesso.
+            {comArquivo(recadoCriado.corpo)}
           </div>
           <Botao variante="ghost" onClick={() => setCriado(null)}>
             Ok
@@ -639,7 +686,7 @@ export default function PainelUsuarios() {
                 !novo.email.trim() ||
                 !novo.perfil
               }
-              title="Cria a pessoa com a senha inicial do piloto, marcada para troca."
+              title={tituloDoBotaoCriar(loginProprio)}
             >
               {criando ? 'Criando…' : 'Criar usuário'}
             </Botao>
@@ -647,8 +694,7 @@ export default function PainelUsuarios() {
               Cancelar
             </Botao>
             <span style={{ font: '400 10.5px/1.4 var(--f-ui)', color: 'var(--tx-muted)' }}>
-              Sem campo de senha de propósito — a pessoa recebe a senha inicial do piloto e
-              troca no primeiro acesso.
+              {dicaDoFormulario(loginProprio)}
             </span>
           </div>
         </div>
@@ -658,7 +704,7 @@ export default function PainelUsuarios() {
         <table style={{ width: '100%', borderCollapse: 'collapse', minWidth: 880 }}>
           <thead>
             <tr>
-              {['Pessoa', 'Login', 'Perfil', 'Situação', 'Senha', ''].map((h) => (
+              {['Pessoa', 'Login', 'Perfil', 'Situação', COLUNA_SENHA, ''].map((h) => (
                 <th
                   key={h}
                   style={{
@@ -776,10 +822,14 @@ export default function PainelUsuarios() {
                   <td style={{ padding: '9px 10px', whiteSpace: 'nowrap' }}>
                     {/* `senha_propria`, nunca hash: o payload não carrega `senha_hash`.
                         "inicial" é informação de operação — é quem ainda não saiu da
-                        senha compartilhada, e é a fila que a virada do P19 precisa zerar. */}
-                    <Chip tom={u.senha_propria ? 'green' : 'amber'}>
-                      {u.senha_propria ? 'própria' : 'inicial'}
-                    </Chip>
+                        senha compartilhada, e é a fila que a virada do P19 precisa zerar.
+                        A dica diz que é a senha do BANCO: com o login próprio desligado ela
+                        não é a que a pessoa digita para entrar. */}
+                    <span title={tituloDoSeloDaSenha(u.senha_propria, loginProprio)}>
+                      <Chip tom={u.senha_propria ? 'green' : 'amber'}>
+                        {u.senha_propria ? 'própria' : 'inicial'}
+                      </Chip>
+                    </span>
                     {u.senha_propria && u.deve_trocar_senha && (
                       <span
                         style={{
@@ -797,8 +847,14 @@ export default function PainelUsuarios() {
                     <div style={{ display: 'inline-flex', gap: 6, justifyContent: 'flex-end' }}>
                       {/* Os gestos de senha aparecem só para quem está ATIVO: em quem saiu não há
                           entrada a preparar. O backend aceita os dois em inativos — esconder aqui
-                          é para a linha apagada não oferecer o que não serve. */}
-                      {u.ativo && (
+                          é para a linha apagada não oferecer o que não serve.
+
+                          E SÓ COM O LOGIN PRÓPRIO LIGADO (decisão do dono, 24/10/2026): com a
+                          entrada pelo Authelia, a temporária de "Redefinir" não abria nada e a
+                          marca de "Exigir troca" não convidava ninguém. O backend recusa os dois
+                          com 404 sem a chave; esconder aqui é para o botão não prometer o que
+                          será negado. */}
+                      {u.ativo && loginProprio && (
                         <>
                           <Botao
                             variante="ghost"
@@ -864,14 +920,17 @@ export default function PainelUsuarios() {
       <div style={{ font: '400 10.5px/1.5 var(--f-ui)', color: 'var(--tx-muted)' }}>
         Toda mudança aqui fica registrada com autor, data e o de-para — desativar é{' '}
         <strong>reversível</strong> e preserva o histórico da pessoa; nada é apagado.{' '}
-        <strong>Criar usuário grava só no banco:</strong> a pessoa também precisa ser cadastrada
-        no Authelia, no servidor, senão ela aparece nesta lista e não consegue entrar. A coluna{' '}
-        <strong>Senha</strong> diz quem já definiu a própria senha — nenhum hash sai do banco para
-        esta tela. <strong>Redefinir senha</strong> gera uma senha temporária só daquela pessoa e
-        mostra a você uma única vez, para repassar; ela vale poucas horas, derruba as sessões
-        abertas dela e obriga a criar uma senha nova na entrada. Se você perder a senha antes de
-        repassar, gere outra — a anterior deixa de valer. O número ao lado de cada perfil é
-        quantas coisas ele libera.
+        {/* O miolo depende do login próprio e mora em `lib/painel-usuarios.ts`, com teste. Até
+            24/10/2026 ele dizia que "Redefinir senha" obrigava a criar uma senha nova na
+            entrada — falso nos dois estados: a troca é oferecida, não obrigada. */}
+        {rodapeDoPainel(loginProprio).map((s, i) =>
+          typeof s === 'string' ? (
+            <Fragment key={i}>{s}</Fragment>
+          ) : (
+            <strong key={i}>{s.forte}</strong>
+          ),
+        )}{' '}
+        O número ao lado de cada perfil é quantas coisas ele libera.
       </div>
     </div>
   )
