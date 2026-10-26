@@ -15,6 +15,13 @@ do CI. Este arquivo tranca:
   desprotegida — um agente podia reescrever o guarda que o julga;
 * os caminhos que precisam continuar LIMPOS (display puro do dashboard, testes, docs), senao o
   auto-merge dos blocos Baixa/Media morre de falso-positivo;
+* a COBERTURA do banco de producao (epic do banco, 2026-10-24): o pacote `src/motor_expansao/db/`
+  inteiro e os crons do banco (backup/expurgo e o proximo que levar `banco`/`sessoes` no nome)
+  sao CRITICO; o conferidor do corte, o rastreio de vazamento e o contrato da porta unica (D28)
+  sao GOVERNANCA; os demais testes do banco, os crons das outras frentes e o extrator de
+  migrations seguem LIMPOS;
+* a CITACAO do git: caminho com acento chega entre aspas e com octal nos DOIS modos, e o guard
+  a desfaz antes de casar -- sem isso, toda regra ancorada (a do banco inclusive) era contornavel;
 * o contrato de saida dos modos `--stdin` e `--json` consumidos pelo job do CI.
 
 O arquivo legado `test_loop_guard.py` (matriz do ralph) continua valendo; a unica linha alterada
@@ -24,6 +31,9 @@ from __future__ import annotations
 
 import io
 import json
+import shutil
+import subprocess
+from pathlib import Path
 
 import pytest
 
@@ -129,6 +139,28 @@ def _classe(path: str) -> str | None:
         # N3 — lancadores do loop que LEEM o CLAUDE_CODE_OAUTH_TOKEN do .env e o injetam no container.
         "iniciar-loop.cmd",
         "scripts/iniciar_loop.ps1",
+        # Banco de producao (autoriza o piloto desde 23/10/2026; autentica no P19 - DEC-067): o
+        # pacote INTEIRO, inclusive modulo e migration que ainda nao existem, e os crons que o
+        # operam com a senha do papel dono. Ate' aqui tudo isto saia LIMPO -> "Media" auto-merge.
+        "src/motor_expansao/db/__init__.py",
+        "src/motor_expansao/db/__main__.py",
+        "src/motor_expansao/db/cli.py",
+        "src/motor_expansao/db/eventos.py",
+        "src/motor_expansao/db/postgres.py",
+        "src/motor_expansao/db/rbac.py",
+        "src/motor_expansao/db/senhas.py",
+        "src/motor_expansao/db/sessoes.py",
+        "src/motor_expansao/db/usuarios.py",
+        "src/motor_expansao/db/modulo_futuro.py",
+        "src/motor_expansao/db/migracoes/000-migracoes-aplicadas.sql",
+        "src/motor_expansao/db/migracoes/021-migration-futura.sql",
+        "src/motor_expansao/db/migracoes/manifesto.json",
+        "scripts/cron/run_backup_banco.sh",
+        "scripts/cron/run_expurgo_sessoes.sh",
+        # F1 -- script que o job `test` executa a partir do HEAD do PR (banco de ensaio): quem o
+        # controla deixa o `test` verde sem migrar nada. O diretorio inteiro, inclusive o proximo.
+        "scripts/ci/banco_de_ensaio.sh",
+        "scripts/ci/script_de_ci_futuro.py",
     ],
 )
 def test_caminhos_criticos(path: str) -> None:
@@ -176,6 +208,13 @@ def test_caminhos_criticos(path: str) -> None:
         ".codex/skills/codex-run-cycle/SKILL.md",
         "scripts/housekeeping_move_block.py",
         "data/osm_cache/bbox_ok_test.json",
+        # Instrumentos de veredito sobre identidade no banco: nao escrevem, mas o veredito deles
+        # decide um corte de acesso (conferidor) e aponta QUEM gerou um arquivo (rastreio).
+        "scripts/conferir_usuarios_banco.py",
+        "scripts/rastrear_arquivo.py",
+        # Contrato da porta unica (D28): a allowlist dele e' a unica trava contra uma segunda
+        # conexao, sem carimbo de auditoria, aberta em codigo que o guard ve como LIMPO.
+        "tests/contracts/test_conexao_por_uma_porta_so.py",
     ],
 )
 def test_caminhos_governanca(path: str) -> None:
@@ -229,6 +268,36 @@ def test_caminhos_governanca(path: str) -> None:
         ".mcp.json",
         ".githooks/post-commit",
         "scripts/verify_mcp_graphify.py",
+        # Contraprova do banco: os TESTES dele (unidade, integracao e contrato), o extrator de
+        # migrations (o que ele gera cai em `db/migracoes/`, ja' CRITICO), a doc e os vizinhos de
+        # nome parecido seguem limpos -- a regra e' o diretorio `db/`, nao a palavra "db".
+        "tests/unit/test_db_rbac.py",
+        "tests/unit/test_db_sessoes.py",
+        "tests/unit/test_migracoes.py",
+        "tests/unit/test_conferir_usuarios_banco.py",
+        "tests/unit/test_wrapper_cron_expurgo_sessoes.py",
+        "tests/integration/test_login_ponta_a_ponta.py",
+        "tests/contracts/test_compose_banco.py",
+        "tests/contracts/test_ip_nao_entra_em_eventos.py",
+        "tests/contracts/test_sem_credencial_morta.py",
+        "scripts/extrair_migracoes.py",
+        "docs/banco_deploy.md",
+        "src/motor_expansao/db_utils.py",
+        "src/motor_expansao/dbx/conexao.py",
+        "src/motor_expansao/dashboard/db.py",
+        # Contraprova do `scripts/ci/`: a regra e' o DIRETORIO, nao o prefixo "ci" no nome.
+        "scripts/ci_helpers.py",
+        # Os crons das OUTRAS frentes seguem LIMPOS por escopo: a regra do banco casa o NOME
+        # (`banco`/`sessoes`), e estende-la a eles e' decisao propria -- esta lista a torna
+        # explicita, em vez de deixa-la implicita na ausencia de um teste.
+        "scripts/cron/run_alerta_borda.sh",
+        "scripts/cron/run_atualizacao_crescimento.sh",
+        "scripts/cron/run_growth_daily.sh",
+        "scripts/cron/run_regen_mercado.sh",
+        "scripts/cron/run_relatorio_acessos.sh",
+        "scripts/cron/run_snapshot_agregadores.sh",
+        "scripts/cron/run_snapshot_concorrentes.sh",
+        "scripts/cron/run_weekly_90.sh",
     ],
 )
 def test_caminhos_limpos(path: str) -> None:
@@ -310,6 +379,123 @@ def test_n3_lancadores_do_loop_sao_critico_por_token() -> None:
     """N3: os lancadores manuseiam o CLAUDE_CODE_OAUTH_TOKEN -> CRITICO (nao GOVERNANCA)."""
     assert _classe("iniciar-loop.cmd") == CLASSE_CRITICO
     assert _classe("scripts/iniciar_loop.ps1") == CLASSE_CRITICO
+
+
+# --------------------------------------------------------------------------------------------
+# Banco de producao (epic do banco, 2026-10-24): o banco AUTORIZA o piloto e vai AUTENTICAR
+# --------------------------------------------------------------------------------------------
+_RAIZ = Path(__file__).resolve().parents[2]
+
+
+def _motivo(path: str) -> str:
+    violacoes = classificar([path])
+    return violacoes[0].motivo if violacoes else ""
+
+
+@pytest.mark.parametrize(
+    ("path", "classe", "trecho_do_motivo"),
+    [
+        # Migrations: a regra MAIS especifica vem antes da do pacote, entao o motivo diz o que e'.
+        ("src/motor_expansao/db/migracoes/012-seed-rbac-real.sql", CLASSE_CRITICO, "migrations do banco"),
+        ("src/motor_expansao/db/migracoes/manifesto.json", CLASSE_CRITICO, "migrations do banco"),
+        # Autenticacao/autorizacao: o sucessor do `authelia/`, que ja' era CRITICO.
+        ("src/motor_expansao/db/rbac.py", CLASSE_CRITICO, "autenticacao/autorizacao"),
+        ("src/motor_expansao/db/usuarios.py", CLASSE_CRITICO, "autenticacao/autorizacao"),
+        ("src/motor_expansao/db/senhas.py", CLASSE_CRITICO, "autenticacao/autorizacao"),
+        ("src/motor_expansao/db/sessoes.py", CLASSE_CRITICO, "autenticacao/autorizacao"),
+        # O resto do pacote cai na regra do diretorio: porta unica, runner como dono, eventos.
+        ("src/motor_expansao/db/postgres.py", CLASSE_CRITICO, "pacote do banco"),
+        ("src/motor_expansao/db/cli.py", CLASSE_CRITICO, "pacote do banco"),
+        ("src/motor_expansao/db/eventos.py", CLASSE_CRITICO, "pacote do banco"),
+        ("src/motor_expansao/db/__init__.py", CLASSE_CRITICO, "pacote do banco"),
+        ("src/motor_expansao/db/modulo_futuro.py", CLASSE_CRITICO, "pacote do banco"),
+        # Crons que operam o banco na VPS com a senha do papel dono.
+        ("scripts/cron/run_backup_banco.sh", CLASSE_CRITICO, "senha do papel dono"),
+        ("scripts/cron/run_expurgo_sessoes.sh", CLASSE_CRITICO, "senha do papel dono"),
+        # Instrumentos de veredito: GOVERNANCA (label humana no PR; AVISO no ralph).
+        ("scripts/conferir_usuarios_banco.py", CLASSE_GOVERNANCA, "veredito sobre identidade"),
+        ("scripts/rastrear_arquivo.py", CLASSE_GOVERNANCA, "veredito sobre identidade"),
+        # O teste que E' a regra da porta unica (D28) nao fica livre: ele e' a unica trava sobre
+        # modulo LIMPO de `src/` que roda em producao. Os OUTROS contratos do banco seguem limpos
+        # -- o que eles vigiam ja' passa por gate (db/ e compose CRITICO, web/server GOVERNANCA)
+        # ou nao roda sozinho em producao (script avulso de `scripts/`).
+        ("tests/contracts/test_conexao_por_uma_porta_so.py", CLASSE_GOVERNANCA, "porta unica do banco"),
+        # O banco de ensaio do CI arma o check `test` (F1): CRITICO pelo motivo do CI, nao do banco.
+        ("scripts/ci/banco_de_ensaio.sh", CLASSE_CRITICO, "job `test` executa a partir do HEAD"),
+    ],
+)
+def test_banco_classe_e_motivo_certos(path: str, classe: str, trecho_do_motivo: str) -> None:
+    """Cada caminho do banco cai na classe certa E com o motivo da sua camada.
+
+    O motivo vai para a tabela do check `guard`: e' o que diz ao revisor POR QUE o PR pede label.
+    Uma regra generica antes da especifica reportaria a migration como "pacote do banco".
+    """
+    assert _classe(path) == classe, path
+    assert trecho_do_motivo in _motivo(path), (path, _motivo(path))
+
+
+def test_todo_arquivo_real_do_pacote_db_e_critico() -> None:
+    """Nenhum arquivo REAL de `src/motor_expansao/db/` escapa -- nem o que nascer amanha.
+
+    A regra do pacote e' o diretorio inteiro, e nao uma lista: foi por lista que as regras do
+    dashboard deixaram passar `mercado_raio`/`geometria_desenhada`/`alcance_ponto` (DEC-070/071/
+    074), que nasceram depois dela. Este teste anda no disco, entao uma regra que um dia encolha
+    para lista de nomes falha aqui no primeiro modulo que ficar de fora.
+    """
+    pacote = _RAIZ / "src" / "motor_expansao" / "db"
+    arquivos = sorted(
+        p.relative_to(_RAIZ).as_posix()
+        for p in pacote.rglob("*")
+        if p.is_file() and "__pycache__" not in p.parts
+    )
+    nomes = {Path(a).name for a in arquivos}
+    # Contra o teste vazio: o pacote tem de existir e trazer os modulos que motivaram a regra.
+    assert {"rbac.py", "sessoes.py", "senhas.py", "usuarios.py", "postgres.py", "cli.py"} <= nomes
+    assert any(a.endswith(".sql") for a in arquivos), "nenhuma migration encontrada no disco"
+    fora = [a for a in arquivos if _classe(a) != CLASSE_CRITICO]
+    assert not fora, f"arquivo do banco fora do CRITICO: {fora}"
+
+
+def test_banco_vizinhos_nao_sao_arrastados() -> None:
+    """A regra e' o DIRETORIO `db/` e scripts NOMEADOS -- nao a palavra "db" ou "banco"."""
+    for limpo in (
+        "src/motor_expansao/db_utils.py",  # sem a barra, nao e' o pacote
+        "src/motor_expansao/dbx/conexao.py",
+        "src/motor_expansao/dashboard/db.py",
+        "tests/unit/test_db_conexao.py",  # os testes do banco seguem limpos (o gate deles e' o CI)
+        "tests/unit/test_conferir_usuarios_banco.py",
+        "scripts/extrair_migracoes.py",  # gera arquivo em `db/migracoes/`, que ja' e' CRITICO
+        "docs/banco_conexao.md",
+    ):
+        assert _classe(limpo) is None, f"vizinho do banco virou protegido (falso-positivo): {limpo}"
+    # O piloto web que CONSOME o banco segue na classe que ja' tinha: nem subiu, nem caiu.
+    assert _classe("web/server/acesso.py") == CLASSE_GOVERNANCA
+
+
+def test_cron_do_banco_e_reconhecido_pelo_nome_nao_pela_lista_dos_dois_de_hoje() -> None:
+    """A regra dos crons casa o NOME (`banco`/`sessoes`), e nao a lista dos dois que existem hoje.
+
+    O proximo cron do banco (restore, copia off-box, um ajudante que os wrappers carreguem) le a
+    mesma senha do papel dono no `.env` de producao. Numa regra por lista ele nasceria LIMPO --
+    a licao das regras que "nasceram fora da lista" (DEC-070/071/074), a mesma que fez o pacote
+    `db/` entrar inteiro. Os crons das OUTRAS frentes seguem LIMPOS (ver `test_caminhos_limpos`).
+    """
+    for futuro in (
+        "scripts/cron/run_restore_banco.sh",
+        "scripts/cron/run_backup_banco_offbox.sh",
+        "scripts/cron/run_expurgo_sessoes_vencidas.sh",
+        "scripts/cron/lib_banco.sh",
+        "scripts/cron/banco/comum.sh",
+    ):
+        assert _classe(futuro) == CLASSE_CRITICO, futuro
+        assert "senha do papel dono" in _motivo(futuro), (futuro, _motivo(futuro))
+    # Contra a regra que encolhe de volta para a lista: os dois de hoje existem no disco e
+    # seguem cobertos pelo MESMO motivo.
+    cron = _RAIZ / "scripts" / "cron"
+    assert (cron / "run_backup_banco.sh").is_file()
+    assert (cron / "run_expurgo_sessoes.sh").is_file()
+    # A regra e' o diretorio dos crons instalados na VPS: doc com o mesmo nome segue limpa.
+    assert _classe("docs/cron/run_backup_banco.md") is None
 
 
 def test_todos_os_motivos_sao_ascii_obs1() -> None:
@@ -398,6 +584,8 @@ def test_stdin_pr_que_desarma_o_check_test_e_pego(monkeypatch: pytest.MonkeyPatc
     assert _run_stdin(monkeypatch, ["docs/x.md", "conftest.py"], json_out=False) == 1
     assert _run_stdin(monkeypatch, ["docs/x.md", ".gitleaksignore"], json_out=False) == 1
     assert _run_stdin(monkeypatch, ["docs/x.md", "constraints.txt"], json_out=False) == 1
+    # O banco de ensaio do CI: `exit 0` no `verificar` = `test` verde sem migration nenhuma.
+    assert _run_stdin(monkeypatch, ["docs/x.md", "scripts/ci/banco_de_ensaio.sh"], json_out=False) == 1
 
 
 def test_stdin_bloco_media_nao_muda_numero_de_producao_sem_gate(
@@ -434,6 +622,71 @@ def test_stdin_pr_de_display_puro_segue_auto_mergeavel(
     payload = json.loads(capsys.readouterr().out)
     assert rc == 0
     assert payload == {"limpo": True, "violacoes": []}
+
+
+def test_stdin_bloco_media_que_mexe_so_no_banco_nao_auto_mergeia(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """O furo que motivou a regra: um "Media" que toca SO o banco (+ teste) passava LIMPO.
+
+    Sem violacao o `guard` fica verde e, pela DEC-016, o auto-merge fecha o PR sozinho -- com o
+    banco autorizando o piloto em producao. Agora e' exit 1 e so' passa com `critica-aprovada`.
+    """
+    rc = _run_stdin(
+        monkeypatch,
+        ["src/motor_expansao/db/rbac.py", "tests/unit/test_db_rbac.py"],
+        json_out=True,
+    )
+    payload = json.loads(capsys.readouterr().out)
+    assert rc == 1
+    assert payload["limpo"] is False
+    assert [(v["path"], v["classe"]) for v in payload["violacoes"]] == [
+        ("src/motor_expansao/db/rbac.py", CLASSE_CRITICO),
+    ]
+
+
+def test_stdin_replay_dos_prs_do_banco_que_o_guard_via_limpo(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Os diffs REAIS do #447 e do #455, reclassificados pela regua nova.
+
+    O #447 corrigiu o `conferir` e o `privilegios` do `cli.py` (aprovavam bancos quebrados) e
+    mexeu no hash de senha; o guard antigo so' o marcou pelo `.gitignore`, que aqui fica de fora.
+    O #455 criou o conferidor do corte e saiu inteiro LIMPO.
+    """
+    rc = _run_stdin(
+        monkeypatch,
+        [
+            "src/motor_expansao/db/cli.py",
+            "src/motor_expansao/db/postgres.py",
+            "src/motor_expansao/db/senhas.py",
+            "tests/unit/test_db_cli.py",
+            "tests/unit/test_db_senhas.py",
+        ],
+        json_out=True,
+    )
+    payload = json.loads(capsys.readouterr().out)
+    assert rc == 1
+    assert [(v["path"], v["classe"]) for v in payload["violacoes"]] == [
+        ("src/motor_expansao/db/cli.py", CLASSE_CRITICO),
+        ("src/motor_expansao/db/postgres.py", CLASSE_CRITICO),
+        ("src/motor_expansao/db/senhas.py", CLASSE_CRITICO),
+    ]
+
+    rc = _run_stdin(
+        monkeypatch,
+        [
+            "docs/banco_deploy.md",
+            "scripts/conferir_usuarios_banco.py",
+            "tests/unit/test_conferir_usuarios_banco.py",
+        ],
+        json_out=True,
+    )
+    payload = json.loads(capsys.readouterr().out)
+    assert rc == 1
+    assert [(v["path"], v["classe"]) for v in payload["violacoes"]] == [
+        ("scripts/conferir_usuarios_banco.py", CLASSE_GOVERNANCA),
+    ]
 
 
 def test_stdin_texto_mostra_classe_e_motivo(
@@ -491,7 +744,13 @@ def test_base_limpo(monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixtu
 
 def test_base_aborta_o_loop_ao_desarmar_a_suite(monkeypatch: pytest.MonkeyPatch) -> None:
     """F1 no ralph: os novos CRITICO tambem abortam o loop (nao so o CI)."""
-    for path in ("pyproject.toml", "conftest.py", "constraints.txt", "Dockerfile.loop"):
+    for path in (
+        "pyproject.toml",
+        "conftest.py",
+        "constraints.txt",
+        "Dockerfile.loop",
+        "scripts/ci/banco_de_ensaio.sh",
+    ):
         monkeypatch.setattr(loop_guard, "_changed_paths", lambda base, _p=path: {_p})
         assert loop_guard.main(["--base", "abc1234"]) == 1, f"loop deveria abortar em {path}"
 
@@ -510,6 +769,31 @@ def test_base_so_avisa_em_camada_de_producao_governanca(
     assert rc == 0, "GOVERNANCA nao pode matar o loop (contrato --base preservado)"
     assert "GUARD AVISO" in captured.err
     assert "GUARD OK" in captured.out
+
+
+def test_base_aborta_o_loop_ao_tocar_o_banco(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Banco no ralph: CRITICO ABORTA o loop -- loop-safe nao persiste PII nem toca segredo."""
+    for path in (
+        "src/motor_expansao/db/sessoes.py",
+        "src/motor_expansao/db/migracoes/021-migration-futura.sql",
+        "scripts/cron/run_backup_banco.sh",
+    ):
+        monkeypatch.setattr(loop_guard, "_changed_paths", lambda base, _p=path: {_p})
+        assert loop_guard.main(["--base", "abc1234"]) == 1, f"loop deveria abortar em {path}"
+
+
+def test_base_so_avisa_nos_instrumentos_de_veredito_do_banco(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Os instrumentos de veredito sao GOVERNANCA: AVISO no ralph, label humana no PR."""
+    monkeypatch.setattr(
+        loop_guard, "_changed_paths", lambda base: {"scripts/conferir_usuarios_banco.py"}
+    )
+    rc = loop_guard.main(["--base", "abc1234"])
+    captured = capsys.readouterr()
+    assert rc == 0
+    assert "GUARD AVISO" in captured.err
+    assert "scripts/conferir_usuarios_banco.py" in captured.err
 
 
 # --------------------------------------------------------------------------------------------
@@ -577,3 +861,126 @@ def test_obs1_json_de_truncamento_e_ascii_puro(
     _run_stdin(monkeypatch, paths, json_out=True)
     out = capsys.readouterr().out
     assert out.isascii()
+
+
+# --------------------------------------------------------------------------------------------
+# Citacao do git: caminho com acento chega ENTRE ASPAS e com octal, nos DOIS modos
+# --------------------------------------------------------------------------------------------
+# Medido no #136: `gh pr diff --name-only` (o comando do job `guard`) lista um arquivo com acento
+# como `"Motor de Expans\303\243o - Refer\303\252ncia (standalone).html"`, e o `git diff
+# --name-only` do ralph faz o mesmo (`core.quotePath`, ligado por padrao). Sem desfazer a
+# citacao, NENHUMA regra ancorada casava -- a do banco inclusive.
+@pytest.mark.parametrize(
+    ("citado", "desfeito", "classe"),
+    [
+        ('"src/motor_expansao/db/sess\\303\\243o.py"', "src/motor_expansao/db/sessão.py", CLASSE_CRITICO),
+        (
+            '"src/motor_expansao/db/migracoes/021-sess\\303\\243o.sql"',
+            "src/motor_expansao/db/migracoes/021-sessão.sql",
+            CLASSE_CRITICO,
+        ),
+        ('"scripts/ci/ensaio_\\303\\251.sh"', "scripts/ci/ensaio_é.sh", CLASSE_CRITICO),
+        ('"scripts/cron/run_restaura\\303\\247\\303\\243o_banco.sh"', "scripts/cron/run_restauração_banco.sh", CLASSE_CRITICO),
+        # F1 pela porta dos fundos: `conftest.py` numa pasta com acento neutraliza a suite.
+        ('"tests/integra\\303\\247\\303\\243o/conftest.py"', "tests/integração/conftest.py", CLASSE_CRITICO),
+        ('"src/motor_expansao/pipelines/m1/a\\303\\247\\303\\243o.py"', "src/motor_expansao/pipelines/m1/ação.py", CLASSE_CRITICO),
+        ('"web/src/screens/Configura\\303\\247\\303\\265es.tsx"', "web/src/screens/Configurações.tsx", CLASSE_GOVERNANCA),
+        # Aspa e barra invertida no nome tambem saem com escape (`\"` e `\\`).
+        ('"src/motor_expansao/db/a\\"b\\\\c.py"', 'src/motor_expansao/db/a"b\\c.py', CLASSE_CRITICO),
+        # O caso REAL do #136: desfeito, segue LIMPO -- a correcao nao cria falso-positivo.
+        (
+            '"Motor de Expans\\303\\243o - Refer\\303\\252ncia (standalone).html"',
+            "Motor de Expansão - Referência (standalone).html",
+            None,
+        ),
+    ],
+)
+def test_caminho_citado_pelo_git_e_desfeito_antes_de_classificar(
+    citado: str, desfeito: str, classe: str | None
+) -> None:
+    assert loop_guard._desfazer_citacao_do_git(citado) == desfeito
+    violacoes = classificar([citado])
+    if classe is None:
+        assert violacoes == [], violacoes
+    else:
+        # A violacao carrega o caminho DESFEITO: e' ele que o revisor le na tabela do CI.
+        assert [(v.path, v.classe) for v in violacoes] == [(desfeito, classe)]
+
+
+def test_citacao_fora_do_padrao_do_git_erra_para_o_lado_de_pegar() -> None:
+    """Escape que o git nao produz: sai so' a aspa, e a regra ancorada casa o esqueleto ASCII."""
+    assert (
+        loop_guard._desfazer_citacao_do_git('"src/motor_expansao/db/x\\777.py"')
+        == "src/motor_expansao/db/x\\777.py"
+    )
+    for estranho in (
+        '"src/motor_expansao/db/x\\777.py"',  # octal acima de 377
+        '"src/motor_expansao/db/x\\q.py"',  # escape que nao existe
+        '"src/motor_expansao/db/x\\30.py"',  # octal incompleto
+        '"src/motor_expansao/db/x\\"',  # barra no fim, sem o que escapar
+    ):
+        assert _classe(estranho) == CLASSE_CRITICO, estranho
+    # Sem aspa nas DUAS pontas nao ha' citacao: o caminho volta intacto, byte a byte.
+    for cru in ("src/motor_expansao/db/rbac.py", '"src/x.py', 'src/x.py"', '"', ""):
+        assert loop_guard._desfazer_citacao_do_git(cru) == cru
+
+
+def test_stdin_caminho_com_acento_no_formato_do_gh_nao_escapa(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """O furo ponta a ponta no modo do CI: antes da correcao, este payload saia `limpo: true`."""
+    rc = _run_stdin(
+        monkeypatch,
+        ['"src/motor_expansao/db/sess\\303\\243o.py"', "tests/unit/test_db_sessoes.py"],
+        json_out=True,
+    )
+    out = capsys.readouterr().out
+    assert rc == 1
+    assert out.isascii(), "o JSON segue ASCII (ensure_ascii) mesmo com o caminho desfeito"
+    payload = json.loads(out)
+    assert payload["limpo"] is False
+    assert [(v["path"], v["classe"]) for v in payload["violacoes"]] == [
+        ("src/motor_expansao/db/sessão.py", CLASSE_CRITICO),
+    ]
+
+
+@pytest.mark.skipif(shutil.which("git") is None, reason="precisa de git")
+def test_base_caminho_com_acento_no_git_de_verdade_aborta_o_loop(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """O mesmo furo no ralph, com o `git diff --name-only` DE VERDADE, e nao um monkeypatch."""
+
+    def git(*args: str) -> str:
+        # `stdin=DEVNULL`: no Windows, herdar o stdin que o pytest redireciona falha de vez em
+        # quando ao duplicar o handle (WinError 50/6) -- ruido do ambiente, nao do guard.
+        proc = subprocess.run(
+            ["git", *args],
+            cwd=tmp_path,
+            check=True,
+            capture_output=True,
+            text=True,
+            stdin=subprocess.DEVNULL,
+        )
+        return proc.stdout.strip()
+
+    git("init", "-q", ".")
+    git("config", "user.email", "t@t")
+    git("config", "user.name", "t")
+    git("config", "core.autocrlf", "false")
+    git("config", "core.quotePath", "true")  # o padrao do git, fixado contra config global
+    (tmp_path / "LEIA-ME.md").write_bytes(b"base\n")
+    git("add", "-A")
+    git("commit", "-qm", "base")
+    base = git("rev-parse", "HEAD")
+    modulo = tmp_path / "src" / "motor_expansao" / "db" / "sessão.py"
+    modulo.parent.mkdir(parents=True)
+    modulo.write_bytes(b"x = 1\n")
+    git("add", "-A")
+    git("commit", "-qm", "modulo do banco com acento no nome")
+    # Pre-condicao: o git REALMENTE cita o caminho -- senao este teste nao mede o furo.
+    assert git("diff", "--name-only", f"{base}..HEAD") == '"src/motor_expansao/db/sess\\303\\243o.py"'
+
+    monkeypatch.chdir(tmp_path)
+    assert loop_guard.main(["--base", base]) == 1
+    err = capsys.readouterr().err
+    assert "[CRITICO] src/motor_expansao/db/sessão.py" in err

@@ -2,19 +2,37 @@
 
 POR QUE ESTE ARQUIVO EXISTE
 ---------------------------
-Todo o resto da epic foi verificado com DUBLÊS: o CI não tem Postgres (decisão de 25/08/2026),
-então `SQL_VALIDAR`, `SQL_CONTAR_RECUSAS`, o `ck_usuarios_prazo_exige_troca` da 019 e o
-`GREATEST` com `-infinity` só passaram por validação de SINTAXE (`pglast`) e por objetos falsos
-que respondem no lugar do banco. Sintaxe correta e comportamento correto são coisas diferentes,
-e a distância entre as duas é exatamente o que este arquivo mede.
+Todo o resto da epic foi verificado com DUBLÊS: até 24/10/2026 o CI não tinha Postgres (decisão
+de 25/08/2026), então `SQL_VALIDAR`, `SQL_CONTAR_RECUSAS`, o `ck_usuarios_prazo_exige_troca` da
+019 e o `GREATEST` com `-infinity` só passavam por validação de SINTAXE (`pglast`) e por objetos
+falsos que respondem no lugar do banco. Sintaxe correta e comportamento correto são coisas
+diferentes, e a distância entre as duas é exatamente o que este arquivo mede.
 
 Ele também é o teste de fumaça para o dia do corte: é o que se roda antes de virar a chave
-`MOTOR_AUTENTICACAO_PROPRIA` em qualquer lugar.
+`MOTOR_AUTENTICACAO_PROPRIA` em qualquer lugar. E é onde os dois instrumentos do operador,
+`db conferir` e `db privilegios`, encontram o catálogo de verdade.
+
+NO CI
+-----
+O job `test` sobe o MESMO PostGIS do `docker-compose.prod.yml`, aplica as migrations do zero e
+roda este arquivo (`scripts/ci/banco_de_ensaio.sh verificar`), DEPOIS da suíte unitária -- que
+segue sem variável de banco, e onde este arquivo pula como sempre. No passo do banco vale
+`MOTOR_BANCO_DE_ENSAIO_OBRIGATORIO=1`: todo pulo por ambiente ausente vira FALHA (ver
+`_pular_ou_falhar`), porque um passo que pula fica verde sem ter testado nada.
+
+O banco do CI não tem o D20: os papéis vivem no `banco-de-reservas` e não são recriados aqui. Os
+testes do `conferir` e do `privilegios` sabem disso e cobram o que dá para cobrar sem ele.
 
 COMO RODAR
 ----------
-Precisa de um Postgres de ENSAIO já migrado (000 → 019). O caminho está em
-`docs/banco_deploy.md` §"Ensaio local"; em resumo:
+O jeito curto é o comando do CI, no Git Bash, a partir da raiz desta árvore:
+
+    PYTHONPATH="$PWD/src" CI_BANCO_NOME=ci_banco_ensaio_local \\
+        bash scripts/ci/banco_de_ensaio.sh verificar
+    CI_BANCO_NOME=ci_banco_ensaio_local bash scripts/ci/banco_de_ensaio.sh derrubar
+
+À mão, precisa de um Postgres de ENSAIO migrado até a última migration do manifesto. O caminho
+está em `docs/banco_deploy.md` §"Ensaio local"; em resumo:
 
     docker run -d --name motor-ensaio -e POSTGRES_PASSWORD=<senha> -p 5432:5432 \\
         postgis/postgis:18-3.6
@@ -23,14 +41,16 @@ Precisa de um Postgres de ENSAIO já migrado (000 → 019). O caminho está em
     python -m motor_expansao.db aplicar
     python -m pytest tests/integration/test_login_ponta_a_ponta.py -v
 
-Sem a variável, ou com o banco não migrado, a suíte PULA com o motivo escrito. Ela nunca falha
-por ausência de ambiente -- falhar assim treinaria todo mundo a ignorar vermelho.
+Sem a variável, ou com o banco não migrado, a suíte PULA com o motivo escrito. Fora do CI ela
+nunca falha por ausência de ambiente -- falhar assim treinaria todo mundo a ignorar vermelho.
 
 TRAVA DE DESTINO
 ----------------
 Este arquivo CRIA usuário, REDEFINE senha e escreve em `eventos`. Apontá-lo para produção por
 engano seria estrago real e irreversível (`eventos` é append-only). Por isso ele recusa rodar
-se o nome do banco não disser `ensaio` ou `test` -- ver `_exigir_banco_de_ensaio`.
+se o nome do banco não disser `ensaio` ou `test`, e recusa também uma `MOTOR_DATABASE_URL`
+que aponte para OUTRO banco: é por ela que a aplicação escreve -- ver
+`_exigir_banco_de_ensaio`.
 """
 
 from __future__ import annotations
@@ -38,14 +58,36 @@ from __future__ import annotations
 import os
 import time
 import uuid
-from typing import Any
+from typing import Any, NoReturn
 
 import pytest
 
-psycopg = pytest.importorskip("psycopg")
+#: No passo do banco no CI esta variável vale `1` (`scripts/ci/banco_de_ensaio.sh`), e ali o banco
+#: de ensaio EXISTE por construção: pular por "ambiente ausente" deixaria o passo verde sem ter
+#: testado nada. Com ela, todo pulo deste arquivo vira FALHA, com o mesmo motivo. Fora do CI ela
+#: não existe, e pular continua sendo o desenho (ver o cabeçalho).
+ENV_OBRIGATORIO = "MOTOR_BANCO_DE_ENSAIO_OBRIGATORIO"
+
+
+def _obrigatorio() -> bool:
+    return os.environ.get(ENV_OBRIGATORIO, "").strip() == "1"
+
+
+def _pular_ou_falhar(motivo: str) -> NoReturn:
+    """Pula -- ou, com `MOTOR_BANCO_DE_ENSAIO_OBRIGATORIO=1`, FALHA pelo mesmo motivo."""
+    if _obrigatorio():
+        pytest.fail(f"{ENV_OBRIGATORIO}=1 e este teste ia PULAR: {motivo}", pytrace=False)
+    pytest.skip(motivo)
+
+
+if _obrigatorio():
+    import psycopg  # sem o driver, o passo do CI QUEBRA na coleta em vez de pular o arquivo
+else:
+    psycopg = pytest.importorskip("psycopg")
 
 from motor_expansao.db import cli  # noqa: E402
 from motor_expansao.db import eventos as db_eventos  # noqa: E402
+from motor_expansao.db import postgres as db_postgres  # noqa: E402
 from motor_expansao.db import senhas as db_senhas  # noqa: E402
 from motor_expansao.db import sessoes as db_sessoes  # noqa: E402
 from motor_expansao.db import usuarios as db_usuarios  # noqa: E402
@@ -61,9 +103,37 @@ def _url() -> str | None:
     return os.environ.get(cli.ENV_URL_ADMIN) or os.environ.get("MOTOR_DATABASE_URL")
 
 
+def _destino(url: str) -> tuple[str, str, str]:
+    """(servidor, porta, banco) de uma URL de conexão -- o que define ONDE se escreve.
+
+    Usuário e senha ficam de fora de propósito: no runbook (§1.2) a `MOTOR_DATABASE_URL` é o
+    papel `app` no MESMO banco da credencial de dono, e isso é legítimo. URL ilegível RECUSA
+    sem ecoar o texto dela, que carrega a senha.
+    """
+    from psycopg.conninfo import conninfo_to_dict
+
+    # O `pytest.fail` fica FORA do `except` de propósito: dentro dele, o erro do psycopg -- que
+    # cita o pedaço da URL que não entendeu, senha inclusive -- iria junto como contexto.
+    try:
+        partes: dict[str, object] | None = conninfo_to_dict(url)
+    except psycopg.Error:
+        partes = None
+    if partes is None:
+        pytest.fail(
+            "RECUSADO: uma URL de banco do ambiente não é legível. O texto dela não aparece "
+            "aqui porque carrega a senha; corrija-a antes de rodar esta suíte.",
+            pytrace=False,
+        )
+    return (
+        str(partes.get("host") or ""),
+        str(partes.get("port") or "5432"),
+        str(partes.get("dbname") or "").lower(),
+    )
+
+
 @pytest.fixture(scope="module")
 def _exigir_banco_de_ensaio() -> None:
-    """Pula sem ambiente; RECUSA ambiente que não pareça de ensaio.
+    """Pula sem ambiente (no CI, FALHA: `_pular_ou_falhar`); RECUSA o que não pareça de ensaio.
 
     NÃO é `autouse`: quem o exige é o `con`, por PARÂMETRO. Como `autouse`, o pytest não garante
     que ele rode antes dos outros fixtures de módulo, e a conexão tentava abrir com URL nula —
@@ -71,7 +141,7 @@ def _exigir_banco_de_ensaio() -> None:
     """
     url = _url()
     if not url:
-        pytest.skip(
+        _pular_ou_falhar(
             f"{cli.ENV_URL_ADMIN} não definida — veja o cabeçalho deste arquivo para subir o "
             "Postgres de ensaio."
         )
@@ -83,6 +153,20 @@ def _exigir_banco_de_ensaio() -> None:
             "redefine senha e escreve em `eventos`, que é append-only. Aponte para um banco "
             "cujo nome contenha `ensaio` ou `test`."
         )
+    # A APLICAÇÃO não usa a URL acima: `usuarios`, `sessoes` e `eventos` escrevem pelo pool da
+    # `MOTOR_DATABASE_URL`, e o `_ambiente` só a preenche quando ela está vazia. Uma que tivesse
+    # sobrado no terminal, apontando para OUTRO banco, recebia as escritas desta suíte sem passar
+    # pela trava. Medido em 24/10/2026, com ela num segundo banco do mesmo servidor, de nome sem
+    # `ensaio` nem `test`: 7 senhas de lá redefinidas, 22 linhas gravadas em `eventos`, 2 sessões
+    # abertas -- e 11 dos 18 testes verdes.
+    piloto = os.environ.get("MOTOR_DATABASE_URL", "").strip()
+    if piloto and _destino(piloto) != _destino(url.strip()):
+        pytest.fail(
+            f"RECUSADO: `MOTOR_DATABASE_URL` e {cli.ENV_URL_ADMIN} apontam para bancos "
+            "diferentes. A aplicação escreve pela `MOTOR_DATABASE_URL`, então esta suíte "
+            "abriria sessão, redefiniria senha e gravaria em `eventos` no OUTRO banco. Aponte "
+            "as duas para o mesmo banco de ensaio, ou tire a `MOTOR_DATABASE_URL` do terminal."
+        )
 
 
 @pytest.fixture(scope="module")
@@ -92,13 +176,18 @@ def con(_exigir_banco_de_ensaio: None) -> Any:
     Banco no nome certo mas fora do ar PULA, e não quebra: é ambiente ausente, a mesma classe de
     `test_api_analisar.py` quando falta a base geo. O caso comum é a variável ter sobrado no
     terminal depois de o container parar. A mensagem diz isso com todas as letras, porque um
-    "pulado" que parece "tudo certo" é pior que um vermelho.
+    "pulado" que parece "tudo certo" é pior que um vermelho. No passo do banco do CI, onde o
+    banco existe por construção, o mesmo caso FALHA.
     """
+    # `connect_timeout`: sem ele, com o banco fora do ar no Windows, o psycopg não percebe a recusa
+    # da porta fechada e espera o próprio teto, 130 s (medido em 24/10/2026; um socket cru recebe
+    # a recusa em 2 s), antes de pular ou falhar. No Linux do CI a recusa chega na hora; aqui, no
+    # máximo 10 s. Banco no ar conecta em milissegundos.
     try:
-        with psycopg.connect(_url(), autocommit=True) as c:
+        with psycopg.connect(_url(), autocommit=True, connect_timeout=10) as c:
             yield c
     except psycopg.OperationalError as erro:
-        pytest.skip(
+        _pular_ou_falhar(
             f"NÃO RODOU: {cli.ENV_URL_ADMIN} está definida, mas o banco não respondeu "
             f"({erro.__class__.__name__}). O container de ensaio está no ar? "
             "Nada abaixo foi verificado."
@@ -122,21 +211,33 @@ def _exigir_migracoes(con: Any) -> None:
         if existe is None
     ]
     if faltando:
-        pytest.skip(f"banco não migrado (falta {', '.join(faltando)}) — rode `db aplicar` antes")
+        _pular_ou_falhar(
+            f"banco não migrado (falta {', '.join(faltando)}) — rode `db aplicar` antes"
+        )
 
 
 @pytest.fixture(scope="module", autouse=True)
 def _ambiente(con: Any) -> Any:
-    """Liga a autenticação própria e garante a senha inicial, que `criar` exige."""
+    """Liga a autenticação própria e garante a senha inicial, que `criar` exige.
+
+    Na saída devolve TUDO o que mexeu -- inclusive `MOTOR_DATABASE_URL` e o pool que o código da
+    aplicação abriu. Rodado junto com a suíte inteira, um módulo que deixasse a URL no ambiente
+    faria os testes seguintes, que contam com "sem banco", conversarem com o banco de ensaio.
+    """
     anterior = {
         k: os.environ.get(k)
-        for k in (db_sessoes.ENV_AUTENTICACAO_PROPRIA, db_senhas.ENV_SENHA_INICIAL)
+        for k in (
+            db_sessoes.ENV_AUTENTICACAO_PROPRIA,
+            db_senhas.ENV_SENHA_INICIAL,
+            "MOTOR_DATABASE_URL",
+        )
     }
     os.environ[db_sessoes.ENV_AUTENTICACAO_PROPRIA] = "1"
     os.environ.setdefault(db_senhas.ENV_SENHA_INICIAL, "inicial-do-ensaio-1")
     # O piloto lê `MOTOR_DATABASE_URL`; no ensaio os dois papéis são a mesma pessoa.
     os.environ.setdefault("MOTOR_DATABASE_URL", _url() or "")
     yield
+    db_postgres.fechar_pool()
     for k, v in anterior.items():
         if v is None:
             os.environ.pop(k, None)
@@ -190,8 +291,8 @@ def test_os_seis_numeros_da_secao_zero_batem_com_o_banco(con: Any) -> None:
     """O momento da verdade do `CHECK = 14`.
 
     `test_migracoes.py` SIMULA a cadeia lendo os `.sql` e chega a 14; `cli.NUMEROS_DA_SECAO_ZERO`
-    afirma 14 para o banco. As duas contas nunca se encontraram, porque o CI não tem Postgres.
-    Aqui elas se encontram.
+    afirma 14 para o banco. Até 24/10/2026 as duas contas nunca se encontravam, porque o CI não
+    tinha Postgres. Aqui elas se encontram -- e, desde então, em todo PR.
     """
     # A consulta recebe a lista NOMINAL das tabelas do modelo: a §0 conta só elas, e não o que
     # mais exista no schema. Chamá-la sem o parâmetro é erro de sintaxe, não contagem errada.
@@ -216,6 +317,186 @@ def test_o_CHECK_da_019_recusa_senha_propria_com_prazo(con: Any, pessoa: dict[st
             "senha_expira_em_usuario = now() + interval '1 hour' WHERE id_usuario = %s",
             (pessoa["id"],),
         )
+
+
+# --------------------------------------------------------------------------------------
+# Os dois instrumentos do operador, contra o catálogo de verdade (24/10/2026)
+# --------------------------------------------------------------------------------------
+
+#: O que o `privilegios` REPROVA conectado como DONO num banco sem o D20 -- o banco do CI. Ali o
+#: veredito é reprovado por construção, e esta é a lista exata do "por construção": cada item tem
+#: uma causa que não é defeito do banco. Problema A MAIS é algo que reprovaria também na VPS (uma
+#: extensão que o D20 não governa, uma função `SECURITY DEFINER` nova, um parâmetro fixado no
+#: banco) -- ou uma checagem NOVA do `privilegios` que o dono reprova por construção, e então ela
+#: entra aqui, com a causa ao lado. Problema A MENOS é uma checagem que parou de enxergar, ou que
+#: mudou de rótulo.
+PRIVILEGIOS_COMO_DONO_SEM_D20 = frozenset(
+    {
+        # O dono pode tudo -- é exatamente por isso que o piloto não usa a credencial dele.
+        "criar objeto no schema public",
+        "escrever no historico de permissoes",
+        "apagar sessao",
+        "alterar o historico de permissoes",
+        "apagar do historico de permissoes",
+        "esvaziar perfil_permissoes",
+        "alterar evento ja' gravado",
+        "apagar evento",
+        "criar tabela temporaria",
+        "ser dono das tabelas auditadas",
+        # Seção 2 do D20: os `REVOKE ... FROM PUBLIC`, que nenhum default do Postgres faz.
+        "poder que a secao 2 revoga de PUBLIC esta aberto: public (TEMPORARY no banco)",
+        "PUBLIC pode executar registra_perfil_permissoes_historico: "
+        "falta o REVOKE EXECUTE da secao 2",
+        "PUBLIC pode executar registra_perfil_permissoes_truncate: "
+        "falta o REVOKE EXECUTE da secao 2",
+        # Seção 6 do D20: `ALTER DEFAULT PRIVILEGES`.
+        "pg_default_acl sem linha de SEQUENCES: a secao 6 nao rodou",
+        "pg_default_acl sem linha de TABLES: a secao 6 nao rodou",
+        # Seção 7 do D20: `ENABLE ALWAYS` nas duas triggers de auditoria.
+        "trigger trg_perfil_permissoes_auditoria fora de ENABLE ALWAYS",
+        "trigger trg_perfil_permissoes_auditoria_truncate fora de ENABLE ALWAYS",
+    }
+)
+
+
+def _problemas(saida: str, cabecalho: str) -> list[str]:
+    """As linhas `  - ...` do bloco que `conferir`/`privilegios` imprimem no fim ao reprovar.
+
+    Lê a SAÍDA, e não uma estrutura interna, de propósito: o operador decide pelo que o comando
+    imprime, e é isso que tem de dizer a verdade. Veredito OK (sem bloco) devolve lista vazia.
+    """
+    _, achou, resto = saida.partition(cabecalho)
+    if not achou:
+        return []
+    cabeca, *linhas = resto.splitlines()
+    problemas = []
+    for linha in linhas:
+        if not linha.startswith("  - "):
+            break
+        problemas.append(linha.removeprefix("  - "))
+    anunciados = int(cabeca.split()[0])
+    assert anunciados == len(problemas), (
+        f"o cabeçalho anuncia {anunciados} problema(s) e o bloco lista {len(problemas)}:\n{saida}"
+    )
+    return problemas
+
+
+def _triggers_de_auditoria(con: Any) -> dict[str, str]:
+    """`tgname -> tgenabled` das triggers da tabela auditada; 'A' só existe depois do D20."""
+    linhas = con.execute(
+        db_postgres.SQL_TRIGGERS_AUDITORIA, (db_postgres.TABELA_AUDITADA,)
+    ).fetchall()
+    return {nome: estado for nome, estado in linhas}
+
+
+def test_o_conferir_aprova_tudo_que_nao_depende_do_D20(con: Any, capsys: Any) -> None:
+    """`db conferir` inteiro contra o banco de verdade: o comando que o runbook manda rodar na VPS.
+
+    O banco do CI nasce SEM o D20: o script de papéis vive no `banco-de-reservas` e não é recriado
+    aqui, porque um D20 inventado provaria o inventado, e não o real. Sem ele o `conferir` reprova
+    POR CONSTRUÇÃO -- é o fail-closed do #447: trigger de auditoria fora de 'A' é problema, não
+    aviso. Então há duas respostas legítimas, e o teste lê do catálogo qual vale:
+
+    * sem o D20 (o CI): os ÚNICOS problemas são as triggers fora de 'A', uma linha por trigger.
+      Extensões, os seis números da §0, o endurecimento das funções (D19/D21) e o registro das
+      migrations têm de passar, todos, contra o PostgreSQL de produção;
+    * com o D20 (o ensaio do runbook, §1.2): `CONFERENCIA OK`, código 0.
+    """
+    triggers = _triggers_de_auditoria(con)
+    assert triggers, "nenhuma trigger de auditoria em `perfil_permissoes` — a 009 não aplicou?"
+
+    codigo = cli.main(["conferir"])
+    saida = capsys.readouterr().out
+    problemas = _problemas(saida, "CONFERENCIA COM ")
+
+    fora_de_a = {nome: estado for nome, estado in triggers.items() if estado != "A"}
+    if not fora_de_a:
+        assert (codigo, problemas) == (0, []), saida
+        assert "CONFERENCIA OK" in saida, saida
+        return
+
+    assert codigo == 1, saida
+    por_trigger = {
+        nome: [p for p in problemas if p.startswith(f"trigger `{nome}` em '{estado}', nao 'A'")]
+        for nome, estado in fora_de_a.items()
+    }
+    alheios = [p for p in problemas if not any(p in lista for lista in por_trigger.values())]
+    assert not alheios, (
+        "o `conferir` reprovou por algo que NÃO é a ausência do D20:\n"
+        + "\n".join(alheios)
+        + "\n\nOu é defeito do banco, que reprovaria também na VPS, ou é uma checagem NOVA do "
+        "`conferir` que depende do D20 -- e então este teste precisa aprender a reconhecê-la, "
+        "como já reconhece as triggers fora de 'A'."
+    )
+    fora_do_relatorio = sorted(nome for nome, lista in por_trigger.items() if len(lista) != 1)
+    assert not fora_do_relatorio, (
+        "sem o D20, cada trigger fora de 'A' tem de aparecer UMA vez entre os problemas do "
+        f"`conferir`: {fora_do_relatorio}\n{saida}"
+    )
+
+
+def test_o_privilegios_roda_inteiro_no_catalogo_real(con: Any, capsys: Any) -> None:
+    """`db privilegios` contra o catálogo de verdade: tudo o que dá para provar sem o papel `app`.
+
+    O VEREDITO deste comando só vale conectado como `app`, e o `app` nasce do D20, que o CI não
+    tem (ver o teste do `conferir`, acima). Esse veredito segue manual: ensaio do runbook (§1.2) e
+    VPS. O que se prova aqui, em todo PR:
+
+    * as consultas de catálogo dele EXECUTAM no PostgreSQL de produção -- erro de SQL nelas só
+      apareceria no dia do repasse, na mão do operador;
+    * todo objeto que ele pergunta EXISTE depois das migrations: uma migration que renomeasse a
+      sequence de `eventos` faria o instrumento diagnosticar "migration pendente" num banco em dia;
+    * conectado como DONO e sem o D20, ele reprova EXATAMENTE pelo que o dono e a falta do D20
+      explicam (`PRIVILEGIOS_COMO_DONO_SEM_D20`) -- nem um item a mais, nem um a menos.
+
+    Conectado como `app` (a `MOTOR_DATABASE_URL` do runbook, com o D20 de pé), exige
+    `PRIVILEGIOS OK`.
+    """
+    dono = con.execute(
+        "SELECT pg_get_userbyid(relowner) FROM pg_class WHERE oid = to_regclass(%s)",
+        (db_postgres.TABELA_AUDITADA,),
+    ).fetchone()[0]
+    triggers = _triggers_de_auditoria(con)
+    assert triggers, "nenhuma trigger de auditoria em `perfil_permissoes` — a 009 não aplicou?"
+    estados = set(triggers.values())
+
+    codigo = cli.main(["privilegios"])
+    saida = capsys.readouterr().out
+    problemas = _problemas(saida, "PRIVILEGIOS COM ")
+
+    assert "o objeto nao existe" not in saida, (
+        "o `privilegios` perguntou por objeto que as migrations não criaram:\n" + saida
+    )
+    conectado = saida.splitlines()[0].removeprefix("papel conectado:").strip()
+
+    if conectado != dono:
+        assert (codigo, problemas) == (0, []), saida
+        assert "PRIVILEGIOS OK" in saida, saida
+    elif "A" not in estados:  # nada do D20 de pé: o banco do CI
+        assert codigo == 1, saida
+        a_mais = sorted(set(problemas) - PRIVILEGIOS_COMO_DONO_SEM_D20)
+        a_menos = sorted(PRIVILEGIOS_COMO_DONO_SEM_D20 - set(problemas))
+        assert not a_mais, (
+            "o `privilegios` reprovou por algo que o dono e a falta do D20 NÃO explicam:\n"
+            + "\n".join(a_mais)
+            + "\n\nDuas causas possíveis. (1) Defeito que reprovaria também na VPS: banco "
+            "nascido do initdb da imagem, sem o `tmpfs` do compose, cai aqui -- suba pelo "
+            "`scripts/ci/banco_de_ensaio.sh`. (2) Checagem NOVA no `privilegios` que o dono "
+            "reprova por construção, porque o dono pode tudo: acrescente o rótulo dela a "
+            "`PRIVILEGIOS_COMO_DONO_SEM_D20`, com a causa ao lado."
+        )
+        assert not a_menos, (
+            "sem o D20 e conectado como dono, o `privilegios` deixou de acusar -- a checagem parou "
+            "de enxergar, ou mudou de rótulo (se foi de propósito, atualize "
+            "`PRIVILEGIOS_COMO_DONO_SEM_D20`):\n" + "\n".join(a_menos)
+        )
+    elif estados != {"A"}:
+        pytest.fail(
+            f"D20 pela metade: as triggers de auditoria estão em {triggers}. A seção 7 dele tem "
+            "DUAS linhas `ALTER TABLE`; rode-a inteira antes de conferir os privilégios."
+        )
+    # Dono COM o D20: como dono, o veredito é reprovado por construção e não diz nada sobre o
+    # banco; o que vale para este caso já foi cobrado acima (rodou inteiro, nenhum objeto ausente).
 
 
 # ======================================================================================

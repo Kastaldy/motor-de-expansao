@@ -16,15 +16,19 @@ O guard tem UM juiz (este arquivo) e DOIS consumidores:
 Duas classes de caminho protegido:
 
 * CRITICO   - nucleo do M1 (score/pesos/config/pipelines/artefatos oficiais), scores PARALELOS
-              servidos em producao (flag_sam/carteira/plano/relatorio municipal), producao/VPS/CI
-              e os arquivos que ARMAM os proprios checks do CI (pyproject/conftest/constraints/
-              gitleaks/Dockerfile). Sem estes ultimos, um PR desarma o check `test` a partir do
-              proprio HEAD (o job `test` roda em `pull_request`) e auto-mergeia com tudo verde.
+              servidos em producao (flag_sam/carteira/plano/relatorio municipal), producao/VPS/CI,
+              o BANCO de producao (migrations, autenticacao/autorizacao, trilha de eventos e os
+              crons que o operam com a senha do dono) e os arquivos que ARMAM os proprios checks
+              do CI (pyproject/conftest/constraints/gitleaks/Dockerfile/scripts/ci). Sem estes
+              ultimos, um PR desarma o check `test` a partir do proprio HEAD (o job `test` roda em
+              `pull_request`) e auto-mergeia com tudo verde.
 * GOVERNANCA - os arquivos que definem as PROPRIAS regras (este guard, CLAUDE.md, backlog, REVIEW.md,
-              runner do loop, .gitignore, .claude/, .github/) e as camadas de PRODUCAO que calculam
+              runner do loop, .gitignore, .claude/, .github/), as camadas de PRODUCAO que calculam
               ou exibem numeros para o comite (dashboard/data, API/bot, viabilidade, lifetime,
-              demanda revelada). Sem isso um agente poderia reescrever o guarda que o julga - ou
-              mudar, num bloco "Media" auto-mergeavel, um numero que o comite le como verdade.
+              demanda revelada), os instrumentos de VEREDITO sobre identidade no banco e o
+              contrato da porta unica dele. Sem isso um agente poderia reescrever o guarda que o
+              julga - ou mudar, num bloco "Media" auto-mergeavel, um numero que o comite le como
+              verdade.
 
 Semantica de saida (o guard REPORTA; quem DECIDE e o consumidor):
 
@@ -35,6 +39,10 @@ Semantica de saida (o guard REPORTA; quem DECIDE e o consumidor):
   AVISO nao-fatal porque o proprio loop faz housekeeping legitimo em `tasks/backlog.md`,
   `tasks/completed.md` e `CLAUDE.md`; bloquear isso mataria o loop a cada ciclo. A revisao dessas
   mudancas acontece no PR (onde o modo `--stdin` do CI as sinaliza).
+
+Nos DOIS modos, caminho que o git cita (aspas nas pontas + octal: o nome com acento, no
+`git diff --name-only` e no `gh pr diff --name-only`) e' desfeito ANTES de casar as regras --
+senao toda regra ancorada era contornavel por um acento no caminho.
 
 Uso:
     python scripts/loop_guard.py --base <ref> [--json]
@@ -144,6 +152,46 @@ _DENY_CRITICO: list[tuple[str, str]] = [
     (r"docker-compose", "compose de producao"),
     (r"(^|/)Caddyfile", "Caddy (VPS)"),
     (r"^authelia/", "Authelia (VPS)"),
+    # BANCO de producao (Postgres/PostGIS). Desde 23/10/2026 ele AUTORIZA o piloto BR (RBAC por
+    # `MOTOR_DATABASE_URL`) e, ligado o P19 (`MOTOR_AUTENTICACAO_PROPRIA`, DEC-067), AUTENTICA:
+    # e' o sucessor do `authelia/` logo acima, por isso fica na MESMA classe. Ate' aqui o pacote
+    # inteiro saia LIMPO -- um bloco "Media" auto-mergeavel podia afrouxar o `_dev_ativo` do
+    # `rbac.py` (qualquer um vira qualquer usuario), aceitar senha errada no `senhas.py`,
+    # conceder permissao por migration (aplicada pelo papel DONO, fora do RBAC) ou parar de
+    # carimbar o autor da auditoria no `postgres.py`, sem gate humano nenhum. Nao e' hipotese:
+    # o #447 mexeu em `cli.py`/`postgres.py`/`senhas.py` (o `conferir` e o `privilegios`
+    # aprovavam bancos quebrados) e o guard so' o marcou pelo `.gitignore` do mesmo diff.
+    # CRITICO, e nao GOVERNANCA, pelo efeito no ralph: o banco guarda dado pessoal e credencial
+    # (login, e-mail, hash de senha, token de sessao, IP) e o criterio loop-safe proibe persistir
+    # PII e tocar segredo -- o loop tem de ABORTAR, nao so' avisar. O pacote entra INTEIRO na
+    # terceira regra (e nao como lista de arquivos): modulo novo nasce coberto, a licao das
+    # regras que "nasceram fora da lista" (DEC-070/071/074). As duas primeiras so' afinam o motivo.
+    (
+        r"^src/motor_expansao/db/migracoes/",
+        "migrations do banco de producao (DDL + seed do RBAC, aplicadas pelo papel dono)",
+    ),
+    (
+        r"^src/motor_expansao/db/(rbac|usuarios|senhas|sessoes)\.py$",
+        "autenticacao/autorizacao do piloto pelo banco (RBAC em producao + login proprio do P19 - DEC-067)",
+    ),
+    (
+        r"^src/motor_expansao/db/",
+        "pacote do banco de producao (porta unica de conexao, runner de migration como dono, trilha de eventos)",
+    ),
+    # Crons do banco na VPS (instalados a mao no host e rodando sozinhos todo dia): os dois de
+    # hoje leem a senha do papel DONO do Postgres no `.env` de producao; o backup tambem le a
+    # chave do restic/S3 e produz o dump com dado pessoal, e o expurgo executa a retencao do IP
+    # das sessoes (P15), que so' vale porque roda ANTES do backup. Mesmo raciocinio dos
+    # lancadores do loop (abaixo): um PR mergeado que os altere exfiltra o segredo na proxima
+    # instalacao. A regra casa o NOME (`banco`/`sessoes` em qualquer ponto do caminho sob
+    # `scripts/cron/`), e nao a lista dos dois de hoje: o proximo cron do banco (restore, copia
+    # off-box, um ajudante que eles carreguem) nasce coberto -- a mesma licao do pacote acima.
+    # Os OUTROS crons de `scripts/cron/` tambem leem o `.env` e ficam fora daqui por escopo --
+    # estender a regra a eles e' decisao propria, nao efeito colateral desta.
+    (
+        r"^scripts/cron/.*(banco|sessoes)",
+        "cron do banco na VPS - opera o Postgres de producao com a senha do papel dono (backup: chave restic/S3 + dump com dado pessoal)",
+    ),
     (r"(^|/)\.env($|\.)", ".env / segredos"),
     (r"^secrets/", "secrets/"),
     # Lancadores do loop: LEEM o CLAUDE_CODE_OAUTH_TOKEN do .env do dono e o injetam no container.
@@ -178,6 +226,16 @@ _DENY_CRITICO: list[tuple[str, str]] = [
         "config de ferramenta na raiz - tem precedencia sobre o pyproject.toml (desarma ruff/mypy/pytest)",
     ),
     (r"(^|/)[^/]+\.pth$", "arquivo .pth - injeta codigo no import do Python"),
+    # Scripts que o job `test` EXECUTA a partir do HEAD do PR -- hoje o banco de ensaio
+    # (`scripts/ci/banco_de_ensaio.sh`): sobe o PostGIS do compose, aplica a cadeia de migrations
+    # do zero e exige o teste de integracao do banco SEM pular, conferindo o junit. Mesmo caso do
+    # `conftest.py`: quem controla o script controla o veredito, e um `exit 0` no `verificar`
+    # deixa o `test` verde sem ter migrado nada. O diretorio inteiro, para o proximo script de CI
+    # nascer coberto.
+    (
+        r"^scripts/ci/",
+        "script que o job `test` executa a partir do HEAD do PR (hoje, o banco de ensaio) - pode desarmar o check",
+    ),
 ]
 
 # --- Classe GOVERNANCA: as regras do jogo + as camadas de PRODUCAO que produzem os numeros --------
@@ -224,6 +282,28 @@ _DENY_GOVERNANCA: list[tuple[str, str]] = [
         r"^src/motor_expansao/(lifetime|demanda_revelada|vulnerabilidade)/",
         "camadas paralelas com insumo de PII na origem (DEC-012)",
     ),
+    # Instrumentos de VEREDITO sobre identidade no banco: o conferidor do corte (diz se quem entra
+    # hoje esta' no banco com as mesmas abas; roda no host da VPS lendo o `users_database.yml` do
+    # Authelia) e o rastreio de vazamento (diz QUEM gerou um PDF ou XLSX). Nao escrevem nada nem
+    # leem o `.env` -- por isso nao sao CRITICO --, mas o veredito deles e' lido como verdade num
+    # corte de acesso e numa acusacao, e nao pode mudar num "Media" auto-mergeavel sem olho
+    # humano (o #455 criou o conferidor e o guard o via LIMPO). `scripts/extrair_migracoes.py`
+    # fica de FORA de proposito: ele so' gera arquivo em `db/migracoes/`, que ja' e' CRITICO.
+    (
+        r"^scripts/(conferir_usuarios_banco|rastrear_arquivo)\.py$",
+        "instrumento de veredito sobre identidade no banco (conferidor do corte de acesso / rastreio de vazamento)",
+    ),
+    # Contrato da PORTA UNICA do banco (D28): o teste varre `src/`, `web/server` e `scripts/` e
+    # recusa conexao aberta fora de `db/postgres.py`/`db/cli.py` -- quem escreve fora dali
+    # escreve SEM o carimbo `app.id_usuario`, e a auditoria registra autor nulo. Ele e' a unica
+    # trava sobre codigo LIMPO (um modulo qualquer de `src/` sai LIMPO do guard), e o jeito
+    # natural de um agente "fazer passar" e' acrescentar o proprio arquivo a `_PERMITIDOS`.
+    # Precedente: `tests/unit/test_scoring.py` ja' e' protegido (CRITICO, pelo `*scoring*`) --
+    # teste que E' a regra nao fica livre.
+    (
+        r"^tests/contracts/test_conexao_por_uma_porta_so\.py$",
+        "contrato da porta unica do banco (D28) - a allowlist e' a unica trava sobre codigo LIMPO",
+    ),
     # N3 - governanca da esteira e insumos/config de PRODUCAO que um bloco "Media" auto-mergeavel
     # nao deve mover sem olho humano: os PROMPTS dos agentes (definem o comportamento da esteira),
     # a config do harness Codex, o housekeeping do backlog, o cache de oferta versionado e a config
@@ -254,14 +334,73 @@ class Violacao:
         return {"path": self.path, "classe": self.classe, "motivo": self.motivo}
 
 
+# Citacao do git (`core.quotePath`, ligado por padrao): caminho com byte fora do ASCII, aspas,
+# barra invertida ou caractere de controle chega ENTRE ASPAS e com escape em octal -- tanto no
+# `git diff --name-only` do ralph quanto no `gh pr diff --name-only` do CI (medido no #136, que
+# o `gh` lista como `"Motor de Expans\303\243o - Refer\303\252ncia (standalone).html"`). As regras
+# ANCORADAS nao casam a aspa da ponta: ate' 2026-10-24, um modulo novo em `db/`, um script em
+# `scripts/ci/` ou um `conftest.py` (que neutraliza a suite, F1) com acento em qualquer ponto do
+# caminho saiam LIMPOS nos DOIS modos. Desfazer a citacao antes de casar so' ACRESCENTA acerto:
+# a parte ASCII do caminho nao muda, e nenhuma regra depende de aspa ou de escape.
+_ESCAPES_DO_GIT = {
+    "a": 0x07,
+    "b": 0x08,
+    "t": 0x09,
+    "n": 0x0A,
+    "v": 0x0B,
+    "f": 0x0C,
+    "r": 0x0D,
+    '"': 0x22,
+    "\\": 0x5C,
+}
+
+
+def _desfazer_citacao_do_git(path: str) -> str:
+    """`"src/motor_expansao/db/sess\\303\\243o.py"` -> o mesmo caminho, com o `a` de til.
+
+    Caminho sem aspas nas DUAS pontas volta intacto. Escape que o git nao produz (fora da
+    tabela, octal incompleto ou acima de 377) devolve o caminho so' SEM as aspas: ali nao ha'
+    citacao do git, mas tirar a aspa da ponta ainda deixa as regras ancoradas casarem o
+    esqueleto ASCII -- na duvida, o guard erra para o lado de PEGAR. Nunca levanta excecao:
+    guard que quebra no insumo reprova o CI e aborta o loop, mas por erro, e nao pelo motivo
+    certo.
+    """
+    if len(path) < 2 or path[0] != '"' or path[-1] != '"':
+        return path
+    corpo = path[1:-1]
+    saida = bytearray()
+    i = 0
+    try:
+        while i < len(corpo):
+            letra = corpo[i]
+            if letra != "\\":
+                saida += letra.encode("utf-8", errors="surrogatepass")
+                i += 1
+                continue
+            seguinte = corpo[i + 1 : i + 2]
+            octal = corpo[i + 1 : i + 4]
+            if seguinte in _ESCAPES_DO_GIT:
+                saida.append(_ESCAPES_DO_GIT[seguinte])
+                i += 2
+            elif len(octal) == 3 and all(c in "01234567" for c in octal) and int(octal, 8) <= 0xFF:
+                saida.append(int(octal, 8))
+                i += 4
+            else:
+                return corpo
+        return saida.decode("utf-8", errors="replace")
+    except (UnicodeError, ValueError):
+        return corpo
+
+
 def classificar(paths: Iterable[str]) -> list[Violacao]:
     """Funcao PURA: classifica caminhos em CRITICO/GOVERNANCA (o que nao casa fica de fora).
 
     CRITICO tem precedencia sobre GOVERNANCA (um caminho gera no maximo UMA violacao). Retorna a
-    lista ordenada por caminho, sem duplicatas.
+    lista ordenada por caminho, sem duplicatas. Caminho citado pelo git (entre aspas, com octal)
+    e' desfeito ANTES de casar, e a violacao carrega o caminho desfeito, legivel na tabela do CI.
     """
     violacoes: list[Violacao] = []
-    for path in sorted({p.strip() for p in paths if p.strip()}):
+    for path in sorted({_desfazer_citacao_do_git(p.strip()) for p in paths if p.strip()}):
         for rx, motivo in _DENY_CRITICO_RES:
             if rx.search(path):
                 violacoes.append(Violacao(path, CLASSE_CRITICO, motivo))
@@ -275,7 +414,12 @@ def classificar(paths: Iterable[str]) -> list[Violacao]:
 
 
 def _git(*args: str) -> str:
-    out = subprocess.run(["git", *args], capture_output=True, text=True, check=False)
+    # `stdin=DEVNULL`: o git daqui nunca le a entrada, e herda-la falha de vez em quando no
+    # Windows (WinError 6/50 ao duplicar um stdin redirecionado) -- o guard quebraria por
+    # erro de ambiente, e nao pelo motivo certo. No container do ralph nao muda nada.
+    out = subprocess.run(
+        ["git", *args], capture_output=True, text=True, check=False, stdin=subprocess.DEVNULL
+    )
     return out.stdout
 
 
