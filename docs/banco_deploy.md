@@ -5,7 +5,7 @@
 > que descreve como o motor **fala** com o banco; aqui é como ele **passa a existir**.
 >
 > Fonte do esquema: repositório `banco-de-reservas`. Nenhum DDL nasce aqui.
-> Versão: Setembro 2026 · Executor: Vinícius
+> Versão: Setembro 2026 · Executor: Vinícius · Estado: §1 a §7 executados na VPS em 17/10/2026; o §8 (ligar) segue pendente, e o cron do backup (§10) ficou no crontab do usuário `deploy`, fora deste roteiro
 
 ## 0. A ordem importa — leia antes de qualquer comando
 
@@ -66,7 +66,7 @@ O que o PostgreSQL nativo **não** cobre:
 
 O que cobre esse resto, quando não houver Docker à mão:
 
-1. `tests/contracts/test_compose_banco.py` trava as quatro invariantes estruturais (variável
+1. `tests/contracts/test_compose_banco.py` trava as invariantes estruturais (as duas do ensaio de 13/10/2026 acima — volume na raiz e `tmpfs` sobre o initdb — e mais quatro: variável
    fail-closed documentada, sem porta no host, `web` não refém da saúde do banco, volume nomeado).
 2. `docker compose config` na VPS **valida sem subir nada** — é o primeiro comando do §4, e falha
    barulhento em erro de sintaxe ou variável faltando.
@@ -93,9 +93,9 @@ $PGBIN = "C:\Program Files\PostgreSQL\18\bin"
 
 > **`PYTHONPATH` primeiro, ou o Python acha o pacote errado.** O projeto usa layout `src/`, e
 > o `motor_expansao` instalado em modo editável aponta para o **checkout principal** — onde o
-> módulo `db` não existe, porque ele só vive nesta branch. Estar dentro da worktree não basta:
+> módulo `db` também existe (está na `main` desde 01/09/2026), mas é o DE LÁ que roda, não o desta worktree. Estar dentro da worktree não basta:
 > o diretório atual não expõe `motor_expansao`. Sem a linha abaixo o erro é
-> `No module named motor_expansao.db`, que parece pacote quebrado e não é.
+> silencioso: o comando roda o `db` do checkout principal sem aviso (até 01/09/2026, quando o módulo só existia na branch, era `No module named motor_expansao.db`).
 >
 > **Não conserte com `pip install -e .` daqui.** Isso repontaria o pacote para esta branch em
 > todo o seu Python, e o trabalho no checkout principal passaria a importar código desta branch
@@ -157,7 +157,7 @@ $env:PYTHONPATH = "C:\Users\Vinicius Cruz\Downloads\Projetos\motor-de-expansao\.
 #
 # Ler o diretorio do checkout principal e' seguro: o piloto e' READ-ONLY sobre os
 # artefatos, e ha teste que trava isso (`test_leituras_nao_mutam_artefatos`).
-$env:MOTOR_DATA_DIR = "C:\Users\Vinicius Cruz\Downloads\Projetos\motor-de-expansao\data"
+$env:MOTOR_DATA_DIR = "C:\Users\Vinicius Cruz\Downloads\Projetos\motor-de-expansao\data"   # desde 21/10/2026 (#472), com esta env a subida também exige os insumos da renda e o carimbo k em staging\censo2022_hex_da_malha.parquet
 
 # OBRIGATORIO desde o merge da main (Bloco A / DEC-047): com MOTOR_DATA_DIR definida,
 # `resolver_perfil()` e FAIL-CLOSED e exige um `perfil.json` na RAIZ dela. O checkout
@@ -346,8 +346,8 @@ Gerar as senhas em hexadecimal não é preciosismo: caractere especial (`@ : / ?
 precisa de percent-encoding, e o sintoma de esquecer é um erro de *host não encontrado*, que manda
 você procurar no lugar errado.
 
-**`.env` mexido pede re-encriptação no SOPS+age.** Já é pendência aberta do BLK-OPS-01 desde os
-segredos da API/bot; três senhas novas não é hora de adiar de novo.
+**`.env` mexido pede re-encriptação no SOPS+age.** Era pendência aberta do BLK-OPS-01 desde os
+segredos da API/bot, fechada na instalação de 17/10/2026 (`secrets/env.enc.env` refeito no #462, já com as senhas do banco); repita a cada mudança do `.env`.
 
 ## 4. Subir o serviço
 
@@ -722,7 +722,7 @@ DDL sobre dado real é onde se perde dado. O caminho de volta é o restore do du
 
 ## 9.0 Aplicar as migrations do P19 (018, 019, 020) — ORDEM QUE IMPORTA
 
-Auditoria de 23/09/2026 antes da primeira aplicação em produção. **A ordem abaixo não é
+Auditoria de 23/09/2026 antes da primeira aplicação em produção — que acabou não vindo por aqui: o banco de produção nasceu em 17/10/2026 com as 21 migrations de uma vez (§5), então esta seção só vale para um banco que já tenha `000`–`017`. **A ordem abaixo não é
 preferência: cada passo evita uma falha concreta, e três delas não apareceram no ensaio local
 porque lá o banco nasce limpo e sem tráfego.**
 
@@ -922,6 +922,6 @@ restaurou é backup que ninguém tem.
 O volume `postgres_data` é o **único** do compose que nenhum pipeline regenera. `caddy_data` se
 refaz sozinho, `bot_data` custa um relogin, os parquets saem dos pipelines. Este não.
 
-`mem_limit: 2g` é teto conservador: a KVM4 tem 16 GB e os tetos de `web` (8g) e `api` (6g) já somam
+`mem_limit: 2g` é teto conservador: a KVM4 tem 16 GB, e só os tetos de `web` (8g) e `api` (6g) — sem contar o `web_ar` (2g, `docker-compose.ar.yml`, na mesma VPS) — já somam
 14. O candidato a estourar isso é o ETL da fase 5 (dissolve por UF) — quando ele existir, **medir
 antes de subir o teto**, não depois de um OOM.

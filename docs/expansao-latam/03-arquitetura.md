@@ -7,7 +7,7 @@
   - **Decisão 0.1 do `docs/plano_multipais.md`:** sem comparação entre países.
   - **D4:** interface em português até ordem do dono.
   - **M1 READ-ONLY.**
-  - **DEC-043:** o motor é triagem, não previsão.
+  - **DEC-041:** o funil é triagem (política declarada), não previsão. A DEC-043 foi revogada pela DEC-078 em 21/10/2026, que pôs na Viabilidade do BR uma sugestão de faturamento calibrada em unidades Ultra.
 
 ---
 
@@ -98,10 +98,10 @@ Ordenada por dependência. Códigos (S1, Q3…) remetem ao `00-baseline-argentin
 | # | Refatoração | Fecha | Natureza | Criticidade (guard) |
 |---|---|---|---|---|
 | R1 | **Réguas de ficha e zona morta no perfil:** `reguas.renda_min_ficha` (BR = 4.500), `renda_zona_morta_min` (BR = 500, DEC-042), `pop_zona_morta_min` (BR = 5.000). Leitores em `app.py:6478` e `viabilidade_ponto.py:72` | S1, S2 (AR **hoje**) | Literal → perfil, BR idêntico ao bit | Alta (`viabilidade_ponto.py` em GOVERNANCA) |
-| R2 | **Front lê as faixas e a moeda do perfil:** `colors.ts` consome `bandas_*` do `/api/me`; renda rotulada por `moedaRenda()`. Guarda anti-moeda estendida a `screens/` e `components/` (allowlist só da viabilidade) | S3, S4 (AR **hoje**) | Front | Alta (`web/`) |
+| R2 | **Front lê as faixas e a moeda do perfil:** `colors.ts` consome `bandas_*` do `/api/me`, que passa a servir também as faixas DOMICILIARES do perfil (desde o #473 o calor de renda pinta a domiciliar, e o `bandas_renda_setor` de hoje é per capita); renda rotulada por `moedaRenda()` (a legenda do calor já usa). Guarda anti-moeda estendida a `screens/` e `components/` (allowlist só da viabilidade) | S3, S4 (AR **hoje**) | Front | Alta (`web/`) |
 | R3 | **Réguas do funil completas:** `demanda_min/max_alunos`, `peso_socio/demanda`, `conc_adensar_max`, `crit_ponto_*`, `consumo_1km_cortes`. **Derivação declarada:** âncoras de demanda = f(`capacidade_concorrente`), e não literal | S7, S9, S8 | Literal → perfil | Crítica (`constants.py`) |
 | R4 | **Campos mortos:** ligar leitor (`score_pesos`, `separador_*`, `faixas_mapa_*`) ou remover do schema (`taxa_fitness`, `mem_limit_alvo`, `basemap_labels_url_obrigatoria`), com o loader **recusando** chave desconhecida em vez de "tolerar" | S11 | Loader | Alta |
-| R5 | **Fallbacks BR fail-closed:** `k = 1.0239`, `fillna(2_500)`, `FATOR_TEMPORAL = 1,0` rotulado "julho/2022 (Censo IBGE)", `TAXA_FITNESS_FALLBACK = 0,10`. Com perfil ≠ BR e insumo ausente, a resposta é **"indisponível"** com motivo, nunca o número brasileiro | S10 | Serving | Crítica (parte em `constants.py`) |
+| R5 | **Fallbacks BR fail-closed:** `k = 1.0239`, `fillna(2_500)`, `TAXA_FITNESS_FALLBACK = 0,10`. O fator temporal já é fail-closed por país desde a DEC-075 (sem `renda/fatores/<PAIS>/` a subida falha), e o k também quando o arquivo do país declara `artefato_k_obrigatorio` (o BR declara; a AR, não). Com perfil ≠ BR e insumo ausente, a resposta é **"indisponível"** com motivo, nunca o número brasileiro | S10 | Serving | Crítica (parte em `constants.py`) |
 | R6 | **Chave de município integral e declarada:** `perfil.identidade.chave_municipio` = `{comprimento, regex}`. O join do crescimento passa a casar a chave inteira normalizada, e não `str[:6]` | S6 (CO 5, MX 5, PY 4 dígitos; PE 6 casa por acaso) | Serving | Alta |
 | R7 | **Partição alfanumérica:** `_UF_RE` → `^[A-Za-z0-9]{2,6}$`, com teste de traversal no mesmo commit (BLK-INTL-04). Rótulos de nível 1 (nome, bandeira, vocabulário "departamento/estado/provincia") saem das tabelas TS por sigla e vão para o perfil. **Isso elimina a fabricação de siglas e o problema das colisões** (`AM` em CO e PY; `SP`, `CE`, `AP` em PY; `MG`, `SP` em MX) | Q3, C2 | Segurança | **Crítica** (sink anti-traversal) |
 | R8 | **`mascara.ts` por locale:** gramática numérica do `perfil.moeda.separador_*`. **Obrigatório antes de MX e PE** (`1,500.00`) | S5 | Front puro, com testes | Alta |
@@ -147,7 +147,7 @@ Fontes: dossiê transversal e auditoria de dados (Kontur r8 → r7 reescalado ao
 
 ### 4.3 CPU é o gate (proposta DEC-073/D7)
 
-`_PDF_CONCORRENCIA_MAX` é **por processo**. Hoje são BR 3 + AR 1; com +4 instâncias a 1 cada, seriam **8 jobs de PDF em 4 vCPU**. Somam-se as coletas semanais de concorrentes de cada país, cerca de 20 min com 4 workers no molde da AR. Isso degrada o p95 do Brasil **sem erro, sem log e sem alerta**. Proposta, compatível com a DEC-047 (que proíbe multiplexar país **dentro** do processo, não limitar recurso **no host**):
+`_PDF_CONCORRENCIA_MAX` é **por processo**. Hoje são BR 3 + AR 1; com +4 instâncias a 1 cada, seriam **8 jobs de PDF em 4 vCPU**. Somam-se as coletas semanais de concorrentes de cada país, cerca de 20 min com 4 workers no molde da AR, e, desde a DEC-074, o Valhalla na mesma VPS (`valhalla-infra/docker-compose.yml`: `cpus: 1.0` e `mem_limit` medido por env), que responde às isócronas do BR. Isso degrada o p95 do Brasil **sem erro, sem log e sem alerta**. Proposta, compatível com a DEC-047 (que proíbe multiplexar país **dentro** do processo, não limitar recurso **no host**):
 
 1. `cpus:` por container nas instâncias novas (ex.: 1,0), o que protege o BR;
 2. `pdf_concorrencia_max = 1` em todo país novo;
@@ -230,7 +230,7 @@ O golden de Londrina continua travando o BR. Cada país ganha seu próprio golde
 
 ## 7. Estratégia de testes e regressão (BR e AR não podem quebrar)
 
-1. **Golden BR inviolável:** `test_viabilidade_golden.py` (Londrina, tolerância de R$ 0,01) e um **novo snapshot de hash** das saídas do funil BR (camadas 1–5 para 3 UFs de referência: SP, PR, AM). O snapshot é gerado **antes** da refatoração e comparado a cada PR do núcleo.
+1. **Golden BR inviolável:** `test_viabilidade_golden.py` (Londrina, tolerância de R$ 0,01) e um **novo snapshot de hash** das saídas do funil BR (camadas 1–5 para 3 UFs de referência: SP, PR, AM). O snapshot é gerado **antes** da refatoração e comparado a cada PR do núcleo. O molde já existe para a AR desde a DEC-077: `tests/unit/test_piloto_web_recomendacao_legado_ar.py` trava por sha256 `/api/municipio`, `/api/uf` e `/api/metodologia` da instância sem régua, e mudança deliberada no funil da AR (R3) tem de regerá-lo com `MOTOR_GERAR_GOLDEN_AR`.
 2. **Matriz de perfis:** todo teste de contrato de perfil roda parametrizado sobre `data/perfis/*/perfil.json` (BR, AR e os novos à medida que entram). **Em subprocesso por país**, porque um país por processo vale também para a suíte (lição 14 da AR: o cache do perfil envenenava outros testes).
 3. **Pacotes-fixture sintéticos por país** (centenas de linhas, gerados a partir do contrato) no CI. O validador semântico roda contra cada um, e o serving sobe com cada perfil e responde às rotas das superfícies ligadas (*smoke* HTTP, não chamada de função, lição do PR do 422).
 4. **Testes negativos do validador:** um fixture por defeito real da AR:
@@ -263,7 +263,7 @@ O golden de Londrina continua travando o BR. Cada país ganha seu próprio golde
 | Google Places como base persistida | Os termos proíbem armazenar e cachear (verificado). No máximo, verificação pontual manual |
 | Relative Wealth Index (Meta) em superfície servida | CC BY-NC (verificado): uso comercial proibido |
 | Contornar anti-bot de portais imobiliários | MX (LFDA art. 114 Bis) e CO (termos da Ciencuadras) tornam isso risco jurídico. A superfície `imobiliaria` só entra com parceria ou licença |
-| Previsão de desempenho por praça | DEC-043 |
+| Previsão de desempenho por praça | DEC-041 (funil = política declarada); a DEC-043 foi revogada pela DEC-078, cuja sugestão de faturamento depende de unidades Ultra para calibrar |
 
 ---
 
@@ -290,7 +290,7 @@ O golden de Londrina continua travando o BR. Cada país ganha seu próprio golde
 ### D3 — Réguas do país completas no perfil e fail-closed dos fallbacks brasileiros
 - Item: DEC-073/D3 | Data: 2026-10-16 | Criticidade: **Crítica** (toca `dashboard/constants.py`, `viabilidade_ponto.py`, `praca_indice.py`; muda o veredito da ficha e da zona morta na AR)
 - Status: **PROPOSTA** — aguarda Felipe Silva
-- Decisão: R1, R3, R4 e R5 da §3. As réguas de ficha, zona morta, camada 5, adensamento e cortes de consumo saem de literal para perfil, com o BR idêntico ao bit. Os campos mortos ganham leitor ou saem do schema. Fallback BR com perfil ≠ BR vira "indisponível com motivo".
+- Decisão: R1, R3, R4 e R5 da §3. As réguas de ficha, zona morta, camada 5, adensamento e cortes de consumo saem de literal para perfil, com o BR idêntico ao bit. Desde a DEC-075 e a DEC-077 a plataforma tem um segundo molde para régua de país, fora do `perfil.json` de propósito: arquivo versionado na imagem (`src/motor_expansao/renda/fatores/<PAIS>/`, `src/motor_expansao/recomendacao/regra/<PAIS>/`); escolher o molde faz parte desta decisão. Os campos mortos ganham leitor ou saem do schema. Fallback BR com perfil ≠ BR vira "indisponível com motivo".
 - Por quê: são 5 defeitos ativos hoje na AR (00-baseline §3.1), e as mesmas peças morderiam os 4 países.
 - Efeito esperado na AR: a ficha do ponto deixa de reprovar toda praça, a zona morta deixa de disparar por R$ 500 sobre USD e as metas SAM/residual saem da escala BR. **Medir antes de decidir os valores AR**, como no molde da DEC-042.
 - Relação: preserva DEC-042 (BR = R$ 500, pop 5.000) e DEC-030 (selos). Emenda o perfil v1 da DEC-047.
@@ -328,7 +328,7 @@ O golden de Londrina continua travando o BR. Cada país ganha seu próprio golde
 - Item: DEC-073/D8 | Data: 2026-10-16 | Criticidade: **Crítica** (portão de sessão; DEC-067)
 - Status: **PROPOSTA** — aguarda Felipe Silva / Vinicius
 - Decisão: §6. O banco de usuários próprio (DEC-067/069) vira fonte única de identidade. A autorização usuário × país é tabela no mesmo banco, servida ao portão de cada host. A AR sai do Authelia quando a migração for segura (com o Authelia como reserva, lição do #425).
-- Por quê: hoje já são dois cadastros (BR banco, AR Authelia). Com 6 instâncias seriam 6.
+- Por quê: hoje já são dois cadastros (o banco do BR e o `users_database.yml` do Authelia, que até o corte do P19 autentica BR e AR). Com 6 instâncias seriam 6.
 - Relação: emenda a emenda de 25/09 da DEC-067 (AR presa ao Authelia). Não cria eixo de país no domínio: é autorização de acesso.
 
 ### D9 — Protocolo de liberação de país sem unidade Ultra (triagem, não previsão)
@@ -340,8 +340,8 @@ O golden de Londrina continua travando o BR. Cada país ganha seu próprio golde
   3. **teste de falso-veto com a Smart Fit**: fração das unidades dela em hexágono "frio" (score < corte ou pop < 5.000) abaixo de um teto declarado antes da medição;
   4. **backtest de ordenação** com aberturas da Smart Fit 2021–2025;
   5. **ranking cego** de 20–30 praças com o time local (Spearman como diagnóstico, não como nota).
-- Ressalvas escritas: a amostra Smart Fit é condicionada no desfecho, então prova falso-veto e não acerto (DEC-042). Há circularidade (ela escolhe ponto com lógica parecida). Nada de R² de faturamento (DEC-043).
-- Relação: confirma DEC-043. Detalhe em `02-matriz-viabilidade.md` §5.
+- Ressalvas escritas: a amostra Smart Fit é condicionada no desfecho, então prova falso-veto e não acerto (DEC-042). Há circularidade (ela escolhe ponto com lógica parecida). Nada de R² de faturamento (DEC-041; a DEC-043 foi revogada pela DEC-078).
+- Relação: confirmava a DEC-043, revogada pela DEC-078 em 21/10/2026; apoia-se na DEC-041 (o funil segue política declarada). Detalhe em `02-matriz-viabilidade.md` §5.
 
 ### D10 — Ordem de entrada dos países e escopo geográfico por país
 - Item: DEC-073/D10 | Data: 2026-10-16 | Criticidade: **Estratégica** (decisão de produto do dono)

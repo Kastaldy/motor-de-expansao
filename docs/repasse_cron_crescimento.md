@@ -60,7 +60,9 @@ cp /opt/motor-expansao/app/scripts/cron/run_atualizacao_crescimento.sh /opt/moto
 chmod +x /opt/motor-expansao-infra/run_atualizacao_crescimento.sh
 ```
 
-(Antes do `cp`: `cd /opt/motor-expansao/app && git pull` para o checkout ter o script.)
+(O checkout `/opt/motor-expansao/app` está parado — commit 302487e, de 2026-08-19 — e o compose de produção foi trocado à
+mão em 17/10: `git pull` ali não é rotina. Envie o script por `scp`, conferido em LF. Atenção: o job também monta
+`data/reports/crescimento` DO CHECKOUT, então a cadeia precisa chegar à VPS do mesmo jeito.)
 
 ## Passo 2 — modo seco (OBRIGATÓRIO antes de agendar)
 
@@ -83,7 +85,7 @@ Validação pós-rodada (a mesma do runbook da camada — `/api/health` NÃO ser
 ```bash
 docker exec -i motor_expansao_web python - <<'PY'
 import json, urllib.request
-js = json.load(urllib.request.urlopen("http://127.0.0.1:8899/api/uf/SP", timeout=300))
+js = json.load(urllib.request.urlopen(urllib.request.Request("http://127.0.0.1:8899/api/uf/SP", headers={"Remote-User": "<usuario com a aba mapa>"}), timeout=300))
 p4 = [x for x in js["passos"] if x["n"] == 4][0]
 print("funil_big", p4["funil_big"], "| cres_mun", len(js.get("cres_mun") or {}),
       "| hexes com cor", sum(1 for h in js["hexes"] if h.get("cres_hex_classe")))
@@ -102,8 +104,8 @@ E o aviso de sucesso deve ter chegado no chat de ops.
 ) | crontab -
 ```
 
-(O healthcheck novo vem no mesmo `git pull`: recopie
-`/opt/motor-expansao/app/scripts/healthcheck_vps.sh` para `/opt/motor-monitoring/`.)
+(O healthcheck novo vai por `scp` de `scripts/healthcheck_vps.sh` direto para `/opt/motor-monitoring/`, conferido
+em LF — o checkout da VPS não é atualizado por `git pull` como rotina.)
 
 ## Rollback
 

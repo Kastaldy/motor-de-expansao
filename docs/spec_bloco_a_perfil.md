@@ -1,6 +1,6 @@
 # SPEC EXECUTÁVEL — Bloco A: o perfil do país
 
-- Data: 2026-08-31 | Status: **PRONTA PARA CODAR** | Dono do arquivo: esta spec (o `docs/plano_multipais.md` e `docs/decisions/` têm outros donos e **não** são alterados por aqui)
+- Data: 2026-08-31 | Status: **EXECUTADA em 2026-09-02** — A1+A2 no PR #288, A8 no #289, A3 no #290, A4 no #291, A5+A6+A7 no #292, A9 no #293 e A10 no #294; os `arquivo:linha` abaixo são de 2026-08-31 e muitos já não batem — o `web/server/app.py` foi de 8.647 para 14.382 linhas | Dono do arquivo: esta spec (o `docs/plano_multipais.md` e `docs/decisions/` têm outros donos e **não** são alterados por aqui)
 - Escopo: **Bloco A da §5.0** do `plano_multipais.md` = **BLK-INTL-02** (parte de perfil), sob a **DEC-047**.
 - Esforço declarado no plano: **7-11 dias · 1 dev**. Exige **`critica-aprovada`** (ver §8).
 - Objetivo operacional: depois deste bloco, **nenhum literal brasileiro de identidade territorial, de moeda, de fonte de dado ou de régua absoluta vive em constante de módulo**. Todos são lidos de um objeto congelado resolvido uma vez no import.
@@ -28,10 +28,12 @@
 > | `app.py:4508`, `:5210`, `:7725`, `:7994` | **`:4522`**, **`:5224`**, **`:7739`**, **`:8008`** | os 4 sítios que constroem `Settings` |
 > | `app.py:5524` | **`:5538`** | `@app.post("/api/viabilidade")` |
 >
-> **As linhas abaixo de ~3200 batem** (`_DEFAULT_DATA` `:99-101`, `DATA_DIR` `:102`, `OFERTA_DESTAQUE_MIN`
+> **As linhas abaixo de ~3200 batiam em 2026-08-31** (`_DEFAULT_DATA` `:99-101`, `DATA_DIR` `:102`, `OFERTA_DESTAQUE_MIN`
 > `:153`, `SCORE_CORTE_QUENTE` `:161`, `_COLS_DESEJADAS` `:376`, `_UF_RE` `:412`, `carregar_uf` `:422`).
-> Referências fora de `app.py` (coord.py, competitors.py, coord.ts, entrada-ponto.ts, calibrar_*) batem
-> todas. **Nesta spec, todos os números são os CONFERIDOS**, não os do plano.
+> Referências fora de `app.py` (coord.py, competitors.py, coord.ts, entrada-ponto.ts, calibrar_*) batiam
+> todas. **Nesta spec, todos os números são os CONFERIDOS naquela data**, não os do plano — e envelheceram
+> com o código: o `app.py` tem hoje 14.382 linhas (`SCORE_CORTE_QUENTE` em `:359`, `_UF_RE` em `:1245`), e o
+> `_DEFAULT_DATA` morreu no commit A3 (PR #290).
 
 ---
 
@@ -70,13 +72,15 @@ descobriu que esta tabela, o `data/perfis/LEIA-ME.md` §3.2 e os dois `perfil.js
 
 1. **Chave iniciada por `_` é comentário e o loader a IGNORA** — sem validar tipo, sem reprovar. É onde
    moram os campos da §1.4: nos arquivos entregues, `_rotulos`, `_particao`, `_subdivisoes`,
-   `_metas_big_numbers`, `_idioma`, `geocode._sufixo` e `fontes._fator_temporal`. O conteúdo continua
+   `_idioma`, `geocode._sufixo` e `fontes._fator_temporal` (o `_metas_big_numbers` que estava nesta lista foi promovido a `reguas.metas_big_numbers` em 2026-09-02 — §1.4). O conteúdo continua
    versionado e revisável em PR; promover um deles ao schema é apagar o `_` **e** acrescentar a linha
    que o lê, nessa ordem.
 2. **Campo fora desta tabela e sem `_` é TOLERADO, não reprovado.** O fail-closed da §3.2 é sobre
-   **ausência** e **tipo** do que a tabela exige; o que sobra passa. É o que deixa `reguas.score_pesos`,
-   `reguas.taxa_fitness`, `reguas.faixas_*`, `avisos` e `operacao` viverem nos arquivos com leitor
-   previsto em bloco POSTERIOR (B, C, C+) sem virarem contrato do Bloco A.
+   **ausência** e **tipo** do que a tabela exige; o que sobra passa. É o que deixa `reguas.score_pesos` e
+   `reguas.taxa_fitness` viverem nos arquivos com leitor previsto em bloco POSTERIOR sem virarem
+   contrato do Bloco A. (`reguas.faixas_*`, `avisos` e `operacao` também estavam nesta lista e já saíram:
+   ganharam leitor e hoje são validados pelo loader — `_ler_faixas_renda`, `_ler_faixas_densidade`,
+   `_ler_avisos` e `_ler_operacao`, em `src/motor_expansao/perfil.py`.)
 
 ```jsonc
 {
@@ -113,10 +117,12 @@ descobriu que esta tabela, o `data/perfis/LEIA-ME.md` §3.2 e os dois `perfil.js
 }
 ```
 
+> **Atualização (2026-10-23):** esta tabela é o schema do Bloco A. Depois dele o loader (`src/motor_expansao/perfil.py`) passou a **exigir** também `moeda.indicadores_renda`, `reguas.uplift_composicao`, `reguas.moradores_por_domicilio`, `reguas.metas_big_numbers` (as sete metas), `malha_municipal_disponivel`, `avisos` e `operacao.pdf_concorrencia_max`, e a aceitar como opcionais `moeda.cambio_base`, `moeda.cambio_viabilidade`, `moeda.base_monetaria`, `reguas.faixas_renda`, `reguas.faixas_densidade` e `reguas.pin_margem_m`. **Um perfil escrito só por esta tabela é reprovado no boot** — para o schema vigente, vale o loader.
+
 | campo | tipo | obrigatório | qual literal ele substitui, e **quem lê hoje** |
 |---|---|---|---|
 | `schema_versao` | `int`, `== 1` | **sim** | nada. Existe para o loader **falhar alto** quando um pacote antigo do Juan encontrar um loader novo. Leitor: o próprio validador (§3.4). |
-| `pais` | `str`, `^[A-Z]{2}$` | **sim** | nada em produção **hoje**. Leitores criados neste bloco: a linha de log de boot (§3.3) e o teste do fio de alarme (§5.9). O campo `pais` em `GET /api/ufs` (`app.py:3216`) está **FORA** deste bloco por decisão da §5.0.2 do plano. |
+| `pais` | `str`, `^[A-Z]{2}$` | **sim** | nada em produção em 2026-08-31. Leitores criados neste bloco: a linha de log de boot (§3.3) e o teste do fio de alarme (§5.9). Desde 2026-09-02 (PR #295) o `pais` também vai ao front pelo `/api/me` e carimba o Dock e o rodapé da base — o `GET /api/ufs` ficou sem o campo. |
 | `nome` | `str`, não-vazio | **sim** | `"Brasil"` dentro de `"Coordenada fora do Brasil"` — `src/motor_expansao/api/coord.py:75`; e `'Essa coordenada está fora do Brasil…'` — `web/src/lib/entrada-ponto.ts:116`. |
 | `locale` | `str` BCP-47 | **sim** | `'pt-BR'` em `new Intl.NumberFormat('pt-BR', …)` — `web/src/lib/format.ts:6`. |
 | `moeda.simbolo` | `str`, não-vazio | **sim** | os `R$` de `web/src/lib/format.ts`: `:38`, `:39`, `:41` (`brl`), `:52`, `:53`, `:54` (`brlCurto`) e `:105` (`valorComUnidade`); e o `R$` da frase da âncora em `web/server/app.py:3626`. |
@@ -509,15 +515,20 @@ e os quatro sítios passam a incluir `perfil=PERFIL`. **Ordem obrigatória:** o 
 `pydantic-settings` levanta em todos os quatro ao mesmo tempo, e o commit não é verde sozinho.
 
 > `Settings` é `BaseSettings` com `extra="ignore"` (`settings.py:32`) e prefixo de env `API_`
-> (`:29`). Um campo de tipo dataclass **não é** preenchível por env, o que é desejável aqui: o perfil
-> não pode ser sobrescrito por variável de ambiente — ele é o arquivo, e só.
+> (`:29`). Um campo de tipo dataclass **É** preenchível por env — medido no commit A2: o `pydantic-settings`
+> lê `API_PERFIL` como JSON e monta o objeto. Como o perfil não pode ser sobrescrito por variável de
+> ambiente (ele é o arquivo, e só), o A2 fecha a porta com um `field_validator(mode="before")` que só
+> aceita `None` ou uma instância de `Perfil` (`src/motor_expansao/api/settings.py`; teste em
+> `tests/unit/test_settings_perfil.py`).
 
 ### 3.5 Como o perfil chega ao front
 
 **Não** entra rota nova (DEC-047: "não entra requisição"). O front já pede `GET /api/me` na abertura
 (`web/server/app.py:3221`). O payload de `/api/me` ganha um campo `perfil` com **exatamente** o que o
-front lê: `nome`, `locale`, `moeda`, `bbox`, `vista_padrao`, `reguas.pop_min_acionavel`,
-`reguas.capacidade_unidade_alunos`. Nada mais.
+front lê — a lista nominal mora em `CAMPOS_DO_FRONT` (`tests/contracts/test_perfil_front_espelha_o_python.py`):
+`pais`, `nome`, `locale`, `moeda` (`codigo`, `simbolo`, `indicadores_renda`), `bbox`, `vista_padrao`,
+`reguas.pop_min_acionavel` e `reguas.capacidade_unidade_alunos`, mais as duas faixas que o Python já
+entrega resolvidas (`reguas.bandas_renda_setor`, `reguas.bandas_densidade_setor`). Nada mais.
 
 `web/src/lib/perfil.ts` (novo) expõe `perfilDoCliente(): PerfilCliente` a partir de um módulo-estado
 preenchido uma vez no bootstrap, **com um default BR compilado** — porque `coord.ts`,
@@ -924,7 +935,7 @@ primeiro deploy deliberado depois dele.** Conferido em 2026-09-02, no working tr
       MOTOR_DATA_DIR: "/app/data"
 ```
 
-**Por que no `api` também, e por que ele precisa da env.** O A4 move `src/motor_expansao/api/coord.py`
+**Por que no `api` também, e por que ele precisa da env** — *e o `telegram-bot` também precisava, e esta spec o esqueceu: ele roda a mesma imagem da API e importa o mesmo `api/coord.py`; ficou de fora e entrou em crash loop no primeiro deploy da API depois do Bloco A, em 2026-09-08 — corrigido pela DEC-049.* O A4 move `src/motor_expansao/api/coord.py`
 e `src/motor_expansao/api/maps_geocoder.py` para o perfil, e os dois vivem na **imagem da API**
 (`Dockerfile.api:37`). Lá `MOTOR_DATA_DIR` **não existe** — o compose só passa `API_*` (`:53-79`) —,
 então o loader cairia no ramo embarcado; e `PERFIL_BR_EMBARCADO` é `parents[2]` a partir de

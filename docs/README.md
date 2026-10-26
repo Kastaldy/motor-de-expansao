@@ -7,7 +7,7 @@ Mapa de navegação dos contratos e runbooks do Motor de Expansão. Legenda de s
 > as decisões (DEC) ficam em [`docs/decisions/`](decisions/README.md).
 
 ## 1. Modelo, scores e relatórios
-- [estado_dos_modelos.md](estado_dos_modelos.md) — **[canônico]** síntese de desempenho/arquitetura dos modelos + roadmap de produto.
+- [estado_dos_modelos.md](estado_dos_modelos.md) — **[histórico]** síntese de 2026-07-08 (desempenho/arquitetura dos modelos + roadmap de produto), anterior à DEC-078.
 - [m1_outputs_oficiais.md](m1_outputs_oficiais.md) — **[canônico]** contrato curto dos outputs oficiais do M1.
 - [m1_1_arquitetura_enriquecimento.md](m1_1_arquitetura_enriquecimento.md) — design da camada M1.1.
 - [modelo_mercado_hexagonos.md](modelo_mercado_hexagonos.md) — **[canônico]** contrato de colunas/cálculos de mercado/residual.
@@ -23,7 +23,7 @@ Mapa de navegação dos contratos e runbooks do Motor de Expansão. Legenda de s
 - [analise_pontual_entorno.md](analise_pontual_entorno.md) · [expansao_dominio.md](expansao_dominio.md) · [mapa_territorial_unificado.md](mapa_territorial_unificado.md) — **[histórico]** contratos de ciclos de maio/2026.
 
 ## 2. App e Dashboard
-- [arquitetura_app_atual.md](arquitetura_app_atual.md) — **[canônico]** arquitetura do app atual (piloto web: 3 superfícies + motor compartilhado; Parte B preserva a história do Streamlit).
+- [arquitetura_app_atual.md](arquitetura_app_atual.md) — **[canônico]** arquitetura do app atual (piloto web: Início + telas de Mapa, Oportunidades, Ponto, Viabilidade, Executiva, Oportunidades imobiliárias e Acessos, sobre o motor compartilhado; Parte B preserva a história do Streamlit).
 - [contrato_api_metodologia.md](contrato_api_metodologia.md) — **[canônico]** contrato do `GET /api/metodologia` (painel de metodologia do Mapa): payload, escopo das faixas e por que elas são DERIVADAS de `constants.FAIXAS_MAPA_*`.
 - [streamlit_dashboard_m1.md](streamlit_dashboard_m1.md) — **[histórico]** governança do dashboard Streamlit de 4 abas — app aposentado pela DEC-022 (2026-08-03); o app de produção é o piloto web (`deploy_piloto_web.md`).
 
@@ -62,6 +62,16 @@ Mapa de navegação dos contratos e runbooks do Motor de Expansão. Legenda de s
 - [handoff_colaborador_run_cycle.md](handoff_colaborador_run_cycle.md) — handoff do /run-cycle.
 - [handoff_repositorio.md](handoff_repositorio.md) — **[histórico]** handoff de repositório (maio/2026).
 
-## 7. Histórico e arquivo
+## 7. Planos, specs e notas (fora do índice até 2026-10-23)
+- [modelo_dimensionamento_expansao.md](modelo_dimensionamento_expansao.md) — spec do CEO do motor de dimensionamento e viabilidade (DEC-008).
+- [nota_impacto_fin_viab_01.md](nota_impacto_fin_viab_01.md) — nota ao comitê do FIN-VIAB-01 (antes × depois).
+- [plano_multipais.md](plano_multipais.md) · [spec_bloco_a_perfil.md](spec_bloco_a_perfil.md) · [spec_portal_selecao_pais.md](spec_portal_selecao_pais.md) — multi-país (DEC-047).
+- [expansao-latam/](expansao-latam/README.md) — plano CO/MX/PE/PY (DEC-073, PROPOSTA).
+- [plano_visao_executiva_2.md](plano_visao_executiva_2.md) — plano executado da Visão Executiva 2.0 (DEC-023).
+- [runbook_deploy_renda_hex_e3.md](runbook_deploy_renda_hex_e3.md) · [renda/2026-10_pnad2025_v1.md](renda/2026-10_pnad2025_v1.md) — renda do hexágono (E3) e relatório da versão de fatores.
+- [fontes_bases_poi.md](fontes_bases_poi.md) — base única de POI (BLK-UNI).
+- [refatoracao/review.md](refatoracao/review.md) — review de refatoração.
+
+## 8. Histórico e arquivo
 - [archive/](archive/README.md) — planos e prompts já implementados/superados, preservados para auditoria.
 - [rev08_spike_perf_runbook.md](rev08_spike_perf_runbook.md) — **[histórico]** medição descartável do BLK-REV-08 (os scripts do spike saíram do repo com a DEC-022).

@@ -1,11 +1,13 @@
 # Valhalla self-host — serviço de rotas do motor (DEC-074)
 
 Sobe um **Valhalla 3.9.0** na **mesma VPS do motor**, numa stack separada, para responder
-uma pergunta só: **até onde se chega em 10 minutos de carro, sem trânsito, a partir de um
-ponto**. É o alcance "10 min de carro" da ficha do ponto e do Estudo (DEC-074). Raio de
+uma pergunta só: **até onde se chega em 5 ou 10 minutos de carro, sem trânsito, a partir de um
+ponto**. São os alcances "5 min de carro" (Emenda 1, 20/10/2026) e "10 min de carro" da ficha do ponto e do Estudo (DEC-074). Raio de
 1 km e raio de 2 km **não** passam por aqui.
 
-> **Muda / não muda:** muda só a disponibilidade da opção "10 min de carro". Score, funil,
+> **Muda / não muda:** muda a disponibilidade das opções "5 min" e "10 min de carro" e da
+> demanda sugerida pelo modelo de praça da Viabilidade (DEC-078, que lê a isócrona de 10 min; sem
+> rotas, a tela segue no modo densidade). Score, funil,
 > M1 e artefatos **não mudam**. A isócrona **não é gate nem peso** de nada (alinhado ao
 > relatório de isócronas de 25/09/2026): é o recorte em que o motor lê população, renda e
 > concorrência, como o raio.

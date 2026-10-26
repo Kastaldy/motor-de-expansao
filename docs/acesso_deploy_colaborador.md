@@ -142,4 +142,4 @@ userdel -r <pessoa>
 ```
 
 As permissões de grupo em `/opt/...` podem ficar — sem ninguém em `motor-ops`, elas não concedem nada.
-Depois de revogar, considerar **rotacionar os segredos do `.env`** se a saída não foi amigável.
+Depois de revogar, considerar **rotacionar os segredos do `.env`** se a saída não foi amigável. **Antes de tirar o `docker`/`motor-ops` ou dar `userdel`, confira `crontab -l -u <pessoa>`:** desde 17/10/2026 o cron do backup do banco (`run_backup_banco.sh`) roda no crontab do `deploy`, e revogar sem movê-lo para outro usuário para o backup em silêncio.

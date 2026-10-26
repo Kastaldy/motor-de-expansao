@@ -2,7 +2,7 @@
 
 > Contrato da fundação de acesso ao banco (`src/motor_expansao/db/`). Cobre o **Marco A**
 > da inclusão do banco no motor: o motor fala com o banco, e continua funcionando sem ele.
-> Autorização, RBAC e migrations são o Marco B e **não** estão aqui.
+> Autorização e RBAC são o Marco B e **não** estão aqui; a aplicação de migrations ganhou a §8.
 >
 > Responsável: Vinícius · Agosto 2026
 
@@ -47,7 +47,7 @@ pip install -e ".[db]"
 export MOTOR_DATABASE_URL="postgresql://postgres:SENHA@localhost:5432/teste_banco_v2"
 
 # 3. subir o backend
-cd web/server && MOTOR_DATA_DIR=<repo>/data python -m uvicorn app:app --port 8899
+cd web/server && python -m uvicorn app:app --port 8899   # sem MOTOR_DATA_DIR: perfil BR versionado e o data/ do repo (DEC-047); com ela, a subida exige <dir>/perfil.json e, desde 21/10/2026, os insumos da renda com o carimbo k
 ```
 
 No Windows/PowerShell, o passo 2 é `$env:MOTOR_DATABASE_URL = "postgresql://..."`.
@@ -64,7 +64,7 @@ O bloco `banco` da resposta traz `configurado`, `conectado`, `servidor`, `postgi
 
 > `migracao` fica `null` enquanto a tabela de controle não existir — que é o estado de um
 > banco levantado à mão pelo roteiro `001→010` do `banco-de-reservas`. Não é falha: é a
-> F1.2 ainda não ter acontecido.
+> falta de registro no runner (a F1.2 existe desde 01/09/2026: `db registrar`/`db aplicar`, §8).
 
 **A segunda metade do teste importa tanto quanto a primeira:** subir **sem**
 `MOTOR_DATABASE_URL` e confirmar que tudo funciona como antes. É o que prova que a imagem
@@ -135,7 +135,7 @@ python -m motor_expansao.db conferir    # o banco tem o que o motor espera?
 
 > **Rodando de um worktree.** Se você está num worktree (`.claude/worktrees/…`) e o pacote
 > `motor_expansao` do seu ambiente foi instalado a partir do checkout principal, o
-> `python -m motor_expansao.db` acha a versão instalada — que não tem este subpacote — e falha com
+> `python -m motor_expansao.db` acha a versão instalada — a do checkout principal, que tem este subpacote desde 01/09/2026 — e roda AQUELE código sem aviso; antes disso falhava com
 > `No module named motor_expansao.db`. Aponte o `src` do worktree para o path, sem reinstalar nada:
 >
 > ```powershell
@@ -159,7 +159,7 @@ o caminho para um cluster levantado por `001→010` no pgAdmin entrar no control
 reprocessar. A `000` é a única que precisa ir à mão antes — ela cria o próprio registro.
 
 **`conferir` lê catálogo, nunca dado.** Ele checa as extensões, os seis números da §0 da
-`verificacao.md`, o `security_definer` e o `search_path` das sete funções (D19/D21), o que está
+`verificacao.md`, o `security_definer` e o `search_path` das oito funções (D19/D21/D29), o que está
 registrado como aplicado, e o estado do provisionamento. Devolve código 1 na primeira divergência,
 então serve como passo de deploy.
 
@@ -168,7 +168,7 @@ então serve como passo de deploy.
 > aqui vira sinal — o banco fica num estado que nenhum arquivo descreve, e a correção é uma migration
 > nova, nunca editar a antiga.
 
-## 9. Próximo passo
+## 9. Próximo passo — entregue em setembro de 2026 (subida no `docs/banco_deploy.md`)
 
 O Marco B — migrations aplicáveis, script de conferência, seed dos quatro perfis e
 substituição do `acesso.py` pelo RBAC. Detalhe e dependências no plano de inclusão.

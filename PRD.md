@@ -1,6 +1,6 @@
 # PRD — Motor de Expansao Ultra Academia
 
-> Versao: 2026-07-19 (rev. de reconciliacao; conteudo subordinado ao CLAUDE.md)
+> Versao: 2026-07-19 (rev. de reconciliacao; conteudo subordinado ao CLAUDE.md) — DESATUALIZADO: descreve o dashboard Streamlit, aposentado pela DEC-022 (2026-08-03); o produto atual esta em `web/README.md` e `docs/arquitetura_app_atual.md`.
 > Responsavel: Felipe Silva | Estrategia e Growth | Ultra Academia
 
 ## 0. Cabecalho e subordinacao ao CLAUDE.md
@@ -21,11 +21,11 @@ Documentos de apoio referenciados ao longo deste PRD:
 - `CLAUDE.md` — fonte canonica curta do projeto (parametros e guardrails).
 - `tasks/backlog.md` — roadmap por bloco (escopo, criterios de aceite, dependencias).
 - `tasks/completed.md` — historico de ciclos concluidos.
-- `docs/streamlit_dashboard_m1.md` — governanca e uso do dashboard.
+- `docs/streamlit_dashboard_m1.md` — governanca do dashboard Streamlit (HISTORICO, aposentado pela DEC-022); o app atual esta em `web/README.md` e `docs/arquitetura_app_atual.md`.
 - `docs/modelo_mercado_hexagonos.md` — contrato tecnico de mercado/residual.
 - `docs/m1_outputs_oficiais.md` — contrato curto dos outputs do M1.
 - `docs/relatorio_pontual_censitario.md` — contrato do relatorio censitario.
-- `docs/api_geoespacial_contrato.md` — contrato da API GeoEspacial on-demand (G1/BLK-API-01; DEC-005, CLAUDE.md §8); esboco em `docs/api_geoespacial_openapi.yaml`. So contrato; sem codigo de API.
+- `docs/api_geoespacial_contrato.md` — contrato da API GeoEspacial on-demand (G1/BLK-API-01; DEC-005, CLAUDE.md §8); esboco em `docs/api_geoespacial_openapi.yaml`. Implementada: `src/motor_expansao/api/`, container `motor_expansao_api`, consumida pelo bot Telegram (`docs/deploy_api_bot.md`).
 - `docs/infra_producao.md` — manutencao e deploy.
 - `docs/backup_restore.md` — backup e regeneracao (DR).
 - `data/reports/perf_baseline_dashboard.md` — baseline de performance do dashboard.
@@ -61,8 +61,8 @@ Usuarios e contextos de uso do produto:
 - Operacao de mercado: leitura de mercado residual e Expansao de Dominio como apoio
   estrategico-operacional.
 
-O consumo principal e feito por um dashboard que funciona offline, sem dependencia de
-API ao vivo em producao.
+O consumo principal e feito pelo piloto web (`web/`, SPA + FastAPI, DEC-022), app de
+API ao vivo que le os Parquets read-only, sem recalcular score.
 
 ## 3. Escopo do produto / fora de escopo
 
@@ -70,7 +70,7 @@ Dentro do escopo:
 
 - Motor M1 oficial territorial (decisao de municipios e ranking de carteira).
 - Camadas paralelas: censitaria, hibrida, mercado/residual e Expansao de Dominio.
-- Dashboard offline com quatro abas (ver §6).
+- Piloto web (SPA + FastAPI) com as telas Mapa, Oportunidades, Ponto, Viabilidade, Visao Executiva, Oportunidades imobiliarias e Acessos (ver §6).
 - Analises pontuais: Analise Pontual de Entorno (H3) e Relatorio Pontual Censitario
   1.0 km.
 - Multi-hex (composicao de cenarios a partir de varios hexagonos).
@@ -78,14 +78,14 @@ Dentro do escopo:
 
 Fora do escopo (espelhando `CLAUDE.md` §4):
 
-- API/FastAPI ao vivo no dashboard de producao.
-- PostGIS, Prefect, pipelines pesados ao vivo.
+- Prefect e pipelines pesados ao vivo (a API/FastAPI e o PostGIS ja estao no compose de
+  producao: piloto web, API GeoEspacial e o servico `postgres`, opcional — `docs/banco_deploy.md`).
 - M2/M3.
 - Pesquisas e Power BI.
 
 Estes itens estao explicitamente fora do deploy inicial.
 
-> Nota (2026-07): a **API GeoEspacial existe como servico STANDALONE on-demand** (DEC-005; `api.ultra-expansao.tech`), fora do dashboard — o dashboard de producao segue **offline**, sem API ao vivo. A **Frente C (BLK-SCORE-\*) de validacao de score foi ENCERRADA pela DEC-009** (previsao de magnitude de demanda pela geografia = NO-GO honesto; pivo para viabilidade property-first).
+> Nota (2026-07): a **API GeoEspacial existe como servico STANDALONE on-demand** (DEC-005; `api.ultra-expansao.tech`), fora do piloto web; e o proprio piloto web (DEC-022) tambem e API ao vivo, READ-ONLY sobre os artefatos. A **Frente C (BLK-SCORE-\*) de validacao de score foi ENCERRADA pela DEC-009** (hoje revogada pela DEC-078, que trata da demanda sugerida na Viabilidade e nao reabre a Frente C) (previsao de magnitude de demanda pela geografia = NO-GO honesto; pivo para viabilidade property-first).
 
 ## 4. Camadas e trilhas
 
@@ -128,8 +128,9 @@ ranking, carteira nem artefatos oficiais.
 
 ### 6.1 Requisitos funcionais
 
-- Dashboard com quatro abas: `Visao Executiva`, `Mapa Territorial`, `Expansao de
-  Dominio` e `Carteira e Plano`.
+- Piloto web com as telas `Inicio`, `Mapa Territorial`, `Oportunidades` (Top 10), `Ponto`,
+  `Viabilidade`, `Visao Executiva`, `Oportunidades imobiliarias` e `Acessos`; `Expansao de
+  Dominio` e `Carteira e Plano` ficaram fora do piloto (DEC-020/DEC-022).
 - `Visao Executiva`: mapa Ultra-only, KPIs de rede e graficos de residual por UF e
   cidade.
 - `Mapa Territorial`: leitura territorial com colorizacao por faixa de score, captura
@@ -137,25 +138,25 @@ ranking, carteira nem artefatos oficiais.
   sidebar.
 - `Expansao de Dominio` e `Carteira e Plano`: leitura operacional de dominio hibrido,
   carteira por M1 e plano de expansao.
-- Analise Pontual de Entorno (H3): analise radial de entorno (raio descritivo de
-  1.6 km como feature) que retorna populacao, renda, consumo de concorrentes e consumo
-  Ultra no raio, sem mutar inputs nem recalcular o score.
+- Analise de ponto (tela `Ponto` e ficha de ponto do Mapa): alcance de raio 1 ou 2 km,
+  5 ou 10 min de carro (DEC-074) ou area desenhada (DEC-071), com populacao, renda, mercado
+  no recorte (DEC-070) e concorrentes, sem mutar inputs nem recalcular o score.
 - Relatorio Pontual Censitario 1.0 km: cruza setor censitario real (geometria IBGE
-  2022) com circulo de raio fixo 1.0 km, com export de PDF/CSV em memoria e mapa
-  censitario offline.
+  2022) com o recorte do ponto (raio de 1,0 km por padrao; 2 km, 5 ou 10 min de carro pela
+  DEC-074), com export de PDF e fundo de ruas por tiles online (DEC-004).
 - Multi-hex: composicao de cenarios a partir de varios hexagonos, com hex_id copiavel
   e parsing flexivel de identificadores.
 
-Detalhe funcional, governanca e uso do dashboard estao em
-`docs/streamlit_dashboard_m1.md`; o contrato do relatorio censitario esta em
+Detalhe funcional e uso do piloto web estao em `web/README.md` e
+`docs/arquitetura_app_atual.md` (`docs/streamlit_dashboard_m1.md` e historico); o contrato do relatorio censitario esta em
 `docs/relatorio_pontual_censitario.md`.
 
 ### 6.2 Requisitos nao-funcionais
 
-- Operacao offline: o dashboard funciona com Parquets locais em `data/outputs/`, SEM
-  API ao vivo em producao.
-- Performance: carga lazy por UF, render lazy das abas e fonte de mapa enxuta (ver
-  `CLAUDE.md` §4 e `data/reports/perf_baseline_dashboard.md`).
+- Operacao sobre Parquets locais: o piloto web le `data/outputs/` e `data/staging/`
+  montados `:ro` em producao, sem recalcular score (a API ao vivo e o proprio piloto, DEC-022).
+- Performance: carga lazy por UF (`carregar_uf` em `web/server/app.py`, em `lru_cache`); o render
+  lazy das abas e a fonte de mapa enxuta eram do Streamlit (historico em `data/reports/perf_baseline_dashboard.md`).
 - Staging sempre em Parquet; CSVs locais usam `sep=";"` e `encoding="utf-8-sig"`, com
   a excecao de legado de `data/ultra/Ultra.csv` (`sep=";"`, `encoding="latin-1"`, 1
   linha inicial de metadado), conforme `CLAUDE.md` §2.
@@ -173,8 +174,8 @@ Detalhe funcional, governanca e uso do dashboard estao em
   refino intraurbano onde a base geo existe).
 - Suite de testes verde: a baseline de testes (`CLAUDE.md` §5) deve permanecer verde a
   cada ciclo.
-- Dashboard utilizavel offline: o produto deve ser operavel sem dependencia de API ao
-  vivo, com tempos de carga aceitaveis (referencia em
+- Piloto web utilizavel: o produto deve ser operavel com tempos de carga aceitaveis por UF
+  (referencia historica em
   `data/reports/perf_baseline_dashboard.md`).
 
 Onde nao ha numero canonico no repositorio, a metrica e mantida qualitativa; este PRD
@@ -190,7 +191,7 @@ intencao por frente:
   infra).
 - Frente B — `BLK-ARCH-*`: arquitetura (concluir migracao para `src/` e remover
   legado, sem alterar comportamento de scoring).
-- Frente C — `BLK-SCORE-*`: **(ENCERRADA — DEC-009)** validacao de scores contra desfecho real (dataset
+- Frente C — `BLK-SCORE-*`: **(ENCERRADA — DEC-009, hoje revogada pela DEC-078; a revogacao nao reabre esta frente)** validacao de scores contra desfecho real (dataset
   rotulado, poder preditivo e proposta de recalibracao com DEC).
 - Produto — `BLK-PROD-*`: evolucoes de produto e performance (geocodificacao,
   relatorio concorrencial, cenarios salvos, manutencao e refatoracao).
@@ -202,13 +203,14 @@ resumidos em `CLAUDE.md` §5. Este PRD nao copia blocos do backlog.
 
 ## 9. Dependencias e restricoes (infra/VPS)
 
-- Producao roda em VPS, com deploy baseado em checkout git (`git pull`) e Docker.
+- Producao roda em VPS, com deploy por imagem publicada no GHCR e pinada por digest
+  (nunca build na VPS; passo manual do Felipe — DEC-016).
   Manutencao e deploy detalhados em `docs/infra_producao.md`.
 - GUARDRAIL ABSOLUTO (`CLAUDE.md` §6): nunca executar qualquer comando no servidor via
   qualquer tool SSH sem confirmacao explicita do usuario, comando a comando. Nao
   encadear multiplos comandos no servidor sem aprovacao intermediaria.
-- Fora do deploy inicial (espelha `CLAUDE.md` §4): API/FastAPI, PostGIS, Prefect,
-  pipelines pesados ao vivo, M2/M3, pesquisas e Power BI.
+- Fora do deploy inicial (espelha `CLAUDE.md` §4): Prefect, pipelines pesados ao vivo,
+  M2/M3, pesquisas e Power BI (API/FastAPI e PostGIS ja estao no compose de producao).
 - Backup e regeneracao (DR): procedimento de encriptacao de segredos, restore ponta a
   ponta de servidor zerado e regeneracao dos Parquets estao em `docs/backup_restore.md`.
 

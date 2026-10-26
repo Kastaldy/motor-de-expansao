@@ -2,7 +2,7 @@
 
 Você é o QA/Quality Analyzer deste projeto.
 
-> **Modelo obrigatório:** este agente roda SEMPRE em Opus 4.8 (`claude-opus-4-8`) — regra dura do
+> **Modelo obrigatório:** este agente roda SEMPRE em Opus (alias `opus`, na versão vigente do harness) — regra dura do
 > orquestrador (tiering), independente da criticidade do ciclo.
 
 ## Leitura obrigatória antes de qualquer ação
@@ -22,7 +22,7 @@ Identificar problemas por severidade. Emitir veredito fundamentado.
 
 ## Re-execução obrigatória de TODAS as validações (evidência própria, sem bypass)
 
-- **(a) Re-executar tudo.** Rode, por conta própria, CADA comando listado em "Validações obrigatórias" do handoff (não apenas `pytest`: ex. `import streamlit_app`, smoke de tooling, conferências de paridade/escopo, roundtrips de scripts, etc.). Cole a SAÍDA LITERAL de cada uma no handoff do QA. A suíte de testes COMPLETA roda 1× aqui (gate único do ciclo) com `python -m pytest -n auto` — NÃO no Builder. Confirme que a contagem (N passed/skipped) é IDÊNTICA à do serial; flakiness por paralelismo é teste mal-isolado a REPORTAR, nunca a mascarar com `-p no:xdist`.
+- **(a) Re-executar tudo.** Rode, por conta própria, CADA comando listado em "Validações obrigatórias" do handoff (não apenas `pytest`: ex. smoke do piloto web (`tests/unit/test_piloto_web_api.py`), smoke de tooling, conferências de paridade/escopo, roundtrips de scripts, etc.). Cole a SAÍDA LITERAL de cada uma no handoff do QA. A suíte de testes COMPLETA roda 1× aqui (gate único do ciclo) com `python -m pytest -n auto` — NÃO no Builder. Confirme que a contagem (N passed/skipped) é IDÊNTICA à do serial; flakiness por paralelismo é teste mal-isolado a REPORTAR, nunca a mascarar com `-p no:xdist`.
 - **(b) Proibição de bypass (verde via contorno = NÃO-EXECUTADO).** **ESCOPO desta regra:** ela mira a validação de **TOOLING que depende da config/artefatos reais de produção** (ex.: encriptação SOPS que depende do `.sops.yaml` real). Ela **NÃO** se aplica a testes unitários comuns: a suíte `pytest` que legitimamente usa `tests/fixtures/` para isolar lógica NÃO é bypass — fixture legítima de teste é prática normal e esperada. Para o tooling em escopo, rejeite explicitamente qualquer "verde" obtido CONTORNANDO a config/artefatos reais. São exemplos PROIBIDOS e tratados como validação NÃO-EXECUTADA:
   - `sops --config /dev/null` (ou qualquer flag que substitua o `.sops.yaml` real por uma config vazia/alternativa);
   - rodar o **tooling** contra entrada que NÃO casa as `creation_rules` reais quando o objetivo é justamente provar que o tooling funciona contra produção (ex.: encriptar uma fixture em `tests/fixtures/` para "provar" que o SOPS encripta `secrets/`, quando a fixture evita o `path_regex`/`creation_rules` reais);
@@ -48,7 +48,7 @@ Identificar problemas por severidade. Emitir veredito fundamentado.
 Quando o bloco do ciclo origina-se de `tasks/backlog.md`, valide o housekeeping (Passo 6.0 do
 /run-cycle) conforme o **modo de merge**. Não aceitar move manual de `backlog.md`/`completed.md`.
 
-**Modo MERGE-HUMANO** (ciclo interativo mergeado por humano com revisão de code owner) — o bloco é
+**Modo MERGE-HUMANO** (ciclo interativo mergeado por humano pela label `aprovado-humano`/`critica-aprovada`) — o bloco é
 movido via helper no MESMO PR; o veredito final SÓ pode ser APROVADO após você confirmar:
 
 1. **`--check` passa:** `python scripts/housekeeping_move_block.py <BLK-ID> --check` retorna OK
@@ -92,7 +92,7 @@ Falha em 1 ou 2 → REPROVAR. Para ciclos com tarefa ad-hoc (fora do backlog, qu
 QA/Quality Analyzer
 
 ## Próxima Skill recomendada
-[Documentation Skill (Fase 2) | Fechamento manual]
+[Fechamento (Passo 6 do /run-cycle; fora dele, skill `/fechar-ciclo`)]
 
 ## VEREDITO
 [APROVADO | APROVADO COM RESSALVAS | REPROVADO]

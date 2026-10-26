@@ -24,22 +24,25 @@ imagem `motor-expansao-web`) serve o `dist/` do Vite via `StaticFiles` e a API e
 vivo **apenas** como host de `/tiles/*` (tileserver que alimenta o basemap dos
 PDFs); a raiz redireciona 301 para o piloto (DEC-022 §3).
 
-São **3 superfícies** (DEC-020 definiu esse escopo; "substituir 100% o Streamlit"
+O app abre na tela de **Início** (menu de modos: análise de ponto, explorar uma região, melhores oportunidades) e o Dock leva a cinco destinos — Mapa, Visão Executiva, Oportunidades imobiliárias (DEC-037), Viabilidade e Acessos (restrita, DEC-027); ver `Tela` em `web/src/App.tsx` e `ITENS_DOCK` em `web/src/lib/dock-itens.ts`. As **3 superfícies** abaixo são o escopo de paridade da DEC-020 ("substituir 100% o Streamlit"
 = paridade destas três):
 
-- **Mapa Territorial** (default) — porta de entrada por UF, funil de 5 camadas
+- **Mapa Territorial** ("Explorar uma região"; o app abre no Início e a escolha da UF é o passo 2 desse modo) — funil de 5 camadas
   (Potencial → setores quentes → residual → pressão concorrencial → como a cidade
   está indo → aberturas) com drill-down até o município, multi-hex, filtro
   "MELHORES", busca por coordenada/link/endereço e geração dos Relatórios Municipal
   e Pontual. **Duas camadas quase não cortam:** a 4 é contexto e não corta ninguém,
   e a 3 desde a DEC-041 só elimina saturação extrema (mais de `CONC_ADENSAR_MAX`
-  concorrentes em 2 km) — ter concorrente por perto deixou de desqualificar, porque
-  a oferta instalada já foi descontada na camada 2. A camada 5 ordena por
-  `indice_praca` (`0,70 × nota socioeconômica + 0,30 × nota de demanda`, ambas em
-  régua absoluta), não mais por residual puro.
-- **Visão Executiva** — a rede Ultra REAL por estado (Growth API,
-  `growth_api_historico.parquet`, ingestão semanal — DEC-013): bubble map,
-  KPIs com variação vs M-1, ranking de unidades, seletor de competência.
+  concorrentes cujo disco de influência de 1 km alcança o hexágono — `n_concorrentes_influencia_1km`, DEC-057) — ter concorrente por perto deixou de desqualificar, porque
+  a oferta instalada já foi descontada na camada 2. No Brasil, a camada 5 ("Para onde crescer")
+  é o **Top 10 único da DEC-077** — 5 Mata Virgem (renda domiciliar ≥ R$ 4.500 e residual ≥ 2.000 alunos,
+  ordem por residual) + 5 Premium (score censitário ≥ 50 e população ≥ 10 mil, ordem por população),
+  via `montar_recomendacao`; a fila por `indice_praca` da DEC-041 só sobrevive sem régua (AR).
+- **Visão Executiva** — a rede Ultra REAL (Growth API, `growth_api_historico.parquet`,
+  ingestão **diária** — `scripts/cron/run_growth_daily.sh`); desde a DEC-023 é um dashboard
+  acionável: carteira priorizada da rede inteira com filtros (UF, master, consultor, coorte,
+  competência) → ficha da unidade, mapa como card, réguas absolutas, coorte de maturidade,
+  exports CSV/XLSX/PDF e cadastro editável (`/api/rede/*`).
 - **Viabilidade do ponto** — stress-test determinístico de um imóvel; o backend
   chama `simular()` (`dimensionamento/simulador.py`) e serve o
   `viabilidade_payload_v1` único que tela, API e PDF consomem sem recalcular.
@@ -47,7 +50,7 @@ São **3 superfícies** (DEC-020 definiu esse escopo; "substituir 100% o Streaml
 O Dock MOSTRAVA `Expansão de domínio` e `Carteira e plano` desabilitadas de
 propósito: a DEC-020 decidiu que Domínio não vira tela (a Fase 4 do Mapa cobre a
 análise) e que Carteira/Plano vira, no futuro, "Oportunidades Imobiliárias"
-(placeholder; epic própria pendente de DEC + spec).
+(deixou de ser placeholder: é tela própria no Dock, `OportunidadesImobiliariasScreen`, com gate de aba `imobiliaria` — DEC-037).
 
 Os dois ícones SAÍRAM do rail em 2026-09-02, a pedido do Juan ("eles não estão
 sendo utilizados, então tirar os ícones deles"). A decisão da DEC-020 continua
@@ -65,15 +68,21 @@ web/
   src/
     lib/                contrato de tipos, cliente HTTP, formatação pt-BR
     components/         dock, mapa deck.gl, painel narrativo, stepper, gráficos
-    screens/            MapScreen, ViabilityScreen
+    screens/            Inicio, Map, Ponto, Oportunidades, OportunidadesImobiliarias,
+                        Executive, Viability, Acessos, Login (`*Screen.tsx`)
     styles/tokens.css   paleta e escalas
 ```
 
-Endpoints do backend (`web/server/app.py`): `GET /api/health`, `/api/ufs`,
-`/api/geocode`, `/api/municipios/{uf}`, `/api/municipio-do-ponto`, `/api/uf/{uf}`,
-`/api/municipio/{uf}/{municipio}`, `/api/faixa-alunos`, `/api/executiva/{uf}`;
-`POST /api/viabilidade`, `/api/relatorio/municipal`, `/api/relatorio/pontual`,
-`/api/simulador/xlsx`.
+Endpoints do backend (`web/server/app.py`, ~60 rotas; lista completa em `grep -n "@app\." web/server/app.py`):
+saúde e catálogo (`GET /api/health`, `/api/ufs`, `/api/estados`, `/api/metodologia`); sessão e acesso
+(`/api/me`, `POST /api/login`, `/api/logout`, `GET /api/verify` — DEC-067; `/api/acessos/*` — DEC-027);
+mapa (`/api/geocode`, `/api/municipios/{uf}`, `/api/municipio-do-ponto`, `/api/uf/{uf}`,
+`/api/municipio/{uf}/{municipio}`, `/api/hexagonos` — DEC-044, `/api/faixa-alunos`, `/api/cobertura/{uf}`);
+ponto (`/api/resolver-ponto`, `/api/ponto`, `/api/ponto/alcance` — DEC-074, `POST /api/ponto/geometria` —
+DEC-071); Visão Executiva (`/api/rede/*` — DEC-023, e o legado `/api/executiva/{uf}`); imóveis
+(`/api/oportunidades*`, `POST /api/imobiliaria/evento/{acao}` — DEC-037); `POST /api/viabilidade`,
+`/api/demanda-v2*` (DEC-078), `/api/relatorio/municipal`, `/api/relatorio/pontual`,
+`/api/relatorio/comparacao`, `/api/simulador/xlsx`.
 
 O backend **importa, não duplica** o motor compartilhado em
 `src/motor_expansao/dashboard/` — que sobreviveu ao corte por inteiro:
@@ -111,13 +120,16 @@ corte `<5k hab` em cinza), então a leitura visual não mudou com a troca de sta
 | `data/outputs/hexagonos_dashboard_enriquecido/uf=XX/` | fonte principal do Mapa (obrigatório) |
 | `data/outputs/setores_censitarios_2022_geo/` | Relatório Pontual (malha real IBGE) |
 | `data/ibge/municipios_XX.geojson` | malha municipal dos relatórios |
-| `data/staging/concorrentes_mapeados.parquet` + `unidades_ultra_performance_hex.parquet` | pins no mapa |
+| `data/staging/concorrentes_mapeados.parquet` + `unidades_ultra_performance_hex.parquet` + `unidades_ultra_mapeadas.parquet` + `vulnerabilidade_ma_redes.parquet` / `vulnerabilidade_ma_nomeadas.parquet` (redes do agregador com pin próprio e independentes — DEC-035, BLK-MA-15/19) | pins no mapa |
 | `data/staging/growth_api_historico.parquet` | Visão Executiva (404 sem ele) |
 | `data/staging/base_calibracao_maduras.parquet` | semente p50 da Viabilidade |
 | `data/staging/hexagonos_mercado_mapeado.parquet` | residual do ponto no Relatório Pontual |
-| `data/staging/uplift_*.parquet` + `fator_temporal_renda.json` | renda domiciliar municipal (fallback nacional sem eles) |
+| `data/staging/crescimento_municipal.parquet` + `crescimento_hex.parquet` | passo 4 do funil ("Como a cidade está indo") |
+| `data/staging/censo2022_hex_da_malha.parquet` | carimbo k da malha, obrigatório para o Top 10 da DEC-077 |
+| `data/oportunidades/viaveis.parquet` + `dossies/` | Oportunidades imobiliárias (DEC-037) |
+| `data/staging/uplift_*.parquet` + fatores versionados na imagem (`src/motor_expansao/renda/fatores/BR/` + `VIGENTE`, DEC-075; o `fator_temporal_renda.json` deixou de ser lido) | renda domiciliar exibida (uplift ausente cai na cascata nacional com WARNING; em produção a subida barra) |
 
-Tudo montado `:ro` em produção; guardrail permanente: o piloto **não recalcula**
+Os dados acima são montados `:ro` em produção — as únicas escritas do piloto vão para dois volumes `:rw` próprios, fora de `/app/data`: cadastro da rede (DEC-023) e trilha de acesso (DEC-027); guardrail permanente: o piloto **não recalcula**
 `score_priorizacao`, `hex_score_estrutural`, carteira, plano nem artefato oficial.
 
 ## A.5 O que o corte removeu (perdas aceitas)

@@ -1,7 +1,11 @@
+> **[HISTORICO — executado em 2026-07-28]** O tileserver subiu nesta data. O "seletor de mapa no dashboard" descrito
+> abaixo morreu com o Streamlit (DEC-022): hoje o tileserver alimenta o basemap dos PDFs por URL interna. Para operar a
+> stack, use `README.md` (nesta pasta) e `docs/infra_producao.md`.
+
 # Handoff — subir o basemap self-host (OpenMapTiles) no VPS
 
 **Para quem tem acesso ao servidor** (`root@2.25.137.241`, Hostinger KVM, Ubuntu, rede
-`app_net`). Tempo: ~15–30 min. Não roda em domingo 2h (janela do job pesado do motor).
+`app_net`). Tempo: ~15–30 min. Não roda de sábado 03:00 UTC até o fim do lote de domingo (coleta do WellHub e lote das 06:00 UTC de domingo).
 
 ## Contexto (1 parágrafo)
 Vamos adicionar um **seletor de mapa de fundo** (Escuro/Claro/Satélite) no dashboard. Para
@@ -67,7 +71,7 @@ O container fica interno (sem porta no host), com cap 1.5 GB / 1 vCPU — não c
 ### 6) Publicar a rota no Caddy (precisa da chave age/SOPS)
 Adicione o bloco de `caddy/tiles.Caddyfile` **DENTRO do bloco
 `dashboard.ultra-expansao.tech { ... }`** do Caddyfile do motor (gerenciado via SOPS em
-`secrets/Caddyfile.enc` no repo do motor), antes do `reverse_proxy` do streamlit:
+`secrets/Caddyfile.enc` no repo do motor) — desde a DEC-022 esse bloco só serve `/tiles/*` e redireciona a raiz (301) para o piloto (não há mais `reverse_proxy` do streamlit):
 ```
     handle_path /tiles/* {
         reverse_proxy motor_expansao_tileserver:8080
@@ -81,7 +85,7 @@ docker compose -f docker-compose.prod.yml restart caddy
 ```
 
 ### 7) Monitoramento
-No `scripts/healthcheck_vps.sh` do motor, subir a contagem esperada de containers de **5 → 6**.
+Já feito: `motor_expansao_tileserver` está no array `CONTAINERS` de `scripts/healthcheck_vps.sh` (8 containers vigiados hoje).
 
 ---
 
@@ -98,4 +102,4 @@ Diga se: (a) `docker compose ps` mostra o tileserver `Up`; (b) o `brazil.json` r
 seguimos para o deploy do dashboard (Fase 2).
 
 > Detalhes e racional completos: `README.md` (nesta pasta) e, no repo do motor,
-> `docs/deploy_basemap_selfhost.md`.
+> `docs/infra_producao.md`.

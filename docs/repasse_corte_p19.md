@@ -7,7 +7,7 @@
 > **Regra que vale acima de tudo:** se qualquer passo devolver algo que este documento não previu,
 > **pare e chame quem repassou**. Nenhum passo aqui é urgente a ponto de justificar adivinhar.
 >
-> **Pré-requisito obrigatório:** o `docs/repasse_migracoes_p19.md` já foi executado por inteiro
+> **Pré-requisito obrigatório:** o banco foi criado pelo `docs/banco_deploy.md` §1 a §7 (feito na produção em 17/10/2026, já com as 21 migrations) ou, se já existia, atualizado pelo `docs/repasse_migracoes_p19.md`
 > (migrations 018, 019 e 020 aplicadas). Este documento começa onde aquele termina.
 
 **Duração estimada:** 45 a 60 min. **Os Passos 4 e 5 são uma sequência contínua** — a partir da
@@ -38,7 +38,7 @@ Hoje o **Authelia** confere quem entra, na porta da rua. Depois deste corte, que
 | Acesso SSH à VPS | já configurado |
 | `WEB_IMAGE` (digest da imagem nova) | job `publish-web` no Actions, depois do merge |
 | Senha do dono do banco (`reservas_owner`) | no `.env` do compose, em `POSTGRES_OWNER_PASSWORD` |
-| **Senha do papel `app`** | **com quem repassou** — ela vive DENTRO da `MOTOR_DATABASE_URL` e, se essa variável está vazia (o estado de entrega), o valor não existe em lugar nenhum que você alcance. Foi gerada no provisionamento do banco (`docs/banco_deploy.md`, seção dos três papéis). **Sem ela o Passo 3 para**, e o Passo 3 é o que impede o Passo 5 de apagar o piloto |
+| **Senha do papel `app`** | **com quem repassou** — ela vive DENTRO da `MOTOR_DATABASE_URL` e, se essa variável está vazia (o estado de entrega), o valor não existe em lugar nenhum que você alcance — salvo se quem instalou o guardou no `.env` (na instalação de 17/10/2026 ele ficou lá como `MOTOR_APP_DB_PASSWORD`, fora do runbook; ver o #462). Foi gerada no provisionamento do banco (`docs/banco_deploy.md`, seção dos três papéis). **Sem ela o Passo 3 para**, e o Passo 3 é o que impede o Passo 5 de apagar o piloto |
 | **Seu login na allowlist do painel de Acessos** | a env `MOTOR_ACESSOS_ADMIN_USUARIOS` do `.env`. Sem o seu login lá, o painel responde **404** para você — e é a única ferramenta de criar gente e destravar conta |
 | **Uma conta sua no Authelia**, com senha | **com quem repassou.** Estar na allowlist acima não basta: **hoje** o Caddy exige sessão do Authelia no host inteiro, então sem conta no `users_database.yml` o navegador nunca chega no painel de Acessos. Peça que o seu login seja a **mesma string** nos dois lugares |
 | **O PERFIL de cada pessoa que você for criar** | **com quem repassou.** O Passo 0.a manda criar pela tela quem falta, e o próprio passo diz *"não tente adivinhar o perfil de ninguém"* — então sem essa lista o 0.a **não fecha**. `login`, nome e e-mail você tira do `users_database.yml` (`displayname` e `email` estão lá, ao lado do login); o perfil é o único dos quatro que não existe na VPS, porque ele nasce com este trabalho |
@@ -107,7 +107,7 @@ Liste os dois lados e compare:
 cd /opt/motor-expansao/app
 
 # 1) quem consegue AUTENTICAR hoje — esta é a lista que importa
-grep -nE '^  [a-zA-Z0-9_.-]+:' authelia/users_database.yml
+docker exec motor_expansao_authelia grep -nE '^  [a-zA-Z0-9_.-]+:' /config/users_database.yml   # no host o arquivo é root:600 (banco_deploy.md §7)
 
 # 1b) o JSON de abas é DIAGNÓSTICO, não lista: veja se tem curinga
 grep -c '"[*]"' /opt/motor-expansao/cadastro/acesso_abas.json
@@ -740,7 +740,7 @@ docker compose -f docker-compose.prod.yml exec postgres \
 | **Sessão expirada** | o Authelia redireciona | a SPA abre o pop-up "Sessão encerrada" e, no clique, leva à nossa tela de entrar |
 
 > **O item do meio é o mais importante para quem recebe alerta de madrugada.** O comentário do
-> `healthcheck_vps.sh` ainda diz que o `web` não cai junto com o Postgres — isso deixa de valer
+> `healthcheck_vps.sh` já separa as duas fases (antes do corte o `web` não cai junto com o Postgres) — a segunda passa a valer
 > aqui. Postgres fora = piloto BR indisponível.
 
 ---

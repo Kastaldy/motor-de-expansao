@@ -1,7 +1,8 @@
 # M1.1 — Arquitetura de Enriquecimento Territorial
 
 > Contrato de design para a camada de enriquecimento territorial paralela ao M1.
-> Data: 2026-04-08 | Status: RASCUNHO | Responsavel: Felipe Silva
+> Data: 2026-04-08 | Status: RASCUNHO (nao executado como desenhado) | Responsavel: Felipe Silva
+> Nota (2026-10): a Fase A foi executada em maio/2026 com OUTRO contrato — a camada censitaria (`fase_a_nacional_completo.py` -> `censo2022_setores_calibrado*.parquet`, colunas `coverage_pct_setor_2022`, `renda_per_capita_setor_2022_calibrada`, `score_setor_2022_calibrado`, regua absoluta da DEC-040). `censo_2022_h3_res7.parquet`, `brasil_territorial_enriquecido.parquet`, `score_territorial_expandido` e as Fases B-E nunca foram materializados.
 > Dependencia: M1 nacional fechado e em GO. Nenhum artefato oficial do M1 e alterado.
 
 ---
@@ -130,7 +131,7 @@ Para cada camada `<c>`, as seguintes colunas sao obrigatorias:
 score_priorizacao  (M1_SCORE_OFICIAL em config.py)
 ```
 
-- Definido na secao 7 do CLAUDE.md.
+- Definido na secao 3 do CLAUDE.md ("Nucleo oficial M1").
 - Inputs: `renda_per_capita` e `populacao_proxy` (= `pop_total`) em nivel municipal (SIDRA). Alterado em 2026-05-15: trava 18-45 removida.
 - Nenhuma alteracao permitida no calculo, nos pesos, nos inputs ou nos artefatos de saida.
 - `hex_score_estrutural`, `ajuste_executivo` e `score_priorizacao` permanecem como estao.
@@ -166,7 +167,7 @@ O `score_territorial_expandido` so pode substituir `score_priorizacao` apos:
 1. Validacao de correlacao com metricas reais de unidades Ultra existentes (churn, LTV, taxa de conversao local).
 2. Cobertura nacional >= 90% com fonte gold.
 3. Aprovacao explicita do responsavel do projeto.
-4. Atualizacao formal do `CLAUDE.md` secao 7 com nova regra canonica.
+4. Atualizacao formal do `CLAUDE.md` secao 3 com nova regra canonica.
 
 ---
 
@@ -321,7 +322,7 @@ O parquet `censo_2022_h3_res7.parquet` deve passar todos os gates abaixo antes d
 
 ## 8. Restricoes operacionais consolidadas
 
-1. **NAO** alterar `hex_score_estrutural`, `score_priorizacao` nem nenhum artefato listado na secao 10 do CLAUDE.md.
+1. **NAO** alterar `hex_score_estrutural`, `score_priorizacao` nem nenhum artefato listado na secao 3 do CLAUDE.md ("Artefatos oficiais").
 2. **NAO** criar dependencia de API publica ao vivo no pipeline de fechamento nacional.
 3. **NAO** usar Nominatim publico para geocodificacao em lote.
 4. **NAO** usar OSM como unica fonte de concorrencia.

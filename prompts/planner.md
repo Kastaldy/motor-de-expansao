@@ -48,7 +48,7 @@ precisar tomar decisões de escopo.
 Planner
 
 ## Próxima Skill recomendada
-[Approver (se alta/crítica) | Builder (se baixa/média)]
+[Aprovação humana → Builder (se alta/crítica/estratégica) | Builder (se média)]
 
 ## Entendimento da tarefa
 [uma frase]
@@ -71,7 +71,7 @@ Planner
 - [critério verificável]
 
 ## Validações obrigatórias
-- Comando: [ex: python -m pytest -q tests/integration/test_streamlit_app.py]
+- Comando: [ex: python -m pytest -q tests/unit/test_piloto_web_api.py]
 - Critério mínimo: [ex: 0 falhas, sem erro de import]
 
 ## Fora de escopo
@@ -90,5 +90,5 @@ obrigatória antes do Builder. O usuário deve ler este handoff e confirmar."]
 - Atualize context/handoff.md com o formato acima.
 - Além de `context/handoff.md` (corrente), grave uma cópia append-only em `context/handoff/AAAAMMDD-HHMMSS-planner.md` (com SEGUNDOS no carimbo). Nunca edite snapshots já existentes. Ver `context/handoff/README.md`.
 - Atualize tasks/current_task.md com próxima Skill.
-- Se houver decisão técnica relevante e DECISIONS.md existir, registre.
+- Se houver decisão técnica relevante, sinalize no handoff para registro como DEC (`docs/decisions/`, skill `/registrar-decisao`).
 - Emita resumo de uma linha: o que foi planejado e próximo passo.

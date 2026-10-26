@@ -55,7 +55,7 @@ um valor é editar esta tabela primeiro.
 >
 > **Por que isto é reposição, e não conveniência.** O `docs/trilha_acesso_piloto.md` registra as
 > tentativas de login do Authelia — **sucesso e falha**, com usuário e IP — como a **camada 3** da
-> trilha, a que "responde quem entrou e quando". O corte do P19 remove essa camada junto com o
+> trilha, a que "responde quem entrou e quando". O corte do P19 remove essa camada para o BR (a AR segue no Authelia — DEC-067, emenda de 25/09/2026), que deixa de passar pelo
 > Authelia; sem estes dois eventos ela ficaria sem substituto.
 >
 > **`login.recusado` entrou em 18/09/2026**, e o que ele pode carregar é pequeno por decisões
@@ -64,7 +64,7 @@ um valor é editar esta tabela primeiro.
 > - **o IP fica FORA.** O **P15** (base legal e prazo) segue aberto, e há teste de contrato no
 >   motor que recusa qualquer `INSERT` em `eventos` mencionando a coluna. Quem guarda o IP da
 >   tentativa é a **trilha da DEC-027**, em arquivo, sem prazo desde a emenda 2 (era 90 dias)
->   — e ela **já grava** o `POST /api/login` hoje (`relevante()` só exclui `/api/health`,
+>   — e ela **já grava** o `POST /api/login` hoje (`relevante()` só exclui `/api/health`, `/api/verify`,
 >   `/assets/` e estáticos);
 > - **o login digitado fica fora** — a §2.7 proíbe login e e-mail em `metadados` (PII), e é
 >   justamente o único identificador quando o usuário digitado não existe;
@@ -76,7 +76,7 @@ um valor é editar esta tabela primeiro.
 >
 > **Registrar passou a barrar (18/09/2026).** Este é o primeiro evento do contrato com um
 > **consumidor de LEITURA em caminho quente**: `POST /api/login` conta os `login.recusado` da
-> conta nos últimos **15 minutos** e recusa a partir de **5**, antes de verificar a senha. Três
+> conta nos últimos **15 minutos** — desde 28/09/2026, só os posteriores à última redefinição pelo admin e ao último login bem-sucedido — e recusa a partir de **5**, antes de verificar a senha. Três
 > consequências que não se leem na tabela:
 >
 > - **a linha virou mecanismo, não só rastro.** Quem apagar `login.recusado` **destranca**
@@ -100,7 +100,7 @@ um valor é editar esta tabela primeiro.
 | `tipo` | Quando | `entidade` | `metadados` |
 |---|---|---|---|
 | `relatorio.gerado` | Pontual, Municipal, Comparação ou Simulador XLSX | — (ver D24) | **`report_id` (UUID, obrigatório)**, `relatorio`, `formato`, `origem`, e o alvo (`hex_id`/`imovel_id`/`unidade_id`) quando houver |
-| `dossie.baixado` | `GET /api/oportunidades/{id}/dossie` | — | `imovel_id` |
+| `dossie.baixado` | `GET /api/oportunidades/{id}/dossie` | — | `imovel_id`, `origem` |
 
 **`report_id` é obrigatório em todo `relatorio.gerado`.** É o que o D17 embute no PDF e o que
 permite, dado um arquivo vazado, chegar ao evento e daí a quem o gerou — o `idx_eventos_metadados_report_id`
@@ -153,7 +153,7 @@ fora dele. **Nem todos são ação no mesmo grau**, e por isso só dois sobem pa
 
 | Gesto | Vai para `eventos`? | Por quê |
 |---|---|---|
-| `marcar-visita` / `desmarcar-visita` | **sim** — `imovel.visita_marcada` / `_desmarcada`, com `imovel_id` em `metadados` | decisão de negócio sobre um imóvel |
+| `marcar-visita` / `desmarcar-visita` | **sim** — `imovel.visita_marcada` / `_desmarcada`, com `imovel_id` e `origem` em `metadados` | decisão de negócio sobre um imóvel |
 | `abrir-dossie` | **não** — quem grava é o `GET` do PDF (§2.2) | o gesto dispara mesmo quando não há dossiê |
 | `abrir-aba`, `abrir-imovel`, `ver-no-mapa`, `filtrar` | não | uso de tela; a trilha da DEC-027 já os tem |
 
@@ -189,7 +189,7 @@ O usuário digita premissas e recebe break-even — é decisão de análise, nã
 > que ele nascesse mentindo ou vazio.
 >
 > Ficam as PREMISSAS, que são o conteúdo real do ato: metragem (`m2`), aluguel pedido (`aluguel`) e
-> a demanda — que a DEC-009 define como premissa explícita do operador, nunca prevista, e é ela que
+> a demanda — premissa do operador, que desde a DEC-078 (que revogou a DEC-009) pode vir semeada pelo modelo de praça e ser editada, e é ela que
 > governa o cálculo inteiro. O evento responde *"fulano rodou viabilidade com estas premissas, e
 > quando"*, que é a pergunta de auditoria que esta seção existe para responder.
 >
@@ -217,7 +217,7 @@ O usuário digita premissas e recebe break-even — é decisão de análise, nã
 | `usuario.desativado` / `usuario.reativado` | `usuario` | id do alvo | — | **sim** |
 | `usuario.criado` | `usuario` | id do **criado** | `perfil` | **sim** (desde a D26) |
 | `usuario.senha_definida` | `usuario` | id de quem trocou | `primeira_vez` | **sim** (desde a D26) |
-| `usuario.senha_redefinida` | `usuario` | id de quem **teve a senha redefinida** | `tinha_senha_propria` | **sim** (desde 15/09) |
+| `usuario.senha_redefinida` | `usuario` | id de quem **teve a senha redefinida** | `tinha_senha_propria`, `validade_horas` | **sim** (desde 15/09) |
 | `usuario.troca_exigida` | `usuario` | id de quem **vai ter de trocar** | — | **sim** (desde 15/09) |
 
 **Aqui são duas pessoas por linha, e elas não podem se confundir.** `id_usuario` é **quem fez** —
@@ -256,7 +256,7 @@ semeadas (`hash_de_teste_1..4`, que não são PHC e não autenticavam nada) rece
 reparo de manutenção sem deixar evento. A tela de administração passou a ter os dois gestos, e cada
 um ganhou o seu tipo:
 
-- **`usuario.senha_redefinida`** — o admin devolve a pessoa à senha inicial compartilhada e liga a
+- **`usuario.senha_redefinida`** — o admin gera uma senha temporária aleatória, só daquela pessoa e válida por 2 h (D31, desde 18/09/2026; antes era a senha inicial compartilhada), e liga a
   marca de troca. É o caminho de quem esqueceu a senha. `metadados.tinha_senha_propria` diz se o
   gesto **apagou** uma senha que a pessoa escolheu: a diferença entre arrumar o acesso de quem nunca
   entrou e derrubar a senha de alguém. Registra **sempre**, mesmo quando a pessoa já estava na

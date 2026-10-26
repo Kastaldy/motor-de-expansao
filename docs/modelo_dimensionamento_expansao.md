@@ -1,3 +1,5 @@
+> **[HISTÓRICO — spec do CEO, 2026-06-10, origem da epic BLK-DIM (DEC-008)]** As camadas 3-4 viraram o simulador determinístico (`dimensionamento/simulador.py`, FIN-VIAB-01; studios na DEC-068). As camadas 1-2 deram NO-GO e a previsão pela geografia foi encerrada (DEC-009, DEC-043); a DEC-078 revogou as duas e passou a semear a demanda pelo modelo de praça (OLS do faturamento maduro na isócrona de 10 min de carro) com a curva de rampa observada. Estado atual: DEC-078.
+
 # Modelo de Dimensionamento e Viabilidade de Unidades — Especificação e Handoff
 
 > Documento de transferência para implementação no repositório do **Motor de Expansão**

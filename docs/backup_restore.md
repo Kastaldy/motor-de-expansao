@@ -45,8 +45,10 @@
 | `/opt/motor-expansao/app/authelia/configuration.yml`    | YAML       | Configuracao Authelia (dominio, regras)                     |
 | `/opt/motor-expansao/app/authelia/users_database.yml`   | YAML       | Usuarios + hashes argon2 das senhas                         |
 | `/opt/motor-expansao/app/authelia/db.sqlite3`           | binario    | Sessoes Authelia (muda a cada login — drift esperado)       |
+| `/opt/motor-expansao/cadastro/` (`cadastro_unidades.json`, `cadastro_log.jsonl`, `acesso_abas.json`, `bot_allowlist.json`) | JSON | Cadastro operacional (DEC-023), abas do piloto e allowlist do bot — editados em producao, SEM copia cifrada |
+| volume `postgres_data` (`motor_expansao_postgres`) | Postgres | Usuarios, RBAC, sessoes e eventos — nenhum pipeline regenera; backup por `scripts/cron/run_backup_banco.sh` (restore: `docs/banco_deploy.md` §10) |
 
-> Esses arquivos estao no `.gitignore` da raiz do repo (linhas 80-86 atuais).
+> Esses arquivos estao no `.gitignore` da raiz do repo (linhas 135-139 atuais).
 > Nenhuma versao em claro pode entrar no git.
 
 ### 2.1 Instancia AR (Bloco E / BLK-INTL-08)
@@ -429,6 +431,7 @@ sops --input-type binary --output-type binary -d secrets/authelia.db.sqlite3.enc
 Opcoes:
 - **Rapido:** SCP da maquina local: `scp -r data/outputs/ root@<novo-ip>:/opt/motor-expansao/data/outputs/`
 - **Limpo:** regenerar conforme §13.
+- **Obrigatorio antes do `up` (DEC-047):** `scp` de `data/perfis/BR/perfil.json` para `/opt/motor-expansao/data/perfil.json` (bind de ARQUIVO em `web`/`api`/`telegram-bot`: ausente, o Docker cria um diretorio e os containers falham com `"is a directory"`), e os diretorios dos outros mounts — `data/{staging,ibge,oportunidades}`, `cadastro/` e `logs/{acesso,caddy}` (`cadastro` e `logs/acesso` com `chown 1000:1000`).
 
 ```bash
 mkdir -p /opt/motor-expansao/data/outputs/ /opt/motor-expansao/data/ultra/ /opt/motor-expansao/concorrentes/
@@ -449,7 +452,9 @@ docker compose -f docker-compose.prod.yml up -d
 docker compose -f docker-compose.prod.yml ps
 ```
 
-Esperado: 5 containers `healthy` em ate 2 min (web, api, telegram-bot, caddy, authelia).
+Esperado: 6 containers `healthy`/`running` em ate 2 min (web, api, telegram-bot, postgres, caddy, authelia) — o `.env`
+restaurado precisa dos `POSTGRES_*` (o compose aborta sem eles). Stack AR (`docker-compose.ar.yml`), tileserver
+(`/opt/openmaptiles-infra`) e Valhalla (`/opt/valhalla-infra`) tem compose proprio e sobem a parte.
 
 ### 10.9. Validar (vai para §14)
 
@@ -473,7 +478,7 @@ echo "Novo recipient: $NEW_RECIPIENT"
 Edite `.sops.yaml` e adicione o novo `age:` em cada `creation_rule`:
 ```yaml
 creation_rules:
-  - path_regex: secrets/.*\.enc\.yaml$
+  - path_regex: '.*\.enc\.yaml$'   # sem `/`: o SOPS 3.8.1 nao casa path_regex com barra (§9)
     age: >-
       age1OLD_RECIPIENT,
       age1NEW_RECIPIENT
@@ -522,7 +527,7 @@ git add secrets/env.enc.env
 git commit -m "chore: rotacionar AUTHELIA_JWT_SECRET"
 git push
 
-# No VPS, apos pull, regenerar o .env:
+# No VPS, regenerar o .env (o checkout /opt/motor-expansao/app esta parado: levar secrets/env.enc.env por scp em vez de git pull):
 ssh root@2.25.137.241
 cd /opt/motor-expansao/app/
 git pull
@@ -540,8 +545,8 @@ docker compose -f docker-compose.prod.yml restart authelia
 ### 13.1. Pre-requisitos
 
 - `data/ultra/Ultra.csv` presente (encoding `latin-1`, sep `;`).
-- Python 3.11 + dependencias de `requirements.txt` instaladas
-  (`h3`, `pandas`, `pyarrow`, `requests`, `shapely`, `structlog`, `geopy`).
+- Python 3.11 + dependencias do `pyproject.toml` instaladas com o lock:
+  `pip install -e . -c constraints.txt` (nao existe `requirements.txt`).
 - Conexao com IBGE (download de malhas Censo 2022) — cache em
   `data/raw/ibge/` acelera reexecucao.
 
@@ -604,11 +609,11 @@ Checklist apos `docker compose up -d`:
 ```bash
 # 1. Containers
 docker compose -f docker-compose.prod.yml ps
-# Esperado: web, api, telegram-bot, caddy, authelia todos 'healthy' ou 'running'
+# Esperado: web, api, telegram-bot, postgres, caddy, authelia todos 'healthy' ou 'running'
 
 # 2. Healthcheck do piloto web — POR DENTRO do container (este e' o caminho bom)
 docker compose -f docker-compose.prod.yml exec web curl -fsS http://127.0.0.1:8899/api/health
-# Esperado: HTTP 200 + {"status":"ok"} — e SO' isso. O /api/health foi EMUDECIDO pelo
+# Esperado: HTTP 200 + {"status":"ok", "renda_fatores": {...}} — e SO' isso (a versao dos fatores entrou na E0 da renda). O /api/health foi EMUDECIDO pelo
 # pentest Onda B #8: ele prova que o container responde, NAO que o dado chegou.
 # O inventario de artefatos mora em /api/acessos/saude-artefatos (so' admin).
 #

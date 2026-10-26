@@ -9,8 +9,8 @@
 - O Motor **não é um modelo**; é uma **pilha de camadas paralelas**, cada uma respondendo uma pergunta
   diferente. A arquitetura correta de uso é um **funil**: triagem macro → mercado → **imóvel real** → viabilidade.
 - Os modelos são bons **triadores** (ordem relativa — "onde olhar") e **fracos preditores de número
-  absoluto** (quantos alunos). Isso é a DEC-009, agora quantificada.
-- A **demanda entra como PREMISSA explícita, nunca como predição pela geografia**.
+  absoluto** (quantos alunos). Era a doutrina da DEC-009 (revogada pela DEC-078 em 2026-10-21), aqui quantificada.
+- A **demanda entra como PREMISSA editável**; desde a DEC-078 o valor pode vir **sugerido por um modelo de praça** que usa a geografia (isócrona de 10 min), só na Viabilidade de um imóvel dado.
 - A ferramenta de viabilidade é de **ordem de grandeza** (MAPE ~30%): use as **faixas p10–p90 e o ranking
   relativo**, não o número pontual.
 
@@ -56,7 +56,7 @@ carteira, plano ou artefatos oficiais.
 
 ### O que os modelos NÃO fazem
 
-- Não preveem quantos alunos um ponto novo terá (DEC-009).
+- Fora da Viabilidade (modelo de praça da DEC-078, que só SUGERE a demanda, editável), não preveem quantos alunos um ponto novo terá.
 - Não substituem análise humana do imóvel (visibilidade, fluxo, esquina, negociação).
 - Fora do envelope de metragem calibrado (~600–3.000 m²), a viabilidade não é confiável.
 
@@ -66,8 +66,8 @@ carteira, plano ou artefatos oficiais.
 
 1. **Triagem decide ONDE olhar, não QUANTOS alunos.** M1/censitário/residual estreitam o mapa para regiões
    promissoras. Não os leia como oráculo de magnitude.
-2. **Demanda entra como PREMISSA, nunca como predição geográfica** (DEC-009). O operador ou os comparáveis
-   trazem a faixa de demanda; o software faz a conta de viabilidade.
+2. **Demanda entra como PREMISSA editável** (DEC-009, revogada pela DEC-078). O operador, os comparáveis ou,
+   na Viabilidade, a sugestão do modelo de praça trazem a demanda; o software faz a conta de viabilidade.
 3. **A decisão é property-first:** o operador traz um imóvel real (m² + aluguel) → o motor devolve faixa de
    alunos, break-even, aluguel-teto, **margem de segurança** e sensibilidade. Use **faixas (p10–p90)**, nunca o
    número pontual.
@@ -80,10 +80,10 @@ carteira, plano ou artefatos oficiais.
 
 ## 4. Roadmap de implementação
 
-O que **já existe e funciona:** M1/censitário/dashboard (produção); `viabilidade_ponto.py` (motor);
+O que **já existe e funciona:** M1/censitário/piloto web (produção, DEC-022); `viabilidade_ponto.py` (motor);
 BLK-VIAB-01/02/03 (base de imóveis → ranking por margem de segurança); BLK-VIAB-04/FU (backtest validado, N=112).
 
-Blocos para operacionalizar o produto (ver `tasks/backlog.md`, epic BLK-VIAB):
+Blocos para operacionalizar o produto (ver `tasks/backlog.md`, epic BLK-VIAB) — em 2026-10-23: VIAB-06 e VIAB-07 concluídos em 2026-07-08; a tela de Viabilidade existe no piloto web, embora o backlog ainda marque o VIAB-09 como pendente:
 
 | # | Bloco | Passo | Autonomia |
 |---|---|---|---|
@@ -103,7 +103,7 @@ rodar autônomos; VIAB-08/09/10 são humanos (rede, UI e dado externo).
 
 ## 5. Referências
 
-- **Decisões:** DEC-001 (não recalibrar M1), DEC-008 (metodologia out-of-fold), DEC-009 (pivô property-first).
+- **Decisões:** DEC-001 (não recalibrar M1), DEC-008 (metodologia out-of-fold), DEC-009 (pivô property-first; revogada pela DEC-078), DEC-078 (Viabilidade v2: demanda sugerida pelo modelo de praça e curva de rampa).
 - **Relatórios (gitignored, `data/analysis/`):** `viabilidade_candidatos.md`, `viabilidade_backtest_ultra.md`,
   `viabilidade_backtest_multirede.md`, `atr_alvo_alunos_totais.md`.
 - **Código:** `src/motor_expansao/dimensionamento/viabilidade_ponto.py` (motor), `backtest_viabilidade.py`

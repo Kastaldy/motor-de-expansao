@@ -25,7 +25,8 @@ telegram-bot ──HTTP interno──► api ──► volumes :ro (outputs + ib
 
 - **Imagem única** (`Dockerfile.api`) para os dois serviços; o bot inclui Google Chrome
   porque o geocoder de endereço+CEP usa Selenium (`maps_geocoder`).
-- A API **não tem porta no host**; só o bot a consome via `http://api:8077`.
+- A API **não tem porta no host**: o bot a consome por `http://api:8077` na rede interna, e o Caddy a
+  publica em `api.ultra-expansao.tech` (internet-facing, só Bearer, sem Authelia na frente — BLK-SEC-05).
 - Não afeta a imagem do piloto web (`Dockerfile.web`, `motor-expansao-web`).
 
 ## Pré-condições de dados na VPS (READ-ONLY, montados via volume)
@@ -41,6 +42,7 @@ telegram-bot ──HTTP interno──► api ──► volumes :ro (outputs + ib
 | `data/staging/uplift_composicao_setor.parquet` | uplift de composição por setor (choropleth `renda_domiciliar` do PDF) | **Sim, na prática** — ver aviso abaixo |
 | *(fator temporal da renda)* | **não é mais arquivo de staging** desde a E0 da correção de renda: viaja **na imagem**, em `src/motor_expansao/renda/fatores/BR/` (versão em uso no `VIGENTE`). Não há `scp` dele | — (ver `docs/runbook_atualizacao_renda.md`) |
 | `data/ultra/` | assets de branding do PDF | Não (fallback de cor sólida) |
+| `data/perfil.json` | perfil do país (DEC-047), bind de ARQUIVO em `api` e `telegram-bot` | **Sim** — tem de existir ANTES do `up`: ausente, o Docker cria um diretório vazio e o container falha com `"is a directory"`; sem `MOTOR_DATA_DIR` + bind o bot entra em crash loop (DEC-049) |
 
 > **⚠ Falha SILENCIOSA (custou um deploy em 2026-07-17).** Até a E0 da correção de renda, os artefatos de
 > renda domiciliar acima não quebravam nada quando faltavam: o código caía em fallback (uplift 1,632,
@@ -101,7 +103,8 @@ Gerar tokens fortes: `openssl rand -hex 24`.
 
 A imagem `motor-expansao-api` é publicada no GHCR pelo job **`publish-api`** do CI
 (`.github/workflows/ci.yml`) — **filtrado por caminho**: só rebuilda/publica quando mudam
-`Dockerfile.api`, `src/motor_expansao/api/**` ou `pyproject.toml`. A VPS **puxa** por digest
+`Dockerfile.api`, `src/motor_expansao/{api,dashboard,dimensionamento,renda}/**`,
+`src/motor_expansao/perfil.py` ou `pyproject.toml`. A VPS **puxa** por digest
 (`API_IMAGE` no `.env`), sem buildar localmente. Execução na VPS é passo humano (§6).
 
 > ⚠️ **ATENÇÃO — o filtro do `publish-api` não cobre tudo que a imagem executa.**
@@ -111,6 +114,7 @@ A imagem `motor-expansao-api` é publicada no GHCR pelo job **`publish-api`** do
 > `dashboard/` deixava a imagem da API/bot STALE. Hoje o filtro real
 > (`.github/workflows/ci.yml`) cobre `Dockerfile.api`, `src/motor_expansao/api/`,
 > `src/motor_expansao/dashboard/`, `src/motor_expansao/dimensionamento/`,
+> `src/motor_expansao/renda/` (desde 2026-10-21: os fatores da renda exibida viajam na imagem),
 > `src/motor_expansao/perfil.py` e `pyproject.toml`. O `CLAUDE.md` §2 já registrava o fim do
 > gotcha; este arquivo é que não tinha acompanhado.
 >
@@ -160,7 +164,9 @@ docker exec motor_expansao_api curl -fsS -X POST http://127.0.0.1:8077/api/v1/an
   -d '{"lat":-23.55,"lng":-46.63}' | head -c 400
 ```
 
-No Telegram: enviar a senha (`API_BOT_SENHA`) → menu → mandar `lat,lng`, link do Maps
+No Telegram — com o `chat_id` na allowlist `/opt/motor-expansao/cadastro/bot_allowlist.json` (FAIL-CLOSED desde
+2026-09-24: arquivo ausente ou chat fora da lista = o bot não responde; ver `docs/infra_producao.md`, "Allowlist do bot do
+Telegram"): enviar a senha (`API_BOT_SENHA`) → menu → mandar `lat,lng`, link do Maps
 ou endereço+CEP → recebe o PDF.
 
 ## Rollback

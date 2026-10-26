@@ -1,7 +1,7 @@
 # Contrato — `GET /api/metodologia` (painel de metodologia do Mapa)
 
 > **Status:** [canônico] · **Origem:** PR #185 (2026-08-05), reparado antes do merge ·
-> **Implementação:** `montar_metodologia()` em `web/server/app.py` ·
+> **Implementação:** `montar_metodologia()` em `web/server/app.py` (desde a DEC-077: `_metodologia_top10` no país com régua de recomendação — camadas 1 a 4 como leitura e a 5 como o Top 10 —, `_metodologia_legado` sem régua, hoje a Argentina) ·
 > **Consumidor:** `web/src/components/MethodologyPanel.tsx` ·
 > **Contrato travado por:** `tests/contracts/test_metodologia_espelha_o_funil.py`
 
@@ -85,14 +85,14 @@ agrava ao publicá-las como "etiquetas do ranking" no mesmo cartão que declara 
 **BLK-MAPA-CHIP-01**; a decisão de produto já tomada é trocar o chip pela leitura em unidades.
 
 **Cuidado ao escrever teste para isso:** o contrato atual valida chamando `_etiqueta` diretamente,
-com valores que o funil nunca entrega (`n_concorrentes_est` = 2 e 99, quando a base do passo 3 é
-`white`, com `n == 0`). Passa verde sobre vocabulário inalcançável. Teste novo deve exercitar as
+com valores que o funil nunca entrega (`n_concorrentes_est` = 99, quando a base do passo 3 é
+`_comporta_entrada`, com `n <= CONC_ADENSAR_MAX` (2) desde a DEC-041 — o `n = 2` ("Adensar") passou a ser alcançável). Passa verde sobre vocabulário inalcançável. Teste novo deve exercitar as
 etiquetas **através de `montar_funil` / `montar_funil_uf`**.
 
 ## Ver também
 
 - [arquitetura_app_atual.md](arquitetura_app_atual.md) — arquitetura das 3 superfícies do piloto.
 - [modelo_mercado_hexagonos.md](modelo_mercado_hexagonos.md) — de onde vêm residual, oferta
-  ponderada por distância e o gate do SAM que o painel descreve.
+  por área de influência de 1 km (DEC-051; antes, ponderada por distância) e o gate do SAM que o painel descreve.
 - `src/motor_expansao/dashboard/constants.py` — `FAIXAS_MAPA_POTENCIAL`, `FAIXAS_MAPA_DEMANDA`,
   `FAIXA_LABELS`, `FAIXA_ORDEM`: a fonte da verdade das faixas.

@@ -77,8 +77,8 @@ clickup_create_task(
 3. Decida a Frente; se Projeto/Análise, confirme a Complexidade na CRIAÇÃO.
 4. Crie com `clickup_create_task` passando as etiquetas em `tags` (devem já existir no Space).
 ```
-clickup_create_task(list_id="<LISTA>", name="<NOME>", assignees=["<USER_ID>"], tags=["Projeto","Média"])
-clickup_create_task(list_id="<LISTA>", name="<NOME>", assignees=["<USER_ID>"], tags=["Operacional"])
+clickup_create_task(list_id="<LISTA>", name="<NOME>", assignees=["<USER_ID>"], tags=["projeto","média"])
+clickup_create_task(list_id="<LISTA>", name="<NOME>", assignees=["<USER_ID>"], tags=["operacional"])
 ```
 
 ## FLUXO 2 — Classificar / backfill de tarefa existente
@@ -101,6 +101,7 @@ Colaboradores às vezes esquecem de marcar como concluído na virada do mês. Po
 
 **Tarefas sem `due_date` (ex.: coletores de scraping, itens soltos).**
 Seguem `date_closed` puro, sem grace period. Fecharam no mês Y -> contam em Y, ponto.
+**Exceção: subtarefa sem `due_date` herda o `due_date` da tarefa-pai** (regra da `clickup-sync`, 2026-09-14).
 
 **Espelho nas duas pontas.** Ao fechar o mês X, o grace traz para X o que tinha prazo em X e fechou
 no começo de X+1; e RETIRA de X o que tinha prazo em X-1 e só foi fechado nos primeiros dias de X.
@@ -140,7 +141,7 @@ uma tarefa criada dia 20 com prazo no mês, concluída dia 02 do mês seguinte, 
    - **Tarefa-pai/épico sem etiqueta de Complexidade:** vale 0 pts (as subtarefas pontuadas é que contam).
      Nunca some o pai + as subtarefas — seria dupla contagem.
    Para tarefas OPERACIONAIS, leia a QUANTIDADE: marcador `[VOL_OPERACIONAL: N]` na descrição (ou
-   `(N estudos)` no nome). Sem marcador, quantidade = 1. **Scraping: cada coletor/academia = 1 item.**
+   `(N estudos)` no nome). Sem marcador, quantidade = 1 — **exceto lote-pai COM subtarefas, que vale 0** (contam as subtarefas, 1 cada; regra da `clickup-sync`). **Scraping: cada coletor/academia = 1 item.**
 4. Pergunte dias úteis do período e dias indisponíveis por pessoa.
 5. NÃO calcule de cabeça. Preencha as variáveis e EXECUTE este código:
 
@@ -253,7 +254,7 @@ print(f"  Análise    : {T['ana_p']} pts entregues ({T['ana_c']} tarefas)")
 5. Apresente SEMPRE por frente. Nunca apresente um número único por pessoa.
 
 ## FLUXO 4 — Painel em HTML (TEMPLATE CANÔNICO, com GRÁFICOS)
-O painel mensal tem UM template visual oficial e fixo, em `template-painel.html` (nesta skill).
+O painel mensal tem UM template visual oficial e fixo, em `template-painel.html` (nesta skill) — **PENDENTE: o arquivo não está versionado nesta pasta** (nunca entrou no git; ver commit c02647c6), então o FLUXO 4 não roda até ele ser adicionado.
 TODO relatório é gerado a partir dele, para que a série arquivada fique 100% consistente — é material
 recorrente para apresentar ao diretor, então o visual NUNCA varia de um mês para o outro.
 
@@ -296,7 +297,7 @@ ou usar como nota isolada de desempenho.
 
 ## Arquivos desta skill
 - `SKILL.md` — este guia.
-- `template-painel.html` — TEMPLATE CANÔNICO do relatório (FLUXO 4). Já vem com os dados de Maio/2026 como
+- `template-painel.html` — TEMPLATE CANÔNICO do relatório (FLUXO 4) — **PENDENTE, ausente no repo** (commit c02647c6). Quando adicionado, vem com os dados de Maio/2026 como
   exemplo funcional; para o mês novo, copie o arquivo e edite só o objeto `DADOS`.
 
 ## Instalação e uso no Cowork

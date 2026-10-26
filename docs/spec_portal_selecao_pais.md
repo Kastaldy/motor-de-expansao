@@ -1,9 +1,9 @@
 # SPEC — Portal de seleção de país na raiz `ultra-expansao.tech`
 
-- Data: 2026-08-31 | Status: **PRONTA PARA CODAR** | Decidida por Felipe em 2026-08-31
+- Data: 2026-08-31 | Status: **IMPLANTADA em 2026-09-03** — metade versionada no PR #313; bloco raiz do `Caddyfile` e Authelia aplicados na VPS, com backups cifrados no PR #316, aceite do §7.4.2 8/8 OK e Caddy v2.11.3 anotado | Decidida por Felipe em 2026-08-31
 - **Dono do arquivo: esta spec.** `docs/plano_multipais.md` e `docs/decisions/` têm outros donos e **não** são alterados por aqui — o ponteiro para esta spec é costurado depois, por outra pessoa.
 - Bloco sugerido: **BLK-INTL-13**. Criticidade: **CRITICA** — exige a label `critica-aprovada` do Felipe (§8). **Não** é `loop-safe`.
-- Depende de: **BLK-INTL-05** (criação dos grupos `expansao_*` no Authelia). Ler o §9 **antes** de abrir a branch.
+- Depende de: **BLK-INTL-05** (criação dos grupos `expansao_*` no Authelia) — **satisfeita em 2026-09-03**, junto com o host AR do BLK-INTL-08; a ordem do §9 foi cumprida.
 - Esforço: **1 a 2 dias**, dos quais mais da metade é a migração de cache do 301 e o aviso ao time — não é código.
 
 ---
@@ -49,7 +49,8 @@ e isso vale também para o **comentário HTML**, que viaja no corpo como qualque
    rodar `caddy version`. Isto é, por si só, um achado: o repositório pina `web` e `api` por **digest
    imutável** (`docker-compose.prod.yml:151` e `:28`, ambos com `:?` fail-closed) e deixa a porta de
    entrada num ponteiro móvel. **Não é escopo desta spec resolver** — mas o §7.1 exige registrar o
-   número da versão no PR, e é o candidato natural a virar um bloco próprio.
+   número da versão no PR, e é o candidato natural a virar um bloco próprio. **Anotado no deploy de
+   2026-09-03: Caddy v2.11.3** (commit `7c6814a9`, PR #316); a imagem segue `caddy:2-alpine`, tag flutuante.
    As peças de Caddy que esta spec usa — `route` com ordem literal, matcher `header` com curinga
    (`*x*`), `not`, conjunção por linhas dentro de um matcher nomeado, `request_header`, `templates`,
    `vars` — são todas de Caddy 2 e nenhuma é recente; o próprio `Caddyfile:59` já assume `>= 2.5`.
@@ -89,10 +90,11 @@ A DEC-047 (`docs/decisions/DEC-047.md:6`) recusa, textualmente:
 > *"Não existe seletor de país em runtime, não existe eixo de país em chave de cache, em rota, em
 > payload ou em `localStorage`."*
 
-O que ela está protegendo é uma propriedade de **correção**, não de estilo: há **35** `@functools.lru_cache`
-em `web/server/app.py` e **5** em `src/motor_expansao/api/service.py`, e nenhum deles tem país na chave.
+O que ela está protegendo é uma propriedade de **correção**, não de estilo: há **58** `@functools.lru_cache`
+em `web/server/app.py` e **6** em `src/motor_expansao/api/service.py` (eram 35 e 5 em 2026-08-31), e nenhum deles separa
+países na chave — o único que recebe o país, `_top10_brasil` (DEC-077), recebe só o nome, como rótulo constante no processo.
 `carregar_uf("SC")` só é inequívoco porque existe **uma** SC por processo. Um seletor que trocasse a
-base servida **dentro** do app rechavearia os 40 caches — e o defeito sairia como fator de renda de um
+base servida **dentro** do app rechavearia os 64 caches — e o defeito sairia como fator de renda de um
 país no PDF do outro, calado.
 
 **Este portal não é esse seletor, e a diferença é verificável, não retórica:**
@@ -274,8 +276,14 @@ ultra-expansao.tech, www.ultra-expansao.tech {
         # 2) Um pais e SO ele: vai direto. 302, NUNCA `permanent`/301 — spec §4.1.
         #    Navegador cacheia 301 indefinidamente; quem ganhasse um segundo pais
         #    depois nunca mais veria o seletor.
-        handle @so_br { redir https://piloto.ultra-expansao.tech{uri} 302 }
-        handle @so_ar { redir https://piloto-ar.ultra-expansao.tech{uri} 302 }
+        # Handles em MULTI-LINHA: a forma de uma linha `{ redir ... }` reprova no `caddy validate`
+        # (achado no deploy de 2026-09-03 -- unica correcao sobre esta spec).
+        handle @so_br {
+            redir https://piloto.ultra-expansao.tech{uri} 302
+        }
+        handle @so_ar {
+            redir https://piloto-ar.ultra-expansao.tech{uri} 302
+        }
 
         # 3) Nenhum pais: explicacao em portugues, nao 403 seco e MUITO menos o 404
         #    cru do Caddy. `portal/sem-acesso.html` TEM de existir antes deste bloco
@@ -320,7 +328,7 @@ caso "vários" desta spec é o **fallback** e não uma lista.
 **O que se escolheu, e como cresce.** Por país novo entram exatamente três coisas mecânicas:
 
 1. um matcher `@so_<pais>` com 1 linha positiva e `N−1` negações;
-2. um `handle @so_<pais> { redir https://piloto-<pais>.ultra-expansao.tech{uri} 302 }`;
+2. um `handle @so_<pais>` com o `redir https://piloto-<pais>.ultra-expansao.tech{uri} 302` em linha própria dentro do bloco (a forma de uma linha reprova no `caddy validate` — §2.3);
 3. um par `@tem_<pais>` / `request_header` (a linha do `set` **e** a da remoção incondicional — §2.3),
    mais um cartão dentro do seu próprio `if` no `index.html` (§5.4).
 
@@ -636,8 +644,12 @@ access_control:
       policy: one_factor
     - domain: dashboard.ultra-expansao.tech
       policy: one_factor
+      subject:
+        - "group:expansao_br"   # desde o Bloco D (BLK-INTL-05), 2026-09-03
     - domain: piloto.ultra-expansao.tech
       policy: one_factor
+      subject:
+        - "group:expansao_br"   # idem
 ```
 
 **A regra da raiz é a ÚNICA que fica deliberadamente sem `subject`, e isso é desenho, não
@@ -650,7 +662,7 @@ exatamente para esse caso. Os aceites **8 e 12 do §7.2** morreriam juntos. Ou s
 transformar "sem grupo" numa página em vez de num código de erro. Nos **hosts de país** é o contrário:
 lá o `subject` é obrigatório, e é isso que o BLK-INTL-05 entrega.
 
-> **Divergência a alinhar — e ela não se resolve nesta spec.** `tasks/backlog.md:4327` (BLK-INTL-D1)
+> **Divergência RESOLVIDA:** o critério do BLK-INTL-D1 em `tasks/backlog.md` passou a dizer que nenhuma regra de **host de país** fica sem `subject` e que a raiz `ultra-expansao.tech` é a exceção deliberada. **Registro do que era:** `tasks/backlog.md:4327` (BLK-INTL-D1)
 > fecha o critério de aceite com *"Nenhuma regra fica sem `subject`"*, que é literalmente o oposto do
 > parágrafo acima. O texto está **certo para os hosts de país e errado para a raiz**, que ainda não
 > existia quando foi escrito. **O backlog tem outro dono e não é editado por aqui** (cabeçalho, §0): o
@@ -903,7 +915,7 @@ mesmo dia** · versão do Caddy anotada no PR.
   `caddy` não é imagem nossa — então o análogo do digest é o §7.1: **anotar a versão do Caddy no PR**,
   para que "o que estava no ar" seja recuperável depois. Guardrail absoluto do §6 vale integralmente:
   **um comando por vez na VPS, com confirmação explícita para cada um.**
-- **`portal/` deveria entrar como GOVERNANCA no guard**, não CRITICO: é conteúdo servido em produção,
+- **`portal/` entrou como GOVERNANCA no guard** (PR #313; `_DENY_GOVERNANCA` em `scripts/loop_guard.py`, logo depois do `^web/`), não CRITICO: é conteúdo servido em produção,
   mas não decide roteamento nem acesso. Entrada sugerida em `_DENY_GOVERNANCA`
   (`scripts/loop_guard.py:163-201`), na vizinhança do `^web/` (`:184`):
   `(r"^portal/", "portal de selecao de pais servido na raiz")`.
@@ -915,9 +927,11 @@ mesmo dia** · versão do Caddy anotada no PR.
 
 ---
 
-## 9. Dependência: os grupos não existem ainda
+## 9. Dependência: os grupos não existiam ainda (satisfeita em 2026-09-03)
 
-**O fato.** `authelia/users_database.yml` tem **19 usuários, todos e apenas** em `ultra_team`
+> **Estado:** os grupos `expansao_br`/`expansao_ar` foram aplicados no Authelia da VPS em 2026-09-03 (BLK-INTL-05 / Bloco D, backups no PR #308), o host AR entrou no `Caddyfile` no mesmo dia (BLK-INTL-08) e o portal subiu depois deles, na ordem abaixo. O texto desta seção é o de 2026-08-31.
+
+**O fato, em 2026-08-31.** `authelia/users_database.yml` tem **19 usuários, todos e apenas** em `ultra_team`
 (`:12`, `:19`, `:26`, … `:138`). **Nenhum `expansao_br`, nenhum `expansao_ar`.** Os grupos por país
 nascem no **BLK-INTL-05 (Bloco D)**.
 

@@ -50,7 +50,7 @@ Colunas adicionais disponiveis:
 
 ### 2.3 Base censitaria complementar
 
-Arquivo: `data/staging/censo2022_setores_calibrado.parquet`
+Arquivo: `data/staging/censo2022_setores_calibrado.parquet` (desde a DEC-045, `renda_per_capita_setor_2022_calibrada` e `score_setor_2022_calibrado` do hexagono sao SOBREPOSTOS pelos agregados da malha de setores, `censo2022_hex_da_malha.parquet`, via `sobrepor_renda_da_malha` em `anexar_colunas_censo`)
 
 Colunas adicionais disponiveis:
 
@@ -67,7 +67,7 @@ Colunas adicionais disponiveis:
 
 ### 2.4 Bases de concorrentes disponiveis
 
-Arquivos: todos os `concorrentes/unidades_*.csv` descobertos automaticamente por `descobrir_csvs()` em `normalizar_concorrentes.py`. Atualmente **28 redes** mapeadas.
+Arquivos: todos os `concorrentes/unidades_*.csv` descobertos automaticamente por `descobrir_csvs()` em `normalizar_concorrentes.py`. Atualmente **~104 redes** mapeadas (medido na DEC-033, 2026-08-14; o lote do GymScraping tem 90 coletores, DEC-013).
 
 Colunas minimas esperadas em cada CSV:
 
@@ -135,7 +135,7 @@ Base de montagem:
 1. `data/outputs/oportunidades_expansao_hibrido.parquet`
 2. left join com `data/staging/brasil_estrutural.parquet` por `hex_id`
 3. left join com `data/staging/censo2022_setores_calibrado.parquet` por `hex_id`
-4. enriquecimento espacial com `data/staging/concorrentes_mapeados.parquet`
+4. enriquecimento espacial com o universo `cadeias`: `concorrentes_mapeados.parquet` + unidades de rede dos agregadores sem equivalente no cadastro (`vulnerabilidade_ma_redes.parquet`, `unir_cadeias` — DEC-048/DEC-062/DEC-066), sem os estudios boutique (DEC-056) e com capacidade real por unidade quando medida (DEC-057)
 5. enriquecimento espacial com as unidades Ultra georreferenciadas
 
 ### 4.1 Camada auxiliar - unidades Ultra normalizadas
@@ -168,22 +168,22 @@ Regras de leitura:
 | `data_snapshot_mercado` | string | data da execucao da camada |
 | `fonte_demanda_principal` | string | `censo_2022_hex` quando `flag_censo_elegivel=True` e `pop_total_setor_2022.notna()`; senao `m1_municipal_proxy` |
 | `fonte_oferta_principal` | string | valor fixo `csv_big_players_mapeados` |
-| `n_redes_mapeadas` | int | contagem dinamica de redes unicas validas em `concorrentes_mapeados.parquet`; calculado via `_contar_redes_mapeadas()` no Bloco 5; atualmente **28** (todos os `unidades_*.csv` de `concorrentes/`) |
+| `n_redes_mapeadas` | int | contagem dinamica de redes unicas validas em `concorrentes_mapeados.parquet`; calculado via `_contar_redes_mapeadas()` no Bloco 5; atualmente **~104** (medido na DEC-033; todos os `unidades_*.csv` do lote do GymScraping) |
 
 ### 5.2 Demanda potencial (TAM)
 
 | coluna | tipo | regra exata |
 | --- | --- | --- |
 | `demanda_granularidade` | string | `hex_censo` quando `flag_censo_elegivel=True` e `pop_total_setor_2022.notna()`; senao `municipio_proxy` |
-| `pop_hex_base` | float | `pop_total_setor_2022` positivo quando existe censo elegivel; senao `populacao_proxy` positiva; senao `null` |
-| `fonte_pop_hex_base` | string | `censo_2022_hex`, `m1_municipal_proxy` ou `sem_populacao_valida` |
+| `pop_hex_base` | float | `pop_total_setor_2022` quando > 0 (independente de `flag_censo_elegivel`); senao `populacao_proxy / total_hex_municipio` quando > 0; senao `null` |
+| `fonte_pop_hex_base` | string | `censo_2022_setor`, `m1_municipal_proxy_per_hex` ou `sem_populacao_valida` |
 | `tam_populacao_base` | float | `pop_total_setor_2022` quando `demanda_granularidade='hex_censo'`; senao `populacao_proxy` |
 | `tam_renda_base` | float | `renda_per_capita_setor_2022_calibrada` quando `demanda_granularidade='hex_censo'` e a coluna estiver preenchida; senao `renda_per_capita` |
 | `tam_indice_demanda` | float | `score_expansao_hibrido` quando `flag_hex_hibrido_elegivel=True` e `score_expansao_hibrido.notna()`; senao `score_priorizacao` |
 | `tam_indice_demanda_norm` | float | `tam_indice_demanda / 100.0` |
 | `tam_pop_total_base` | float | `populacao_proxy` (= `pop_total`; trava 18-45 removida em 2026-05-15) |
 | `tam_populacao_hex` | float | alias auditavel de `pop_hex_base` para sizing absoluto do Bloco 5 |
-| `taxa_fitness_mercado_calibrada` | float | taxa de penetracao fitness calibrada em runtime por `calibrar_taxa_fitness_mercado(df)`: mediana de `(n_total_academias_2km * 2000) / pop_hex_base` nos hexes com >= 1 academia e populacao > 0; clip `[0.05, 0.50]`; fallback `TAXA_FITNESS_MERCADO_FALLBACK = 0.10` se < 10 hexes com academias na base; com todos os 28 CSVs mapeados resulta em **20%** |
+| `taxa_fitness_mercado_calibrada` | float | taxa de penetracao fitness calibrada em runtime por `calibrar_taxa_fitness_mercado(df)` (DEC-060): mediana de `(consumo_concorrentes_1km_area + oferta_consumida_ultra_real) / pop_hex_base` nos hexes que CONTEM academia (`n_concorrentes_no_hex > 0`) e populacao > 0; clip `[0.05, 0.50]`; fallback `TAXA_FITNESS_MERCADO_FALLBACK = 0.10` se < 10 hexes na mascara; artefato sem essas colunas cai na formula antiga (2 km do centroide x 2000) e AVISA; medido: **17,35%** na DEC-060 (era 28,52%), 17,63% apos a DEC-066 |
 | `taxa_fitness_calibrada` | float | alias de `taxa_fitness_mercado_calibrada` mantido para compatibilidade retroativa |
 | `tam_fitness_potencial` | float | `tam_populacao_hex * taxa_fitness_mercado_calibrada` |
 
@@ -195,7 +195,7 @@ Observacao:
 
 ### 5.3 Oferta mapeada de concorrentes
 
-Todos os calculos abaixo usam o centroide do hex (`lat`, `lng`) contra cada concorrente valido em `concorrentes_mapeados`.
+Todos os calculos abaixo usam o centroide do hex (`lat`, `lng`) contra cada concorrente do universo `cadeias`: os validos de `concorrentes_mapeados` unidos as unidades de rede dos agregadores sem equivalente no cadastro (`unir_cadeias` + `vulnerabilidade_ma_redes.parquet`, DEC-048/DEC-062/DEC-066), menos os estudios boutique (`excluir_estudios_boutique`, DEC-056).
 
 Distancia base:
 
@@ -237,7 +237,7 @@ Leitura:
 
 Implementacao em `src/motor_expansao/pipelines/pressao_concorrencial_1km.py`
 (2026-08-05, a pedido de Felipe). Cada concorrente vira uma fonte com disco de
-influencia de **1 km** e a capacidade dele (`2500` alunos) e' repartida entre os
+influencia de **1 km** e a capacidade dele (a REAL da unidade quando medida — DEC-057, `anexar_capacidade_real`; senao o proxy de `2500` alunos) e' repartida entre os
 hexagonos que o disco cobre, na proporcao da **area de intersecao**, com kernel
 uniforme (cada m2 do disco pesa igual):
 
@@ -248,14 +248,14 @@ oferta_efetiva_1km_area[h] = SOMA_c share(c -> h)
 ```
 
 A igualdade acima vale sobre TODAS as celulas H3 que o disco cobre. Na coluna publicada
-ela nao fecha: `anexar_pressao_1km_area` faz `merge` contra a base de hexes e descarta o
-share que cai fora dela — ver **LIMITACAO CONHECIDA** abaixo.
+ela tambem fecha desde a DEC-050/DEC-051: `anexar_pressao_1km_area` passa `hex_ids_validos` a
+`repartir_concorrentes`, que renormaliza o share sobre os hexagonos da base (so' um disco 100% fora da base contribui zero).
 
 | coluna | tipo | regra exata |
 | --- | --- | --- |
-| `oferta_efetiva_1km_area` | float | soma dos `share` de todos os concorrentes que cobrem o hex (share caido fora da base e' descartado — ver LIMITACAO CONHECIDA) |
+| `oferta_efetiva_1km_area` | float | soma dos `share` de todos os concorrentes que cobrem o hex (share renormalizado sobre os hexagonos da base desde a DEC-050/DEC-051; so' concorrente com disco 100% fora da base contribui zero) |
 | `n_concorrentes_influencia_1km` | int | quantos concorrentes distintos tem `share > 0` no hex |
-| `consumo_concorrentes_1km_area` | float | `oferta_efetiva_1km_area * capacidade_default_concorrente_alunos` |
+| `consumo_concorrentes_1km_area` | float | soma, concorrente a concorrente, de `share * capacidade_alunos` — capacidade REAL da unidade quando medida (DEC-057 / BLK-CAPACIDADE-01, 1.202 de 4.951 unidades), senao o proxy `2500`; deixou de ser `oferta_efetiva_1km_area * capacidade_default_concorrente_alunos` |
 | `gap_competitivo_1km_area` | float | `1 / (1 + oferta_efetiva_1km_area)` |
 | `pressao_concorrencial_score_1km_area` | float | `100 * (1 - gap_competitivo_1km_area)` |
 
@@ -292,8 +292,8 @@ travados por teste - os parquets sao gitignored, entao o CI nao regride se mudar
   posicoes ACIMA de `1,00` (max `1,04`, ou seja SOBRE-injeta), e em Belem a media cai para
   `0,68`. O que vale em geral e' a irregularidade, nao a direcao. O de 1 km por area
   injeta exatamente `1,00` em qualquer posicao — mas isso e' a massa ANTES do merge
-  (`3.179,0` para 3.179 validos); na coluna publicada a soma cai para `3.151,6`, pela
-  LIMITACAO CONHECIDA abaixo.
+  (`3.179,0` para 3.179 validos); a queda para `3.151,6` na coluna publicada, pela
+  LIMITACAO CONHECIDA abaixo, foi medida ANTES da renormalizacao de borda da DEC-050/DEC-051.
 - **Alcance.** Contra-intuitivo: o raio de 2 km NAO espalha mais. Na malha NACIONAL a
   distancia entre centroides vizinhos vai de `1.999` a `2.682 m` (mediana `2.496`) — a
   faixa `2.387-2.513 m` citada antes era do hexagono de Sao Paulo, e 67% da malha cai
@@ -313,14 +313,13 @@ travados por teste - os parquets sao gitignored, entao o CI nao regride se mudar
   Conter o alcance nao impede o consumo de um hex especifico de diminuir; uma versao
   anterior deste paragrafo afirmava "nunca sobe", o que nao decorre do teste.
 
-- **LIMITACAO CONHECIDA - massa retida na borda da base.** `shares_por_hex` conserva massa
-  sobre todas as celulas H3 que o disco cobre, mas `anexar_pressao_1km_area` faz `merge`
-  contra o DataFrame de hexes: o share que cai em celula FORA da base (litoral, fronteira,
-  hexagono podado por `M1_HEX_LAND_FRACTION_MIN`) e' descartado em silencio. Medido:
-  **119 dos 3.179 concorrentes (3,7%) perdem parte da conta** — mediana `15,8%`, ate
-  `100%` — somando `27,4` unidades (`68.431` alunos) que somem. Subestima a pressao em
-  hexes de borda. NAO corrigido neste ciclo; renormalizar ou sinalizar a perda por
-  hexagono sao os caminhos, e a escolha fica para a DEC.
+- **LIMITACAO CONHECIDA - massa retida na borda da base (CORRIGIDA na DEC-050/DEC-051).** Antes do
+  fix, `anexar_pressao_1km_area` fazia `merge` contra o DataFrame de hexes e o share que caia em
+  celula FORA da base (litoral, fronteira, hexagono podado por `M1_HEX_LAND_FRACTION_MIN`) era
+  descartado em silencio — medido entao: **119 dos 3.179 concorrentes (3,7%)** perdiam parte da
+  conta (mediana `15,8%`, ate `100%`), somando `27,4` unidades (`68.431` alunos). Hoje
+  `repartir_concorrentes` recebe `hex_ids_validos` e renormaliza o share sobre os hexagonos da
+  base; so' um concorrente cujo disco cai 100% fora dela contribui zero.
 
 Comparativo executavel: `python scripts/comparar_pressao_1km.py` (usa os parquets reais
 se existirem; senao roda um cenario sintetico rotulado como DEMO).
@@ -336,7 +335,7 @@ Colunas de corte de populacao (materializadas no pipeline via helper compartilha
 | `fonte_populacao_corte` | string | `setor_2022` / `total_municipal` / `ausente` |
 | `flag_pop_min_5k` | bool | `populacao_corte_hex >= 5000` (`POP_MIN_SAM_GATE`, espelha `POP_MIN_ACIONAVEL`) |
 
-> **`granular`** (regua do corte) = `qualidade_join_uf in {A,B}` **AND** (`flag_censo_disponivel`
+> **`granular`** (regua do corte) = (`qualidade_join_uf in {A,B}` **OR** `classe_join_municipio in {A,B}` — nota de cobertura do MUNICIPIO, que so' promove: DEC-054/DEC-058) **AND** (`flag_censo_disponivel`
 > OR `score_setor_2022_calibrado` notna). NAO e `flag_censo_elegivel` nem `mask_hex_censo`
 > (`flag_censo_elegivel & pop_total_setor_2022.notna()`). Um hex pode ter
 > `flag_censo_elegivel=False` e ainda ser `granular` — nesse caso o corte usa o setor 2022.
@@ -425,8 +424,8 @@ Leitura:
 | `capacidade_captura_mapeada` | float | `(sam_indice_operavel / 100.0) * gap_competitivo_1km_area` |
 | `som_indice_mapeado` | float | `100 * capacidade_captura_mapeada` |
 | `som_populacao_mapeada` | float | `sam_populacao_base * gap_competitivo_1km_area` quando `demanda_granularidade='hex_censo'`; senao `null` |
-| `capacidade_default_concorrente_alunos` | float | `2500`; capacidade proxy por unidade grande mapeada ate existir calibracao por rede |
-| `oferta_consumida_mercado_estimada` | float | `oferta_efetiva_1km_area * capacidade_default_concorrente_alunos` |
+| `capacidade_default_concorrente_alunos` | float | `2500`; proxy da unidade SEM aluno real medido (desde a DEC-057, 1.202 de 4.951 unidades usam a capacidade REAL, `confianca_match = alta`) |
+| `oferta_consumida_mercado_estimada` | float | `consumo_concorrentes_1km_area` (capacidade real por unidade quando medida, proxy `2500` no resto — DEC-057 / BLK-CAPACIDADE-01); so' artefato anterior ao bloco cai em `oferta_efetiva_1km_area * capacidade_default_concorrente_alunos` |
 | `oferta_consumida_ultra_real` | float | soma de `alunos_total` das unidades Ultra reais no mesmo `hex_id`, quando disponivel em `unidades_ultra_performance_hex.parquet`; senao `0` |
 | `oferta_consumida_ultra_estimada` | float | `oferta_consumida_ultra_real` quando > 0; senao `n_unidades_ultra_2km * 2500` (proxy de capacidade Ultra) |
 | `oferta_consumida_total_estimada` | float | `oferta_consumida_mercado_estimada + oferta_consumida_ultra_estimada`; total de alunos estimados ja atendidos (concorrentes + Ultra) |
@@ -443,7 +442,7 @@ Leitura:
 - `som_populacao_mapeada` so deve ser lido como proxy volumetrico quando a granularidade for `hex_censo`.
 - `oferta_efetiva_disponivel` e `score_oportunidade_residual` sao sizing absoluto inicial em alunos potenciais, nao substituem `score_priorizacao`.
 - `oferta_consumida_total_estimada` desconta tanto os concorrentes mapeados quanto a propria Ultra; e o denominador correto para penetracao total, nao apenas de terceiros.
-- A capacidade concorrente de `2500` alunos e uma proxy conservadora e deve ser substituida quando houver capacidade real por rede/unidade.
+- A capacidade concorrente de `2500` alunos e uma proxy; desde a DEC-057 ela ja' foi substituida pela capacidade REAL nas 1.202 unidades com aluno medido (confianca alta) e segue valendo no resto.
 - `quartil_oportunidade_residual` e apenas apoio visual de ranking relativo; nao deve ser usado como sizing absoluto nem como substituto do M1.
 
 ### 5.7 Classificacoes executivas
@@ -478,7 +477,7 @@ Leitura:
 Itens abaixo nao devem entrar nesta primeira camada porque ainda nao existem como variaveis confiaveis e estruturadas no repo:
 
 - ticket medio por rede concorrente
-- capacidade fisica real por concorrente
+- capacidade fisica real por concorrente (ENTROU em parte: a DEC-057 usa o aluno real de 1.202 de 4.951 unidades no residual)
 - area da unidade concorrente
 - rating e reviews por unidade
 - dados de churn/conversao por hexagono

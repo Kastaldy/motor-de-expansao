@@ -195,7 +195,7 @@ Pessoa B
 | Superfícies | `mapa` (camadas 1–3, ficha do hex, funil municipal) + Relatório Pontual onde houver unidade censitária com geometria (MX AGEB, CO manzana; PE e PY depois) | + `oportunidades` (Modo 3) com réguas da camada 5 do país; + `viabilidade` com premissas locais assinadas; + camada 4; + M&A (só MX) |
 | Dados mínimos | identidade + camada 1 (pop medida/reescalada + renda modelada) + camada 2 (taxa e capacidade **declaradas com faixa e fonte**, carimbo "não calibrado") + camada 3 (redes + OSM/Overture/DENUE) | + momentum, coleta recorrente na VPS, aluguel/imobiliário com parceria |
 | Gate | DEC-073/D9 (5 gates) | + golden fiscal do país assinado |
-| O que o MVP **não** promete | previsão de desempenho (DEC-043); viabilidade; ranking entre países | — |
+| O que o MVP **não** promete | previsão de desempenho (o funil é política declarada, DEC-041; a DEC-043 foi revogada pela DEC-078); viabilidade; ranking entre países | — |
 
 ---
 

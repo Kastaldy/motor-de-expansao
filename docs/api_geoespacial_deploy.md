@@ -42,8 +42,11 @@ A API lê duas bases locais (nunca escreve):
   (27 UFs, 5.571 municípios, 468.099 setores). Aponte via `API_CENSO_GEO_DIR`.
 - **Malha municipal IBGE:** `municipios_*.geojson` (resolve coordenada → município). Via `API_IBGE_DIR`.
 
-Opcionais (enriquecem o PDF; ausência = fallback gracioso): `API_ULTRA_DIR` (branding),
-`API_STAGING_DIR` (SAM/concorrentes/Ultra), `API_COMPETITORS_LOGOS_DIR` (logos dos pins).
+Opcionais (enriquecem o PDF; ausência = fallback gracioso): `API_ULTRA_DIR` (branding) e
+`API_COMPETITORS_LOGOS_DIR` (logos dos pins). `API_STAGING_DIR` deixou de ser opcional em produção
+(`MOTOR_DATA_DIR` setado): a subida recusa sem os insumos da renda (`uplift_renda_domiciliar_municipio.parquet`,
+`uplift_composicao_setor.parquet` — E0/DEC-075) e sem o carimbo k da malha (`censo2022_hex_da_malha.parquet` —
+DEC-077); SAM/concorrentes/Ultra e as rotas municipais também leem dali.
 
 > **Importante (performance):** mantenha os dados em **disco local**, não no OneDrive. Medido: PDF de
 > área densa cai de ~211 s (OneDrive) para ~9–27 s (local). Hoje em `C:/APIGeoEspacial-dados/`.
@@ -54,9 +57,10 @@ O serviço `api` monta os seguintes volumes read-only do host:
 
 | Volume host | Caminho no container | Env correspondente | Obrigatório |
 |---|---|---|---|
+| `/opt/motor-expansao/data/perfil.json` (arquivo) | `/app/data/perfil.json` | `MOTOR_DATA_DIR=/app/data` | Sim (DEC-047; tem de existir no host antes do `up`) |
 | `/opt/motor-expansao/data/outputs` | `/app/data/outputs` | `API_CENSO_GEO_DIR` | Sim |
 | `/opt/motor-expansao/data/ibge` | `/app/data/ibge` | `API_IBGE_DIR` | Sim |
-| `/opt/motor-expansao/data/staging` | `/app/data/staging` | `API_STAGING_DIR` | Não (SAM/concorrentes) |
+| `/opt/motor-expansao/data/staging` | `/app/data/staging` | `API_STAGING_DIR` | Sim em produção (insumos da renda e carimbo k da malha; SAM/concorrentes/Ultra) |
 | `/opt/motor-expansao/data/ultra` | `/app/data/ultra` | `API_ULTRA_DIR` | Não (branding PDF) |
 | `/opt/motor-expansao/concorrentes` | `/app/concorrentes` | `API_COMPETITORS_LOGOS_DIR` | Não (logos pins) |
 
@@ -81,10 +85,15 @@ Todas têm prefixo `API_` e podem ir no `.env` (gitignored) ou no ambiente do pr
 | `API_GOOGLE_MAPS_API_KEY` | `""` | Se preenchida, geocoding/reverse via Google; senão Nominatim. |
 | **Bot** | | |
 | `API_TELEGRAM_TOKEN` | `""` | Token do @BotFather. **Nunca commitar.** |
-| `API_BASE_URL` | `http://127.0.0.1:8077` | Base da API que o bot consome. |
-| `API_CALL_TOKEN` | `dev-token` | Token com que o bot se autentica (deve existir em `API_TOKENS`). |
+| `API_API_BASE_URL` | `http://127.0.0.1:8077` | Base da API que o bot consome (campo `api_base_url` + prefixo `API_`). |
+| `API_API_CALL_TOKEN` | `dev-token` | Token com que o bot se autentica (deve existir em `API_TOKENS`). |
 | `API_BOT_SENHA` | `trocar-esta-senha` | Senha de acesso ao bot. **Trocar em prod.** |
 | `API_BOT_SESSOES_PATH` | `bot_sessoes.json` | Onde persistir quem já logou (sobrevive a restart). |
+| `API_BOT_ALLOWLIST_PATH` | `None` | Allowlist de chats do bot (JSON por `chat_id`, fail-closed; em produção `/cadastro/bot_allowlist.json`). |
+| `API_BOT_TRILHA_DIR` | `None` | Trilha persistente do bot, um JSONL por dia, 90 dias (em produção `/data/trilha`). |
+| `API_ACESSO_LOG_DIR` / `API_ACESSOS_ADMIN_CHAT_ID` | `None` / `""` | Comando `/acessos` do bot, só no chat de ops (DEC-027). |
+| `API_ARCGIS_API_KEY` | `""` | Vista aérea (satélite Esri) do PDF pontual (DEC-018); vazia, a página sai do PDF. |
+| `API_API_PREFIX` | `/api/v1` | Prefixo de versão das rotas. |
 
 Exemplo de `.env` mínimo de produção:
 
@@ -98,7 +107,7 @@ API_ULTRA_DIR=C:/APIGeoEspacial-dados/ultra
 API_STAGING_DIR=C:/APIGeoEspacial-dados/staging
 API_COMPETITORS_LOGOS_DIR=C:/APIGeoEspacial-dados/Logos
 API_TELEGRAM_TOKEN=123456:ABC-token-do-botfather
-API_CALL_TOKEN=tok-bot-telegram-aleatorio
+API_API_CALL_TOKEN=tok-bot-telegram-aleatorio
 API_BOT_SENHA=uma-senha-forte
 ```
 
@@ -141,8 +150,8 @@ curl -X POST http://127.0.0.1:8077/api/v1/analisar \
 - [ ] `API_TOKENS` com tokens reais e aleatórios (não `dev-token`).
 - [ ] `API_BOT_SENHA` forte (o default é `trocar-esta-senha`).
 - [ ] **Regenerar o token do bot** no @BotFather — o token anterior foi exposto em chat.
-- [ ] `API_CORS_ORIGINS` restrito ao(s) front(s) reais. **Não** deixar `["*"]`: combinado com
-      `allow_credentials=True`, o navegador rejeita; para clientes server-to-server (bot) é inócuo,
+- [ ] `API_CORS_ORIGINS` restrito ao(s) front(s) reais. **Não** deixar `["*"]` sem motivo: desde o BLK-SEC-05 o CORS sai com
+      `allow_credentials=False` (auth por Bearer), então `*` não reflete origem nem quebra o navegador; para clientes server-to-server (bot) é inócuo,
       mas restringir é a higiene correta.
 - [ ] Dados em **disco local** (não OneDrive) — ver §3.
 - [ ] Chrome instalado no host se quiser o geocoder de endereço+CEP (`[geocoder]`).
@@ -156,7 +165,7 @@ A API loga em stdout pelo logger `motor_expansao.api` (handler próprio, idempot
 - **Erros 500:** o `unexpected_error_handler` grava `ERROR` com o **traceback completo**
   (`exc_info`) — nenhuma falha inesperada some silenciosamente. O corpo devolvido ao cliente segue o
   contrato §9: `{"detail":"Erro interno ao gerar o estudo","codigo":"erro_interno"}`.
-- O bot loga `[ESTUDO] login=...` no stdout (rastreio de quem solicitou).
+- O bot loga `[ESTUDO] chat=#<ref opaca> coord=lat,lng` e `[ESTUDO-MUNI] chat=... uf=... municipio=... unidade=...` no stdout, sem o nome de quem pediu (BLK-SEC-05), e grava a trilha persistente de 90 dias em `API_BOT_TRILHA_DIR` (um JSONL por dia, sem texto da mensagem nem coordenada) — o `docker logs` some a cada deploy.
 
 Para enviar a um coletor, redirecione o stdout dos processos (systemd journal, Docker logs, etc.).
 
@@ -165,7 +174,7 @@ Para enviar a um coletor, redirecione o stdout dos processos (systemd journal, D
 A API é containerizada pelo `Dockerfile.api` da raiz (imagem `motor-expansao-api`, compartilhada
 com o bot — runbook em `docs/deploy_api_bot.md`; o `Dockerfile.web` é do piloto e o
 `fora_primeira_fase/api_postgis/Dockerfile.api` é legado PostGIS — não usar). A receita: base
-Python 3.11+, `".[api_mvp,basemap,geocoder]"` + Google Chrome, dados montados como volume
+Python 3.11+, `".[basemap,api_mvp,geocoder,crescimento]"` + Google Chrome, dados montados como volume
 read-only e porta 8077 com o uvicorn do §5.
 
 ## 9. Referências

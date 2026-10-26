@@ -10,6 +10,9 @@
 | Piloto (app de produção) | https://piloto.ultra-expansao.tech |
 | Tiles (basemap self-host) | https://dashboard.ultra-expansao.tech/tiles/* |
 | Portal de login | https://auth.ultra-expansao.tech |
+| Piloto AR (instância argentina) | https://piloto-ar.ultra-expansao.tech |
+| API GeoEspacial (só Bearer, sem Authelia) | https://api.ultra-expansao.tech |
+| Portal de seleção de país | https://ultra-expansao.tech |
 | SO | Ubuntu 22.04 LTS |
 | Recursos | 4 vCPU, 16 GB RAM, 200 GB NVMe, 4 GB swap |
 
@@ -26,9 +29,13 @@
 - **API GeoEspacial + bot Telegram** — containers `motor_expansao_api` e `motor_expansao_telegram_bot` (mesma imagem; ver `docs/deploy_api_bot.md`)
 - **Caddy** — reverse proxy com TLS automático (Let's Encrypt), container `motor_expansao_caddy`
 - **Authelia 4.38** — autenticação self-hosted (login + 2FA opcional), container `motor_expansao_authelia`
-- **Valhalla (opcional, DEC-074)** — serviço de rotas da isócrona de 10 min de carro, stack separada em `/opt/valhalla-infra`, container `motor_expansao_valhalla` (ver "Serviço de rotas")
+- **Valhalla (opcional, DEC-074)** — serviço de rotas das isócronas de 5 e 10 min de carro (Emenda 1 da DEC-074), stack separada em `/opt/valhalla-infra`, container `motor_expansao_valhalla` (ver "Serviço de rotas")
 
-Todos os containers sobem com `docker compose -f docker-compose.prod.yml`.
+- **PostgreSQL 18 + PostGIS 3.6** — banco do piloto (usuários, RBAC, sessões), container `motor_expansao_postgres`, sem porta no host (ver `docs/banco_deploy.md`)
+- **Piloto web AR** — instância argentina com a MESMA imagem (`WEB_IMAGE`), container `motor_expansao_web_ar`, compose próprio `docker-compose.ar.yml` (ver `docs/deploy_piloto_web.md` §8)
+- **Tileserver (basemap self-host)** — container `motor_expansao_tileserver`, stack separada em `/opt/openmaptiles-infra`
+
+`web`, `api`, `telegram-bot`, `postgres`, `caddy` e `authelia` sobem com `docker compose -f docker-compose.prod.yml`; `web_ar` (`docker-compose.ar.yml`), tileserver e Valhalla têm compose próprio.
 
 ## Acesso SSH
 
@@ -37,6 +44,8 @@ ssh -i ~/.ssh/id_ultra root@2.25.137.241
 ```
 
 Chave privada local: `~/.ssh/id_ultra` (Windows: `C:\Users\Felipe Silva\.ssh\id_ultra`)
+
+Colaborador de deploy (sem root): usuário `deploy` (grupos `docker` + `motor-ops`, sem `sudo`), com a chave `~/.ssh/id_ultra_deploy` da estação dele — `ssh -i ~/.ssh/id_ultra_deploy deploy@2.25.137.241`. Onboarding, limites e offboarding em `docs/acesso_deploy_colaborador.md`.
 
 > **Duas chaves, papeis distintos** (declarado em `~/.ssh/config`): `id_ultra` e' a do
 > OPERADOR — os comandos deste runbook, rodados pelo Felipe. `id_ultra_mcp` e' a de
@@ -78,6 +87,9 @@ docker compose -f docker-compose.prod.yml exec web curl -fsS http://127.0.0.1:88
 ```
 
 - Caddy e Authelia **nao** reiniciam.
+- **A stack AR usa o MESMO `WEB_IMAGE`**: o `up -d web` do BR nao recria o `web_ar`. Rodar tambem
+  `docker compose -f docker-compose.ar.yml pull web_ar` e `docker compose -f docker-compose.ar.yml up -d web_ar`
+  (idem no rollback abaixo) — ver `docs/deploy_piloto_web.md` §5.
 - API e bot seguem o mesmo modelo com `API_IMAGE` — ver `docs/deploy_api_bot.md`.
 - Dados em `/opt/motor-expansao/data/outputs/` sao preservados (bind mount read-only).
 - Se o pacote GHCR for privado, autenticar antes: `docker login ghcr.io` com PAT `read:packages`
@@ -132,16 +144,17 @@ scp -i "$env:USERPROFILE\.ssh\id_ultra" -r data/outputs/hexagonos_dashboard_enri
 ```powershell
 # Atenção: rodar de dentro do diretório do projeto
 cd "C:\Users\Felipe Silva\Downloads\motor-de-expansao\motor-de-expansao"
-scp -i "$env:USERPROFILE\.ssh\id_ultra" data/outputs/brasil_estrutural.parquet root@2.25.137.241:/opt/motor-expansao/data/outputs/
-scp -i "$env:USERPROFILE\.ssh\id_ultra" data/outputs/brasil_priorizados.parquet root@2.25.137.241:/opt/motor-expansao/data/outputs/
+scp -i "$env:USERPROFILE\.ssh\id_ultra" data/staging/brasil_estrutural.parquet root@2.25.137.241:/opt/motor-expansao/data/staging/
+scp -i "$env:USERPROFILE\.ssh\id_ultra" data/staging/brasil_priorizados.parquet root@2.25.137.241:/opt/motor-expansao/data/staging/
 scp -i "$env:USERPROFILE\.ssh\id_ultra" data/outputs/hexagonos_brasil_dashboard.parquet root@2.25.137.241:/opt/motor-expansao/data/outputs/
 scp -i "$env:USERPROFILE\.ssh\id_ultra" data/outputs/hexagonos_mapa_sample.parquet root@2.25.137.241:/opt/motor-expansao/data/outputs/
 scp -i "$env:USERPROFILE\.ssh\id_ultra" -r data/outputs/hexagonos_dashboard_enriquecido root@2.25.137.241:/opt/motor-expansao/data/outputs/
 ```
 
-O web lê do volume na próxima requisição — em geral **não é necessário reiniciar o container**.
-Exceção: dados que o backend cacheia em memória (`lru_cache` — ex.: Growth, logos de
-concorrentes) só aparecem após `docker compose -f docker-compose.prod.yml restart web`.
+O web **cacheia** os parquets em memória (`lru_cache` — inclusive `carregar_uf`, a partição do
+enriquecido por UF, o parquet de mercado, Growth e logos) e vários leitores memoizam a ausência: depois
+de qualquer `scp`, **reiniciar é obrigatório** — `docker compose -f docker-compose.prod.yml restart web`
+(e `api telegram-bot` quando o arquivo também alimenta o PDF).
 
 ---
 
@@ -183,16 +196,21 @@ concorrentes) só aparecem após `docker compose -f docker-compose.prod.yml rest
      e `relatorio_crescimento_<data>.txt`;
   4. **Integração ao motor** (regen camada paralela, READ-ONLY M1 — ver abaixo);
   5. **Sync do diretório de concorrentes dos apps** (`sync_concorrentes_dashboard.py` — ver abaixo);
-  6. **Restart** de `api`/`telegram-bot`/`web` (o `streamlit` saiu da lista com a DEC-022).
+  5.5. **Pins de M&A** (`alvos_ma` na imagem da `api`, promovidos só com as guardas de desenhabilidade e de
+     coerência de chave — ver "Entregável de M&A"); se as redes do agregador mudaram, um **2º regen** (2026-10-21);
+  6. **Restart** de `api`/`telegram-bot`/`web` (o `streamlit` saiu da lista com a DEC-022). Os passos 5, 5.5 e 6
+     só rodam se o regen da etapa 4 publicar. Depois da coleta o lote também roda o **snapshot semanal**
+     (`FONTES="unidades wellhub"`) e, depois do relatório, copia `historico_contagem.csv` para o staging do motor.
 - **Cron:** `0 6 * * 0` (domingo **06:00 UTC = 03:00 BRT**; o servidor é UTC). `crontab -l` no root.
 - **Logs:** `/var/log/gymscraping/weekly_<TS>.log` (+ symlink `weekly_latest.log`).
 
 ### Integração ao motor (regen mercado/residual — READ-ONLY M1)
 
 A coleta atualiza só os CSVs `Unidades/unidades_<rede>.csv`. A propagação para os apps roda a cadeia
-**paralela** via o checkout do motor em **`/opt/motor-expansao/app`** (imagem da `api`, que carrega o motor
-completo — desde a DEC-022; antes rodava na imagem do `streamlit` —, `PYTHONPATH=/app/src`,
-`ROOT=/app`, dados em `/app/data`):
+**paralela** com o código **da imagem** da `api` (que carrega o motor completo — desde a DEC-022; antes
+rodava na imagem do `streamlit` —, `PYTHONPATH=/app/src`, `ROOT=/app`, dados em `/app/data`), pelo wrapper
+`run_regen_mercado.sh` e **sem montar checkout nenhum** (até 2026-09-17 o lote montava `/opt/motor-expansao/app`
+por cima da imagem, e o checkout congelado gravou pins vazios por três semanas):
 
 ```
 normalizar_concorrentes → enriquecimento_espacial_hexagonos → calcular_colunas_mercado →
@@ -252,7 +270,7 @@ diff). O espelho usa **hardlink** (`cp -al`, custo ~0) para o que a cadeia só l
 > está aqui é **instalação**, e não acontece sozinha — o checkout em `/opt/motor-expansao/app` não é
 > atualizado por ninguém automaticamente.
 
-**1. Sincronizar o checkout** (ou enviar o arquivo por `scp` da estação, conferindo que foi com **LF**):
+**1. Enviar o wrapper por `scp` da estação**, conferindo que foi com **LF** (o checkout `/opt/motor-expansao/app` está parado no commit 302487e, de 2026-08-19 — sincronizá-lo não é passo rotineiro; enviando direto para `/opt/motor-expansao-infra/`, pule o `cp` do passo 2):
 
 ```bash
 ls -l /opt/motor-expansao/app/scripts/cron/run_regen_mercado.sh
@@ -303,17 +321,15 @@ Confira na saída, antes de seguir:
 | `oferta_var_pct` | dentro de ±15% — fora disso é coleta parcial ou universo trocado |
 | `hexes` | igual a `hexes_publicado` (a cadeia não pode perder hexágono) |
 
-**5. Trocar a etapa 4 do lote semanal.** No `/opt/gymscraping-infra/run_weekly_90.sh`, o bloco inteiro da
-etapa 4 vira **uma linha**:
+**5. Etapa 4 do lote semanal — já versionada.** Desde 2026-09-17 o lote de domingo é
+`scripts/cron/run_weekly_90.sh` (instalação por `cp`, no cabeçalho dele), e ele já chama
+`/opt/motor-expansao-infra/run_regen_mercado.sh` num `if`: reprovado o regen, **sync, pins e restart
+não rodam** e os apps seguem com o dado anterior — a coleta, que já rodou, não se perde. Não há mais
+bloco a trocar à mão.
 
-```bash
-/opt/motor-expansao-infra/run_regen_mercado.sh || echo "regen falhou (nada publicado; ver log)"
-```
-
-> O `||` **aqui**, na fronteira, é deliberado e não é o `||` que este bloco veio matar: uma falha do
-> regen não pode abortar a coleta nem os passos 5/6 do lote. O que acabou foi o `||` **entre** os passos
-> da cadeia, que publicava estado misto. O wrapper tem `flock` próprio
-> (`/var/lock/motor-regen-mercado.lock`), então uma segunda invocação sai `0` sem atropelar a primeira.
+> O que acabou com a DEC-059 foi o `||` **entre** os passos da cadeia, que publicava estado misto. O
+> wrapper tem `flock` próprio (`/var/lock/motor-regen-mercado.lock`), então uma segunda invocação sai
+> `0` sem atropelar a primeira.
 
 **6. Agendar o monitor** (linha do `crontab -l` do root — ver "Alertas automáticos"):
 
@@ -420,9 +436,10 @@ está perdida **para sempre**. O snapshot é o produtor da série que os sinais 
 `run_growth_daily.sh`: container efêmero na imagem da `api`, `--user 0:0`, concorrentes montado
 `:ro`). Instalação e a linha a inserir no `run_weekly_90.sh` estão no cabeçalho do próprio script.
 
-**`--fontes unidades`, e isto NÃO é detalhe de configuração.** O runner de domingo recoleta só os 90
-coletores, que atualizam `Unidades/unidades_<rede>.csv`; WellHub e TotalPass são recoletados pelo
-cron **semanal dos agregadores**, na terça (seção própria abaixo). **Fotografar um feed que não foi recoletado é pior do que não
+**`FONTES="unidades wellhub"`, numa chamada só, e isto NÃO é detalhe de configuração.** O runner de
+domingo recoleta os 90 coletores (`Unidades/unidades_<rede>.csv`) e fotografa junto o WellHub, recoletado
+no sábado 03:00 UTC (emenda 3 da DEC-039; `scripts/cron/run_weekly_90.sh`, passo 1.5): snapshotar sábado
+e domingo em chamadas separadas apagaria uma a outra. O TotalPass não entra (coletor arquivado). **Fotografar um feed que não foi recoletado é pior do que não
 fotografar:** o `hash_campos_raspados` sai idêntico semana após semana, `semanas_sem_mudanca` cresce
 sozinho e o **S4 marca o universo inteiro daquela fonte como "parado"** — que é exatamente o sinal de
 vulnerabilidade que o funil de M&A procura. Falso positivo em massa, no sinal de segundo maior peso,
@@ -459,9 +476,10 @@ DRY_RUN=1 /opt/motor-expansao-infra/run_snapshot_concorrentes.sh
 > se lê como "não há dado" em vez de "caminho errado". Um caminho inexistente, ao contrário, aborta
 > na hora. Se precisar sobrescrever: `HOST_CONCORRENTES=/outro/caminho DRY_RUN=1 ...`.
 
-`--dry-run` roda a cadeia inteira **sem gravar e sem podar** (a poda de retenção,
-`RETENCAO_SEMANAS = 26` desde a emenda de 2026-08-26 ao BLK-MA-21 / DEC-039 — o `78` foi comprado
-pela premissa mensal, que morreu; a aritmética está na seção do cron dos agregadores, abaixo). Se
+`--dry-run` roda a cadeia inteira **sem gravar e sem podar** (em regime a poda também não roda desde a
+DEC-064, 2026-09-18: a série é retida inteira e a auditoria sai com `retencao_semanas = 0`; podar virou ato
+manual, `--retencao-semanas N`, com referência `26` = 2× o piso medido de 13 — aritmética na seção do cron
+dos agregadores, abaixo). Se
 `linhas_snapshot` vier `0`, o caminho de `HOST_CONCORRENTES`
 está errado; só agende depois de ver contagem plausível.
 
@@ -496,6 +514,10 @@ e no TotalPass. O snapshot semanal acima fotografa `--fontes unidades`, que é o
 Sem este cron, S3 (churn) e S4 (staleness) sobre independentes **nunca amadurecem**, e o score de
 vulnerabilidade fica preso no regime `{s1,s6}` — em que o `v1` é constante e o que se ordena é
 pressão competitiva renomeada, para sempre.
+
+> **Em produção o wrapper é outro (emenda 3 da DEC-039, 2026-09-14):** o crontab da VPS roda
+> `run_wellhub_semanal.sh` (não versionado neste repositório; TotalPass arquivado) e o snapshot saiu dele
+> para o lote de domingo. O script abaixo descreve o desenho D2 original.
 
 **Script versionado:** `scripts/cron/run_snapshot_agregadores.sh`. Ele faz os **três** passos numa
 execução só (decisão D2 da DEC-039): coleta (~21h45) → curadoria → snapshot, com um `flock -n`
@@ -551,9 +573,10 @@ wrapper nunca disparava.
 | decisão | regra | por quê |
 |---|---|---|
 | qual diretório | `TotalPass/csvs`; WellHub prefere `Wellhub/csvs_musculacao` e cai em `Wellhub/csvs` se ele não existir | os dois universos do WellHub diferem por 2-3× (16.432 × 6.850 linhas medidas em SP). `csvs/` já sai filtrado no modo **default** do coletor; `csvs_musculacao/` só é gerado quando o filtro do pipeline está desligado |
-| ambiguidade | `csvs_musculacao/` presente mas **mais antigo** que `csvs/` ⇒ **aborta** | significa que a última coleta rodou noutro modo. Escolher em silêncio é o modo de falha que este bloco existe para matar |
+| ambiguidade | `csvs_musculacao/` presente, **mais antigo** que `csvs/` **e** com `data_coleta` diferente ⇒ **aborta**; com a **mesma** `data_coleta` nos dois (mesma coleta, filtro desligado) ⇒ escolhe `csvs_musculacao/` (emenda 4 da DEC-039) | troca de modo real ainda aborta; a ambiguidade medida só por `mtime` era falsa — seguindo a mensagem de erro, o operador apagou o subset filtrado em 2026-09-18 e o universo completo (2,05×) ficou como única cópia |
 | frescor | recusa publicar agregador cuja **`data_coleta`** mais VELHA ainda no diretório passe de `MAX_IDADE_DIAS` (default **3**) | se um coletor morrer no meio da janela de 20h, os CSVs antigos ficam no disco. Fotografá-los faz `semanas_sem_mudanca` crescer sozinho e o **S4 marcar o universo inteiro daquela fonte como "parado"** — falso positivo em massa, no sinal de segundo maior peso, com `exit 0` |
 | piso de volume | recusa volume abaixo de `--piso-relativo` (default **0,5**) do que já está publicado no destino | o teto pega universo que **infla**; sem piso, coleta que morreu na metade passa — CSVs frescos, metade das linhas, e as que faltam viram `sumiu_recente` em massa no **S1**. Inerte na 1ª execução (sem baseline); `0` desliga |
+| teto de volume | recusa volume acima de `--teto-relativo` (default **1,5**) do que já está publicado no destino | com `csvs_musculacao/` ausente a curadoria SUPÕE que `csvs/` veio filtrado; se veio o universo completo (2-3×), o teto barra em vez de dobrar o funil de M&A. Inerte na 1ª execução; `0` desliga (emenda 4 da DEC-039) |
 
 > **A idade sai da linha mais VELHA do feed (`min(data_coleta)`), não do `mtime` nem do máximo**
 > *(emenda de 2026-08-25, régua ajustada para o mínimo em 2026-08-26)*. A guarda nasceu medindo
@@ -590,7 +613,11 @@ no laço único anterior, o `totalpass` (primeiro na ordem canônica) já tinha 
 ambiguidade do `wellhub` levantava, e o destino ficava com meia curadoria de uma semana nova enquanto
 o wrapper abortava.
 
-> **Ação humana pendente, e ela se repete toda SEMANA se não for resolvida.** O wrapper roda o WellHub
+> **SUPERADO pela emenda 4 da DEC-039 (2026-09-18).** Seguir esta instrução apagou o subset filtrado e deixou o
+> universo completo (2,05×) como única cópia; desde a emenda, a mesma `data_coleta` nos dois diretórios escolhe
+> `csvs_musculacao/` sozinha e o teto de volume (1,5) barra o universo completo. Só apague diretório à mão se a
+> curadoria ABORTAR por troca de modo real (`data_coleta` diferente), depois de conferir em que modo o coletor rodou.
+> Texto original, para registro: **Ação humana pendente, e ela se repete toda SEMANA se não for resolvida.** O wrapper roda o WellHub
 > no modo **default** (filtro do pipeline ligado), em que só `csvs/` é regenerado —
 > `Wellhub/csvs_musculacao/` fica para trás e vira "estritamente mais antigo", que é exatamente o
 > gatilho da linha *ambiguidade* acima. Nesta estação o clone já está nesse estado
@@ -598,7 +625,10 @@ o wrapper abortava.
 > agendada:** confirmar de que modo o coletor rodou e **apagar `Wellhub/csvs_musculacao/` à mão**. Com
 > o filtro ligado, `csvs/` já É o subset de musculação e o diretório antigo não tem função.
 
-**Retenção: `RETENCAO_SEMANAS` voltou de `78` para `26`, e o número decide o epic.**
+**Retenção — desde a DEC-064 (2026-09-18) a poda NÃO roda em regime:** a série é retida inteira (auditoria com
+`retencao_semanas = 0`) e a leitura passou a ser recortada na origem, então o teto de RSS medido abaixo deixou de
+restringir. O que segue vale como **referência para a poda manual** (`--retencao-semanas N`): `RETENCAO_SEMANAS`
+voltou de `78` para `26`, e nunca abaixo de 13.
 `podar_snapshots` é keep-newest-N sobre diretórios `semana=`. Com as **três** fontes semanais, N
 partições = N observações de **cada** fonte no caminho feliz — o divisor `4,345` do feed mensal não
 existe mais. O piso é **13**, medido: `_semanas_sem_mudanca` conta observações estritamente **após**
@@ -684,18 +714,21 @@ Confira na saída, nesta ordem:
 > `DRY_RUN` provar **qual imagem está rodando** antes de agendar. A lição é do BLK-MA-19 — "código
 > publicado ≠ camada no ar".
 
-**Linha de crontab (D1 — TODA terça, 02:00 UTC = segunda 23:00 BRT):**
+**Linha de crontab (D1 — todo sábado, 03:00 UTC; emenda 3 da DEC-039, 2026-09-14):**
 
 ```cron
-0 2 * * 2 /opt/motor-expansao-infra/run_snapshot_agregadores.sh
+0 3 * * 6 /opt/motor-expansao-infra/run_wellhub_semanal.sh
 ```
 
+> O wrapper da VPS é `run_wellhub_semanal.sh` (TotalPass arquivado) e o snapshot saiu dele: as duas fontes são
+> fotografadas numa chamada só no lote de domingo (`FONTES="unidades wellhub"`, `scripts/cron/run_weekly_90.sh`).
+> A terça (`0 2 * * 2`) é incompatível com a guarda de frescor de 3 dias do D4: a curadoria recusaria o feed toda semana.
+
 **Sem guarda de dia do mês** — ela existia só para emular "1ª terça", e com ela cai também o `%`
-escapado (`\%`) que o crontab exigia. A janela sequencial mede ~21h45: começando 02:00 UTC de terça,
-fecha ~23h45 de terça. Folga de **39h depois** do runner de domingo (06:00 UTC) e de **~102h antes**
-do próximo — as duas janelas nunca se encostam, nem na banda alta de 31h medida para o WellHub.
-Terça também deixa a retentativa caber na **mesma semana ISO**: falha na terça → `FAIL` do
-healthcheck na quinta 12:00 → retentativa manual fecha sexta, e a observação da semana é salva.
+escapado (`\%`) que o crontab exigia. No sábado 03:00 UTC o WellHub mede **~25h57** (rodadas de 05 e 12/09/2026) e termina
+~04:58 UTC de domingo: **margem de 62 min** antes do lote de domingo (06:00 UTC), que é quem fotografa.
+Não é defeito, é fio de alarme — passar de ~27h põe o WellHub disputando a VPS com os 90 coletores
+(emenda 3 da DEC-039).
 
 > **Terça e domingo caem na MESMA semana ISO** (medido: `2026-08-25` e `2026-08-30` são ambos
 > `2026-35`), então as três fontes colidem numa partição **por construção** — é para isso que a
@@ -783,7 +816,9 @@ pela emenda de 2026-08-14 à DEC-028) e são **opt-in**: sem a flag, nada nomead
 `vulnerabilidade_ma_academias.parquet` (variante sem identidade) **não vai a produção**: nenhuma
 superfície de lá o lê.
 
-**Gerar — na estação, nunca na VPS:**
+**Gerar — o lote de domingo já materializa e promove os dois parquets na VPS toda semana** (passo 4.5
+de `scripts/cron/run_weekly_90.sh`: one-shot com `/app/data` montado RW, caminhos explícitos e as guardas
+de desenhabilidade e de coerência de chave). Geração manual, fora do ciclo — na estação:
 
 ```bash
 python -m motor_expansao.vulnerabilidade.alvos_ma \
@@ -820,7 +855,9 @@ python -m motor_expansao.vulnerabilidade.alvos_ma \
 > (o `/api/health` nunca acusou: é mudo desde o pentest Onda B #8) e a camada fica
 >    invisível **com sinal verde**, que é pior que o estado de hoje.
 >
-> Caminho canônico: gerar na estação, conferir, e **transportar por `scp`**.
+> Caminho canônico: o passo 4.5 do lote de domingo, que contorna os três itens acima (one-shot com `/app/data` RW,
+> caminhos explícitos e guarda de desenhabilidade contra artefato vazio). Fora do ciclo: gerar na estação, conferir, e
+> **transportar por `scp`**.
 
 **Antes do `scp`, confirmar que a imagem NO AR tem o código dos pins.** "Publicado no GHCR" não é
 "rodando na VPS" — o deploy é manual por digest (§6 do `CLAUDE.md`), então a imagem em execução pode
@@ -859,8 +896,9 @@ Conferir na VPS (`md5sum` dos `.tmp` contra os da estação), depois `chmod 0644
 sobre o nome final. **Não rodar `chown`** no staging: o diretório é compartilhado com a `api`.
 
 **RESTARTAR o `web` — obrigatório, não higiene.** `carregar_independentes` e `carregar_redes` são
-`@functools.lru_cache(maxsize=1)` e **memoizam a ausência**. Com o container de pé, o `/api/health`
-fica **verde na hora** (ele faz `exists()` a cada chamada) e os pins seguem invisíveis:
+`@functools.lru_cache(maxsize=1)` e **memoizam a ausência**. Com o container de pé, o
+`/api/acessos/saude-artefatos` acusa o arquivo **na hora** (faz `stat` a cada chamada), o `/api/health`
+fica verde de qualquer jeito (é mudo desde o pentest Onda B #8) e os pins seguem invisíveis:
 
 ```bash
 docker restart motor_expansao_web
@@ -869,7 +907,7 @@ docker restart motor_expansao_web
 Use `docker restart`, **não** `up -d --force-recreate` — este recria a partir do `${WEB_IMAGE}` do
 `.env` e trocaria a versão do piloto junto com o dado, dando duas causas na mesma janela.
 
-**Provar que funcionou.** O `/api/health` é necessário e **insuficiente** (prova disco, não leitura).
+**Provar que funcionou.** O `/api/health` só prova que o container responde (é mudo desde o pentest Onda B #8), e o `/api/acessos/saude-artefatos` prova disco, não leitura.
 A prova é a rota que serve a camada, num drill-down **municipal** — a visão de UF nunca traz M&A:
 
 ```bash
@@ -896,7 +934,7 @@ Dois erros de leitura a evitar no `403` e no `200`:
   ou seja, qualquer nome passa. O `200` prova a camada, não a allowlist.
 
 > **Contagem de pins não fecha com o total do artefato, e isso é correto.** Das 2.844 unidades de
-> rede, só as **851** com `tem_pin_proprio = True` são desenhadas: as demais colapsaram contra um
+> rede, só as que têm `tem_pin_proprio = True` são desenhadas (**851** na DEC-035; a dedup da DEC-062 — trava de município + raio de 300 m — levou o feed a **714**, e a contagem muda a cada safra): as demais colapsaram contra um
 > ponto de `concorrentes_mapeados` na dedup da DEC-034/FU4 e **já têm bandeira naquele endereço** —
 > desenhá-las de novo daria duas bandeiras no mesmo lugar. Esperar 2.844 bandeiras é expectativa
 > errada, não defeito.
@@ -983,16 +1021,17 @@ falha no chat, `exit != 0` no log (`/var/log/motor-snapshots/atualizacao_crescim
 estado real enquanto o repasse não acontecer). A linha de cron dele está no bloco da
 seção "Alertas automáticos (BLK-SEC-05)", mais abaixo.
 
-## Serviço de rotas (Valhalla, DEC-074) — isócrona de "10 min de carro"
+## Serviço de rotas (Valhalla, DEC-074) — isócronas de "5 min" e "10 min de carro"
 
 Stack **separada e opcional** em `/opt/valhalla-infra` (versionada em `valhalla-infra/`, molde
-do `openmaptiles-infra/`). Responde só a isócrona de 10 min de carro, sem trânsito, do alcance
+do `openmaptiles-infra/`). Responde só as isócronas de 5 e 10 min de carro (Emenda 1 da DEC-074), sem trânsito, do alcance
 do ponto; raio de 1 km e de 2 km não passam por ela. Container `motor_expansao_valhalla`, na
 `app_net`, **sem porta no host e sem rota no Caddy** — quem chama é o servidor do piloto, nunca
 o navegador, e o Valhalla não tem autenticação.
 
-**Desligado por padrão.** Sem `MOTOR_ROTAS_URL` no `.env`, a opção "10 min de carro" some da
-tela e a rota responde 503 com mensagem; nada mais muda. O `web` só enxerga a variável porque ela
+**Desligado por padrão.** Sem `MOTOR_ROTAS_URL` no `.env`, as opções "5 min" e "10 min de carro"
+somem da tela, a rota responde 503 com mensagem e a demanda sugerida pelo modelo de praça da
+Viabilidade (DEC-078, que lê a isócrona de 10 min) fica indisponível — a tela segue no modo densidade. O `web` só enxerga a variável porque ela
 está listada no `environment:` do `docker-compose.prod.yml` (o compose não tem `env_file`).
 
 **Instalação (manual, cada comando na VPS com confirmação do Felipe — §6 do CLAUDE.md).**
@@ -1068,6 +1107,7 @@ requisição seguinte, sem restart); mudanças no `Caddyfile` seguem pedindo
      email: email@ultraacademia.com.br
      groups:
        - ultra_team
+       - expansao_br     # piloto BR (regra com `subject`, Bloco D de 2026-09-03); `expansao_ar` para a AR
    ```
 4. Reiniciar Authelia:
    ```bash
@@ -1251,7 +1291,7 @@ grupo de ops — `MONITOR_TELEGRAM_CHAT_ID` no `.env`). Script versionado no rep
 O que é vigiado e a cadência (crontab do root):
 
 ```cron
-*/5 * * * * /opt/motor-monitoring/healthcheck_vps.sh containers  # 6 containers (web, api, bot, caddy, authelia, tileserver) + edge HTTPS
+*/5 * * * * /opt/motor-monitoring/healthcheck_vps.sh containers  # 8 containers (web, web_ar, api, bot, postgres, caddy, authelia, tileserver; + valhalla se MOTOR_ROTAS_URL) + edge HTTPS + /api/me sem cookie = 401
 0 * * * *   /opt/motor-monitoring/healthcheck_vps.sh host        # disco >80% / memória <10%
 0 11 * * *  /opt/motor-monitoring/healthcheck_vps.sh authelia    # resumo diário de falhas de login (08h BRT)
 0 18 * * 0  /opt/motor-monitoring/healthcheck_vps.sh coleta      # domingo 15h BRT: resumo/falha da coleta semanal
@@ -1352,12 +1392,14 @@ BLK-OPS-01 (`docs/backup_restore.md`) — todos os segredos têm regeneração d
 Reinstalar/recriar containers só a partir de imagens do GHCR (pinadas por digest).
 
 **3. Perda/corrupção de dados (parquets).**
-Enquanto o BLK-SEC-04 não entrega o backup automatizado: restaurar por `scp` da cópia
+O BLK-SEC-04 fechou em 2026-07-13 com risco aceito — o backup dos parquets é o snapshot semanal nativo
+da Hostinger (restore tudo-ou-nada); o Postgres tem backup próprio (`scripts/cron/run_backup_banco.sh`,
+restore em `docs/banco_deploy.md` §10). Para um arquivo só, restaurar por `scp` da cópia
 local da máquina de dev (seção "Atualizar parquets de dados") ou regenerar pelos
 pipelines. Sessões do bot (`bot_data`) são descartáveis (usuários apenas deslogam).
 
 Ligações: DR de segredos = `docs/backup_restore.md` (BLK-OPS-01); backup de dados =
-BLK-SEC-04 (pendente); hardening preventivo = BLK-SEC-03.
+snapshot semanal da Hostinger (BLK-SEC-04, risco aceito em 2026-07-13) + `run_backup_banco.sh` para o Postgres; hardening preventivo = BLK-SEC-03.
 
 ---
 
@@ -1387,27 +1429,37 @@ docker compose -f docker-compose.prod.yml logs caddy | grep -i "certificate\|tls
 │   │   └── db.sqlite3            # banco de sessões Authelia
 │   ├── web/                      # SPA + backend FastAPI do piloto
 │   └── src/
-└── data/
-    ├── outputs/                  # Parquets do M1 (~1,6 GB)
-    │   ├── hexagonos_brasil_dashboard.parquet
-    │   ├── hexagonos_dashboard_enriquecido/
-    │   │   └── uf=XX/
-    │   └── ...
-    └── ultra/                    # Base Ultra (CSV legado)
+├── data/
+│   ├── outputs/                  # Parquets do M1 (~1,6 GB) — :ro
+│   │   ├── hexagonos_brasil_dashboard.parquet
+│   │   ├── hexagonos_dashboard_enriquecido/
+│   │   │   └── uf=XX/
+│   │   └── ...
+│   ├── staging/                  # camadas paralelas (mercado, M&A, crescimento, renda) — :ro
+│   ├── ibge/                     # malha municipal — :ro (obrigatória para a API)
+│   ├── oportunidades/            # coletor imobiliário (viaveis.parquet + dossies/) — :ro
+│   ├── ultra/                    # Base Ultra (CSV legado) — :ro
+│   └── perfil.json               # perfil do país (DEC-047): bind de ARQUIVO, tem de existir antes do `up`
+├── concorrentes/                 # CSVs + logo_<rede>.png dos apps — :ro
+├── cadastro/                     # :rw (uid 1000) — cadastro_unidades.json, acesso_abas.json, bot_allowlist.json
+├── logs/
+│   ├── acesso/                   # trilha do piloto (DEC-027) — :rw (uid 1000)
+│   └── caddy/                    # access log do Caddy
+└── backups/banco/                # dumps do Postgres (run_backup_banco.sh)
 ```
 
-### Arquivos que NÃO estão no git (existem apenas no servidor)
+### Arquivos que NÃO estão no git em claro (os de configuração têm cópia cifrada em `secrets/` — `docs/backup_restore.md`)
 
 | Arquivo | Conteúdo |
 |---|---|
 | `app/Caddyfile` | Configuração do Caddy com domínio real |
-| `app/.env` | Segredos Authelia |
+| `app/.env` | Segredos e pins do deploy: `AUTHELIA_*`, `API_TOKENS`, `API_TELEGRAM_TOKEN`, `API_BOT_SENHA`, `POSTGRES_*`, `MOTOR_DATABASE_URL`, `WEB_IMAGE`/`API_IMAGE` (o compose aborta sem os obrigatórios) |
 | `app/authelia/configuration.yml` | Configuração Authelia com domínio real |
 | `app/authelia/users_database.yml` | Usuários e hashes de senhas |
 | `data/outputs/` | Todos os parquets (~1,6 GB) |
 | `data/ultra/` | Base Ultra.csv |
 
-**Importante:** antes de qualquer `git pull`, confirme que esses arquivos não foram sobrescritos.
+**Importante:** o checkout `/opt/motor-expansao/app` não é atualizado por `git pull` como rotina (está parado no commit 302487e, de 2026-08-19, e o `docker-compose.prod.yml` de produção foi trocado à mão em 17/10). Arquivo novo do repo chega por `scp`, conferido em LF; antes de qualquer `git pull` ali, confirme que esses arquivos e o compose não serão sobrescritos.
 
 ---
 

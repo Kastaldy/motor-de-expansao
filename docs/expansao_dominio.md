@@ -1,4 +1,4 @@
-> **[HISTORICO]** Contrato de ciclo concluido (maio/2026). Estado atual: `docs/README.md` + `docs/modelo_mercado_hexagonos.md`.
+> **[HISTORICO]** Contrato de ciclo concluido (maio/2026). O plano de dominio segue VIVO: `gerar_plano_expansao_dominio` roda no `scripts/cron/run_regen_mercado.sh` e `plano_expansao_dominio.parquet` alimenta as zonas do Relatorio Municipal (`relatorio_municipal.py`, D2) e a API (`api/service.py`); parametros e schema abaixo ainda conferem com o codigo, e nenhum outro doc descreve esse artefato.
 
 # Expansao de Dominio — Contrato Tecnico
 > Versao: 2026-05-21 | Ciclo: Cenarios Multi-Hex e Dominio Hibrido (concluido)
