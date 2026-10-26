@@ -76,7 +76,8 @@ Por isso, antes de marcar a data:
   Instalar é passo do Felipe (root), comando a comando, e a troca traz junto os outros monitores da
   `main`, que podem começar em FAIL.
 - **Um restore testado** a partir de um dump real (`docs/banco_deploy.md` §10): depois do corte o
-  banco é a fonte das credenciais.
+  banco é a fonte das credenciais. **Feito em 25/10/2026:** o dump das 05:10 UTC restaurou sem erro,
+  com as 14 tabelas iguais às do banco real.
 - **A cópia fora da máquina (restic) — recomendada.** Em 24/10/2026, banco e dumps ficam no mesmo
   disco; destino e custo são decisão do Felipe.
 - **A entrada "banco fora" no Runbook de incidente** (`docs/infra_producao.md`): sintomas,
@@ -900,9 +901,9 @@ grep -c '^MOTOR_AUTENTICACAO_PROPRIA=ENC\[' secrets/env.enc.env                 
 Só as linhas `VAR=valor` do `.env` vão para o cifrado: o `sops` guardaria comentário em texto puro. O
 erro do segundo `sops` vai para `/dev/null` de propósito: a mensagem dele pode repetir uma linha do
 `.env`, com senha; se ele falhar, o `mv` não roda e a última conferência sai `0`. O
-PR toca `secrets/`, que o guard trata como CRÍTICO (`critica-aprovada`). O `secrets/env.enc.env` da
-`main` é de 17/10/2026 e não tem nem a `MOTOR_DATABASE_URL` de 23/10, então refazê-lo é devido mesmo
-antes do corte.
+PR toca `secrets/`, que o guard trata como CRÍTICO (`critica-aprovada`). O `secrets/env.enc.env` foi
+refeito em 25/10/2026, já com a `MOTOR_DATABASE_URL` de 23/10; depois do corte ele fica sem a chave
+nova e com a senha inicial antiga, e por isso este passo o refaz.
 
 ---
 

@@ -5075,22 +5075,25 @@ Vinicius (avaliação na DEC); (3) deploy das imagens `web`/`api` e `restart web
 | **Prioridade** | Alta — o código do P19 já está no ar; faltam a imagem nova (merge da `feat/banco-completo`) e a execução. |
 | **Esteira** | kit conferir/ligar/desfazer, simulado antes → `[aplicação na VPS: passo MANUAL, comando a comando — §6]` |
 | **Quem** | Vinicius (conta `deploy`); Felipe (root) no que a conta `deploy` não alcançar |
-| **Status** | Pendente |
+| **Status** | Pendente — kit pronto e ensaiado, e restore testado (25/10/2026); faltam o merge com o deploy da imagem nova, o healthcheck da `main` (BLK-BANCO-03) e a janela |
 | **Depende de** | **BLK-BANCO-03** (o monitor tem de vigiar o banco antes de ele virar o ponto único do login), **BLK-SEC-03-FU2** (conciliação Authelia × banco) e o merge da branch `feat/banco-completo` (a imagem nova do Passo 2 do runbook, que esconde o cadeado e o convite de troca enquanto a chave estiver desligada) |
 | **Autonomia** | **manual (NÃO loop-safe)** — VPS, Caddy e credenciais. NUNCA marcar loop-safe. |
 
 Referência: `docs/repasse_corte_p19.md`, adaptado em 24/10/2026 ao estado de 23/10: conta `deploy`,
 template do Caddy por `scp` e nenhum `git pull`, porque o checkout de `/opt/motor-expansao/app` é do
-root, num commit antigo, com o compose trocado à mão. Falta virar kit de scripts simulados (item 2).
-Antes de marcar a janela valem os pré-requisitos que o runbook lista, entre eles um restore testado
-a partir de um dump real (`docs/banco_deploy.md` §10).
+root, num commit antigo, com o compose trocado à mão. O kit de scripts simulados do item 2 ficou
+pronto em 25/10/2026, na estação do Vinicius (`p19b` conferir, `p19c` senha, `p19d` ligar, `p19e`
+desfazer e a folha da janela): ensaio final com 165 verificações e nenhuma falha. Antes de marcar a
+janela valem os pré-requisitos que o runbook lista, entre eles um restore testado a partir de um dump
+real (`docs/banco_deploy.md` §10), feito em 25/10/2026.
 
 1. **Passo 0, antes da janela** (decisão do Vinicius em 24/10/2026). Trocar no `.env` a
    `MOTOR_SENHA_INICIAL` (sorteada na instalação) pela senha compartilhada do Authelia, sem
-   imprimir, e rodar `up -d web`. Depois, `python -m motor_expansao.db alinhar-senhas` nos 20, pelo
-   container do `web` (`docker compose run --rm`, como no 0.c do runbook), com a
-   `MOTOR_DATABASE_URL_ADMIN` do dono: `--simular` (20 usuários ativos, nenhum hash quebrado), de
-   verdade, `--simular` de novo (nada a alinhar) e `unset`. O alinhar remarca a troca
+   imprimir, e rodar `up -d --no-deps web`. Depois, `python -m motor_expansao.db alinhar-senhas` nos
+   20, dentro do `web` no ar, com a credencial do dono entregue pela entrada padrão (o 0.c do runbook
+   e o `p19c` do kit; até 25/10/2026 era um `docker compose run --rm` com a
+   `MOTOR_DATABASE_URL_ADMIN` exportada): `--simular` (20 usuários ativos, nenhum hash quebrado), de
+   verdade e `--simular` de novo (nada a alinhar). O alinhar remarca a troca
    recomendada no primeiro acesso (o convite tem "Agora não"); quem usa senha pessoal no Authelia (o Felipe) entra com a
    compartilhada e define a dele na hora. Com a chave desligada o cadeado e o convite de troca
    ficam escondidos, então isso pode rodar dias antes, sem efeito visível, **desde que a imagem
@@ -5102,7 +5105,7 @@ a partir de um dump real (`docs/banco_deploy.md` §10).
    a conta `deploy` não puder editá-lo, o Passo 5 e o rollback ficam com o Felipe (root), ou ele
    ajusta antes (`chgrp motor-ops` + `chmod 664`).
 3. **Janela** (marcada e avisada à equipe no Passo 1): Passo 4 (`MOTOR_AUTENTICACAO_PROPRIA=1` e
-   `up -d web`, nunca `restart`, que não relê o `.env`), Passo 5 (só o bloco BR do Caddy passa a
+   `up -d --no-deps web`, nunca `restart`, que não relê o `.env`), Passo 5 (só o bloco BR do Caddy passa a
    apontar o `forward_auth` para `/api/verify`) e Passo 6 (conferir). A chave vem ANTES do Caddy: o
    inverso derruba o piloto inteiro. O rollback, em ordem inversa, fica pronto antes de começar.
 4. **Observação:** gente nova é cadastrada também no Authelia, o que mantém o rollback possível;
@@ -5179,10 +5182,10 @@ desde a primeira rodada enquanto o restic estiver desligado (BLK-BANCO-02). Test
 | Campo | Valor |
 |---|---|
 | **Criticidade** | **Crítica** — PR em `secrets/` é crítico no guard (`critica-aprovada`). |
-| **Prioridade** | Média-alta — um restore pelo backup cifrado de 17/10 subiria o site com o banco desligado, sem erro nenhum. |
+| **Prioridade** | Média — o `.env` re-cifrado em 25/10/2026 já tem a `MOTOR_DATABASE_URL`; falta o pós-corte, e um restore pelo Caddyfile cifrado de antes do corte desfaria o corte sem avisar. |
 | **Esteira** | `[estação do Vinicius: sops + chave age]` → PR em `secrets/` |
 | **Quem** | Vinicius (o `sops` e a chave age ficam na estação dele, não na VPS) |
-| **Status** | Pendente |
+| **Status** | Em andamento — o `.env` foi re-cifrado em 25/10/2026; falta o pós-corte |
 | **Depende de** | — para o `.env` de 23/10; **BLK-BANCO-01** para o Caddyfile e o `.env` do pós-corte |
 | **Autonomia** | **manual (NÃO loop-safe)** — segredos. |
 
@@ -5190,9 +5193,11 @@ desde a primeira rodada enquanto o restic estiver desligado (BLK-BANCO-02). Test
 (19/10); não tem a linha `MOTOR_DATABASE_URL`, acrescentada ao `.env` em 23/10. O `.env` muda de
 novo com o Passo 0 do corte (a nova `MOTOR_SENHA_INICIAL`) e com o próprio corte (a chave
 `MOTOR_AUTENTICACAO_PROPRIA`), e o `secrets/Caddyfile.enc` de antes do corte devolveria o bloco BR do
-Authelia e desfaria o corte sem avisar. **Fazer:** re-cifrar o `.env` de 23/10 sem esperar o
-corte; depois do corte, o Caddyfile e o `.env` outra vez. Conferir sem decifrar (nomes e contagem
-de valores em `ENC[]`), como no #462.
+Authelia e desfaria o corte sem avisar. **Feito em 25/10/2026:** o `.env` re-cifrado pela estação
+(`sops-env-2.sh`), com 51 variáveis: entraram a `MOTOR_DATABASE_URL` e a `MOTOR_ROTAS_URL`, que foi
+para o `.env` depois de 17/10, e nenhuma sumiu; conferido sem decifrar. **Falta:** depois do corte,
+o Caddyfile e o `.env` outra vez, conferidos sem decifrar (nomes e contagem de valores em `ENC[]`),
+como no #462.
 
 ---
 

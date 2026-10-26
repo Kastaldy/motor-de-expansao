@@ -434,12 +434,12 @@ sops --input-type binary --output-type binary -d secrets/authelia.db.sqlite3.enc
   > authelia/db.sqlite3
 ```
 
-> **O `secrets/env.enc.env` da `main` e' de 2026-10-17 e NAO tem a linha `MOTOR_DATABASE_URL`**
-> (o banco foi ligado no site em 2026-10-23). Restaurado como esta', o web sobe com o banco
-> DESLIGADO, e nada acusa o banco. Ate' ele ser refeito, acrescente a linha no formato do §8 do
-> `docs/banco_deploy.md` (`postgresql://app:<senha>@postgres:5432/banco_de_reservas`), com a
-> senha que esta' em `MOTOR_APP_DB_PASSWORD` no proprio `.env`. Os pins `WEB_IMAGE`/`API_IMAGE`
-> dele tambem sao os de 2026-10-17: confira o digest vigente antes do `pull` (§10.8).
+> **O `secrets/env.enc.env` e' de 2026-10-25, ja' com a linha `MOTOR_DATABASE_URL`** (o banco foi
+> ligado no site em 2026-10-23; ate' 2026-10-25 o cifrado era o de 2026-10-17, sem ela, e
+> restaurado subia o web com o banco DESLIGADO, sem nada acusar). Ele fica velho de novo a cada
+> mudanca do `.env`: no corte do P19 entram a nova `MOTOR_SENHA_INICIAL` e a
+> `MOTOR_AUTENTICACAO_PROPRIA` (BLK-BANCO-04). Os pins `WEB_IMAGE`/`API_IMAGE` dele sao os de
+> 2026-10-25: confira o digest vigente antes do `pull` (§10.8).
 
 ### 10.7. Recolocar dados de parquets
 

@@ -433,10 +433,10 @@ precisa de percent-encoding, e o sintoma de esquecer é um erro de *host não en
 você procurar no lugar errado.
 
 **`.env` mexido pede re-encriptação no SOPS+age.** Era pendência aberta do BLK-OPS-01 desde os
-segredos da API/bot, fechada na instalação de 17/10/2026 (`secrets/env.enc.env` refeito no #462, já com as senhas do banco); repita a cada mudança do `.env`. **E o cifrado já venceu:** o de 17/10/2026 não tem a linha
-`MOTOR_DATABASE_URL`, acrescentada ao `.env` no §8 em 23/10/2026, e restaurado como está subiria o piloto
-com o banco desligado, sem erro nenhum. Refazê-lo é pela estação do Vinicius — o `sops` e a chave age
-não ficam na VPS.
+segredos da API/bot, fechada na instalação de 17/10/2026 (`secrets/env.enc.env` refeito no #462, já com as senhas do banco); repita a cada mudança do `.env`. O de 17/10/2026 venceu com o §8: não tinha a linha
+`MOTOR_DATABASE_URL`, acrescentada ao `.env` em 23/10/2026, e restaurado subiria o piloto com o banco
+desligado, sem erro nenhum. Foi refeito em 25/10/2026, já com ela. Refazê-lo é sempre pela estação do
+Vinicius — o `sops` e a chave age não ficam na VPS —, e a próxima vez é depois do corte do P19.
 
 ## 4. Subir o serviço
 
@@ -1373,9 +1373,10 @@ docker exec -i motor_expansao_postgres \
 
 Restaurar o dump mais novo numa base **temporária** do mesmo cluster, comparar com o banco real tabela a
 tabela e apagar a temporária. O banco real só é lido e nada no piloto aponta para a base temporária, por
-isso não precisa de janela. Ainda não rodou na produção (24/10/2026); o kit da estação do Vinicius
-automatiza a sequência (`backup3-restaurar-teste.sh`), apagando a temporária mesmo se algo falhar no
-meio. Como `deploy`, a conta dona das pastas do backup:
+isso não precisa de janela. Rodou na produção em 25/10/2026, pelo kit da estação do Vinicius
+(`backup3-restaurar-teste.sh`), sobre o dump das 05:10 UTC do mesmo dia: restore sem erro e as 14
+tabelas iguais às do banco real (20 usuários, 21 migrations). O kit automatiza a sequência abaixo,
+apagando a temporária mesmo se algo falhar no meio. Como `deploy`, a conta dona das pastas do backup:
 
 **No terminal da VPS:**
 ```bash
