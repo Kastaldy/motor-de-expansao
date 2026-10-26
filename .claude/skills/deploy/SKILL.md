@@ -42,7 +42,11 @@ gh workflow run ci.yml --ref main -f publish_api=true
    (o `dashboard/` entrou no filtro em 2026-08-14). Só `pipelines/`, `docs/` ou testes? → nenhuma imagem
    republica (ver 3b) — decide se precisa do `publish_api=true`/`publish_web=true`.
 2. **Confirmar CI verde + imagem publicada no GHCR** (deploy só por digest de imagem que passou CI). Se faltar imagem → disparar o dispatch correspondente (comandos acima) e **aguardar** (prometa "te aviso quando publicar" + PushNotification).
-3. **Na VPS (cada comando com confirmação do Felipe, §6):** pinar `WEB_IMAGE`/`API_IMAGE` por **digest** no `.env` → `pull` → `up -d`/`restart` dos serviços afetados (`web`, `api`, `telegram-bot` e, se o `WEB_IMAGE` mudou, o `web_ar` do `docker-compose.ar.yml`, que lê o MESMO digest) → healthcheck.
+3. **Na VPS (cada comando com confirmação do Felipe, §6):** pinar `WEB_IMAGE`/`API_IMAGE` por **digest** no `.env` → `pull` → `up -d --no-deps` dos serviços afetados (`web`, `api`, `telegram-bot` e, se o `WEB_IMAGE` mudou, o `web_ar` do `docker-compose.ar.yml`, que lê o MESMO digest) → healthcheck.
+   **Imagem `web` nova com o banco ligado (desde 23/10/2026): o roteiro é o `docs/banco_deploy.md` §9.0.** Três regras dele valem aqui sempre:
+   - **ANTES de pinar**, o `estado` com a imagem NOVA (`WEB_IMAGE="$NOVA"` na frente do comando): havendo migration pendente, ela vem antes do pin e do `up` — a imagem nova quebra rota viva sem ela;
+   - **todo `up` que alcance o `web`** (o dele, o `up -d` sem serviço e o `up -d caddy`, que depende dele) começa com `unset MOTOR_DATABASE_URL`: uma variável VAZIA no terminal vence o `.env` e sobe o `web` sem banco, sem erro nenhum;
+   - **`up -d --no-deps`, nunca `restart`, para o `web`**: o `restart` não relê o `.env`, e sem o `--no-deps` o `up` converge também o `postgres` (dependência declarada do `web`) e o recria se a config dele tiver mudado — uma `POSTGRES_OWNER_PASSWORD` trocada no `.env` basta. Depois do `up`, conte sem imprimir — `docker inspect -f '{{range .Config.Env}}{{println .}}{{end}}' motor_expansao_web | grep -c '^MOTOR_DATABASE_URL=postgresql://app:'` tem de dar `1` (a linha carrega a senha do `app`: nunca tire o `-c`).
 3b. **CONFERIR O `revision` DA IMAGEM, e não só o digest.** Puxe a tag e leia o label:
    `docker inspect --format='{{index .Config.Labels "org.opencontainers.image.revision"}}' <ref>`
    — ele tem de bater com `git rev-parse origin/main`. **Por que este passo existe:** em 2026-09-11

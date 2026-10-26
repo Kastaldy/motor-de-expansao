@@ -70,6 +70,11 @@ Colaborador de deploy (sem root): usuário `deploy` (grupos `docker` + `motor-op
 ```bash
 cd /opt/motor-expansao/app
 
+# 0. Com o banco ligado (BR desde 23/10/2026), antes de pinar: o `estado` com a imagem nova diz
+#    se ela traz migration -- roteiro em docs/banco_deploy.md §9.0, que roda com a imagem na frente
+#    do comando e deixa a troca do digest no .env por ultimo. Havendo pendente, ela e' aplicada
+#    antes do pin e do `up` que troca o container (migration nao tem `down`).
+
 # 1. Pinar a imagem por DIGEST imutavel no .env (o compose EXIGE WEB_IMAGE — fail-closed).
 #    Obter o digest:
 #    - do output "WEB digest imutavel publicado:" do job publish-web no Actions, ou
@@ -77,18 +82,37 @@ cd /opt/motor-expansao/app
 #        ghcr.io/kastaldy/motor-de-expansao/motor-expansao-web:sha-<commit>
 #    No .env: WEB_IMAGE=ghcr.io/kastaldy/motor-de-expansao/motor-expansao-web@sha256:<digest>
 
-# 2. Pull + up -d SOMENTE do web (SEM --build)
+# 2. Pull + up -d SOMENTE do web (SEM --build). O `unset` vem antes de TODO `up` do web: uma
+#    MOTOR_DATABASE_URL no shell, mesmo vazia, vence a do .env, e o web subiria sem banco. O
+#    --no-deps recria so' o web: sem ele, o compose converge tambem o postgres (depends_on).
+unset MOTOR_DATABASE_URL
 docker compose -f docker-compose.prod.yml pull web
-docker compose -f docker-compose.prod.yml up -d web
+docker compose -f docker-compose.prod.yml up -d --no-deps web
 
 # 3. Conferir saude (o web NAO expoe porta no host — checar de dentro do container)
 docker compose -f docker-compose.prod.yml ps
 docker compose -f docker-compose.prod.yml exec web curl -fsS http://127.0.0.1:8899/api/health
+
+# 3b. Com o banco ligado: o web subiu COM a URL do papel `app`? Conta a linha sem imprimir a
+#     senha -- tem de dar 1 (NUNCA tire o -c).
+docker inspect -f '{{range .Config.Env}}{{println .}}{{end}}' motor_expansao_web | grep -c '^MOTOR_DATABASE_URL=postgresql://app:'
 ```
 
 - Caddy e Authelia **nao** reiniciam.
+- **Todo `up` que alcance o `web` comeca com `unset MOTOR_DATABASE_URL`**: o dele (aqui, no
+  rollback abaixo e em qualquer recriacao), o `up -d` sem servico e o `up -d caddy`, que recria o
+  `web` junto quando a config dele diverge (medido em 24/10/2026, Compose v5.6.0: com a variavel
+  vazia no shell, o `up -d caddy` recriou o `web` sem a URL). Depois do corte do P19, subir o `web`
+  sem a URL tranca todo mundo para fora. O `docker restart` diario das 06:30 UTC (ingestao da Growth) mantem o ambiente do
+  container: mudanca no `.env` so' vale depois de um `up -d web`.
+- **`--no-deps` em todo `up` do `web` e do `web_ar`** (aqui, no rollback abaixo e em qualquer
+  recriação): ele recria só o serviço pedido. O `web` declara `depends_on: postgres`, e sem o
+  `--no-deps` o `up -d web` converge o `postgres` junto e o recria se a config dele tiver mudado — uma
+  `POSTGRES_OWNER_PASSWORD` trocada no `.env` basta —, tirando o banco do ar no meio do deploy. O
+  `up -d caddy` sem `--no-deps` alcança o `web` e, por ele, o `postgres`. Medido no laboratório em
+  25/10/2026 (Compose 2.33 e 5.6); é a forma dos kits de deploy.
 - **A stack AR usa o MESMO `WEB_IMAGE`**: o `up -d web` do BR nao recria o `web_ar`. Rodar tambem
-  `docker compose -f docker-compose.ar.yml pull web_ar` e `docker compose -f docker-compose.ar.yml up -d web_ar`
+  `docker compose -f docker-compose.ar.yml pull web_ar` e `docker compose -f docker-compose.ar.yml up -d --no-deps web_ar`
   (idem no rollback abaixo) — ver `docs/deploy_piloto_web.md` §5.
 - API e bot seguem o mesmo modelo com `API_IMAGE` — ver `docs/deploy_api_bot.md`.
 - Dados em `/opt/motor-expansao/data/outputs/` sao preservados (bind mount read-only).
@@ -108,18 +132,22 @@ cd /opt/motor-expansao/app
 #    vigente antes de atualizar; ou recupere via imagetools inspect da tag sha-<commit_anterior>)
 #    No .env: WEB_IMAGE=ghcr.io/kastaldy/motor-de-expansao/motor-expansao-web@sha256:<digest_anterior>
 
-# 2. Pull + up -d (SEM --build)
+# 2. Pull + up -d --no-deps (SEM --build), com o mesmo `unset` da atualizacao
+unset MOTOR_DATABASE_URL
 docker compose -f docker-compose.prod.yml pull web
-docker compose -f docker-compose.prod.yml up -d web
+docker compose -f docker-compose.prod.yml up -d --no-deps web
 
 # 3. Conferir
 docker compose -f docker-compose.prod.yml ps
 docker compose -f docker-compose.prod.yml logs --tail=80 web
+docker inspect -f '{{range .Config.Env}}{{println .}}{{end}}' motor_expansao_web | grep -c '^MOTOR_DATABASE_URL=postgresql://app:'   # banco ligado: 1 (NUNCA tire o -c)
 ```
 
 - Digest imutavel (`@sha256:...`) garante reproducao byte-identica da imagem anterior; a tag
   `sha-<commit>` tambem e rastreavel, mas o digest e o pin canonico.
 - Rollback NAO usa `--build` (nada e reconstruido no servidor).
+- Migration nao tem `down` (docs/banco_deploy.md §8): voltar a imagem nao desfaz o schema, e a
+  volta do dado e' restore de dump (§10 do mesmo doc).
 
 ---
 
@@ -928,7 +956,9 @@ drill-down.
 Dois erros de leitura a evitar no `403` e no `200`:
 
 - **`403`** significa que o `Remote-User` escolhido não tem a aba `mapa` — **não** prova ausência de
-  artefato. Use um usuário que exista no `acesso_abas.json` de produção.
+  artefato. Use um usuário com o mapa: no BR, desde 23/10/2026, alguém ativo no banco com perfil
+  `expansao`, `lideres` ou `growth` (o `acesso_abas.json` só vale na AR e no rollback do §8 do
+  `docs/banco_deploy.md`).
 - **`200` com um nome inventado não prova o gate.** Se o controle de abas estiver indisponível, o
   fail-closed devolve `ABAS_VALIDAS - ABAS_SENSIVEIS` (`acesso.py`), e `mapa` **não** é sensível —
   ou seja, qualquer nome passa. O `200` prova a camada, não a allowlist.
@@ -1047,8 +1077,9 @@ Detalhe e verificação em `valhalla-infra/README.md`.
    (rascunho → rename atômico → `up -d` → smoke de dentro do `motor_expansao_web`; reprovado,
    volta o anterior sozinho).
 5. Só com o smoke verde: `MOTOR_ROTAS_URL=http://motor_expansao_valhalla:8002` no `.env` do
-   motor e `docker compose -f docker-compose.prod.yml up -d web` (recriar, não `restart`: env
-   nova só entra na recriação).
+   motor e `unset MOTOR_DATABASE_URL && docker compose -f docker-compose.prod.yml up -d --no-deps web`
+   (recriar, não `restart`: env nova só entra na recriação; o `unset` e o `--no-deps` são os de todo
+   `up` do `web`, seção "Atualizar o web").
 
 **Monitor:** o subcomando `containers` do healthcheck só vigia `motor_expansao_valhalla` quando
 `MOTOR_ROTAS_URL` está preenchida no `.env`. Com a variável vazia, a stack ausente é o estado
@@ -1075,6 +1106,7 @@ volume só entra na recriação do container:
 ```bash
 cd /opt/motor-expansao/app
 docker compose -f docker-compose.prod.yml exec caddy caddy validate --config /etc/caddy/Caddyfile
+unset MOTOR_DATABASE_URL                                 # o caddy depende do web, e este up pode recria-lo (secao "Atualizar o web")
 docker compose -f docker-compose.prod.yml up -d caddy    # NAO `caddy reload` neste primeiro deploy
 ```
 
@@ -1088,6 +1120,17 @@ requisição seguinte, sem restart); mudanças no `Caddyfile` seguem pedindo
 
 > O login continua igual após a DEC-022: o Authelia protege `piloto.ultra-expansao.tech`
 > e `/tiles/` em `dashboard.ultra-expansao.tech` com a mesma base de usuários.
+>
+> **Com o banco ligado no BR (desde 23/10/2026), quem usa o piloto brasileiro depende de DOIS
+> cadastros:** o Authelia autentica (`users_database.yml`) e o banco autoriza (a linha da pessoa
+> em `usuarios`, com o perfil). Sem a linha no banco ela entra e abre o piloto vazio; sem a
+> entrada no Authelia ela não entra. A instância AR não tem banco e segue pelo `acesso_abas.json`
+> dela. Os gestos de senha do banco — "Trocar a minha senha", "Redefinir senha" e "Exigir troca" —
+> só aparecem e só funcionam com `MOTOR_AUTENTICACAO_PROPRIA` ligada (P19); até o corte, a senha
+> que vale é a do Authelia, e a coluna "Senha (banco)" da tela de Acessos fala da senha do banco.
+> Esse comportamento e o nome da coluna chegam com a imagem da mudança de 24/10/2026. Na que estava no ar
+> nesse dia (`d1cc438e…`), eles ainda aparecem (o cadeado, para todos) e não devem ser usados até o
+> corte: o cadeado pede a senha inicial sorteada, e a temporária de "Redefinir senha" não abre a entrada.
 
 ### Adicionar usuário
 
@@ -1113,19 +1156,31 @@ requisição seguinte, sem restart); mudanças no `Caddyfile` seguem pedindo
    ```bash
    cd /opt/motor-expansao/app && docker compose -f docker-compose.prod.yml restart authelia
    ```
+5. **Banco (piloto BR, desde 23/10/2026):** criar a pessoa na tela de **Acessos** do piloto, com o
+   perfil (`expansao`, `consultoria`, `lideres` ou `growth`). Quem cria é um admin da allowlist do
+   painel (`MOTOR_ACESSOS_ADMIN_USUARIOS`) com perfil `growth`. A ordem dos dois cadastros não
+   importa; a pessoa só usa o piloto quando os dois existem.
 
 ### Revogar usuário
 
 São **quatro** portas independentes, e revogar só a primeira não fecha as outras três.
 
-> **A porta 1 DEIXA DE REVOGAR O BR no dia do corte do P19, e a 4 nasce nesse dia.** Depois
+**Com o banco ligado (BR desde 23/10/2026), sair é em TRÊS lugares — as portas 1, 3 e 4:** remover
+do Authelia, remover da allowlist do bot e desativar na tela de Acessos. A porta 2 não corta nada no
+BR enquanto o banco estiver ligado. Até o corte do P19, quem barra a **entrada** é o Authelia:
+desativar só no banco tira o piloto da pessoa (sem linha ativa em `usuarios` o RBAC não concede
+capacidade nenhuma, e ela abre o piloto vazio), mas ela segue autenticando — e, se o banco cair com
+queda provada, as rotas não sensíveis passam sem conferir permissão (Runbook de incidente, cenário
+4). Por isso a porta 1 não pode faltar.
+
+> **A porta 1 DEIXA DE REVOGAR O BR no dia do corte do P19, e a 4 passa a cortar também a entrada.** Depois
 > que `MOTOR_AUTENTICACAO_PROPRIA` estiver preenchida, quem autentica o piloto brasileiro é o
 > banco: remover a pessoa do `users_database.yml` **não a tira de lá** — ela continua dentro
 > pelas 8 h da sessão aberta —, e o `restart authelia` **desloga a instância argentina
 > inteira**, que segue dependendo dele. Conferir o estado:
 > `cd /opt/motor-expansao/app && grep '^MOTOR_AUTENTICACAO_PROPRIA=' .env`.
 >
-> Enquanto durar a janela de observação do corte, faça a **1 e a 4**: o rollback devolve o
+> Enquanto durar a janela de observação do corte, faça a **1 e a 4** (a 3, do bot, vale sempre): o rollback devolve o
 > Authelia ao comando, então quem sai da empresa precisa sair dos dois cadastros. É a dívida
 > declarada na emenda de 25/09/2026 da DEC-067.
 
@@ -1138,13 +1193,17 @@ São **quatro** portas independentes, e revogar só a primeira não fecha as out
    `/opt/motor-expansao/cadastro/acesso_abas.json`. Relido por mtime: vale na hora,
    sem restart. (O curinga `"*"` está em `[]`, então sair do arquivo já zera as abas —
    mas o passo 1 continua necessário, senão a pessoa ainda autentica.)
+   **Com o banco ligado (produção BR desde 23/10/2026) este arquivo não é consultado no BR:**
+   remover a chave não corta nada hoje, só mantém fiel o caminho de volta do §8 do
+   `docs/banco_deploy.md` (esvaziar a `MOTOR_DATABASE_URL` devolve o controle a este JSON).
 3. **Bot do Telegram** — remover o `chat_id` de
    `/opt/motor-expansao/cadastro/bot_allowlist.json` (seção abaixo).
 4. **Linha em `usuarios`** — desativar a pessoa pelo painel de **Acessos** do piloto. É a
    única porta que revoga de verdade no BR depois do corte, e é **imediata**: `SQL_VALIDAR`
    exige `u.ativo` a cada requisição guardada, então a sessão dela morre na requisição
-   **seguinte** — sem janela de 8 h e sem reiniciar serviço nenhum. Antes do corte esta porta
-   não faz diferença para o acesso (quem autentica é o Authelia), mas não atrapalha.
+   **seguinte** — sem janela de 8 h e sem reiniciar serviço nenhum. Antes do corte ela já tira o
+   piloto da pessoa (com o banco ligado, o RBAC não concede nada a quem está inativo), mas não a
+   impede de autenticar no Authelia: até o corte, a porta 1 continua obrigatória.
 
 > **Por que o passo 3 existe.** Até 2026-09-24 o bot tinha uma única porta: a senha
 > COMPARTILHADA. O "login" pedido depois dela nunca foi verificado contra nada — é
@@ -1187,6 +1246,8 @@ Arquivo: `/opt/motor-expansao/cadastro/bot_allowlist.json`. Um `chat_id` por ent
 > aleatória válida por 2 h e **destrava** a conta barrada pela trava de tentativas. Mexer no
 > `users_database.yml` não muda a senha com que a pessoa entra no piloto brasileiro. Os dois
 > passos abaixo seguem valendo antes do corte e, sempre, para a instância AR.
+> Antes do corte (a partir da imagem de 24/10/2026), "Redefinir senha" nem aparece no painel (e a rota responde 404 avisando que a
+> entrada ainda é pelo Authelia).
 
 1. Gerar novo hash (passo 1 acima)
 2. Substituir o campo `password:` do usuário em `users_database.yml`
@@ -1263,8 +1324,18 @@ docker compose -f docker-compose.prod.yml restart caddy
 ### Reiniciar tudo
 
 ```bash
-cd /opt/motor-expansao/app && docker compose -f docker-compose.prod.yml down && docker compose -f docker-compose.prod.yml up -d
+cd /opt/motor-expansao/app && unset MOTOR_DATABASE_URL && docker compose -f docker-compose.prod.yml down && docker compose -f docker-compose.prod.yml up -d
 ```
+
+> **Com o banco no ar, prefira reiniciar só o serviço afetado (acima).** O `down` derruba também
+> o `postgres`, que é do mesmo compose, e no `up` o `web` não espera o banco ficar pronto
+> (`depends_on` é `service_started`): nos primeiros segundos, antes do corte do P19, o RBAC do BR
+> responde degradado ou 503 (Runbook de incidente, cenário 4); depois do corte, ninguém entra até
+> o banco aceitar conexão. O volume do banco (`app_postgres_data`) sobrevive ao `down` —
+> **nunca** use `down -v`, que o apaga (a volta seria o restore do dump, §10 do
+> `docs/banco_deploy.md`). E o `up` relê o `.env`, mas sem o `unset` uma `MOTOR_DATABASE_URL`
+> herdada do shell vence a dele — vazia, sobe o `web` sem banco, e depois do corte isso tranca todo
+> mundo para fora.
 
 ### Verificar espaço em disco
 
@@ -1291,7 +1362,7 @@ grupo de ops — `MONITOR_TELEGRAM_CHAT_ID` no `.env`). Script versionado no rep
 O que é vigiado e a cadência (crontab do root):
 
 ```cron
-*/5 * * * * /opt/motor-monitoring/healthcheck_vps.sh containers  # 8 containers (web, web_ar, api, bot, postgres, caddy, authelia, tileserver; + valhalla se MOTOR_ROTAS_URL) + edge HTTPS + /api/me sem cookie = 401
+*/5 * * * * /opt/motor-monitoring/healthcheck_vps.sh containers  # 8 containers (web, web_ar, api, bot, postgres, caddy, authelia, tileserver; + valhalla se MOTOR_ROTAS_URL) + edge HTTPS + /api/me com cookie de sessão falso = 401 (503 = banco fora, depois do P19)
 0 * * * *   /opt/motor-monitoring/healthcheck_vps.sh host        # disco >80% / memória <10%
 0 11 * * *  /opt/motor-monitoring/healthcheck_vps.sh authelia    # resumo diário de falhas de login (08h BRT)
 0 18 * * 0  /opt/motor-monitoring/healthcheck_vps.sh coleta      # domingo 15h BRT: resumo/falha da coleta semanal
@@ -1299,7 +1370,19 @@ O que é vigiado e a cadência (crontab do root):
 0 12 * * 4  /opt/motor-monitoring/healthcheck_vps.sh crescimento # quinta 09h BRT: idade da camada de crescimento municipal (DEC-052; limiar 100 dias)
 0 12 * * 4  /opt/motor-monitoring/healthcheck_vps.sh mercado     # quinta 09h BRT: camada de mercado x cadastro de concorrentes (DEC-059; limiar 9 dias)
 0 12 * * 4  /opt/motor-monitoring/healthcheck_vps.sh pins        # quinta 09h BRT: idade da última promoção dos pins de M&A + desenháveis (limiar 9 dias / piso 100)
+0 12 * * *  MONITOR_BANCO_BACKUP_DIR=/home/deploy/backups/banco MONITOR_BANCO_BACKUP_LOG=/home/deploy/logs/backup_banco.log MONITOR_BANCO_EXPURGO_LOG=/home/deploy/logs/expurgo_sessoes.log /opt/motor-monitoring/healthcheck_vps.sh banco  # diário 09h BRT: backup, expurgo e saúde interna do Postgres (A INSTALAR: aviso abaixo; ver "Monitor do banco")
 ```
+
+> **A cópia instalada hoje em `/opt/motor-monitoring/` (crontab do root) é antiga** (24/10/2026):
+> não vigia o `postgres` e não conhece o subcomando `banco`. Trocá-la pela versão do repo é passo
+> do Felipe (root), comando a comando (§6 do `CLAUDE.md`): levar o arquivo por `scp` (o checkout
+> da VPS está parado), rodar `healthcheck_vps.sh containers` e `healthcheck_vps.sh test` uma vez e
+> só então acrescentar a linha do `banco`. O `postgres` entra sozinho no `containers`, que já roda
+> a cada 5 min; o `banco` precisa da linha nova. A troca traz junto tudo o que a `main` acrescentou
+> depois daquela cópia — o levantamento de 23/10/2026 aponta ao menos o check `auth`, o `web_ar` e
+> o Valhalla condicional; a lista exata depende de quando ela foi copiada (`git hash-object` no
+> arquivo da VPS, comparado com o histórico de `scripts/healthcheck_vps.sh`) —, e esses monitores
+> podem começar em FAIL.
 
 > **Por que os pins têm monitor próprio.** A guarda de desenhabilidade do passo 4.5 do lote de
 > domingo faz o certo ao barrar artefato ruim, mas o efeito dela é **invisível**: entre 30/08 e
@@ -1307,6 +1390,56 @@ O que é vigiado e a cadência (crontab do root):
 > mais velho, e nada alertou. Sem relógio, uma guarda que só bloqueia troca "pin errado" por "pin
 > velho em silêncio". Aqui o **mtime é confiável** — ao contrário do monitor de `mercado`, em que
 > o arquivo é reescrito toda semana —, porque este só é tocado pelo `mv` da promoção.
+
+#### Monitor do banco — `healthcheck_vps.sh banco` (diário)
+
+O `containers` só sabe se o `motor_expansao_postgres` está de pé. O `banco` cuida do resto: o
+backup, o expurgo da origem das sessões e a saúde de dentro do banco. Antes dele, falha de backup
+ou de expurgo deixava só uma linha de log — os dois wrappers saem com `exit 1` e mais nada.
+
+Os três caminhos da linha de cron são os da conta `deploy`, onde backup e expurgo rodam desde
+17/10/2026 (ver "Estrutura de diretórios no servidor"). Sem as variáveis, o script cai nos caminhos
+padrão do runbook (`/opt/motor-expansao/backups/banco` e `/var/log/motor-monitoring/*.log`), que a
+produção não usa. Se backup e expurgo mudarem de conta, só as três variáveis mudam; o root lê as
+pastas `700` do `deploy` sem ajuste de permissão.
+
+**Por que 12:00 UTC.** O backup roda às 05:10 e o expurgo às 04:40. Na hora do check o dump do dia
+tem ~7 h, e um dia sem backup deixa o anterior com ~31 h, acima do limiar de 26 h: o dia perdido
+aparece no próprio dia. Com o check logo depois das 05:10, ele só apareceria no dia seguinte.
+
+Cada aspecto tem chave de estado própria em `/var/lib/motor-monitoring/`: um defeito não silencia o
+outro, e a recuperação diz o que voltou. Os limiares saem de variáveis `MONITOR_BANCO_*`, com os
+defaults no cabeçalho do script.
+
+| Chave | Nível | Quando dispara |
+|---|---|---|
+| `banco_dump` | FAIL | nenhum `*.dump` em `diario/`; o mais novo com mais de 26 h pelo **carimbo do nome** (o mtime mente depois de um restore); arquivo vazio; sem a assinatura `PGDMP` do formato `-Fc`; sem o `.sha256`; ou sha256 que não bate |
+| `banco_semanal` | FAIL | nenhuma cópia em `semanal/`, a mais nova com mais de 8 dias ou inutilizável (mesmas regras do dump). Numa instalação nova, dura até o primeiro domingo |
+| `banco_backup` | FAIL | log do backup ausente, log sem nenhuma execução registrada, ou a última execução sem a linha de fim e começada há mais de 60 min. O alerta traz o último `!!` do script, com `NOME=valor` e credencial em URL mascarados |
+| `banco_offbox` | AVISO 🟡 | a última execução terminou só local (`copia off-box DESLIGADA` / `fim (somente local)`). **Esperado em 24/10/2026:** o restic está desligado (destino e custo são decisão pendente do Felipe); lembrete semanal, e 🟢 quando a cópia off-box for ligada |
+| `banco_expurgo` | FAIL | log ausente; só simulações (`--simular` não conta); a última execução real não terminou; ou ela tem mais de 26 h |
+| `banco_medicao` | FAIL | o `docker exec` no container falhou, passou de 60 s ou devolveu algo fora do formato. Monitor cego conta como falha, e as quatro chaves abaixo ficam como estavam |
+| `banco_tamanho` | FAIL | banco acima de 5120 MB — guarda de crescimento fora do esperado, não de capacidade (o disco é do `host`) |
+| `banco_conexoes` | FAIL | conexões a partir de 80% do `max_connections`: no teto o Postgres recusa conexão nova, inclusive a do pool do piloto |
+| `banco_transacoes` | FAIL | sessão `idle in transaction` parada há mais de 10 min: segura lock e impede o VACUUM (`pg_terminate_backend` encerra) |
+| `banco_locks` | FAIL | sessão esperando lock há mais de 5 min (`pg_blocking_pids(pid)` mostra quem bloqueia) |
+
+**Segredos.** A medição roda dentro do container com as credenciais do próprio container: as
+`$POSTGRES_*` são expandidas lá dentro, a senha vai em `PGPASSWORD` (nunca no argv) e o SQL entra
+pela entrada padrão; só números voltam. O monitor não lê segredo do banco no `.env` — o único que o
+script toca segue sendo o token do bot, no envio do alerta.
+
+Rodada manual, como root — o estado e o log ficam em pastas do root (não imprime nada no terminal:
+o resultado vai para o log e, se houver transição, para o Telegram):
+
+```bash
+MONITOR_BANCO_BACKUP_DIR=/home/deploy/backups/banco MONITOR_BANCO_BACKUP_LOG=/home/deploy/logs/backup_banco.log MONITOR_BANCO_EXPURGO_LOG=/home/deploy/logs/expurgo_sessoes.log /opt/motor-monitoring/healthcheck_vps.sh banco
+tail -20 /var/log/motor-monitoring/healthcheck.log
+```
+
+`tests/unit/test_healthcheck_banco.py` trava a paridade dos defaults e das frases de início e fim
+com os dois wrappers: se um deles mudar a frase que escreve no log, o teste avisa antes de o
+monitor passar a dizer "nenhuma execução registrada" na VPS.
 
 #### Alerta de borda — varreduras com assinatura (2026-09-23)
 
@@ -1362,7 +1495,9 @@ Sob demanda, sem enviar nada:
 > todo processo da máquina em vez de um run de 2 segundos.
 
 Comportamento anti-spam: alerta na transição OK→FAIL, lembrete a cada 1h enquanto durar,
-e aviso de recuperação no FAIL→OK (estado em `/var/lib/motor-monitoring/`). Logs em
+e aviso de recuperação no FAIL→OK (estado em `/var/lib/motor-monitoring/`). O nível AVISO (🟡)
+segue a mesma máquina de estados com lembrete semanal (`MONITOR_AVISO_REMIND_SECS`, 7 dias) — em 24/10/2026,
+só o `banco_offbox` o usa. Logs em
 `/var/log/motor-monitoring/healthcheck.log`. Teste manual: `healthcheck_vps.sh test`.
 
 Segredos: o script lê `API_TELEGRAM_TOKEN` e `MONITOR_TELEGRAM_CHAT_ID` do `.env` em
@@ -1373,7 +1508,7 @@ daemon (`/etc/docker/daemon.json`, json-file 10m×3) — não é papel deste scr
 
 ## Runbook de incidente
 
-Proporcional a um app interno — 3 cenários. Em todos: **quem aciona é quem viu o
+Proporcional a um app interno — 4 cenários. Em todos: **quem aciona é quem viu o
 alerta primeiro** (grupo de ops); Felipe é o dono da decisão de contenção.
 
 **1. Indisponibilidade (piloto/API/bot fora do ar).**
@@ -1394,9 +1529,73 @@ Reinstalar/recriar containers só a partir de imagens do GHCR (pinadas por diges
 **3. Perda/corrupção de dados (parquets).**
 O BLK-SEC-04 fechou em 2026-07-13 com risco aceito — o backup dos parquets é o snapshot semanal nativo
 da Hostinger (restore tudo-ou-nada); o Postgres tem backup próprio (`scripts/cron/run_backup_banco.sh`,
-restore em `docs/banco_deploy.md` §10). Para um arquivo só, restaurar por `scp` da cópia
+restore em `docs/banco_deploy.md` §10; na produção o cron roda na conta `deploy`, com os dumps em
+`/home/deploy/backups/banco` e a cópia off-box desligada, então dumps e banco dividem o mesmo disco).
+Para um arquivo só, restaurar por `scp` da cópia
 local da máquina de dev (seção "Atualizar parquets de dados") ou regenerar pelos
 pipelines. Sessões do bot (`bot_data`) são descartáveis (usuários apenas deslogam).
+
+**4. Banco fora (Postgres do piloto, `motor_expansao_postgres`).**
+Desde 23/10/2026 o RBAC do piloto BR vem do banco (a AR, a API e o bot não o usam). Quem acusa, na
+versão do repo: o `containers` (`container_motor_expansao_postgres`, a cada 5 min) e, uma vez por
+dia, o `banco_medicao` do `banco`. **Em 24/10/2026 nenhuma das duas checagens está ativa** — a cópia instalada no
+root não vigia o postgres nem tem o `banco` (ver "Alertas automáticos") —, e nada mais avisa.
+**O `auth` só acusa depois do corte do P19, e só na versão do repo a partir de 24/10/2026:** a
+sonda leva um cookie de sessão falso, e o `/api/verify` responde 503 quando não consegue consultar
+o banco (com ele de pé, 401). Antes do corte quem responde é o Authelia, que não usa o banco. A
+sonda antiga ia sem cookie, e sem cookie o `/api/verify` responde 401 sem consultar o banco: banco
+fora passava como "auth OK". O `/api/health` segue 200 (não olha o banco, de propósito).
+
+O que a equipe vê com o P19 desligado (login pelo Authelia):
+- **Queda provada** (conexão recusada, nome `postgres` que não resolve, servidor saindo do ar — o
+  container parado ou caído): as rotas sensíveis — Visão Executiva (carteira e cadastro da rede),
+  dossiê do imóvel, Viabilidade e o painel de Acessos — respondem 403 "Acesso indisponível no
+  momento. Tente novamente em instantes."; as demais (Mapa, Oportunidades, análise de ponto,
+  relatórios em PDF, lista de imóveis) passam **sem conferir permissão**, inclusive para quem foi
+  desativado no banco e ainda entra pelo Authelia. O `/api/me` mostra só Mapa e Oportunidades
+  (os admins da allowlist ainda veem o ícone de Acessos, mas o painel responde 403). Nos
+  primeiros segundos da queda, até a primeira falha comprovada, vale o item seguinte.
+- **Banco que não respondeu, sem prova de queda** (pool de 4 conexões tomado, lock de mais de 1 s,
+  comando de mais de 2 s, conexão que não abre em 2 s, container pausado): toda rota controlada
+  responde 503 "Piloto ocupado no momento. Tente novamente em instantes.", com `Retry-After: 2`.
+  Com a imagem que traz o follow-up A do #463 (código de 24/10/2026), o `/api/me` dá o mesmo 503 e a
+  SPA tenta de novo (três tentativas, 2 s entre elas); nas anteriores — inclusive a que estava no ar
+  em 24/10/2026 — ele escondia as abas sensíveis (um F5 as traz de volta quando o banco responde).
+
+Diagnóstico por SSH (conta `deploy` ou root, comando a comando — §6 do `CLAUDE.md`). O painel de
+Acessos e o `/api/acessos/saude-artefatos` não servem nessa hora: dependem de capacidade sensível e
+respondem 403 ou 503.
+
+```bash
+cd /opt/motor-expansao/app
+docker compose -f docker-compose.prod.yml ps postgres
+docker compose -f docker-compose.prod.yml logs --tail=100 postgres
+docker compose -f docker-compose.prod.yml logs --since 30m web | grep -E 'RBAC indisponivel|RBAC nao respondeu|pool sem conexao'
+```
+
+`RBAC indisponivel (...)` (gate) e `RBAC indisponivel no /api/me (...)` são a queda provada, uma
+linha de cada por episódio; `/api/me: o RBAC nao respondeu e nada prova queda do banco` é o caso do
+503 (só o `/api/me` a escreve: o 503 do gate não tem linha própria); `pool sem conexao; disjuntor aberto` só aparece na queda provada (o disjuntor só arma com prova
+e, por 3 s, responde "banco fora" sem tentar o pool).
+
+Ação: com o container parado, `docker compose -f docker-compose.prod.yml up -d postgres` (sempre com
+o nome do serviço). Quando o banco volta, o web se recupera sozinho em segundos — o RBAC não tem
+cache —, e quem estava com a tela aberta recarrega a página para recuperar as abas. Mudança feita
+na tela de Acessos durante o incidente tem desfecho ambíguo num 503 de escrita: recarregar a lista
+e conferir antes de repetir. Se o banco não volta logo e a degradação atrapalha o time, o
+interruptor é o §8 do `docs/banco_deploy.md`: esvaziar a `MOTOR_DATABASE_URL` e `up -d --no-deps web` (com o
+`unset` antes), e o BR volta ao `acesso_abas.json`. Duas ressalvas: o JSON parou no estado de
+23/10/2026 — quem foi criado ou mudado pela tela depois disso perde ou muda de acesso (o kit da
+estação do Vinicius tem o desfazer simulado, que mostra quem muda antes de desligar) —, e migration
+não volta (a volta do dado é restore de dump, §10).
+
+**Depois do corte do P19 (`MOTOR_AUTENTICACAO_PROPRIA` ligada), banco fora = piloto BR fora:** a
+sessão vive em tabela, o `/api/verify` responde 503 e o Caddy nega tudo; quem estava dentro sai
+junto, e o login também não funciona. O interruptor do §8 deixa de existir (sem banco ninguém
+entra): primeiro desfaz-se o P19 — `docs/repasse_corte_p19.md`, "Se precisar voltar atrás" (o bloco
+do Caddy de `Caddyfile.antes-do-p19`, depois a chave vazia), o que só devolve a entrada enquanto os
+logins BR ainda estiverem no Authelia —, e só então, se o banco seguir fora, o §8. Conferir o
+estado: `grep '^MOTOR_AUTENTICACAO_PROPRIA=' /opt/motor-expansao/app/.env`.
 
 Ligações: DR de segredos = `docs/backup_restore.md` (BLK-OPS-01); backup de dados =
 snapshot semanal da Hostinger (BLK-SEC-04, risco aceito em 2026-07-13) + `run_backup_banco.sh` para o Postgres; hardening preventivo = BLK-SEC-03.
@@ -1445,15 +1644,38 @@ docker compose -f docker-compose.prod.yml logs caddy | grep -i "certificate\|tls
 ├── logs/
 │   ├── acesso/                   # trilha do piloto (DEC-027) — :rw (uid 1000)
 │   └── caddy/                    # access log do Caddy
-└── backups/banco/                # dumps do Postgres (run_backup_banco.sh)
+└── backups/banco/                # caminho PADRÃO do run_backup_banco.sh — a produção não o usa (abaixo)
 ```
+
+Na produção, backup e expurgo do banco rodam no crontab da conta `deploy` desde 17/10/2026 (desvio
+decidido naquele dia: as pastas do runbook, em `/opt` e `/var/log`, são do root):
+
+```
+/home/deploy/
+├── motor-infra/                  # run_backup_banco.sh e run_expurgo_sessoes.sh (copiados da main, conferidos por hash)
+├── backups/banco/                # dumps -Fc + .sha256, pastas 700: diario/ (7 dias) e semanal/ (4 semanas; hardlink aos domingos)
+└── logs/                         # backup_banco.log e expurgo_sessoes.log
+```
+
+```cron
+10 5 * * * BACKUP_DIR=/home/deploy/backups/banco LOG_CRON=/home/deploy/logs/backup_banco.log /home/deploy/motor-infra/run_backup_banco.sh >> /home/deploy/logs/backup_banco.log 2>&1
+40 4 * * * LOG_CRON=/home/deploy/logs/expurgo_sessoes.log /home/deploy/motor-infra/run_expurgo_sessoes.sh >> /home/deploy/logs/expurgo_sessoes.log 2>&1
+```
+
+A ordem das linhas no arquivo é indiferente; a de execução (expurgo às 04:40, antes do backup das
+05:10) é a política de retenção (§9.1 do `docs/banco_deploy.md`). O offboarding padrão da conta
+(`gpasswd -d` do `docker`, `userdel -r`) mataria os dois crons e, no `userdel -r`, apagaria os
+dumps: ver `docs/acesso_deploy_colaborador.md` §4 antes de mexer nela. Manter os dois na conta
+`deploy` ou movê-los para root ou para uma conta de serviço é decisão pendente. Os dados do
+Postgres ficam no volume Docker **`app_postgres_data`** (o `postgres_data` do compose, com o
+prefixo do projeto `app`; `docker volume ls`), o único que nenhum pipeline regenera.
 
 ### Arquivos que NÃO estão no git em claro (os de configuração têm cópia cifrada em `secrets/` — `docs/backup_restore.md`)
 
 | Arquivo | Conteúdo |
 |---|---|
 | `app/Caddyfile` | Configuração do Caddy com domínio real |
-| `app/.env` | Segredos e pins do deploy: `AUTHELIA_*`, `API_TOKENS`, `API_TELEGRAM_TOKEN`, `API_BOT_SENHA`, `POSTGRES_*`, `MOTOR_DATABASE_URL`, `WEB_IMAGE`/`API_IMAGE` (o compose aborta sem os obrigatórios) |
+| `app/.env` | Segredos e pins do deploy: `AUTHELIA_*`, `API_TOKENS`, `API_TELEGRAM_TOKEN`, `API_BOT_SENHA`, `POSTGRES_*`, `MOTOR_DATABASE_URL`, `MOTOR_APP_DB_PASSWORD`/`MOTOR_AUDITORIA_DB_PASSWORD` (senhas dos papéis do D20: o compose não as lê; a do `app` vai dentro da URL), `WEB_IMAGE`/`API_IMAGE` (o compose aborta sem os obrigatórios) |
 | `app/authelia/configuration.yml` | Configuração Authelia com domínio real |
 | `app/authelia/users_database.yml` | Usuários e hashes de senhas |
 | `data/outputs/` | Todos os parquets (~1,6 GB) |

@@ -28,9 +28,11 @@ import argparse
 import hashlib
 import json
 import os
+import re
 import sys
 from pathlib import Path
 from typing import Any
+from urllib.parse import unquote
 
 from . import postgres
 
@@ -176,23 +178,190 @@ def _conectar_com_diagnostico(psycopg: Any, url: str) -> Any:
     """
     try:
         return psycopg.connect(url)
-    except psycopg.OperationalError as erro:
+    # `psycopg.Error`, a base de TODA falha do driver, e nao so' `OperationalError`. URL
+    # malformada levanta `ProgrammingError` -- o parse do libpq a recusa antes de qualquer
+    # conexao --, e ate' 25/10/2026 ela escapava daqui como traceback cru, com a mensagem do
+    # libpq, que CITA o trecho recusado. Medido com psycopg 3.3.4: `invalid percent-encoded
+    # token: "<a senha>"`, `unexpected spaces found in "<a senha>"` e, com o esquema em
+    # maiuscula ou o colchete do IPv6 aberto, a URL INTEIRA do dono.
+    except psycopg.Error as erro:
         # Erro ESPERADO numa ferramenta de operador (senha errada, banco inexistente,
-        # servidor fora). Traceback aqui nao ajuda ninguem: esconde a linha que importa
-        # no meio de sete quadros de pilha. A mensagem do servidor e' preservada, ja' sem
-        # a string de conexao -- `_sem_segredo` tira a URL e a senha se elas aparecerem.
-        detalhe = postgres._sem_segredo(str(erro).strip())  # noqa: SLF001 - mesma casa
-        dicas = (
-            "  - senha errada? se ela tem @ : / # ou %, a URL quebra. Tire a senha da URL\n"
-            "    e passe por PGPASSWORD, que o libpq le sozinho:\n"
-            '      $env:PGPASSWORD = "..."   (PowerShell)\n'
-            '      MOTOR_DATABASE_URL="postgresql://postgres@localhost:5432/<banco>"\n'
-            "  - o banco existe? CREATE DATABASE <nome> ENCODING 'UTF8';\n"
-            "  - o servidor esta no ar e ouvindo na porta 5432?"
+        # servidor fora, URL quebrada). Traceback aqui nao ajuda ninguem: esconde a linha
+        # que importa no meio de sete quadros de pilha. A mensagem do libpq e' preservada,
+        # mas limpa pela URL que foi USADA -- ver `_sem_segredo_da_conexao`.
+        bruto = str(erro).strip()
+    # A limpeza e o `raise` ficam FORA do `except` de proposito. Dentro dele, mesmo com
+    # `from None`, o `SystemExit` guardaria o erro original em `__context__` -- com a mensagem
+    # CRUA, senha e tudo. `from None` so' tira o contexto do traceback IMPRESSO; quem capturar
+    # o `SystemExit` (um teste, um script que chame `main()`) ainda o alcancaria. E a limpeza,
+    # se levantasse la' dentro, sairia num traceback que ENCADEIA o erro original ("During
+    # handling of the above exception..."), com a mensagem crua junto.
+    detalhe = _sem_segredo_da_conexao(bruto, url)
+    dicas = (
+        "  - senha errada? se ela tem @ : / # ou %, a URL quebra. Tire a senha da URL\n"
+        "    e passe por PGPASSWORD, que o libpq le sozinho:\n"
+        '      $env:PGPASSWORD = "..."   (PowerShell)\n'
+        '      MOTOR_DATABASE_URL="postgresql://postgres@localhost:5432/<banco>"\n'
+        "  - o banco existe? CREATE DATABASE <nome> ENCODING 'UTF8';\n"
+        "  - o servidor esta no ar e ouvindo na porta 5432?"
+    )
+    raise SystemExit(f"ERRO: nao consegui conectar.\n{detalhe}\n\nO que conferir:\n{dicas}")
+
+
+# ---------------------------------------------------------------------------------------
+# A limpeza da mensagem de conexao (revisao de seguranca do kit do P19, 25/10/2026)
+#
+# `postgres._sem_segredo` conhece UMA URL, a do piloto (`MOTOR_DATABASE_URL`), e e' a certa
+# para o piloto. Mas o CLI conecta, na pratica, com a do DONO (`MOTOR_DATABASE_URL_ADMIN`),
+# e era ela que saia na tela sem limpeza. `_sem_segredo` fica como esta' para os outros
+# chamadores; esta camada roda ANTES dela, e so' aqui.
+# ---------------------------------------------------------------------------------------
+
+#: Pedaco seguido de uma senha que, sozinho, ja' e' mascarado. Com `@` ou `/` sem codificar
+#: na senha, o libpq a PARTE e a mensagem traz so' um pedaco -- medido com psycopg 3.3.4: a
+#: senha `Ab12@<resto>` vira `failed to resolve host '<resto>@127.0.0.1'`, e mascarar a senha
+#: INTEIRA nao pega nada. Quatro e' o meio-termo: menos que isso apagaria letras soltas da
+#: mensagem; mais deixaria passar pedaco legivel. O pedaco MENOR nao fica de fora: sai como
+#: ficha (`_fichas_da_senha`), mas so' onde a mensagem o cita inteiro.
+TRECHO_MINIMO_DA_SENHA = 4
+
+# A senha numa URI, nas DUAS leituras. O libpq corta no PRIMEIRO `@` (e nem procura
+# credencial se vier `/` antes dele); quem digitou quis dizer ate' o ULTIMO `@`.
+_SENHA_NA_URI_LIBPQ = re.compile(r"^postgres(?:ql)?://[^:@/]*:([^@/]*)@", re.IGNORECASE)
+_SENHA_NA_URI_ATE_O_ULTIMO_ARROBA = re.compile(
+    r"^postgres(?:ql)?://[^:@/]*:(.*)@", re.IGNORECASE | re.DOTALL
+)
+# `password=` (e `sslpassword=`, que o padrao tambem casa) na query da URI ou no formato
+# chave=valor, ate' o proximo parametro (`&chave=` ou ` chave=`) ou o fim da string.
+_SENHA_EM_PARAMETRO = re.compile(
+    r"password\s*=\s*(.*?)(?=(?:&|\s+)[A-Za-z_]+\s*=|$)", re.IGNORECASE | re.DOTALL
+)
+# Onde o libpq PARTE a senha em outro componente da conexao -- o `@` que vira host, a `,` da
+# lista de hosts, o `:` da porta, a `/` do banco, o `?`, o `&` e o `=` da query, o espaco do
+# formato chave=valor -- e onde a mensagem cita um componente: entre aspas ou colchetes.
+_DELIMITADOR = r"@/:,?&=\"'\[\]\s"
+_PEDACO_ENTRE_DELIMITADORES = re.compile(rf"[^{_DELIMITADOR}]+")
+# A query de uma URI: tudo depois do primeiro `?`.
+_QUERY_DA_URI = re.compile(r"^postgres(?:ql)?://[^?]*\?(.*)$", re.IGNORECASE | re.DOTALL)
+
+
+def _formas_da_senha(url: str) -> set[str]:
+    """Toda forma em que a senha desta conexao pode aparecer numa mensagem de erro.
+
+    CRUA, como esta' na URL (`%40`): e' a que o parse do libpq cita ao recusar um trecho.
+    DECODIFICADA: o libpq decodifica os valores no parse, e o que se diz do VALOR depois disso
+    cita a forma decodificada (medido: o host `Vw%41Zq99@...` volta como `'VwAZq99@...'`).
+    Sem aspas e sem a barra invertida de escape, pelo formato chave=valor. E a `PGPASSWORD`:
+    com a URL sem senha -- a forma que a propria dica do CLI recomenda --, e' ela a senha da
+    conexao. O libpq nao a cita em mensagem nenhuma conhecida; entra por defesa. E o `repr`
+    de cada uma, que e' como o psycopg cita o host (`!r`): a barra invertida volta DOBRADA.
+    """
+    brutas = [
+        achado.group(1)
+        for achado in (
+            _SENHA_NA_URI_LIBPQ.match(url),
+            _SENHA_NA_URI_ATE_O_ULTIMO_ARROBA.match(url),
         )
-        raise SystemExit(
-            f"ERRO: nao consegui conectar.\n{detalhe}\n\nO que conferir:\n{dicas}"
-        ) from None
+        if achado
+    ]
+    brutas += [achado.group(1) for achado in _SENHA_EM_PARAMETRO.finditer(url)]
+    brutas.append(os.environ.get("PGPASSWORD", ""))
+    formas: set[str] = set()
+    for bruta in brutas:
+        for base in (bruta, unquote(bruta), bruta.strip("'"), re.sub(r"\\(.)", r"\1", bruta)):
+            # O `repr`, medido: `Ab12@Qx\7Vw9` da' `failed to resolve host 'Qx\\7Vw9@...'`, e
+            # nenhuma janela crua casa a barra DOBRADA -- sobrava `Qx\` na tela.
+            for forma in (base, repr(base)[1:-1]):
+                # VAZIA NUNCA entra (e' a URL sem senha): um pedaco vazio casa em toda posicao,
+                # e quem trocar a busca por `str.replace` meteria `<senha>` entre cada letra.
+                if forma:
+                    formas.add(forma)
+    return formas
+
+
+def _rotulo_da_url(url: str) -> str:
+    """De qual env a URL veio. E' o que diz ao operador QUAL das duas esta' quebrada."""
+    if url == os.environ.get(ENV_URL_ADMIN, "").strip():
+        return f"<{ENV_URL_ADMIN}>"
+    if url == postgres.url_configurada():
+        return f"<{postgres.ENV_URL}>"
+    return "<URL de conexao>"
+
+
+def _fichas_da_senha(url: str, formas: set[str]) -> set[str]:
+    """Pedacos da senha CURTOS demais para a janela, que saem so' quando citados INTEIROS.
+
+    Com `@` sem codificar, o libpq parte a senha e o que vem depois do PRIMEIRO `@` vira host
+    -- medido com psycopg 3.3.4 e libpq 18: `Mudar@123`, o formato mais comum de senha fraca
+    com `@`, da' `failed to resolve host '123@127.0.0.1'`. Tres letras a janela de
+    `TRECHO_MINIMO_DA_SENHA` nao alcanca, e mascarar `123` em TODO lugar apagaria o que nao e'
+    segredo (o `1` de `Senha@1` comeria o `127.0.0.1` e o `[Errno 11001]` -- e o estrago diria
+    qual letra era). Por isso a ficha so' sai entre delimitadores, que e' como o libpq cita um
+    componente: entre aspas, colado no `@` do host, depois do `:`. Vale tambem para a lista
+    de hosts (`,`) e para o esquema em maiuscula com espaco na senha, em que o libpq cita so'
+    o comeco dela.
+
+    Entra ainda o parametro da query SEM `=`: o libpq o cita inteiro (`missing key/value
+    separator "=" in URI query parameter: "<parametro>"`), e `?password<a senha>`, digitado
+    sem o `=`, nao casa `_SENHA_EM_PARAMETRO` -- era a senha INTEIRA na tela.
+    """
+    fichas = {
+        pedaco
+        for forma in formas
+        for pedaco in _PEDACO_ENTRE_DELIMITADORES.findall(forma)
+        if len(pedaco) < TRECHO_MINIMO_DA_SENHA
+    }
+    query = _QUERY_DA_URI.match(url)
+    if query:
+        fichas.update(p for p in query.group(1).split("&") if p and "=" not in p)
+    return fichas
+
+
+def _sem_trechos_da_senha(texto: str, formas: set[str], fichas: set[str]) -> str:
+    """Troca por `<senha>` toda faixa do texto coberta por um pedaco de alguma forma da senha.
+
+    Marca as POSICOES de cada ocorrencia de cada pedaco de `TRECHO_MINIMO_DA_SENHA`
+    caracteres (a forma inteira, se for mais curta) e troca cada faixa contigua marcada por
+    UM `<senha>`. Garantia: nenhum pedaco desse tamanho de nenhuma forma sobra no texto. Pode
+    mascarar demais -- uma palavra da mensagem que coincida com quatro letras seguidas da
+    senha --, e esse e' o lado certo de errar. Cada FICHA (`_fichas_da_senha`) entra na mesma
+    marcacao, mas so' onde aparece INTEIRA entre delimitadores.
+    """
+    coberto = [False] * len(texto)
+    for forma in formas:
+        tamanho = min(len(forma), TRECHO_MINIMO_DA_SENHA)
+        for inicio in range(len(forma) - tamanho + 1):
+            pedaco = forma[inicio : inicio + tamanho]
+            achado = texto.find(pedaco)
+            while achado != -1:
+                coberto[achado : achado + tamanho] = [True] * tamanho
+                achado = texto.find(pedaco, achado + 1)
+    for ficha in fichas:
+        inteira = rf"(?<![^{_DELIMITADOR}]){re.escape(ficha)}(?![^{_DELIMITADOR}])"
+        for ocorrencia in re.finditer(inteira, texto):
+            coberto[ocorrencia.start() : ocorrencia.end()] = [True] * len(ficha)
+    partes: list[str] = []
+    for posicao, letra in enumerate(texto):
+        if not coberto[posicao]:
+            partes.append(letra)
+        elif posicao == 0 or not coberto[posicao - 1]:
+            partes.append("<senha>")
+    return "".join(partes)
+
+
+def _sem_segredo_da_conexao(texto: str, url: str) -> str:
+    """Tira da mensagem a URL que o CLI USOU e a senha dela; depois, o que `_sem_segredo` tira.
+
+    A ORDEM importa. A URL inteira sai primeiro, trocada pelo nome da env de onde veio; os
+    pedacos da senha saem depois, e so' FORA do rotulo. `_sem_segredo` vem por ultimo: se
+    rodasse antes e a senha do piloto fosse curta (`x`, como nos testes), ele trocaria letras
+    DENTRO da URL e da senha do dono, que deixariam de casar.
+    """
+    formas = _formas_da_senha(url)
+    fichas = _fichas_da_senha(url, formas)
+    pedacos = texto.split(url) if url else [texto]
+    limpo = _rotulo_da_url(url).join(_sem_trechos_da_senha(p, formas, fichas) for p in pedacos)
+    return postgres._sem_segredo(limpo)  # noqa: SLF001 - mesma casa
 
 
 def _aplicadas(con: Any) -> dict[str, str]:

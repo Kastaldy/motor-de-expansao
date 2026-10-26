@@ -11,10 +11,28 @@ A `main` não é mais protegida por "1 aprovação humana". Ela é protegida por
 
 | check | quem é | o que reprova |
 |---|---|---|
-| `test` | `ci.yml` | suíte full, `ruff`, `mypy`, `gitleaks`, `pip-audit`. Gate sem bypass. |
-| `guard` | `guard.yml` → `scripts/loop_guard.py` | o PR toca caminho **crítico** (M1, `config.py`, `deploy/`, `secrets/`, `Dockerfile.*`, CI) ou de **governança** (`.github/`, `CLAUDE.md`, `REVIEW.md`, `tasks/backlog.md`, o próprio guard e, depois do bootstrap, `web/`, `src/motor_expansao/api/`, `prompts/`, `.claude/` — lista completa em `scripts/loop_guard.py`) **sem a label humana validada**. |
+| `test` | `ci.yml` | suíte full, `ruff`, `mypy`, `gitleaks`, `pip-audit` e o banco de ensaio (`scripts/ci/banco_de_ensaio.sh`, 24/10/2026: migrations do zero no PostGIS de produção e o teste de integração do login, em que pular é falhar). Gate sem bypass. |
+| `guard` | `guard.yml` → `scripts/loop_guard.py` | o PR toca caminho **crítico** (M1, `config.py`, `deploy/`, `secrets/`, `Dockerfile.*`, CI, o banco de produção — ver a nota abaixo da tabela) ou de **governança** (`.github/`, `CLAUDE.md`, `REVIEW.md`, `tasks/backlog.md`, o próprio guard e, depois do bootstrap, `web/`, `src/motor_expansao/api/`, `prompts/`, `.claude/` e os instrumentos de veredito do banco — lista completa em `scripts/loop_guard.py`) **sem a label humana validada**. |
 | `review-gate` | `guard.yml` | a label `criticidade:*` do PR **não bate** com o campo Criticidade do bloco em `tasks/backlog.md` **da base** (criticidade não é auto-declarada), ou falta a label humana em bloco Alta/Crítica. |
 | `claude-review` | `claude-review.yml` | achado de **severidade ALTA** pela régua do `REVIEW.md` (defeito técnico). |
+
+> **O banco de produção no `guard` (regras de 24/10/2026).** **Crítico:** o pacote
+> `src/motor_expansao/db/` inteiro (migrations incluídas; módulo novo nasce coberto), todo
+> arquivo sob `scripts/cron/` com `banco` ou `sessoes` no caminho (em 24/10/2026,
+> `run_backup_banco.sh` e `run_expurgo_sessoes.sh`, que operam o Postgres com a senha do papel
+> dono) e `scripts/ci/` (o banco de ensaio que o job `test` executa a partir do HEAD do PR).
+> **Governança:** `scripts/conferir_usuarios_banco.py`, `scripts/rastrear_arquivo.py` e
+> `tests/contracts/test_conexao_por_uma_porta_so.py`. Os crons das outras frentes, os demais
+> testes do banco e `scripts/extrair_migracoes.py` seguem livres. Nos dois modos (`--stdin` do
+> CI e `--base` do ralph), o guard desfaz a citação do git antes de casar as regras: caminho
+> com acento chega entre aspas e com escape octal no `gh pr diff --name-only` e no
+> `git diff --name-only`, e sem isso um acento no caminho contornava qualquer regra ancorada.
+> **Regra nova só julga PR depois de mergeada:** o job `guard` roda o `loop_guard.py` da base
+> (§4), então o PR que traz a regra é julgado pelas antigas — foi o caso destas.
+> **Efeito no Auditor de PRs (§5):** ele reclassifica os PRs mergeados da janela (até 40) com o
+> `loop_guard.py` da `main`, então, depois do merge, PR antigo que tocou `db/` sem `critica-aprovada`
+> passa a contar como bypass do guard (a simulação de 24/10/2026 apontou o #447 e o #463; o alerta
+> de suspensão já disparava antes e não muda de estado).
 
 **Régua de autonomia por criticidade do bloco:**
 
@@ -122,3 +140,13 @@ Incidente = PR auto-mergeado que reprove o `guard` em auditoria, introduza segre
 - **`strict: true`** exige a branch atualizada com a `main`: se a `main` andar, o PR precisa de
   "Update branch" — e o update **apaga as labels de aprovação** (por desenho). Em PR Alta/Crítica,
   rotule por último.
+- **`critica-aprovada` não exige outra pessoa.** O `guard` só confere que quem aplicou a label
+  é um dos donos, e num bloco Baixa/Média o `review-gate` não pede `aprovado-humano`: um PR que
+  toque caminho crítico fora do `.github/CODEOWNERS` (entre eles o banco, `scripts/ci/`,
+  `authelia/`, `renda/` e `recomendacao/`), aberto por um dono, pode ser liberado só por ele. Pôr
+  o banco no `CODEOWNERS` é decisão dos donos, registrada no backlog (BLK-BANCO-08).
+- **O `test` passou a depender do Docker Hub** (banco de ensaio, 24/10/2026): a tag
+  `postgis/postgis:18-3.6` do compose é resolvida a cada execução (o digest sai no log como
+  `imagem resolvida`), então um limite de download anônimo ou uma reconstrução nova da tag
+  pode deixar o `test` vermelho sem mudança de código. Saídas: `docker/login-action` com um
+  token do Docker Hub em secret, ou uma cópia da imagem no GHCR.

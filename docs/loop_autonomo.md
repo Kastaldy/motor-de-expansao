@@ -53,10 +53,21 @@ O loop também **respeita `Depende de`**: só inicia um bloco cujas dependência
 ## As 4 redes de segurança (substituem o humano no loop)
 1. **Container sem credencial** — o `run-ralph-loop.sh` **aborta** se achar `VPS_`, `SSH_PRIVATE_KEY`,
    `CLICKUP_WRITE`, `DEPLOY_KEY`, `GROWTH_API_*` no ambiente. Sem chave de VPS → impossível deployar.
+   A regex ainda não cobre as credenciais do banco (`POSTGRES_*`, `MOTOR_DATABASE_URL*`,
+   `PGPASSWORD`, `BACKUP_RESTIC_*`, `BACKUP_S3_*`, `MOTOR_SENHA_INICIAL`, `MOTOR_APP_DB_PASSWORD`,
+   `MOTOR_AUDITORIA_DB_PASSWORD`): pendência no backlog (BLK-BANCO-08).
 2. **Guard de M1/VPS** (`scripts/loop_guard.py`) — após cada iteração, inspeciona o `git diff` do loop
-   e **aborta + escreve `RELATORIO-BLOQUEIO.md`** se tocar `config.py`, `pipelines/m1/`, `*scoring*`,
+   e **aborta + escreve `RELATORIO-BLOQUEIO.md`** se tocar caminho crítico (lista completa no próprio
+   guard), como `config.py`, `pipelines/m1/`, `*scoring*`,
    artefatos M1 (`brasil_*`/`hexagonos_brasil*`), `deploy/`, qualquer `Dockerfile.*` (web/api/loop),
-   `docker-compose*`, `Caddyfile*`, `authelia/`, `.env*`, `secrets/`, `.github/workflows/`.
+   `docker-compose*`, `Caddyfile*`, `authelia/`, `.env*`, `secrets/`, `.github/workflows/` e o banco de
+   produção (regras de 24/10/2026): o pacote `src/motor_expansao/db/` inteiro, os arquivos de
+   `scripts/cron/` com `banco` ou `sessoes` no caminho e `scripts/ci/`. Os instrumentos de veredito do
+   banco (`scripts/conferir_usuarios_banco.py`, `scripts/rastrear_arquivo.py`) e o contrato da porta
+   única (`tests/contracts/test_conexao_por_uma_porta_so.py`) são governança: no loop viram aviso, e
+   no PR pedem `aprovado-humano`. Caminho com acento, que o git cita entre aspas e com octal, é
+   desfeito antes de casar. No PR, regra nova só vale depois do merge na `main`: o check `guard`
+   roda o `loop_guard.py` da base. O loop roda o do próprio checkout.
 3. **Testes = gate** — `ruff check .` + `pytest -q` no QA, **sem bypass**; não avança com teste vermelho.
 4. **Sem merge/push/deploy** — o loop só **commita por path** no branch atual. Revisão e merge são seus.
 
@@ -125,6 +136,6 @@ blocos loop-safe que consomem `data/staging` — mas **não** os commita (seguem
 - **Ingestão ao vivo (Growth API) NÃO roda no loop** — o container é credential-free por decisão. Se um
   bloco loop-safe precisar de dados novos, materialize-os antes (passo humano) ou rode o bloco de
   ingestão (Alta, com gate) fora do loop. O `BLK-DIM-00` já materializou a base atual.
-- **Blocos que tocam M1/VPS/produção nunca são loop-safe** — por construção, o guard os bloqueia.
+- **Blocos que tocam M1/VPS/produção/banco nunca são loop-safe** — por construção, o guard os bloqueia.
 - O loop é **otimista**: confia nos testes. Cobertura fraca de teste num bloco = risco. Por isso a
   revisão humana do branch antes do merge continua obrigatória.

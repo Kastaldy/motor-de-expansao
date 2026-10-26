@@ -32,6 +32,9 @@ escreve em BR e AR, e arquivo novo nasce `deploy:motor-ops` (efeito do `setgid`)
 - `/opt/motor-expansao/cadastro/` e `/opt/motor-expansao-ar/cadastro/` — `ubuntu:ubuntu`, arquivos `0600`.
   É onde vive o `acesso_abas.json` (controle de abas, **fail-closed**): sobrescrever por `scp` com
   outro dono derruba o controle de abas inteiro, **sem erro visível**.
+  No BR, desde 23/10/2026, quem controla as abas é o banco: o `acesso_abas.json` de lá só volta a
+  valer se a `MOTOR_DATABASE_URL` for esvaziada (o da AR segue no comando). A pasta do BR guarda ainda o
+  `bot_allowlist.json` do bot, também fail-closed: ilegível, ninguém usa o bot.
 - `/opt/motor-expansao/logs/acesso/` — `ubuntu`, `0700`, trilha de acesso (DEC-027), escrita do app.
 - `authelia/`, `secrets/`, `Caddyfile` — ficam dentro de `/opt/motor-expansao/app/`, com permissão própria.
 
@@ -142,4 +145,31 @@ userdel -r <pessoa>
 ```
 
 As permissões de grupo em `/opt/...` podem ficar — sem ninguém em `motor-ops`, elas não concedem nada.
-Depois de revogar, considerar **rotacionar os segredos do `.env`** se a saída não foi amigável. **Antes de tirar o `docker`/`motor-ops` ou dar `userdel`, confira `crontab -l -u <pessoa>`:** desde 17/10/2026 o cron do backup do banco (`run_backup_banco.sh`) roda no crontab do `deploy`, e revogar sem movê-lo para outro usuário para o backup em silêncio.
+Depois de revogar, considerar **rotacionar os segredos do `.env`** se a saída não foi amigável. **Antes de tirar o `docker`/`motor-ops` ou dar `userdel`, confira `crontab -l -u <pessoa>`:** desde 17/10/2026 os crons do backup do banco (`run_backup_banco.sh`, 05:10 UTC) e do expurgo da origem das sessões (`run_expurgo_sessoes.sh`, 04:40 UTC) rodam no crontab do `deploy`, e revogar sem movê-los para outra conta interrompe os dois — em silêncio enquanto o monitor `banco` do healthcheck não estiver instalado no root (`docs/infra_producao.md`, "Alertas automáticos").
+
+### Antes de revogar a conta `deploy`: o backup do banco mora nela
+
+Desvio decidido em 17/10/2026 (as pastas do runbook, em `/opt` e `/var/log`, são do root). Manter
+os dois crons aqui ou movê-los para root ou para uma conta de serviço é decisão pendente.
+
+| Caminho | O quê |
+|---|---|
+| `/home/deploy/motor-infra/` | `run_backup_banco.sh` e `run_expurgo_sessoes.sh` |
+| `/home/deploy/backups/banco/diario/` e `.../semanal/` | os dumps `-Fc` do banco, cada um com o seu `.sha256` (pastas `700`; 7 dias e 4 semanas) |
+| `/home/deploy/logs/` | `backup_banco.log` e `expurgo_sessoes.log` |
+
+Tirar só o login (o `truncate`) não afeta os crons. Tirar o `docker` faz os dois falharem todo dia
+(os dois precisam do Docker para chegar ao banco, e o aviso `!!` do script — o que o monitor `banco`
+repete no alerta — culpa o container, "nao esta de pe"; a permissão negada só aparece na linha de
+cima, a do próprio `docker`), e `userdel -r` apaga o home inteiro — scripts, dumps e logs.
+Antes de qualquer um dos dois:
+
+1. instalar os dois crons na conta que vai assumir, com os caminhos dela (instalação no cabeçalho
+   de cada script em `scripts/cron/`; a ordem, expurgo às 04:40 antes do backup das 05:10, é a
+   política de retenção — §9.1 do `docs/banco_deploy.md`);
+2. copiar `diario/` e `semanal/` para o destino novo e conferir com `sha256sum -c` dentro de cada
+   pasta;
+3. esperar o primeiro backup no destino novo terminar com a linha de fim no log;
+4. se a linha do `banco` já estiver no crontab do root, trocar os três `MONITOR_BANCO_*` dela.
+
+Só então tirar o `docker` ou dar `userdel`.

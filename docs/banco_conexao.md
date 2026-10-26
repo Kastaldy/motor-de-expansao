@@ -4,6 +4,10 @@
 > da inclusão do banco no motor: o motor fala com o banco, e continua funcionando sem ele.
 > Autorização e RBAC são o Marco B e **não** estão aqui; a aplicação de migrations ganhou a §8.
 >
+> **Estado em 24/10/2026:** a produção roda com o banco ligado desde 23/10/2026 — o RBAC do piloto BR
+> vem dele, e o §3 diz o que o piloto faz quando ele falha. Depois do corte do P19, o banco deixa de
+> ser opcional (§1).
+>
 > Responsável: Vinícius · Agosto 2026
 
 ## 1. O que este marco entrega
@@ -11,6 +15,11 @@
 Uma porta única do motor para o banco, que existe **antes** do banco existir. Sem a
 variável `MOTOR_DATABASE_URL`, nada é tentado e o piloto se comporta exatamente como antes
 — é isso que permite a imagem ir para produção antes de haver serviço de banco no compose.
+
+**O mecanismo continua; a premissa mudou.** Desde 23/10/2026 a produção roda com `MOTOR_DATABASE_URL`
+preenchida, e esvaziá-la é o interruptor de incidente do `banco_deploy.md` §8. Depois do corte do P19
+(`MOTOR_AUTENTICACAO_PROPRIA` ligada), o banco deixa de ser opcional: a sessão vive em tabela, e sem ele
+ninguém entra.
 
 Ainda **não** entrega: migrations aplicáveis, seed de RBAC, substituição do
 `web/server/acesso.py`, nem qualquer consulta de domínio.
@@ -20,7 +29,9 @@ Ainda **não** entrega: migrations aplicáveis, seed de RBAC, substituição do
 Decidido em 25/08/2026: **nenhum comando SQL parte do desenvolvimento.** O banco é
 provisionado, migrado e carregado por Vinícius; o motor chega pronto para receber, ligado
 por variável de ambiente. A verificação das consultas contra dado real também é dele — a
-suíte automatizada usa dublês e não abre conexão.
+suíte unitária usa dublês e não abre conexão. Desde 24/10/2026 o check `test` tem também um passo com
+PostGIS de verdade, num banco **vazio**: migrations do zero e o login de ponta a ponta
+(`banco_deploy.md` §1.5).
 
 ## 3. Os três estados
 
@@ -36,6 +47,27 @@ diferentes para quem opera:
 "Sem driver" é deliberadamente um caso de *não configurado*, não um erro: quem roda os
 pipelines do M1 não precisa de psycopg, e um `import` desprotegido faria o `app.py` falhar
 no boot por uma dependência que aquele caminho não usa.
+
+### Com o RBAC no comando: o que o piloto faz quando o banco falha
+
+Desde 23/10/2026 a produção roda com o banco ligado, e o RBAC do piloto BR vem dele
+(`web/server/acesso.py`). O pool tem de 1 a 4 conexões e espera até 5 s por uma; cada consulta tem
+`statement_timeout` de 2 s e `lock_timeout` de 1 s (`db/postgres.py`). Quando o RBAC fica sem resposta,
+o gate e o `/api/me` aplicam a mesma régua, que separa duas falhas:
+
+| Falha | Gate (rota com capacidade) | `/api/me` |
+|---|---|---|
+| **Queda provada:** o servidor recusou ou derrubou a conexão (`banco_em_falha()`). Vale até o banco voltar a responder | rota sensível — Visão Executiva e rede, dossiê do imóvel, Viabilidade e painel de Acessos — responde **403** "Acesso indisponível no momento. Tente novamente em instantes."; as demais passam para quem o Authelia autenticou, inclusive quem está desativado no banco | mostra só Mapa e Oportunidades |
+| **Sem prova de queda** (`BancoSemProvaDeQueda`): pool saturado, `lock_timeout`, `statement_timeout` ou tempo de conexão esgotado | **503** "Piloto ocupado no momento. Tente novamente em instantes.", com `Retry-After: 2` | o **mesmo 503**, no código desde 24/10/2026 (#463, follow-up A); antes — e na imagem no ar nesse dia (`main` em `84429f3e`), até o deploy que leve a mudança —, ele escondia as abas sensíveis de quem as tem, enquanto o gate respondia 503 |
+
+Só a queda provada degrada porque a degradação **libera** as rotas não sensíveis sem checar permissão —
+aceitável com o banco fora, um furo com ele no ar e sob carga. A SPA repete o `/api/me` quando recebe
+503 (três tentativas ao todo, com 2 s de espera) e, enquanto não sabe as abas, abre como abriria sem
+ele: quem barra continua sendo o gate, rota a rota. O log do RBAC indisponível sai uma vez por
+episódio, e não por requisição.
+
+**Depois do corte do P19, banco fora é piloto BR fora:** o `/api/verify` responde 503, o Caddy nega
+tudo que não for 2xx, e ninguém entra — nem quem já estava dentro.
 
 ## 4. Como ligar e testar localmente
 
@@ -68,7 +100,8 @@ O bloco `banco` da resposta traz `configurado`, `conectado`, `servidor`, `postgi
 
 **A segunda metade do teste importa tanto quanto a primeira:** subir **sem**
 `MOTOR_DATABASE_URL` e confirmar que tudo funciona como antes. É o que prova que a imagem
-pode ir para produção antes do banco.
+pode ir para produção antes do banco. Vale enquanto `MOTOR_AUTENTICACAO_PROPRIA` estiver desligada:
+com ela ligada, sem banco ninguém entra (§1).
 
 ## 5. Onde o diagnóstico mora, e por que não no `/api/health`
 
@@ -81,6 +114,13 @@ atrás do 404 fail-closed do middleware e da allowlist de admin.
 Há uma segunda razão, operacional: **o healthcheck do container não pode depender do
 banco.** O piloto foi desenhado para servir sem ele; amarrar os dois faria o Docker
 reiniciar o `web` a cada piscada do Postgres, derrubando tudo que ainda funcionava.
+
+**Com o banco no comando, a própria rota de diagnóstico depende dele.** `/api/acessos/` exige a
+capacidade `acesso.painel_ver`, que é sensível: com o banco fora a rota responde 403, e com ele só
+ocupado, 503 (§3) — justamente quando se queria o bloco `banco`. Nessa hora o diagnóstico é pela VPS:
+`docker compose -f docker-compose.prod.yml ps postgres`, `... logs --tail 50 postgres` e, no log do
+`web`, as linhas `RBAC indisponivel` (banco fora) ou `o RBAC nao respondeu` (banco ocupado; ela sai
+do `/api/me`, porque o 503 do gate não tem linha própria).
 
 ## 6. Duas portas, e a diferença é imposta pelo banco
 
@@ -98,7 +138,8 @@ with db.transacao(id_usuario=42) as con:       # ESCRITA
 servidor recusa qualquer escrita ali dentro. Isso importa porque o guardrail que hoje prova
 o read-only do piloto (`test_leituras_nao_mutam_artefatos`) funciona por *snapshot do
 filesystem* — e um `INSERT` não aparece em snapshot de arquivo. A proteção definitiva é o
-papel `app` do **D20**; até ele existir, o `READ ONLY` cobre o caminho de leitura.
+papel `app` do **D20**, de pé na produção desde 17/10/2026; antes dele era o `READ ONLY` que cobria o
+caminho de leitura, e ele continua lá.
 
 **`transacao()` exige `id_usuario`** e emite `set_config('app.id_usuario', ..., true)` como
 primeiro comando. É o insumo das triggers de auditoria do **D19**: sem ele, toda concessão
@@ -151,7 +192,8 @@ python -m motor_expansao.db conferir    # o banco tem o que o motor espera?
 justamente para que a aplicação não possa desligar a própria trigger de auditoria. A ferramenta lê
 `MOTOR_DATABASE_URL_ADMIN` primeiro e só cai para `MOTOR_DATABASE_URL` quando aquela não existe — o
 que é o caso do banco de teste local, onde os dois papéis são a mesma pessoa. Em produção, usar a
-mesma URL nas duas anula o D20 em silêncio, e é isso que o `conferir` denuncia.
+mesma URL nas duas anula o D20 em silêncio, e quem denuncia é o `privilegios`, que conecta pela
+`MOTOR_DATABASE_URL` — o `conferir`, que conecta como dono, passa verde.
 
 **`registrar` existe para o cluster que já rodou o roteiro à mão.** Ele não executa nada: preenche
 `migracoes_aplicadas` com as versões cujo efeito já está no banco, usando os hashes do manifesto. É
@@ -160,13 +202,19 @@ reprocessar. A `000` é a única que precisa ir à mão antes — ela cria o pr�
 
 **`conferir` lê catálogo, nunca dado.** Ele checa as extensões, os seis números da §0 da
 `verificacao.md`, o `security_definer` e o `search_path` das oito funções (D19/D21/D29), o que está
-registrado como aplicado, e o estado do provisionamento. Devolve código 1 na primeira divergência,
-então serve como passo de deploy.
+registrado como aplicado, e o estado do provisionamento — desde o #447, trigger de auditoria fora de
+`'A'` reprova. Devolve código 1 se houver qualquer divergência (e lista todas), então serve como passo
+de deploy. **Não** confere se os papéis existem, coluna comum, a versão do servidor ou do PostGIS (só a
+presença das extensões) nem privilégio de banco: esse é o `privilegios` (`banco_deploy.md` §8).
 
 > **Uma migration editada depois de aplicada é denunciada.** O hash registrado no banco deixa de
 > bater com o do arquivo, e as três subcomandos avisam. A `convencoes.md` §7 proíbe isso por prosa;
 > aqui vira sinal — o banco fica num estado que nenhum arquivo descreve, e a correção é uma migration
 > nova, nunca editar a antiga.
+
+**Mudança no pacote `db/` — migration incluída — é PR CRÍTICO no guard** (`critica-aprovada`;
+`banco_deploy.md` §9.0), e o check `test` aplica a cadeia do zero num PostGIS de verdade em todo PR para
+a `main` (`banco_deploy.md` §1.5).
 
 ## 9. Próximo passo — entregue em setembro de 2026 (subida no `docs/banco_deploy.md`)
 
