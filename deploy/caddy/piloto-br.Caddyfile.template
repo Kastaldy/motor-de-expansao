@@ -52,6 +52,8 @@
 # nao sobra de deploy.
 
 piloto.ultra-expansao.tech {
+    import sec_headers
+
     # O QUE A BORDA PROTEGE — e o matcher nao e' refinamento, e' o que impede a tela de
     # login de ficar atras da autenticacao que ela existe para obter.
     #
@@ -113,9 +115,10 @@ piloto.ultra-expansao.tech {
     # o que nao estiver aqui e' perdido.
     log {
         output file /var/log/caddy/piloto-access.log {
-            roll_size 20mb
+            roll_size 20MiB
             roll_keep 10
             roll_keep_for 2160h
         }
+        format json
     }
 }
