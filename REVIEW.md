@@ -42,7 +42,8 @@
    DEC-004 (tiles do relatório pontual e, pela emenda de 2026-10-14, do PDF de concorrência
    da unidade), DEC-010 (geocoding da barra de busca), DEC-011 (tiles do relatório municipal), DEC-018 (tiles de satélite Esri da vista aérea do relatório pontual, com chave ArcGIS por env)
    e DEC-074 (isócrona de carro pelo serviço de rotas PRÓPRIO, `MOTOR_ROTAS_URL`, só no
-   cálculo do alcance do ponto: ficha, PDF pontual e comparativo; opcional por env, e sem
+   cálculo do alcance do ponto: ficha, PDF pontual (do piloto e, pela Emenda 3, da API
+   pública) e comparativo; opcional por env, e sem
    ela a opção não aparece). Qualquer rede fora desses caminhos é achado ALTA.
 6. **Teste removido ou `skip` novo sem justificativa explícita** no PR.
 

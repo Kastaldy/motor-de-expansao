@@ -84,7 +84,8 @@ paths:
       description: >
         Recebe uma coordenada {lat,lng} OU um link do Google Maps (maps_url) e retorna o estudo
         do ponto. Por padrao devolve JSON com KPIs; com formato=pdf (ou Accept: application/pdf)
-        devolve o PDF de 7 paginas. Raio fixo 1.0 km (DEC-021). Importa, nao edita, a camada censo_*.
+        devolve o PDF de 7 paginas. Sem `alcance`, raio de 1.0 km (DEC-021); com `alcance` (DEC-074,
+        Emenda 3), o PDF Estudo daquele recorte, sem viabilidade. Importa, nao edita, a camada censo_*.
       operationId: postAnalisar
       parameters:
         - in: query
@@ -119,7 +120,10 @@ paths:
           description: >
             Coordenada invalida / maps_url nao parseavel / ponto fora do Brasil. Inclui
             o caso de ponto DENTRO do bounding box mas fora de qualquer municipio (ex.:
-            offshore) -> codigo "coordenada_invalida".
+            offshore) -> codigo "coordenada_invalida". Com `alcance` fora do raio de 1 km:
+            "alcance_so_no_pdf" (saida JSON), "alcance_so_no_estudo" (junto de `viabilidade`
+            ou `info_imovel`) e "alcance_invalido" (recorte nao analisavel, ex.: ponto a mais
+            de 300 m de qualquer rua nos minutos de carro).
           content:
             application/json:
               schema:
@@ -155,6 +159,14 @@ paths:
                 $ref: "#/components/schemas/HTTPValidationError"
         "500":
           description: Erro interno ao gerar o estudo/PDF.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "503":
+          description: >
+            Servico de rotas indisponivel no alcance de carro (carro_5min/carro_10min) ->
+            codigo "rotas_indisponiveis". O pedido NAO cai para o raio de 1 km.
           content:
             application/json:
               schema:
@@ -195,7 +207,7 @@ components:
 
     AnalisarRequest:
       type: object
-      description: Fornecer {lat,lng} OU maps_url. Raio e fixo 1.0 km (nao e parametro).
+      description: Fornecer {lat,lng} OU maps_url. Sem `alcance`, o raio e o de 1.0 km.
       properties:
         lat:
           type: number
@@ -225,6 +237,16 @@ components:
             Nome de quem pediu; carimba a marca d'agua do PDF. Omitido, vale o
             consumidor do token.
           example: "Juan"
+        alcance:
+          type: [string, "null"]
+          enum: [raio_1km, raio_2km, carro_5min, carro_10min, null]
+          default: null
+          description: >
+            Recorte do Estudo (DEC-074, Emenda 3): raio_1km (o de sempre), raio_2km,
+            carro_5min ou carro_10min (isocrona de carro, sem transito). Fora do raio de
+            1 km vale so no PDF e sem `viabilidade` nem `info_imovel` (400 nos dois casos):
+            o relatorio completo e do raio de 1 km. Servico de rotas fora -> 503.
+          example: carro_10min
         info_imovel:
           type: [object, "null"]
           description: >

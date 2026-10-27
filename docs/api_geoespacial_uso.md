@@ -134,6 +134,7 @@ ou **PDF** (8 páginas sem `viabilidade`: as 7 de base + a Conclusão só-estudo
 | `solicitante` | `string` / `null` | Não | Nome de quem pediu; carimba a marca d'água. Omitido, vale o consumidor do token |
 | `info_imovel` | `object` / `null` | Não | Dados do imóvel (`metragem_m2`, `aluguel_pedido`, `valor_venda`, `pe_direito_m`, `vagas`, `tipo_imovel`, `endereco`, `observacoes`) → página "Imóvel · Informações" |
 | `viabilidade` | `object` / `null` | Não | Cenário financeiro (`m2`, `aluguel`, `demanda` obrigatórios) → páginas de Viabilidade + Conclusão com selo financeiro |
+| `alcance` | `"raio_1km"` / `"raio_2km"` / `"carro_5min"` / `"carro_10min"` / `null` | Não | Recorte do Estudo (DEC-074, Emenda 3). Fora do raio de 1 km: só no PDF e sem `viabilidade` nem `info_imovel` (ver "Estudo por alcance" abaixo) |
 
 **`viabilidade` não repete `lat`/`lng`** — a coordenada é a do próprio request (ou a resolvida
 do `maps_url`). Dois lugares para o mesmo ponto seria um lugar para eles discordarem.
@@ -217,6 +218,25 @@ Com o cenário financeiro presente, a Conclusão deixa o modo só-estudo e volta
 piloto web entrega e, desde o BLK-RELPON-14, o **gerador único** do relatório pontual. Das páginas
 **opcionais** do gerador, o endpoint agora usa duas — **dados do imóvel** e **viabilidade** — e, com `API_ARCGIS_API_KEY` definida, a vista aérea (DEC-018), que soma 1 página às contagens acima. As
 **fotos do imóvel** continuam fora: o corpo da API é JSON e não carrega binário.
+
+#### Estudo por alcance (DEC-074, Emenda 3)
+
+Com `alcance` = `raio_2km`, `carro_5min` ou `carro_10min`, o PDF é o **Estudo** daquele recorte —
+o mesmo do botão "Estudo" da análise de ponto do piloto: população, renda, mercado e mapas medidos
+no recorte, metas de totais escaladas pela área (`fator = área / π`) e a Conclusão só com o selo
+demográfico. Os minutos de carro são **sem trânsito**, pela isócrona do serviço de rotas próprio
+(`MOTOR_ROTAS_URL`).
+
+| Pedido | Resposta |
+|---|---|
+| `alcance` ausente ou `raio_1km` | o de sempre (nada muda) |
+| `alcance` + PDF, sem `viabilidade` e sem `info_imovel` | 200, PDF Estudo do recorte |
+| `alcance` + saída JSON | 400 `alcance_so_no_pdf` |
+| `alcance` + `viabilidade` ou `info_imovel` | 400 `alcance_so_no_estudo` — o relatório completo é do raio de 1 km |
+| minutos de carro com o serviço de rotas fora | 503 `rotas_indisponiveis` |
+| ponto a mais de 300 m de qualquer rua, ou área acima dos tetos | 400 `alcance_invalido` |
+
+Em nenhum caso o pedido de recorte cai, em silêncio, para o raio de 1 km.
 
 **Performance:** a primeira chamada pode levar de 10 a 30 s (cold load dos Parquets +
 busca de tiles de mapa). Chamadas subsequentes ao mesmo município são mais rápidas
@@ -333,6 +353,16 @@ curl -s -X POST http://localhost:8077/api/v1/analisar \
   -H "Content-Type: application/json" \
   -d '{"lat": -21.9180, "lng": -46.6855, "formato": "pdf"}' \
   -o relatorio.pdf
+```
+
+### Estudo de 10 min de carro (PDF, sem viabilidade)
+
+```bash
+curl -s -X POST http://localhost:8077/api/v1/analisar \
+  -H "Authorization: Bearer dev-token" \
+  -H "Content-Type: application/json" \
+  -d '{"lat": -21.9180, "lng": -46.6855, "formato": "pdf", "alcance": "carro_10min"}' \
+  -o estudo_10min.pdf
 ```
 
 ---

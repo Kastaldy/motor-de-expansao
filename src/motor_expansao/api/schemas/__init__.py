@@ -38,7 +38,7 @@ class ErrorResponse(BaseModel):
 
 
 class AnalisarRequest(BaseModel):
-    """Fornecer ``{lat,lng}`` OU ``maps_url``. Raio e fixo 1.0 km (nao e parametro)."""
+    """Fornecer ``{lat,lng}`` OU ``maps_url``. Sem ``alcance``, o raio e' o de 1.0 km."""
 
     lat: float | None = Field(default=None, examples=[-21.9180])
     lng: float | None = Field(default=None, examples=[-46.6855])
@@ -86,6 +86,20 @@ class AnalisarRequest(BaseModel):
         default=None,
         description="Nome de quem pediu; carimba a marca d'agua do PDF. Omitido, vale o consumidor do token.",
         examples=["Juan"],
+    )
+    # --- Alcance do ponto (DEC-074, Emenda 3) -------------------------------------
+    # Ate' 27/10/2026 o campo nao existia e o Pydantic o descartava em silencio: quem
+    # pedia 10 min de carro recebia o raio de 1 km. Os valores sao os do motor
+    # (`alcance_ponto.ALCANCES`, travado por teste). Fora do raio de 1 km, so' no PDF
+    # Estudo (sem `viabilidade` e sem `info_imovel`): a recusa e' da rota, em portugues.
+    alcance: Literal["raio_1km", "raio_2km", "carro_5min", "carro_10min"] | None = Field(
+        default=None,
+        description=(
+            "Recorte do Estudo (DEC-074): raio_1km (o de sempre), raio_2km, carro_5min ou "
+            "carro_10min (isócrona de carro, sem trânsito). Fora do raio de 1 km vale só no "
+            "PDF e sem viabilidade nem info_imovel: o relatório completo é do raio de 1 km."
+        ),
+        examples=["carro_10min"],
     )
 
     @model_validator(mode="after")

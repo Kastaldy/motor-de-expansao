@@ -95,3 +95,18 @@ def test_todo_ref_de_schema_resolve(spec: dict[str, Any]) -> None:
     andar(spec.get("paths"))
     andar((spec.get("components") or {}).get("schemas"))
     assert not quebrados, f"$ref sem destino: {sorted(set(quebrados))}"
+
+
+def test_alcance_do_documento_e_o_do_motor(spec: dict[str, Any]) -> None:
+    """O enum de `alcance` no documento e' o do motor (DEC-074, Emenda 3).
+
+    Quem consome de fora le' SO' este arquivo. Se o motor ganhar um alcance e o documento
+    nao, o cliente nunca pede; se o documento listar um que o motor nao tem, o cliente
+    recebe 422 sem entender por que.
+    """
+    from motor_expansao.dashboard.alcance_ponto import ALCANCES
+
+    campo = spec["components"]["schemas"]["AnalisarRequest"]["properties"]["alcance"]
+    assert tuple(v for v in campo["enum"] if v is not None) == ALCANCES
+    respostas = spec["paths"]["/analisar"]["post"]["responses"]
+    assert "503" in respostas, "o 503 do servico de rotas nao esta documentado"

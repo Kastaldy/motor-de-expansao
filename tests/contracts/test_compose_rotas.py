@@ -3,7 +3,7 @@
 O serviço é OPCIONAL por construção e mora numa stack separada (`valhalla-infra/`). O que
 este arquivo trava são as coisas que só se descobrem quebradas na VPS:
 
-1. `MOTOR_ROTAS_URL` fora do `environment:` do `web`. O compose de produção NÃO tem
+1. `MOTOR_ROTAS_URL` fora do `environment:` do `web` ou do `api` (Emenda 3). O compose de produção NÃO tem
    `env_file`: sem a linha, preencher o `.env` não tem efeito nenhum e a opção "10 min de
    carro" nunca aparece — falha muda, o operador conclui que a função não funciona.
 2. A mesma variável com `:?` em vez de `:-`. Ela é opcional: com `:?` o `docker compose up`
@@ -59,6 +59,26 @@ def test_web_recebe_motor_rotas_url_opcional() -> None:
     assert env["MOTOR_ROTAS_URL"] == "${MOTOR_ROTAS_URL:-}", (
         "a variável tem de ser `${MOTOR_ROTAS_URL:-}`: opcional. Com `:?` o compose do motor "
         "inteiro aborta numa VPS sem o Valhalla."
+    )
+
+
+def test_api_recebe_motor_rotas_url_opcional() -> None:
+    """DEC-074, Emenda 3: o PDF da API publica tambem calcula a isocrona (`alcance`).
+
+    Sem a linha no `environment:` do `api`, o `.env` preenchido nao chega ao container: o
+    piloto mostraria os 5 e 10 min de carro e a API responderia 503 para o mesmo ponto.
+    """
+    api = yaml.safe_load(COMPOSE_PROD.read_text(encoding="utf-8"))["services"]["api"]
+    env = api.get("environment") or {}
+    assert "MOTOR_ROTAS_URL" in env, (
+        "o `api` nao recebe `MOTOR_ROTAS_URL` no `environment:` — sem `env_file`, o alcance de "
+        "carro do PDF da API responde 503 mesmo com o Valhalla no ar"
+    )
+    assert env["MOTOR_ROTAS_URL"] == "${MOTOR_ROTAS_URL:-}", (
+        "a variável tem de ser `${MOTOR_ROTAS_URL:-}`: opcional, como no `web`."
+    )
+    assert "networks" in api and "app_net" in api["networks"], (
+        "o `api` saiu da `app_net`: o Valhalla só é alcançável por ela"
     )
 
 

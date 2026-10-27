@@ -67,7 +67,7 @@ Fixadas por Felipe (2026-06-09) e reafirmadas na DEC-005 (2026-06-10):
 
 A API importa (e NUNCA edita) as funcoes abaixo, com as assinaturas reais confirmadas no codigo:
 
-- `dashboard.censo_point.analisar_ponto_censitario_setores(lat: float, lng: float, setores_df: pd.DataFrame, raio_km: float = RAIO_CENSITARIO_DEFAULT_KM, competitors_df: pd.DataFrame | None = None, ultra_df: pd.DataFrame | None = None, geometria_wgs84: BaseGeometry | None = None, geometria_tipo: str | None = None) -> dict` (os dois ultimos sao do recorte da DEC-071/074; a API nao os passa)
+- `dashboard.censo_point.analisar_ponto_censitario_setores(lat: float, lng: float, setores_df: pd.DataFrame, raio_km: float = RAIO_CENSITARIO_DEFAULT_KM, competitors_df: pd.DataFrame | None = None, ultra_df: pd.DataFrame | None = None, geometria_wgs84: BaseGeometry | None = None, geometria_tipo: str | None = None) -> dict` (os dois ultimos sao do recorte da DEC-071/074; a API os passa so' com `alcance` de carro, Emenda 3 da DEC-074)
   — **pura**, nao muta inputs, nao recalcula nenhum artefato oficial do M1. Retorna o `result` dict
   (campos no §7).
 - `dashboard.censo_point.agregar_perfil_bairro_distrito(setores_df: pd.DataFrame, *, cod_bairro: str | None = None, nome_bairro: str | None = None, nome_distrito: str | None = None, nome_municipio: str | None = None, uf: str | None = None, cod_municipio: str | None = None) -> dict[str, object]`
@@ -152,11 +152,15 @@ Superficie minima do MVP:
   "lng": -46.33,          // float, opcional se houver maps_url
   "maps_url": "https://maps.google.com/...",  // string, opcional se houver lat/lng
   "formato": "json",      // "json" (default) | "pdf" (Decisao 1); ?formato= ou Accept: application/pdf
-  "rotulo": "Pastel da Sueli - Av. ..."  // string, OPCIONAL: nome do local p/ a capa do PDF
+  "rotulo": "Pastel da Sueli - Av. ...",  // string, OPCIONAL: nome do local p/ a capa do PDF
+  "alcance": "carro_10min"  // OPCIONAL: raio_1km | raio_2km | carro_5min | carro_10min (DEC-074, Emenda 3)
 }
 ```
-- Regra de validacao: fornecer `{lat,lng}` OU `maps_url` (nao ambos vazios). Raio e **fixo 1.0 km**
-  (Decisao 5, emendada pela DEC-021) — NAO e parametro de entrada.
+- Regra de validacao: fornecer `{lat,lng}` OU `maps_url` (nao ambos vazios). Sem `alcance`, o raio e
+  **1.0 km** (Decisao 5, emendada pela DEC-021).
+- `alcance` (DEC-074, Emenda 3): fora do raio de 1 km, so' no PDF e sem `viabilidade`/`info_imovel`
+  (400 `alcance_so_no_pdf` / `alcance_so_no_estudo`); servico de rotas fora -> 503
+  `rotas_indisponiveis`; recorte inviavel -> 400 `alcance_invalido`. Nunca cai para o raio de 1 km.
 - `rotulo` (aditivo compativel em `v1`, §10): quando presente e nao for apenas `"lat,lng"`, vai para a
   capa do PDF no lugar de "Coordenada: ...". Ignorado na saida JSON. Adicionado pela trilha do bot
   (BLK-API-07) para carimbar o nome do local no relatorio.

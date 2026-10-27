@@ -156,6 +156,11 @@ services:
       # (default) = nao fixada. Tem de estar listada AQUI: este compose nao tem `env_file`,
       # e por o valor so no `.env` da VPS nao chegaria ao container (falha muda).
       MOTOR_FATORES_RENDA_VERSAO: ${MOTOR_FATORES_RENDA_VERSAO:-}
+      # Servico de rotas (Valhalla, DEC-074, Emenda 3): o PDF da API aceita `alcance` e, nos
+      # 5/10 min de carro, calcula a isocrona pela MESMA URL interna do `web` (ver o
+      # comentario la'). Opcional, `:-`: vazia, o alcance de carro responde 503 em portugues
+      # e o raio de 1 km e o de 2 km seguem iguais. Nunca cai em silencio para o raio de 1 km.
+      MOTOR_ROTAS_URL: ${MOTOR_ROTAS_URL:-}
     volumes:
       # O perfil do pais. Bind de ARQUIVO, e nao de diretorio, porque `/app/data` vem da
       # IMAGEM e so os subdiretorios abaixo sao montados — a RAIZ nao e mount, entao
