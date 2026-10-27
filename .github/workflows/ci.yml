@@ -154,6 +154,10 @@ jobs:
       #    (_svg_do_item em rede_export.py); nenhum SVG vem do usuario -> vetor
       #    nao se aplica. Bump 2.8.8 adiado: golden de PDF BYTE-A-BYTE + imagem de
       #    producao (janela de deploy propria). Revisao 2026-10-27.
+      #  - GHSA-rw7v-4hrq-x6r9 (fpdf2 2.8.7): deref implicito de referencia de recurso
+      #    de imagem na API de render. Mesma exposicao da entrada acima (so PNG +
+      #    icones SVG fixos; nenhuma imagem/SVG de usuario), mesma correcao (2.8.8) e
+      #    mesmo adiamento. Revisao 2026-10-27.
       - name: Install pip-audit (CI only)
         # Upgrade do proprio pip p/ >=26.1.2 REMEDIA PYSEC-2026-196 (pip 26.1.1: entry
         # points instalados fora do dir de instalacao). Remediacao real (nao allowlist):
@@ -170,7 +174,7 @@ jobs:
           python -m pip install --upgrade "pip>=26.1.2" "setuptools>=83.0.0"
           pip install "pip-audit==2.7.3"
       - name: Dependency audit (pip-audit)
-        run: pip-audit --desc --skip-editable --ignore-vuln GHSA-6w46-j5rx-g56g --ignore-vuln GHSA-wqw6-wpr3-45rh
+        run: pip-audit --desc --skip-editable --ignore-vuln GHSA-6w46-j5rx-g56g --ignore-vuln GHSA-wqw6-wpr3-45rh --ignore-vuln GHSA-rw7v-4hrq-x6r9
 
   # ── Piloto web: typecheck + unit (Vitest) + build (WEB-16) ──────────────────
   # Gate de qualidade do FRONT do piloto, paralelo ao `test`. Toolchain Node (fora
