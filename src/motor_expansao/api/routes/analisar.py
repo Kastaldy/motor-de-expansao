@@ -15,7 +15,11 @@ from motor_expansao.api.auth import resolver_consumidor
 from motor_expansao.api.coord import CoordenadaInvalidaError, resolver_coordenada
 from motor_expansao.api.errors import APIError
 from motor_expansao.api.schemas import AnalisarRequest, AnalisarResponseJSON, ErrorResponse
-from motor_expansao.api.service import analisar_ponto, gerar_pdf_ponto
+from motor_expansao.api.service import (
+    analisar_ponto,
+    gerar_pdf_ponto,
+    validar_pedido_de_alcance,
+)
 from motor_expansao.api.settings import Settings, get_settings
 
 router = APIRouter(tags=["analise"])
@@ -25,6 +29,8 @@ _ERR: dict[int | str, dict[str, Any]] = {
     401: {"model": ErrorResponse},
     404: {"model": ErrorResponse},
     500: {"model": ErrorResponse},
+    # DEC-074, Emenda 3: servico de rotas fora no alcance de carro.
+    503: {"model": ErrorResponse},
 }
 
 
@@ -52,6 +58,16 @@ async def analisar(
     aceita_pdf = "application/pdf" in request.headers.get("accept", "")
     fmt = "pdf" if (aceita_pdf or "pdf" in (formato, payload.formato)) else "json"
 
+    # DEC-074, Emenda 3: o alcance que a API nao atende (JSON, ou junto do relatorio com
+    # viabilidade) e' recusado AQUI, antes de qualquer calculo -- nunca respondido com o
+    # raio de 1 km, que era o que acontecia ate' o campo existir.
+    validar_pedido_de_alcance(
+        payload.alcance,
+        formato=fmt,
+        viabilidade_inputs=payload.viabilidade,
+        info_imovel=payload.info_imovel,
+    )
+
     if fmt == "pdf":
         # Repasse PURO: a rota nao decide nada sobre viabilidade — quem monta o payload
         # e' a funcao unica (FIN-VIAB-01), e quem decide se ele existe e' quem chamou.
@@ -64,6 +80,7 @@ async def analisar(
             viabilidade_inputs=payload.viabilidade,
             info_imovel=payload.info_imovel,
             solicitante=payload.solicitante,
+            alcance=payload.alcance,
         )
         return Response(
             content=pdf_bytes,

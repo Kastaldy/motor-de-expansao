@@ -17,9 +17,10 @@ from __future__ import annotations
 import json
 import logging
 import unicodedata
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from functools import lru_cache
-from math import cos, radians
+from math import cos, pi, radians
 from pathlib import Path
 from typing import Any
 
@@ -1062,6 +1063,102 @@ def _reuse_contextily_session() -> None:
         pass
 
 
+# ===========================================================================
+# Alcance do ponto no PDF da API (DEC-074, Emenda 3).
+#
+# O MESMO recorte do botao "Estudo" do piloto (`web/server/app.py`,
+# `_resolver_recorte_do_pdf` e `_gerar_relatorio_pontual_pdf`): raio de 2 km ou isocrona de
+# 5/10 min de carro pelo servico de rotas proprio. O mapeamento recorte -> kwargs vive nas
+# duas superficies; `tests/unit/test_api_alcance.py` trava que as duas entregam o mesmo.
+# ===========================================================================
+
+MSG_ALCANCE_SO_NO_PDF = "O alcance só vale no PDF (formato=pdf)."
+MSG_ALCANCE_SO_NO_ESTUDO = (
+    "O relatório com viabilidade é do raio de 1 km. Para o alcance, envie o pedido sem "
+    "viabilidade e sem info_imovel."
+)
+
+
+@dataclass(frozen=True)
+class _RecorteDaApi:
+    """O recorte resolvido no servidor. `lat`/`lng`: a coordenada com que o PDF roda (a
+    pedida, ou a origem da isocrona, garantida dentro dela). `raio_km` so' no raio;
+    `geometria` (shapely em graus) e `versao_rotas` so' na isocrona."""
+
+    tipo: str
+    lat: float
+    lng: float
+    raio_km: float | None = None
+    geometria: Any = None
+    geometria_tipo: str | None = None
+    versao_rotas: str | None = None
+
+
+def validar_pedido_de_alcance(
+    alcance: str | None,
+    *,
+    formato: str,
+    viabilidade_inputs: ViabilidadeInputs | None,
+    info_imovel: dict[str, Any] | None,
+) -> None:
+    """Recusa (400, em portugues) o alcance que a API nao atende, antes de qualquer calculo.
+
+    O recorte so' existe no PDF Estudo (decisao 3 da DEC-074): o JSON e o relatorio com
+    viabilidade sao do raio de 1 km. `info_imovel` entra na recusa porque carrega
+    `aluguel_pedido` e `valor_venda` -- o piloto o zera no Estudo; aqui, sem a tela no meio,
+    descartar em silencio repetiria o defeito que esta emenda fecha.
+    """
+    from motor_expansao.dashboard.alcance_ponto import ALCANCE_RAIO_1KM
+
+    if alcance is None or alcance == ALCANCE_RAIO_1KM:
+        return
+    if formato != "pdf":
+        raise APIError(400, MSG_ALCANCE_SO_NO_PDF, "alcance_so_no_pdf")
+    if viabilidade_inputs is not None or info_imovel is not None:
+        raise APIError(400, MSG_ALCANCE_SO_NO_ESTUDO, "alcance_so_no_estudo")
+
+
+def _recorte_do_alcance(lat: float, lng: float, alcance: str | None) -> _RecorteDaApi | None:
+    """`alcance` -> recorte pronto, ou `None` (o raio de 1 km de sempre). 400/503 em portugues.
+
+    Espelha `_resolver_alcance` do piloto: a isocrona e' SEMPRE calculada aqui, a partir da
+    origem. Servico de rotas ausente/fora/lento -> 503; resposta que nao forma area
+    analisavel -> 400. Em nenhum dos dois casos o pedido cai para o raio de 1 km.
+    """
+    from motor_expansao.dashboard.alcance_ponto import (
+        ALCANCE_RAIO_1KM,
+        MINUTOS_DO_ALCANCE,
+        RAIO_DO_ALCANCE,
+        AlcanceInvalido,
+        RotasIndisponiveis,
+        isocrona_carro,
+    )
+    from motor_expansao.dashboard.censo_point import geometria_tipo_isocrona
+
+    if alcance is None or alcance == ALCANCE_RAIO_1KM:
+        return None
+    if alcance not in MINUTOS_DO_ALCANCE:
+        return _RecorteDaApi(alcance, lat, lng, raio_km=RAIO_DO_ALCANCE[alcance])
+    try:
+        iso = isocrona_carro(lat, lng, MINUTOS_DO_ALCANCE[alcance])
+    except RotasIndisponiveis as exc:
+        # Condicao ESPERADA (servico fora/lento): `warning`, com a causa no log.
+        logging.getLogger(__name__).warning(
+            "rotas indisponiveis: %s", exc.detalhe, exc_info=True
+        )
+        raise APIError(503, str(exc), "rotas_indisponiveis") from exc
+    except AlcanceInvalido as exc:
+        raise APIError(400, str(exc), "alcance_invalido") from exc
+    return _RecorteDaApi(
+        alcance,
+        iso.lat,
+        iso.lng,
+        geometria=iso.geometria,
+        geometria_tipo=geometria_tipo_isocrona(iso.minutos),
+        versao_rotas=iso.versao,
+    )
+
+
 def gerar_pdf_ponto(
     lat: float,
     lng: float,
@@ -1072,6 +1169,7 @@ def gerar_pdf_ponto(
     viabilidade_inputs: ViabilidadeInputs | None = None,
     info_imovel: dict[str, Any] | None = None,
     solicitante: str | None = None,
+    alcance: str | None = None,
 ) -> bytes:
     """Gera o PDF de 8 paginas do Relatorio Pontual Censitario (BLK-API-04).
 
@@ -1084,7 +1182,21 @@ def gerar_pdf_ponto(
     montou essa camada a mao (ela vinha pronta do dict de `render_mapas_censitarios_combinados`).
 
     `rotulo`: nome do endereco/estabelecimento para a capa (no lugar de "Coordenada: ...").
+
+    `alcance` (DEC-074, Emenda 3): `raio_2km`, `carro_5min` ou `carro_10min` -> o Estudo
+    daquele recorte (so' demografico), com carga, motor, mercado, mapas e textos lendo o
+    recorte, como no botao "Estudo" do piloto. Sem ele (ou com `raio_1km`), nenhuma
+    chamada abaixo ganha kwarg novo: o PDF de sempre.
     """
+    # O recorte se resolve (e se recusa) ANTES de carregar qualquer dado: a isocrona pode
+    # chamar o servico de rotas, e um 503 depois de ler a malha seria trabalho jogado fora.
+    validar_pedido_de_alcance(
+        alcance, formato="pdf", viabilidade_inputs=viabilidade_inputs, info_imovel=info_imovel
+    )
+    recorte = _recorte_do_alcance(lat, lng, alcance)
+    if recorte is not None:
+        lat, lng = recorte.lat, recorte.lng
+
     _reuse_contextily_session()  # acelera a busca de tiles (~117s -> ~24s em area densa)
 
     from motor_expansao.dashboard.censo_map import render_mapas_censitarios_combinados
@@ -1093,14 +1205,41 @@ def gerar_pdf_ponto(
         agregar_perfil_bairro_distrito,
         analisar_ponto_censitario_setores,
     )
-    from motor_expansao.dashboard.censo_report import gerar_pdf_relatorio_pontual_classico
+    from motor_expansao.dashboard.censo_report import (
+        gerar_pdf_relatorio_pontual_classico,
+        recorte_pdf,
+    )
 
-    uf, cod_municipio, setores_df = _resolver_e_carregar(lat, lng, settings)
+    # DEC-074: os kwargs do RECORTE, montados uma vez e repassados a carga, ao motor, ao
+    # mercado e aos mapas -- os mesmos do piloto. Vazios sem recorte: cada chamada abaixo
+    # fica literalmente a de antes.
+    raio_pdf = (
+        recorte.raio_km
+        if recorte is not None and recorte.raio_km is not None
+        else RAIO_CENSITARIO_DEFAULT_KM
+    )
+    carga_kw: dict[str, Any] = {}
+    motor_kw: dict[str, Any] = {}
+    if recorte is not None and recorte.geometria is not None:
+        carga_kw["geometria"] = recorte.geometria
+        # O PDF DESENHA o mapa do recorte: os vizinhos cobrem o quadro dele.
+        carga_kw["com_mapa"] = True
+        motor_kw = {
+            "geometria_wgs84": recorte.geometria,
+            "geometria_tipo": recorte.geometria_tipo,
+        }
+    elif recorte is not None:
+        # Raio de 2 km: o frame de vizinhos cresce com o raio (classe DEC-065).
+        carga_kw["raio_km"] = raio_pdf
+
+    uf, cod_municipio, setores_df = _resolver_e_carregar(lat, lng, settings, **carga_kw)
     comp_df, ultra_df = _competitors_ultra(settings)
     result = analisar_ponto_censitario_setores(
-        lat, lng, setores_df, raio_km=RAIO_CENSITARIO_DEFAULT_KM,
-        competitors_df=comp_df, ultra_df=ultra_df,
+        lat, lng, setores_df, raio_km=raio_pdf,
+        competitors_df=comp_df, ultra_df=ultra_df, **motor_kw,
     )
+    # O fator da regua sai do MOTOR (area exata). 1.0 sem recorte.
+    fator_regua = float(result.get("fator_regua") or 1.0)
     # BLK-RELPON-07: sem este agregado o slide "Perfil do Bairro/Distrito" cai no
     # default gracioso (`flag_perfil_disponivel=False`) e sai `TEXTO_SEM_DADO` -- era o estado
     # do PDF do bot ate aqui. O dashboard (pages.py) ja fazia esta chamada; a API nao.
@@ -1134,9 +1273,19 @@ def gerar_pdf_ponto(
     # camada `residual` ausente -> fallback textual no slide (offline-safe). READ-ONLY.
     hexes_df = _hexes_vizinhos_do_ponto(lat, lng, settings)
 
+    # DEC-074: com recorte, os mapas recebem o `result` JA' calculado (sem pagar a
+    # intersecao duas vezes e sem os pins/faixas sairem de outro recorte) e, na isocrona,
+    # o contorno e o rotulo dela. Sem recorte, nenhum kwarg novo.
+    mapas_kw: dict[str, Any] = {}
+    if recorte is not None:
+        mapas_kw["result"] = result
+        if recorte.geometria is not None:
+            mapas_kw["geometria_wgs84"] = recorte.geometria
+            mapas_kw["geometria_tipo"] = recorte.geometria_tipo
+
     def _mapas(basemap: bool):
         return render_mapas_censitarios_combinados(
-            lat, lng, setores_df, raio_km=RAIO_CENSITARIO_DEFAULT_KM,
+            lat, lng, setores_df, raio_km=raio_pdf,
             competitors_df=comp_df, ultra_df=ultra_df,
             basemap=basemap, ultra_logo_dir=ultra_dir, logos_dir=logos_dir,
             hexes_df=hexes_df,
@@ -1148,6 +1297,7 @@ def gerar_pdf_ponto(
             # dashboard (DEC-021). O 110 daqui existia para as ruas aparecerem por baixo
             # da cor — o overlay do BLK-BASEMAP-06 as desenha POR CIMA desde entao.
             street_ceil=215, street_gain=1.3, street_cap=200,
+            **mapas_kw,
         )
 
     # Tenta com ruas (online); cai para offline; em ultimo caso, sem mapas.
@@ -1171,7 +1321,16 @@ def gerar_pdf_ponto(
 
     # DEC-070: SAM/consumo/residual no RAIO de 1,0 km, com a populacao do MESMO recorte que o
     # motor censitario acabou de medir. Mesma funcao da ficha e do PDF do piloto.
-    residual = _mercado_do_ponto(lat, lng, settings, result.get("pop_total_raio"))
+    # DEC-074: com recorte, o mercado no MESMO recorte, com o gate do SAM escalado pelo
+    # MESMO fator dos cards e da Conclusao.
+    mercado_kw: dict[str, Any] = {}
+    if recorte is not None:
+        mercado_kw["fator_regua"] = fator_regua
+        if recorte.geometria is not None:
+            mercado_kw["geometria"] = recorte.geometria
+        else:
+            mercado_kw["raio_km"] = raio_pdf
+    residual = _mercado_do_ponto(lat, lng, settings, result.get("pop_total_raio"), **mercado_kw)
     # Variante "Apresentacao Classica Ultra" (BLK-EST-05): a API/bot espelha o
     # MESMO modelo que o dashboard passou a gerar por padrao (pages.py usa
     # template="classico"). Com o BLK-RELPON-14 a classica virou o gerador UNICO
@@ -1211,6 +1370,19 @@ def gerar_pdf_ponto(
             cenario, staging_dir=settings.staging_dir, setores_df=setores_df
         )
 
+    # DEC-074: com recorte, o gerador recebe `recorte` (rotulos do recorte e o fator que
+    # escala as metas de TOTAL), pela fonte UNICA dos rotulos (`recorte_pdf`). Sem recorte o
+    # kwarg nem e' passado: metas e textos de hoje.
+    gerador_kw: dict[str, Any] = {}
+    if recorte is not None:
+        area_exata = float(result.get("area_km2_exata") or pi * raio_pdf**2)
+        gerador_kw["recorte"] = recorte_pdf(
+            recorte.tipo,
+            fator_regua=fator_regua,
+            area_km2=area_exata,
+            versao_rotas=recorte.versao_rotas,
+        )
+
     return gerar_pdf_relatorio_pontual_classico(
         result, mapas, residual=residual, perfil_bairro=perfil_bairro, ultra_dir=ultra_dir,
         solicitante=solicitante or consumidor, rotulo=rotulo, foto_satelite=foto_sat,
@@ -1223,6 +1395,7 @@ def gerar_pdf_ponto(
         # financeiro na mao, a Conclusao volta a carimbar os DOIS selos da DEC-030 —
         # deixar `True` aqui manteria o relatorio completo com meia conclusao.
         conclusao_so_estudo=viabilidade_pdf is None,
+        **gerador_kw,
     )
 
 

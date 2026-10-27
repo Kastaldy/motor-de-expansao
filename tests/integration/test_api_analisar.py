@@ -279,3 +279,58 @@ def test_viabilidade_da_api_liga_o_catchment() -> None:
 
     assert com_malha["flag_zona_morta"] is not None, "o catchment nao rodou com a malha"
     assert sem_malha["flag_zona_morta"] is None, "sem malha a flag tem que ser indecidivel"
+
+
+# --------------------------------------------------------------------------- #
+# Alcance do ponto no PDF da API (DEC-074, Emenda 3). Ate' 27/10/2026 o campo era   #
+# descartado em silencio e o pedido de 2 km saia com o estudo de 1 km.              #
+# --------------------------------------------------------------------------- #
+
+
+def test_pdf_do_estudo_no_raio_de_2km(client: TestClient, monkeypatch) -> None:
+    """Dado real, motor real, gerador real: o espiao so' anota o que passou por ele.
+
+    O texto do PDF sai COMPRIMIDO quando ha' mapas (ver o teste acima), entao a prova do
+    recorte e' o que o motor mediu e o que o gerador recebeu, nao uma busca nos bytes.
+    """
+    from motor_expansao.dashboard import censo_report
+
+    real = censo_report.gerar_pdf_relatorio_pontual_classico
+    visto: dict = {}
+
+    def _espiao(result, mapas, **kw):
+        visto["result"], visto["kw"] = result, kw
+        return real(result, mapas, **kw)
+
+    monkeypatch.setattr(censo_report, "gerar_pdf_relatorio_pontual_classico", _espiao)
+    resp = client.post(
+        "/api/v1/analisar",
+        json={**AGUAS_DA_PRATA, "formato": "pdf", "alcance": "raio_2km"},
+        headers=AUTH,
+    )
+    assert resp.status_code == 200, resp.text
+    assert resp.headers["content-type"] == "application/pdf"
+    assert resp.content.startswith(b"%PDF")
+    assert visto["result"]["metodo"] == "setor_censitario_intersecao_area_2km"
+    assert visto["kw"]["recorte"]["tipo"] == "raio_2km"
+    assert visto["kw"]["recorte"]["fator_regua"] == 4.0
+    assert visto["kw"]["conclusao_so_estudo"] is True
+    assert visto["kw"].get("viabilidade") is None
+
+
+def test_pdf_dos_10_min_sem_servico_de_rotas_e_503(client: TestClient, monkeypatch) -> None:
+    """Sem `MOTOR_ROTAS_URL` o pedido de carro e' recusado; nunca vira o raio de 1 km."""
+    from motor_expansao.dashboard import alcance_ponto
+
+    monkeypatch.delenv(alcance_ponto.ENV_ROTAS, raising=False)
+    alcance_ponto.limpar_cache()
+    resp = client.post(
+        "/api/v1/analisar",
+        json={**AGUAS_DA_PRATA, "formato": "pdf", "alcance": "carro_10min"},
+        headers=AUTH,
+    )
+    assert resp.status_code == 503, resp.text
+    assert resp.json() == {
+        "detail": alcance_ponto.MSG_ROTAS_INDISPONIVEIS,
+        "codigo": "rotas_indisponiveis",
+    }
