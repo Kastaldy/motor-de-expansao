@@ -4911,14 +4911,17 @@ def gerar_pdf_relatorio_pontual_classico(
 ) -> bytes:
     """Gera o PDF "Apresentacao Classica Ultra" (estetica GeoFusion antiga, motor novo).
 
-    `recorte` (DEC-074, Estudo por recorte): `{"tipo", "rotulo_curto", "rotulo_longo",
+    `recorte` (DEC-074: o Estudo por recorte e, pela Emenda 4, o relatorio completo da
+    Viabilidade no alcance da ficha): `{"tipo", "rotulo_curto", "rotulo_longo",
     "fator_regua", "area_km2"}` -- o dict de `recorte_pdf`. Com ele a capa, o slide
     Concorrentes, os Big Numbers, a Conclusao e a Realizacao nomeiam o recorte (raio de 2
     km, 10 min de carro, area desenhada), as 4 metas de TOTAL do Big Numbers e do parecer
     saem escaladas pelo `fator_regua` (um objeto so', para card e parecer nunca divergirem)
-    e as paginas que ficam presas ao ponto dizem isso. `result`, `residual` e `mapas` tem de
-    ser do MESMO recorte -- este modulo so' desenha. `None` (default, bot/API, Viabilidade)
-    = o PDF do raio de 1 km de sempre, caractere a caractere.
+    e as paginas que ficam presas ao ponto dizem isso. O eixo FINANCEIRO e as paginas de
+    viabilidade NAO leem o recorte: o payload financeiro nao depende dele. `result`,
+    `residual` e `mapas` tem de ser do MESMO recorte -- este modulo so' desenha. `None`
+    (default: bot/API e a Viabilidade no raio de 1 km) = o PDF do raio de 1 km de sempre,
+    caractere a caractere.
 
     `praca` (piloto web) acrescenta DUAS paginas: "Pressao concorrencial" (depois de
     "Concorrentes") e "Como a cidade esta indo", com o hexagono do ponto (depois de "Big
