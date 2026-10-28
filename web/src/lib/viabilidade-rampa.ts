@@ -152,6 +152,29 @@ export function eixoDaRampa(
 }
 
 /**
+ * Meses com linha de grade vertical no gráfico "Rampa de alunos" (pedido do dono do
+ * produto em 28/10/2026: "uma linha tracejada vertical para cada mês"). São os meses
+ * inteiros de DENTRO do eixo, do 1 ao `limite - 1`, e com eles todo mês de dentro do eixo
+ * tem exatamente UMA linha vertical:
+ * - o mês do platô (o `plato` de `eixoDaRampa`) fica de fora: ele já tem o marcador
+ *   próprio, tracejado na cor de destaque, e duas linhas no mesmo x embaralhariam os dois
+ *   tracejados. Platô ausente ou fora do eixo (série curta) não tira mês nenhum, e aí
+ *   também não há marcador;
+ * - as bordas não ganham linha: o mês 0 é a borda esquerda e o `limite`, a direita, as
+ *   duas já rotuladas embaixo ("mês 0" e "mês N"). O SVG corta o que passa da borda, e
+ *   uma linha ali sairia mais fina que as outras (com metade da tinta, medido a 100%).
+ *
+ * Pico 1 (eixo de 0 a 3, marcador no 1) dá só o mês 2; pico 10 (eixo de 0 a 12), do 1 ao
+ * 9 e o 11. Eixo degenerado (`limite` <= 1 ou não finito) não tem grade.
+ */
+export function mesesDaGrade(limite: number, plato: number | null): number[] {
+  const meses: number[] = []
+  if (!Number.isFinite(limite)) return meses
+  for (let m = 1; m < limite; m++) if (m !== plato) meses.push(m)
+  return meses
+}
+
+/**
  * O que a rampa muda no steady-state. Com o regime pleno até o mês 12 ela só move o
  * caixa e o payback. Depois do mês 12 (pico tardio), o motor mede o regime pleno no
  * próprio pico, que já tem o reajuste anual de preços (degrau a partir do mês 13): o
