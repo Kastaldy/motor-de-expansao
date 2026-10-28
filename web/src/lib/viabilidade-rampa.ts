@@ -154,24 +154,36 @@ export function eixoDaRampa(
 /**
  * Meses com linha de grade vertical no gráfico "Rampa de alunos" (pedido do dono do
  * produto em 28/10/2026: "uma linha tracejada vertical para cada mês"). São os meses
- * inteiros de DENTRO do eixo, do 1 ao `limite - 1`, e com eles todo mês de dentro do eixo
- * tem exatamente UMA linha vertical:
+ * inteiros do eixo, do 0 ao `limite - 1`, e com eles todo mês do eixo, menos o último, tem
+ * exatamente UMA linha vertical:
  * - o mês do platô (o `plato` de `eixoDaRampa`) fica de fora: ele já tem o marcador
  *   próprio, tracejado na cor de destaque, e duas linhas no mesmo x embaralhariam os dois
  *   tracejados. Platô ausente ou fora do eixo (série curta) não tira mês nenhum, e aí
  *   também não há marcador;
- * - as bordas não ganham linha: o mês 0 é a borda esquerda e o `limite`, a direita, as
- *   duas já rotuladas embaixo ("mês 0" e "mês N"). O SVG corta o que passa da borda, e
- *   uma linha ali sairia mais fina que as outras (com metade da tinta, medido a 100%).
+ * - o mês 0, a borda esquerda, ganha linha (pedido do mesmo dia: "a linha do mês 0 para o
+ *   1 completa"), com o traço mais largo de `larguraDaLinhaDaGrade`;
+ * - o `limite`, a borda direita, não ganha ("pode ser cortada, visto que vira uma reta"):
+ *   no fim do eixo a curva já está no platô, plana, e o mês está rotulado embaixo ("mês N").
  *
- * Pico 1 (eixo de 0 a 3, marcador no 1) dá só o mês 2; pico 10 (eixo de 0 a 12), do 1 ao
- * 9 e o 11. Eixo degenerado (`limite` <= 1 ou não finito) não tem grade.
+ * Pico 1 (eixo de 0 a 3, marcador no 1) dá os meses 0 e 2; pico 10 (eixo de 0 a 12), do 0
+ * ao 9 e o 11. Eixo degenerado (`limite` <= 0 ou não finito) não tem grade.
  */
 export function mesesDaGrade(limite: number, plato: number | null): number[] {
   const meses: number[] = []
   if (!Number.isFinite(limite)) return meses
-  for (let m = 1; m < limite; m++) if (m !== plato) meses.push(m)
+  for (let m = 0; m < limite; m++) if (m !== plato) meses.push(m)
   return meses
+}
+
+/**
+ * Largura do traço da linha de grade de um mês, em px de tela (o traço não escala com o
+ * SVG). O mês 0 cai na borda esquerda, e o `<svg>` recorta o que passa do próprio
+ * contorno: com o traço centrado na borda, a metade de fora some, e uma linha de 1 px
+ * sairia com metade da tinta das outras (medido a 100% em 28/10/2026). Com 2 px, a metade
+ * que fica tem 1 px, como as demais.
+ */
+export function larguraDaLinhaDaGrade(mes: number): number {
+  return mes === 0 ? 2 : 1
 }
 
 /**

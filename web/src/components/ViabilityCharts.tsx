@@ -7,7 +7,12 @@ import type {
 } from '../lib/types'
 import { Glass } from './primitives'
 import { TEXTO_SEM_DADO } from '../lib/constants'
-import { eixoDaRampa, mesFimDaRampa, mesesDaGrade } from '../lib/viabilidade-rampa'
+import {
+  eixoDaRampa,
+  larguraDaLinhaDaGrade,
+  mesFimDaRampa,
+  mesesDaGrade,
+} from '../lib/viabilidade-rampa'
 
 /* ---------------------------------------------------------------------------
    Graficos da Viabilidade. Formas herdadas do template de referencia.
@@ -618,9 +623,10 @@ function LinhaReceita({
  * O eixo X termina 2 meses depois do pico (pedido de 28/10/2026; antes ia a no mínimo 18
  * meses): a regra e os casos de borda moram em `eixoDaRampa`.
  *
- * Cada mês de dentro do eixo tem uma linha tracejada vertical (pedido do mesmo dia),
- * desenhada atrás da área e da linha: a de grade, em cinza de hairline, ou, no mês do
- * platô, o marcador na cor de destaque. Quais meses ganham grade mora em `mesesDaGrade`.
+ * Cada mês do eixo, do 0 ao penúltimo, tem uma linha tracejada vertical (pedidos do mesmo
+ * dia), desenhada atrás da área e da linha: a de grade, no cinza próprio dela
+ * (`--line-grid`), ou, no mês do platô, o marcador na cor de destaque. Quais meses ganham
+ * grade mora em `mesesDaGrade`, e a largura do traço, em `larguraDaLinhaDaGrade`.
  */
 export function RampaAlunos({
   serie,
@@ -713,11 +719,12 @@ export function RampaAlunos({
               <stop offset="100%" stopColor="var(--ac)" stopOpacity="0.02" />
             </linearGradient>
           </defs>
-          {/* Grade: um tracejado por mês, ATRÁS da área e da linha. Cinza de hairline e
-              traço mais curto e mais aberto ("2 4") que o do marcador do platô (cor de
-              destaque, "3 3"), para os dois não se confundirem. Sem `crispEdges` de
-              propósito: com a tela em escala fracionária (125%, 150%) ele assenta umas
-              linhas em 1 pixel e outras em 2, e a grade sai com espessuras diferentes. */}
+          {/* Grade: um tracejado por mês, ATRÁS da área e da linha. Cinza próprio da
+              grade (`--line-grid`) e traço mais curto e mais aberto ("2 4") que o do
+              marcador do platô (cor de destaque, "3 3"), para os dois não se confundirem.
+              Sem `crispEdges` de propósito: com a tela em escala fracionária (125%, 150%)
+              ele assenta umas linhas em 1 pixel e outras em 2, e a grade sai com
+              espessuras diferentes. */}
           {grade.map((m) => (
             <line
               key={m}
@@ -725,8 +732,8 @@ export function RampaAlunos({
               y1="0"
               x2={x(m)}
               y2={H}
-              stroke="var(--line-dashed)"
-              strokeWidth="1"
+              stroke="var(--line-grid)"
+              strokeWidth={larguraDaLinhaDaGrade(m)}
               strokeDasharray="2 4"
               vectorEffect="non-scaling-stroke"
             />
