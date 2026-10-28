@@ -10,6 +10,7 @@ import {
   DICA_SIMULADOR_VETADO,
   ROTULO_ESTUDO,
   ROTULO_ESTUDO_GERANDO,
+  alcanceParaSimulador,
   estadoDoEstudo,
   estadoDoSimulador,
   estiloDoBotaoEstudo,
@@ -152,14 +153,37 @@ describe('estadoDoSimulador', () => {
     expect(DICA_SIMULADOR_AREA).toMatch(/raio de 1 km/)
   })
 
-  it('ponto de outro alcance vai pela ORIGEM, e a dica diz que lá é o raio de 1 km', () => {
+  it('ponto de outro alcance vai pela ORIGEM e LEVA o recorte: a dica diz isso (Emenda 4)', () => {
     expect(estadoDoSimulador(raio2km, true)).toMatchObject({ habilitado: true, dica: DICA_SIMULADOR_ALCANCE })
     expect(estadoDoSimulador(isocrona, true).dica).toBe(DICA_SIMULADOR_ALCANCE)
-    expect(DICA_SIMULADOR_ALCANCE).toMatch(/raio de 1 km/)
+    expect(DICA_SIMULADOR_ALCANCE).toMatch(/recorte escolhido aqui/)
+    expect(DICA_SIMULADOR_ALCANCE).not.toMatch(/raio de 1 km/)
   })
 
   it('sem ficha: travado', () => {
     expect(estadoDoSimulador(null, true).habilitado).toBe(false)
+  })
+})
+
+describe('alcanceParaSimulador (Emenda 4 da DEC-074)', () => {
+  it('o ponto de outro alcance LEVA o alcance ao Simulador', () => {
+    expect(alcanceParaSimulador(raio2km)).toEqual({ alcance: 'raio_2km' })
+    expect(alcanceParaSimulador(isocrona)).toEqual({ alcance: 'carro_10min' })
+    const cincoMin = { ...isocrona, recorte: { ...isocrona.recorte, tipo: 'carro_5min' } } as typeof isocrona
+    expect(alcanceParaSimulador(cincoMin)).toEqual({ alcance: 'carro_5min' })
+  })
+
+  it('raio de 1 km, área desenhada e ficha ausente não levam nada', () => {
+    expect(alcanceParaSimulador(pontoComRaio)).toEqual({})
+    expect(alcanceParaSimulador(areaComContorno)).toEqual({})
+    expect(alcanceParaSimulador(areaDesenhada)).toEqual({})
+    expect(alcanceParaSimulador(null)).toEqual({})
+  })
+
+  it('é a MESMA regra do Estudo: o alcance que o Estudo manda é o que o Simulador leva', () => {
+    for (const ficha of [pontoComRaio, raio2km, isocrona]) {
+      expect(alcanceParaSimulador(ficha)).toEqual(recorteDoEstudo(ficha))
+    }
   })
 })
 

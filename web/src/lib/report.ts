@@ -11,7 +11,9 @@
    se um dia o PDF precisar de algo, entra no payload do motor — nao numa conta
    feita aqui.
    --------------------------------------------------------------------------- */
+import type { Alcance } from './alcance'
 import { coordenadaDoEstudo, ehCentroideDoHex } from './coord'
+import { MINUTOS_DO_CARRO, rotuloDaIsocrona, rotuloDoRaio } from './recorte'
 import type { InfoImovel, ViabilidadeOut } from './types'
 
 /**
@@ -82,6 +84,11 @@ export interface PontoDoRelatorio {
   lng?: number
   /** Estudo da unidade Ultra (emenda da DEC-070): o PDF tira o consumo da unidade. */
   estudoUltra?: boolean
+  /**
+   * O ALCANCE da ficha (DEC-074, Emenda 4): o relatório completo sai nesse recorte. Ausente
+   * (ou `raio_1km`) = o raio de 1 km de sempre.
+   */
+  alcance?: Alcance
 }
 
 /** Parametros de identificacao do ponto no `api.relatorioPontual` (contrato dele). */
@@ -92,6 +99,8 @@ export interface ParametrosRelatorioPontual {
   origemCentroideHex: boolean
   /** So' presente (e `true`) no estudo da unidade Ultra. */
   excluirUltraProxima?: true
+  /** So' presente fora do raio de 1 km (DEC-074, Emenda 4): o recorte do relatorio completo. */
+  alcance?: Alcance
 }
 
 /**
@@ -126,5 +135,58 @@ export function parametrosRelatorioPontual(
      ja' diz "(unidade Ultra)", e sem a flag o PDF do Simulador calcularia o estudo de
      ponto sob esse titulo. */
   if (ponto.estudoUltra === true) out.excluirUltraProxima = true
+  /* O ALCANCE viaja com o ponto (DEC-074, Emenda 4): sem ele o relatório completo saía no
+     raio de 1 km de um ponto lido em 5 min de carro (relato do Vinicius, 27/10/2026). O raio
+     de 1 km não vira campo: é o default do servidor, e o pedido de sempre fica byte a byte. */
+  if (ponto.alcance && ponto.alcance !== 'raio_1km') out.alcance = ponto.alcance
   return out
+}
+
+/**
+ * O `title` do botão "Relatório completo em PDF" da Viabilidade no raio de 1 km — o texto de
+ * sempre, para a tela do raio de 1 km não mudar um caractere (decisão 5 da DEC-074).
+ */
+export const DICA_RELATORIO_COMPLETO =
+  'Relatório Pontual Censitário 1,0 km com fotos, dados do imóvel e os números da viabilidade'
+
+/** O recorte do relatório completo em texto de usuário: os MESMOS rótulos da ficha (`lib/recorte`). */
+export function rotuloDoRecorteDoRelatorio(alcance: Alcance | undefined): string {
+  if (alcance === 'carro_5min' || alcance === 'carro_10min') {
+    return rotuloDaIsocrona(null, MINUTOS_DO_CARRO[alcance])
+  }
+  return rotuloDoRaio(alcance === 'raio_2km' ? 2 : 1)
+}
+
+const foraDoRaioPadrao = (alcance: Alcance | undefined): alcance is Exclude<Alcance, 'raio_1km'> =>
+  alcance != null && alcance !== 'raio_1km'
+
+/**
+ * O `title` do botão do relatório completo (DEC-074, Emenda 4): nomeia o recorte quando o
+ * ponto veio de outro alcance. Um botão que promete "1,0 km" e entrega 5 min de carro (ou o
+ * contrário) é a confusão do relato do Vinicius.
+ */
+export function dicaDoRelatorioCompleto(alcance: Alcance | undefined): string {
+  if (!foraDoRaioPadrao(alcance)) return DICA_RELATORIO_COMPLETO
+  return (
+    `Relatório Pontual Censitário no recorte da ficha (${rotuloDoRecorteDoRelatorio(alcance)}), ` +
+    'com fotos, dados do imóvel e os números da viabilidade'
+  )
+}
+
+/**
+ * A linha VISÍVEL sob o botão do relatório completo, só fora do raio de 1 km (`null` nele).
+ *
+ * `title` não aparece no toque nem em todo navegador; o recorte que muda o PDF tem de estar
+ * escrito na tela. A linha diz também o que NÃO muda com ele, cada um por razão própria: a
+ * conta financeira é do imóvel; a zona morta lê a captação própria de 1,5 km em volta do
+ * ponto (DEC-042); a sugestão de demanda é do modelo de praça, treinado na isócrona de 10 min
+ * de carro (DEC-078) — trocá-la pelo recorte seria usar o modelo fora do que ele aprendeu.
+ */
+export function avisoDoRecorteDoRelatorio(alcance: Alcance | undefined): string | null {
+  if (!foraDoRaioPadrao(alcance)) return null
+  return (
+    `O relatório completo sai no recorte da ficha do ponto: ${rotuloDoRecorteDoRelatorio(alcance)}. ` +
+    'A conta financeira, a zona morta (captação própria de 1,5 km) e a sugestão de demanda ' +
+    '(10 min de carro, do modelo de praça) não mudam com ele.'
+  )
 }

@@ -9,7 +9,9 @@
  *   sem viabilidade, DRE, aluguel, payback ou teto, com a Conclusao so' com o selo
  *   DEMOGRAFICO (DEC-030). E' o mesmo modo do bot. Desde a fase 2 da DEC-071 (DEC-074)
  *   ele sai tambem do RECORTE da ficha: area desenhada, raio de 2 km e 10 min de carro.
- * - "Simulador" leva a coordenada EXATA do ponto aberto para a tela de Viabilidade.
+ * - "Simulador" leva a coordenada EXATA do ponto aberto para a tela de Viabilidade e, desde
+ *   a Emenda 4 da DEC-074, o ALCANCE da ficha (`alcanceParaSimulador`): o relatório completo
+ *   de lá sai no mesmo recorte. A área desenhada segue indo pelo ponto central (raio de 1 km).
  *
  * As regras de quando cada botao fica travado vivem aqui, testadas, porque o Vitest roda
  * sem DOM — e porque botao travado sem explicacao e' botao morto (a dica e' obrigatoria).
@@ -64,9 +66,13 @@ export const DICA_SIMULADOR = 'Abre a tela de Viabilidade com a coordenada deste
 export const DICA_SIMULADOR_VETADO = 'Sua conta não tem acesso à tela de Viabilidade.'
 export const DICA_SIMULADOR_AREA =
   `Abre a tela de Viabilidade no ponto central da área. Lá o estudo é do ${rotuloDoRaio(1)} em volta desse ponto, não da área desenhada.`
-/** O ponto de outro alcance (DEC-074) vai ao Simulador pela ORIGEM, que é o ponto clicado. */
+/**
+ * O ponto de outro alcance (DEC-074) vai ao Simulador pela ORIGEM, que é o ponto clicado, e
+ * LEVA o alcance (Emenda 4): o relatório completo de lá sai no recorte da ficha. A conta
+ * financeira não depende do recorte — ela é do imóvel.
+ */
 export const DICA_SIMULADOR_ALCANCE =
-  `Abre a tela de Viabilidade neste ponto. Lá o estudo é do ${rotuloDoRaio(1)} em volta dele, não do recorte escolhido aqui.`
+  'Abre a tela de Viabilidade neste ponto. O relatório completo de lá sai no recorte escolhido aqui; a conta financeira não muda com ele.'
 
 /**
  * O recorte que o "Estudo" manda ao servidor, no CORPO do pedido (`api.relatorioPontual`):
@@ -84,6 +90,11 @@ export function recorteDoEstudo(
   if (ehAreaDesenhada(ficha)) {
     return ficha.geometria?.length ? { geometria: { type: 'Polygon', coordinates: ficha.geometria } } : null
   }
+  return alcanceForaDoPadrao(ficha)
+}
+
+/** O alcance de um PONTO no formato do pedido: `{ alcance }` fora do raio de 1 km, `{}` nele. */
+function alcanceForaDoPadrao(ficha: FichaDoRodape): { alcance?: Alcance } {
   const alcance = alcanceDoItem({
     raio_km: ficha.raio_km ?? null,
     geometria: ficha.geometria,
@@ -91,6 +102,21 @@ export function recorteDoEstudo(
     mercado: ficha.mercado,
   })
   return alcance && alcance !== 'raio_1km' ? { alcance } : {}
+}
+
+/**
+ * O alcance que o ponto LEVA ao Simulador (DEC-074, Emenda 4) — a MESMA regra do Estudo
+ * (`alcanceForaDoPadrao`), para os dois PDFs da ficha nunca discordarem do recorte.
+ *
+ * O relato do Vinicius (27/10/2026): "selecionei uma coordenada com deslocamento de 5
+ * minutos, fui para a Viabilidade e fiz o estudo dela, mas o relatório saiu com
+ * deslocamento de 1 km". Só fora do raio de 1 km (o pedido de sempre não ganha campo) e
+ * NUNCA da área desenhada: na Viabilidade ela é o ponto central, e o relatório completo dela
+ * é o raio de 1 km em volta dele (`DICA_SIMULADOR_AREA`).
+ */
+export function alcanceParaSimulador(ficha: FichaDoRodape | null): { alcance?: Alcance } {
+  if (!ficha || ehAreaDesenhada(ficha)) return {}
+  return alcanceForaDoPadrao(ficha)
 }
 
 /**
@@ -133,8 +159,9 @@ export function estadoDoSimulador(ficha: FichaDoRodape | null, liberado: boolean
     }
   }
   /* A area desenhada VAI ao Simulador (decisao do dono: pelo ponto central), e o ponto de
-     outro alcance vai pela origem; nos dois a dica diz o que acontece la': a Viabilidade
-     e o PDF dela sao do RAIO de 1 km em volta desse ponto. */
+     outro alcance vai pela origem LEVANDO o alcance (Emenda 4 da DEC-074); a dica diz o
+     que acontece la': na area, o PDF e' do RAIO de 1 km em volta do ponto central; no
+     alcance, o relatorio completo sai no recorte da ficha. */
   const tipo = ficha ? tipoDoRecorte(ficha) : 'raio_1km'
   const dica =
     tipo === 'poligono' ? DICA_SIMULADOR_AREA : tipo === 'raio_1km' ? DICA_SIMULADOR : DICA_SIMULADOR_ALCANCE

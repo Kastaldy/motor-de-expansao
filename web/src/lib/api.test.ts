@@ -415,9 +415,36 @@ describe('relatorioPontual — o recorte do Estudo vai no CORPO', () => {
     expect(cap.corpo().has('geometria')).toBe(false)
   })
 
-  it('fora do modo Estudo o recorte não vai: o relatório completo é do raio de 1 km', async () => {
+  it('o ALCANCE vai também no relatório completo (Emenda 4 da DEC-074), no corpo', async () => {
+    /* O relato do Vinicius (27/10/2026): o ponto lido em 5 min de carro ia ao Simulador e
+       o relatório de lá saía no raio de 1 km — este `if` descartava o alcance fora do Estudo. */
     const cap = capturarTudo()
-    await api.relatorioPontual({ lat: -23.48, lng: -46.61, alcance: 'carro_10min' })
+    await api.relatorioPontual({ lat: -23.48, lng: -46.61, alcance: 'carro_5min', viabilidadeInputs: INPUTS })
+    expect(cap.corpo().get('alcance')).toBe('carro_5min')
+    const q = new URLSearchParams(cap.url().split('?')[1] ?? '')
+    // É o COMPLETO: sem `so_estudo`, com o cenário financeiro na query.
+    expect(q.has('so_estudo')).toBe(false)
+    expect(q.has('viabilidade_inputs_json')).toBe(true)
+    expect(cap.url()).not.toContain('alcance')
+  })
+
+  it('no completo o raio de 1 km segue sem campo novo — o pedido de antes', async () => {
+    const cap = capturarTudo()
+    await api.relatorioPontual({ lat: -23.48, lng: -46.61, alcance: 'raio_1km', viabilidadeInputs: INPUTS })
+    expect(cap.corpo().has('alcance')).toBe(false)
+    expect(cap.corpo().has('geometria')).toBe(false)
+  })
+
+  it('a área desenhada segue só no Estudo: fora dele o contorno não vai', async () => {
+    const cap = capturarTudo()
+    const anel: [number, number][] = [
+      [-46.6, -23.5],
+      [-46.5, -23.5],
+      [-46.5, -23.4],
+      [-46.6, -23.5],
+    ]
+    await api.relatorioPontual({ lat: -23.48, lng: -46.61, geometria: { type: 'Polygon', coordinates: [anel] } })
+    expect(cap.corpo().has('geometria')).toBe(false)
     expect(cap.corpo().has('alcance')).toBe(false)
   })
 })

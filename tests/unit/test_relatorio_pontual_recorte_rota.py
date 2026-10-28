@@ -6,8 +6,10 @@ motor, mapas, mercado, gerador): o que se trava e' o que a rota ENTREGA a cada u
 desenho dos textos e das metas no PDF e' do `censo_report` e tem teste proprio. Travas:
 
 - sem os campos, nenhuma chamada ganha kwarg novo (o PDF de sempre);
-- o recorte so' existe no Estudo; com os dois campos, sem `so_estudo` ou com o estudo da
-  unidade Ultra na AREA DESENHADA -> 400 em portugues, ANTES de registrar o relatorio;
+- a AREA DESENHADA so' existe no Estudo; o ALCANCE vale tambem no relatorio COMPLETO da
+  Viabilidade (Emenda 4 da DEC-074): o Simulador leva o alcance da ficha, e o territorio do
+  completo e' o do Estudo do mesmo alcance; com os dois campos, a area sem `so_estudo` ou o
+  estudo da unidade Ultra na AREA DESENHADA -> 400 em portugues, ANTES de registrar;
 - o estudo da unidade Ultra vale no raio de 2 km e nos 5/10 min de carro e o mercado do PDF
   e' medido NO recorte, sem a unidade (emenda do item 6 da DEC-074, 2026-10-21);
 - o servidor RECALCULA o recorte: a isocrona sai do servico de rotas (mockado), o desenho
@@ -362,12 +364,12 @@ def test_area_desenhada_invalida_e_400(espioes, geometria, trecho) -> None:
 @pytest.mark.parametrize(
     ("kwargs", "trecho"),
     [
-        ({"alcance": "raio_2km"}, "use o Estudo"),
         ({"geometria": "{}"}, "use o Estudo"),
         ({"so_estudo": True, "alcance": "raio_2km", "geometria": "{}"}, "não os dois"),
         ({"so_estudo": True, "geometria": "{}", "excluir_ultra_proxima": True}, "área desenhada"),
-        ({"alcance": "raio_2km", "excluir_ultra_proxima": True}, "use o Estudo"),
         ({"so_estudo": True, "alcance": "raio_9km"}, "Alcance desconhecido"),
+        # Emenda 4: o alcance chega ao completo, mas um alcance fora da lista segue 400.
+        ({"alcance": "raio_9km"}, "Alcance desconhecido"),
     ],
 )
 def test_recusas_sao_400_em_portugues_antes_de_registrar(espioes, kwargs, trecho) -> None:
@@ -441,6 +443,158 @@ def test_os_campos_sao_form_e_nao_query() -> None:
 
 
 # --------------------------------------------------------------------------- #
+# Relatorio COMPLETO no recorte do alcance (DEC-074, Emenda 4)                  #
+# --------------------------------------------------------------------------- #
+# O relato do Vinicius (27/10/2026): "selecionei uma coordenada com deslocamento de 5
+# minutos, fui para a Viabilidade e fiz o estudo dela, mas o relatorio saiu com
+# deslocamento de 1 km". O Simulador passa a levar o alcance da ficha, e o relatorio
+# completo le o RECORTE no territorio (carga, motor, mapas, mercado com o fator da regua e
+# o gerador) -- o MESMO do Estudo -- e segue com o financeiro, o imovel e os dois selos.
+_VIAB_INPUTS = json.dumps(
+    {"lat": _LAT, "lng": _LNG, "m2": 1500.0, "aluguel": 30_000.0, "demanda": 2304.0, "ticket": 147.0}
+)
+_VIAB_PDF = {"versao": "viabilidade_payload_v1", "espiao": True}
+_INFO = {"metragem_m2": 1500.0, "aluguel_pedido": 30_000.0}
+
+
+@pytest.fixture
+def viab_espiao(monkeypatch: pytest.MonkeyPatch) -> list:
+    """O payload financeiro do PDF vira espiao: a montagem real tem teste proprio; aqui so'
+    importa que ele chega ao gerador e com QUE coordenada foi pedido."""
+    pedidos: list = []
+
+    def _payload(body):
+        pedidos.append(body)
+        return dict(_VIAB_PDF)
+
+    monkeypatch.setattr(pilot, "_viabilidade_pdf_payload", _payload)
+    return pedidos
+
+
+def test_relatorio_completo_no_raio_de_2km_le_o_recorte(espioes, viab_espiao) -> None:
+    _rota(alcance="raio_2km", viabilidade_inputs_json=_VIAB_INPUTS, info_imovel=json.dumps(_INFO))
+
+    assert _kw(espioes, "carga") == {"raio_km": 2.0}
+    assert _kw(espioes, "motor")["raio_km"] == 2.0
+    mapas = _kw(espioes, "mapas")
+    assert mapas["raio_km"] == 2.0
+    assert mapas["result"] is espioes["gerador"][-1][0][0]
+    assert _kw(espioes, "mercado") == {"raio_km": 2.0, "fator_regua": 4.0}
+    gerador = _kw(espioes, "gerador")
+    assert gerador["recorte"] == {
+        "tipo": "raio_2km",
+        "rotulo_curto": "Raio 2,0 km",
+        "rotulo_longo": "raio de 2,0 km",
+        "fator_regua": 4.0,
+        "area_km2": math.pi * 4,
+    }
+    # O COMPLETO, e nao o Estudo: Conclusao com os dois selos, financeiro e imovel no PDF.
+    assert gerador["conclusao_so_estudo"] is False
+    assert gerador["viabilidade"] == _VIAB_PDF
+    assert gerador["info_imovel"] == _INFO
+    # O financeiro NAO le o recorte: o cenario e' o do corpo, na coordenada dele (a zona
+    # morta usa a captacao propria de 1,5 km em volta dela, DEC-042).
+    assert [(b.lat, b.lng) for b in viab_espiao] == [(_LAT, _LNG)]
+    assert len(espioes["registro"]) == 1
+
+
+def _territorio(visto: dict) -> dict:
+    """O que o RECORTE entrega a cada colaborador, sem o `result` (objeto de cada rodada)."""
+    out: dict = {}
+    for nome in ("carga", "motor", "mapas", "mercado"):
+        args, kw = visto[nome][-1]
+        out[nome] = (args, {k: v for k, v in kw.items() if k != "result"})
+    out["recorte"] = _kw(visto, "gerador")["recorte"]
+    return out
+
+
+@pytest.mark.parametrize("alcance", ["raio_2km", "carro_5min", "carro_10min"])
+def test_completo_le_o_mesmo_recorte_do_estudo(espioes, valhalla, viab_espiao, alcance) -> None:
+    """Uma regra so': o territorio do relatorio completo e' o do Estudo do mesmo alcance,
+    chamada a chamada. So' muda o que e' do completo (financeiro, imovel, dois selos)."""
+    _rota(so_estudo=True, alcance=alcance)
+    do_estudo = _territorio(espioes)
+    assert _kw(espioes, "gerador")["conclusao_so_estudo"] is True
+
+    _rota(alcance=alcance, viabilidade_inputs_json=_VIAB_INPUTS)
+    assert _territorio(espioes) == do_estudo
+    gerador = _kw(espioes, "gerador")
+    assert gerador["recorte"]["tipo"] == alcance
+    assert gerador["conclusao_so_estudo"] is False
+    assert gerador["viabilidade"] == _VIAB_PDF
+    if alcance.startswith("carro_"):
+        # A isocrona saiu do cache do servidor: o completo nao pagou outra chamada de rotas.
+        assert len(valhalla) == 1
+
+
+def test_relatorio_completo_dos_10_min_sem_servico_e_503_antes_de_registrar(
+    espioes, viab_espiao
+) -> None:
+    """Sem o servico de rotas o completo recusa como o Estudo -- nunca o raio de 1 km em
+    silencio (decisao 2) --, antes de registrar e antes de montar o financeiro."""
+    with pytest.raises(HTTPException) as exc:
+        _rota(alcance="carro_10min", viabilidade_inputs_json=_VIAB_INPUTS)
+    assert exc.value.status_code == 503
+    assert exc.value.detail == alcance_ponto.MSG_ROTAS_INDISPONIVEIS
+    assert espioes["registro"] == [] and espioes["gerador"] == [] and viab_espiao == []
+
+
+def test_relatorio_completo_da_unidade_ultra_no_recorte(espioes, unidade_valida, viab_espiao) -> None:
+    """O modo e o recorte chegam JUNTOS ao mercado tambem no completo (Emenda 2)."""
+    _rota(alcance="raio_2km", excluir_ultra_proxima=True, viabilidade_inputs_json=_VIAB_INPUTS)
+    assert _kw(espioes, "mercado") == {
+        "raio_km": 2.0,
+        "fator_regua": 4.0,
+        "excluir_ultra_proxima": True,
+    }
+    assert unidade_valida == [(_LAT, _LNG)]
+    assert _kw(espioes, "gerador")["conclusao_so_estudo"] is False
+
+
+@pytest.mark.parametrize("extra", [{}, {"alcance": "raio_1km"}])
+def test_relatorio_completo_no_raio_de_1km_e_o_de_sempre(espioes, viab_espiao, extra) -> None:
+    """Decisao 5 da DEC-074: o PDF da Viabilidade no raio de 1 km nao ganha um kwarg."""
+    _rota(viabilidade_inputs_json=_VIAB_INPUTS, **extra)
+    assert _kw(espioes, "carga") == {}
+    assert _kw(espioes, "motor")["raio_km"] == 1.0
+    assert not {"geometria_wgs84", "geometria_tipo"} & set(_kw(espioes, "motor"))
+    assert not {"result", "geometria_wgs84", "geometria_tipo"} & set(_kw(espioes, "mapas"))
+    assert _kw(espioes, "mapas")["raio_km"] == 1.0
+    assert _kw(espioes, "mercado") == {}
+    gerador = _kw(espioes, "gerador")
+    assert "recorte" not in gerador
+    assert gerador["conclusao_so_estudo"] is False
+    assert gerador["viabilidade"] == _VIAB_PDF
+
+
+def test_aviso_da_viabilidade_cita_a_captacao_e_a_isocrona_do_modelo() -> None:
+    """A linha da tela de Viabilidade (`avisoDoRecorteDoRelatorio`, `web/src/lib/report.ts`)
+    diz o que NAO muda com o recorte com dois numeros escritos a mao no front: a captacao da
+    zona morta (DEC-042) e a isocrona do modelo de praca (DEC-078). Os dois vem daqui -- se a
+    constante mudar, o texto de usuario nao pode seguir afirmando o valor velho."""
+    from motor_expansao.dimensionamento.config import RAIO_CATCHMENT_KM, V2_MINUTOS_ISOCRONA
+
+    fonte = (_REPO / "web" / "src" / "lib" / "report.ts").read_text(encoding="utf-8")
+    inicio = fonte.index("export function avisoDoRecorteDoRelatorio")
+    corpo = fonte[inicio : fonte.index("\n}\n", inicio)]
+    raio = f"{RAIO_CATCHMENT_KM:.1f}".replace(".", ",")
+    assert f"captação própria de {raio} km" in corpo
+    assert f"({V2_MINUTOS_ISOCRONA} min de carro, do modelo de praça)" in corpo
+
+
+def test_area_desenhada_segue_so_no_estudo(espioes, viab_espiao) -> None:
+    """A area desenhada NAO entra no completo (fora da Emenda 4): na Viabilidade ela e' o
+    ponto central, e o relatorio completo dela e' o raio de 1 km em volta dele."""
+    with pytest.raises(HTTPException) as exc:
+        _rota(geometria=_desenho_geojson(), viabilidade_inputs_json=_VIAB_INPUTS)
+    assert exc.value.status_code == 400
+    assert exc.value.detail == pilot.MSG_RECORTE_SO_NO_ESTUDO
+    assert "área desenhada" in exc.value.detail
+    assert "use o Estudo" in exc.value.detail
+    assert espioes["registro"] == [] and espioes["carga"] == [] and viab_espiao == []
+
+
+# --------------------------------------------------------------------------- #
 # Deck de comparacao                                                           #
 # --------------------------------------------------------------------------- #
 def test_comparacao_aceita_o_recorte_por_item_e_repassa(monkeypatch) -> None:
@@ -498,12 +652,8 @@ def test_comparacao_recusa_recorte_malformado(recorte) -> None:
 # --------------------------------------------------------------------------- #
 # Ponta a ponta com o gerador REAL                                             #
 # --------------------------------------------------------------------------- #
-def test_pdf_real_do_estudo_do_raio_de_2km_nomeia_o_recorte(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """O dict que a rota monta e' aceito pelo gerador de VERDADE, e o PDF diz o recorte e a
-    escala das metas -- trava a COSTURA rota -> gerador (os textos tem teste proprio)."""
-    pytest.importorskip("h3", reason="censo_report importa h3", exc_type=ImportError)
+def _preparar_rota_com_gerador_real(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Colaboradores pesados viram stubs; o GERADOR do PDF fica o de verdade."""
     from motor_expansao.api import service as api_service
     from motor_expansao.dashboard import censo_map, censo_point
 
@@ -530,10 +680,61 @@ def test_pdf_real_do_estudo_do_raio_de_2km_nomeia_o_recorte(
     monkeypatch.setattr(pilot, "_praca_para_pdf", lambda *a, **k: None)
     monkeypatch.setattr(pilot, "_registrar_relatorio_gerado", lambda *a, **k: "rid")
 
+
+def test_pdf_real_do_estudo_do_raio_de_2km_nomeia_o_recorte(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """O dict que a rota monta e' aceito pelo gerador de VERDADE, e o PDF diz o recorte e a
+    escala das metas -- trava a COSTURA rota -> gerador (os textos tem teste proprio)."""
+    pytest.importorskip("h3", reason="censo_report importa h3", exc_type=ImportError)
+    _preparar_rota_com_gerador_real(tmp_path, monkeypatch)
+
     texto = _rota(so_estudo=True, alcance="raio_2km").body.decode("latin-1", errors="replace")
     assert texto.startswith("%PDF")
     assert "Raio 2,0 km" in texto
     assert "x4,0" in texto  # a nota da escala das metas de total
+    # Controle do teste abaixo: o Estudo nao tem financeiro nem o segundo selo.
+    assert "Payback" not in texto
+    assert "FINANCEIRO" not in texto
+
+
+# Payload PLANO de viabilidade (o caminho `viabilidade_json`, que a rota aceita sem rodar o
+# motor) -- o mesmo de `test_relatorio_pontual_so_estudo_rota.py`.
+_VIAB_PLANO = {
+    "alunos_breakeven": 520,
+    "aluguel_teto": 24500.0,
+    "margem_ebitda_pct": 0.18,
+    "payback_meses": 26.0,
+    "roic_anual": 0.22,
+    "faturamento_mensal": 150_000.0,
+    "ebitda_mensal": 27_000.0,
+    "faixa_p10": 400,
+    "faixa_p90": 1000,
+    "flag_viavel": True,
+    "flag_fora_envelope": False,
+}
+
+
+def test_pdf_real_do_relatorio_completo_do_raio_de_2km(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Emenda 4 com o gerador de VERDADE: o completo no recorte nomeia o recorte e a escala
+    (como o Estudo) E mantem o financeiro e o selo FINANCEIRO da Conclusao."""
+    pytest.importorskip("h3", reason="censo_report importa h3", exc_type=ImportError)
+    _preparar_rota_com_gerador_real(tmp_path, monkeypatch)
+
+    texto = _rota(
+        alcance="raio_2km",
+        viabilidade_json=json.dumps(_VIAB_PLANO),
+        info_imovel=json.dumps(_INFO),
+    ).body.decode("latin-1", errors="replace")
+    assert texto.startswith("%PDF")
+    assert "Raio 2,0 km" in texto
+    assert "x4,0" in texto
+    assert "Payback" in texto
+    assert "FINANCEIRO" in texto
+    # A Conclusao e' a dos DOIS eixos (a nota do Estudo nao tem esta frase).
+    assert "dois eixos independentes" in texto
 
 
 # --------------------------------------------------------------------------- #

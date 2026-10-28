@@ -27,7 +27,13 @@ import {
   rotuloMes,
 } from '../lib/format'
 import { formatarNumero } from '../lib/mascara'
-import { infoImovelParaPdf, parametrosRelatorioPontual } from '../lib/report'
+import {
+  avisoDoRecorteDoRelatorio,
+  dicaDoRelatorioCompleto,
+  infoImovelParaPdf,
+  parametrosRelatorioPontual,
+  rotuloDoRecorteDoRelatorio,
+} from '../lib/report'
 import {
   clampNStudios,
   definirTicketStudio,
@@ -638,7 +644,8 @@ export default function ViabilityScreen({
     setErro(null)
     try {
       const { blob, filename } = await api.relatorioPontual({
-        // Coordenada do estudo + rótulo + AVISO DE ORIGEM saem prontos de
+        // Coordenada do estudo + rótulo + AVISO DE ORIGEM (e, fora do raio de 1 km, o
+        // ALCANCE da ficha — DEC-074, Emenda 4) saem prontos de
         // `parametrosRelatorioPontual` (lib/report.ts), que é onde essa decisão pode
         // ser testada. Ela responde às duas coisas pela MESMA regra de `lib/coord.ts`:
         // qual coordenada usar e se o PDF precisa avisar que ela é o CENTROIDE do
@@ -844,6 +851,8 @@ export default function ViabilityScreen({
           }}
         >
           ↩ vindo {origemRotulo} · {ponto.rotulo}
+          {/* O recorte que o relatório completo vai ler (DEC-074, Emenda 4), só fora do raio de 1 km. */}
+          {ponto.alcance && ponto.alcance !== 'raio_1km' && ` · ${rotuloDoRecorteDoRelatorio(ponto.alcance)}`}
         </button>
 
         <div style={{ flex: 1 }} />
@@ -1911,7 +1920,7 @@ export default function ViabilityScreen({
             onClick={gerarPdf}
             disabled={gerandoPdf}
             style={{ width: '100%', marginTop: 10 }}
-            title="Relatório Pontual Censitário 1,0 km com fotos, dados do imóvel e os números da viabilidade"
+            title={dicaDoRelatorioCompleto(ponto.alcance)}
           >
             {gerandoPdf ? (
               <span style={carregando}>
@@ -1921,6 +1930,20 @@ export default function ViabilityScreen({
               'Relatório completo em PDF ↓'
             )}
           </Botao>
+
+          {/* DEC-074, Emenda 4: o recorte que muda o PDF ESCRITO na tela (o `title` não aparece
+              no toque nem em todo navegador). `null` no raio de 1 km: a tela de sempre. */}
+          {avisoDoRecorteDoRelatorio(ponto.alcance) && (
+            <p
+              style={{
+                font: '400 10.5px/1.5 var(--f-ui)',
+                color: 'var(--tx-sub)',
+                marginTop: 8,
+              }}
+            >
+              {avisoDoRecorteDoRelatorio(ponto.alcance)}
+            </p>
+          )}
 
           {gerandoPdf && (
             <p

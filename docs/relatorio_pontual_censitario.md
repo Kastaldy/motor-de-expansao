@@ -141,7 +141,7 @@ Validacao real executada no DF: 5.418 setores, 1 arquivo, 3,46 MB, ~35s, 97,16% 
 
 ## 5. Metodo de intersecao
 
-1. Receber `lat`, `lng` e usar `raio_km=1.0` no fluxo do relatorio (o Estudo do piloto aceita tambem raio de 2 km, isocrona de 5/10 min de carro e area desenhada, cada recorte com metodo proprio — DEC-071/DEC-074; o relatorio completo, com financeiro, segue no raio de 1 km).
+1. Receber `lat`, `lng` e usar `raio_km=1.0` no fluxo do relatorio (o Estudo do piloto aceita tambem raio de 2 km, isocrona de 5/10 min de carro e area desenhada, cada recorte com metodo proprio — DEC-071/DEC-074; o relatorio completo, com financeiro, aceita o alcance da ficha — raio de 2 km e isocronas de 5/10 min, nao a area desenhada — desde a Emenda 4 da DEC-074, PROPOSTA).
 2. Identificar UF/municipio provavel para carregar apenas particoes relevantes do artefato geo.
 3. Reprojetar ponto e setores candidatos para CRS metrico apropriado ao local antes de criar buffer e medir area.
 4. Criar circulo/buffer de `1.000 m`.

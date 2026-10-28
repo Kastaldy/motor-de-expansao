@@ -1,5 +1,13 @@
 import { describe, expect, it } from 'vitest'
-import { infoImovelParaPdf, parametrosRelatorioPontual, viabilidadeParaPdf } from './report'
+import {
+  avisoDoRecorteDoRelatorio,
+  DICA_RELATORIO_COMPLETO,
+  dicaDoRelatorioCompleto,
+  infoImovelParaPdf,
+  parametrosRelatorioPontual,
+  rotuloDoRecorteDoRelatorio,
+  viabilidadeParaPdf,
+} from './report'
 import { VIABILIDADE_PAYLOAD_VERSAO } from './types'
 import type { SerieMensalLinha, ViabilidadeOut } from './types'
 
@@ -387,5 +395,56 @@ describe('parametrosRelatorioPontual', () => {
       'origemCentroideHex',
       'rotulo',
     ])
+  })
+
+  it('o ALCANCE da ficha viaja ao PDF do Simulador (Emenda 4 da DEC-074)', () => {
+    // O relato: um ponto lido em 5 min de carro saía no raio de 1 km no relatório completo.
+    expect(parametrosRelatorioPontual({ ...ponto, alcance: 'carro_5min' }).alcance).toBe('carro_5min')
+    expect(parametrosRelatorioPontual({ ...ponto, alcance: 'raio_2km' }).alcance).toBe('raio_2km')
+    expect(parametrosRelatorioPontual({ ...ponto, alcance: 'carro_10min' }).alcance).toBe('carro_10min')
+  })
+
+  it('o raio de 1 km NÃO vira campo: o pedido do raio de sempre fica byte a byte', () => {
+    expect('alcance' in parametrosRelatorioPontual({ ...ponto, alcance: 'raio_1km' })).toBe(false)
+    expect('alcance' in parametrosRelatorioPontual(ponto)).toBe(false)
+  })
+
+  it('alcance e estudo da unidade Ultra viajam JUNTOS (a emenda da DEC-070 vale em todo alcance)', () => {
+    const p = parametrosRelatorioPontual({ ...ponto, alcance: 'raio_2km', estudoUltra: true })
+    expect(p).toMatchObject({ alcance: 'raio_2km', excluirUltraProxima: true })
+  })
+})
+
+describe('o recorte do relatório completo na tela de Viabilidade (Emenda 4 da DEC-074)', () => {
+  it('no raio de 1 km a dica do botão é a de sempre e não há aviso', () => {
+    expect(DICA_RELATORIO_COMPLETO).toBe(
+      'Relatório Pontual Censitário 1,0 km com fotos, dados do imóvel e os números da viabilidade',
+    )
+    expect(dicaDoRelatorioCompleto(undefined)).toBe(DICA_RELATORIO_COMPLETO)
+    expect(dicaDoRelatorioCompleto('raio_1km')).toBe(DICA_RELATORIO_COMPLETO)
+    expect(avisoDoRecorteDoRelatorio(undefined)).toBeNull()
+    expect(avisoDoRecorteDoRelatorio('raio_1km')).toBeNull()
+  })
+
+  it('o rótulo do recorte usa os mesmos textos da ficha', () => {
+    expect(rotuloDoRecorteDoRelatorio(undefined)).toBe('raio de 1 km')
+    expect(rotuloDoRecorteDoRelatorio('raio_2km')).toBe('raio de 2 km')
+    expect(rotuloDoRecorteDoRelatorio('carro_5min')).toBe('5 min de carro, sem trânsito')
+    expect(rotuloDoRecorteDoRelatorio('carro_10min')).toBe('10 min de carro, sem trânsito')
+  })
+
+  it('fora dele, a dica e o aviso dizem o recorte e o que NÃO muda com ele', () => {
+    const dica = dicaDoRelatorioCompleto('carro_5min')
+    expect(dica).toContain('5 min de carro, sem trânsito')
+    expect(dica).not.toContain('1,0 km')
+    const aviso = avisoDoRecorteDoRelatorio('carro_5min') ?? ''
+    expect(aviso).toContain('5 min de carro, sem trânsito')
+    // O que fica no ponto por razão própria: o financeiro, a zona morta (captação de 1,5 km,
+    // DEC-042) e a sugestão de demanda (10 min de carro do modelo de praça, DEC-078).
+    expect(aviso).toMatch(/financeir/)
+    expect(aviso).toMatch(/zona morta/)
+    expect(aviso).toMatch(/1,5 km/)
+    expect(aviso).toMatch(/10 min de carro/)
+    expect(avisoDoRecorteDoRelatorio('raio_2km')).toContain('raio de 2 km')
   })
 })
