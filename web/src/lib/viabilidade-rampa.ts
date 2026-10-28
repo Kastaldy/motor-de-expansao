@@ -99,6 +99,58 @@ export function mesFimDaRampa(p: PremissasRampa | null | undefined): number | nu
   return Number.isFinite(m) && m > 0 ? Math.round(m) : null
 }
 
+/** Meses que o eixo do gráfico "Rampa de alunos" mostra DEPOIS do pico (pedido de 28/10/2026). */
+export const MESES_DEPOIS_DO_PICO = 2
+
+/** Um ponto da série de alunos, com o mês JÁ na unidade do eixo do gráfico. */
+export interface PontoDaRampa {
+  mes: number
+  v: number
+}
+
+/** 1º mês em que a série atinge o seu máximo (a série vem em ordem de mês). */
+function mesDoMaximo(pontos: readonly PontoDaRampa[]): number {
+  let melhor = pontos[0]
+  for (const p of pontos) if (p.v > melhor.v) melhor = p
+  return melhor.mes
+}
+
+/**
+ * Eixo X do gráfico "Rampa de alunos": vai até 2 meses depois do pico (pedido do dono do
+ * produto em 28/10/2026: "12 meses mostra 14, 8 meses mostra 10"). Antes o eixo ia a no
+ * mínimo 18 meses (`max(platô + 6, 18)`), largo demais: num pico de 8 a subida ocupava
+ * menos da metade da largura.
+ *
+ * `fimDaRampa` é o `mes_maturidade_rampa` servido (via `mesFimDaRampa`), o 1º mês de
+ * OPERAÇÃO com a demanda cheia. Na curva observada o eixo conta o MÊS DE VIDA (mês 0 = a
+ * inauguração) e o platô cai em `fimDaRampa - 1`, que é o pico escolhido: o motor serve
+ * `mes_maturidade_rampa` = pico + 1. Na rampa linear (só pela API) o eixo é o mês de
+ * operação e o platô é o próprio `fimDaRampa`. Nos dois casos o eixo termina no platô + 2,
+ * sem piso nem teto: pico 1 mostra 3 meses; pico 36, 38.
+ *
+ * O eixo nunca passa do último mês da série: série mais curta que o platô + 2 termina
+ * nela, e o marcador do platô some quando ele fica fora (quem desenha testa
+ * `plato <= limite`). Sem fim servido (premissas ausentes), o eixo ancora no 1º mês em que
+ * a própria série atinge o seu máximo: a mesma regra sem número fixo, e o máximo da série,
+ * que é o valor do cabeçalho, nunca fica fora do eixo. Esse mês LIDO da série não vira
+ * `plato`: o rótulo "platô no mês N" e o marcador só afirmam o que o payload serviu.
+ *
+ * `pontos` vem em ordem de mês, já na unidade do eixo, e não é vazio (o gráfico só desenha
+ * com 2 pontos ou mais).
+ */
+export function eixoDaRampa(
+  fimDaRampa: number | null,
+  curva: boolean,
+  pontos: readonly PontoDaRampa[],
+): { plato: number | null; limite: number } {
+  const plato =
+    fimDaRampa != null && Number.isFinite(fimDaRampa) && fimDaRampa > 0
+      ? Math.round(fimDaRampa) - (curva ? 1 : 0)
+      : null
+  const ancora = plato ?? mesDoMaximo(pontos)
+  return { plato, limite: Math.min(pontos[pontos.length - 1].mes, ancora + MESES_DEPOIS_DO_PICO) }
+}
+
 /**
  * O que a rampa muda no steady-state. Com o regime pleno até o mês 12 ela só move o
  * caixa e o payback. Depois do mês 12 (pico tardio), o motor mede o regime pleno no

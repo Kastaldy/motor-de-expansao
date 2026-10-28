@@ -7,7 +7,7 @@ import type {
 } from '../lib/types'
 import { Glass } from './primitives'
 import { TEXTO_SEM_DADO } from '../lib/constants'
-import { mesFimDaRampa } from '../lib/viabilidade-rampa'
+import { eixoDaRampa, mesFimDaRampa } from '../lib/viabilidade-rampa'
 
 /* ---------------------------------------------------------------------------
    Graficos da Viabilidade. Formas herdadas do template de referencia.
@@ -614,6 +614,9 @@ function LinhaReceita({
  * com o pico escolhido) ou, pela API pública, da rampa linear; o desenho
  * é o mesmo (é a série do motor), e `maturacaoMeses` é o fim da rampa SERVIDO
  * (`mes_maturidade_rampa`), não o parâmetro da reta.
+ *
+ * O eixo X termina 2 meses depois do pico (pedido de 28/10/2026; antes ia a no mínimo 18
+ * meses): a regra e os casos de borda moram em `eixoDaRampa`.
  */
 export function RampaAlunos({
   serie,
@@ -653,10 +656,9 @@ export function RampaAlunos({
     )
   }
 
-  // Horizonte curto: a rampa se lê nos primeiros meses; o platô já aparece plano.
-  const mat =
-    maturacaoMeses != null && maturacaoMeses > 0 ? Math.round(maturacaoMeses) - desloc : null
-  const limite = Math.min(pts[pts.length - 1].mes, Math.max((mat ?? 8) + 6, 18))
+  // Horizonte curto: o eixo termina 2 meses depois do pico, com o platô já plano. `mat` é o
+  // platô SERVIDO, na unidade do eixo (o mês de vida, na curva); null sem fim servido.
+  const { plato: mat, limite } = eixoDaRampa(maturacaoMeses, curva, pts)
   const visiveis = pts.filter((p) => p.mes <= limite)
   const plateau = Math.max(...visiveis.map((p) => p.v))
 

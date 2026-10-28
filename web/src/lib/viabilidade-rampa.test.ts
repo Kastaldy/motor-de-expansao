@@ -5,12 +5,14 @@ import { describe, expect, it } from 'vitest'
 
 import * as rampa from './viabilidade-rampa'
 import {
+  MESES_DEPOIS_DO_PICO,
   PICO_RAMPA_MAX,
   PICO_RAMPA_MIN,
   PICO_RAMPA_OBSERVADO,
   ajudaDaRampa,
   casaNoMes1,
   ebitdaDosPrimeirosMeses,
+  eixoDaRampa,
   formaDoPayload,
   mesFimDaRampa,
   notaDaRampa,
@@ -261,5 +263,87 @@ describe('a tela trata a Viabilidade como produto único', () => {
     expect(TELA).toContain('aria-label="Aumentar o pico de maturação"')
     expect(TELA).toContain('mes_pico_rampa: picoParaEnviar(picoRampa)')
     expect(TELA).not.toContain('Pico de maturação, em meses')
+  })
+})
+
+/* ---------------------------------------------------------------------------
+   Eixo do gráfico "Rampa de alunos" (pedido de 28/10/2026): termina 2 meses depois do
+   pico, e não mais em no mínimo 18 meses. O payload serve `mes_maturidade_rampa` = pico +
+   1 (mês de OPERAÇÃO), conferido no motor (`premissas_do_body` + a série mensal) para os
+   picos 1, 2, 8, 10, 12 e 36; na rampa linear, o próprio N.
+   --------------------------------------------------------------------------- */
+
+// Alunos por MÊS DE VIDA de uma curva com pico `pico`, no formato da do motor (80% no mês
+// 0, 68% no mês 1, demanda cheia do pico em diante), já no eixo do gráfico; 60 meses.
+function serieCurva(pico: number, meses = 60): { mes: number; v: number }[] {
+  const demanda = 2500
+  return Array.from({ length: meses }, (_, mes) => {
+    if (mes === 0) return { mes, v: demanda * 0.8 }
+    if (mes >= pico) return { mes, v: demanda }
+    return { mes, v: demanda * (0.68 + (0.32 * (mes - 1)) / (pico - 1)) }
+  })
+}
+
+describe('eixo do gráfico "Rampa de alunos" (pedido de 28/10/2026)', () => {
+  it('vai até 2 meses depois do pico: pico 8 mostra 10, 10 mostra 12 e 12 mostra 14', () => {
+    expect(MESES_DEPOIS_DO_PICO).toBe(2)
+    for (const [pico, fimDoEixo] of [
+      [8, 10],
+      [10, 12],
+      [12, 14],
+    ]) {
+      // a tela recebe o fim servido (pico + 1); na curva o eixo é o mês de vida
+      expect(eixoDaRampa(pico + 1, true, serieCurva(pico))).toEqual({
+        plato: pico,
+        limite: fimDoEixo,
+      })
+    }
+  })
+
+  it('lê o fim da rampa do payload pelo mesmo caminho da tela (mesFimDaRampa)', () => {
+    expect(eixoDaRampa(mesFimDaRampa(CURVA), true, serieCurva(10))).toEqual({
+      plato: 10,
+      limite: 12,
+    })
+    expect(eixoDaRampa(mesFimDaRampa(CURVA_PICO_6), true, serieCurva(6))).toEqual({
+      plato: 6,
+      limite: 8,
+    })
+  })
+
+  it('sem piso nem teto: pico 1 mostra 3 meses e o pico máximo (36), 38', () => {
+    expect(eixoDaRampa(2, true, serieCurva(1))).toEqual({ plato: 1, limite: 3 })
+    expect(eixoDaRampa(PICO_RAMPA_MAX + 1, true, serieCurva(PICO_RAMPA_MAX))).toEqual({
+      plato: PICO_RAMPA_MAX,
+      limite: PICO_RAMPA_MAX + 2,
+    })
+  })
+
+  it('rampa linear (só pela API): eixo em mês de operação e platô no próprio fim servido', () => {
+    const reta = Array.from({ length: 60 }, (_, i) => ({ mes: i + 1, v: Math.min(i + 1, 8) * 250 }))
+    expect(eixoDaRampa(mesFimDaRampa(LINEAR), false, reta)).toEqual({ plato: 8, limite: 10 })
+  })
+
+  it('série mais curta que o pico + 2: o eixo termina nela e o marcador do platô some', () => {
+    // o gráfico só desenha o marcador com `plato <= limite`
+    expect(eixoDaRampa(13, true, serieCurva(12, 6))).toEqual({ plato: 12, limite: 5 })
+  })
+
+  it('sem fim servido: ancora no 1º mês com o máximo da série e não inventa platô', () => {
+    expect(eixoDaRampa(null, true, serieCurva(10))).toEqual({ plato: null, limite: 12 })
+    expect(eixoDaRampa(null, true, serieCurva(20))).toEqual({ plato: null, limite: 22 })
+    // fim não finito conta como ausente, como em `mesFimDaRampa`
+    expect(eixoDaRampa(Number.NaN, true, serieCurva(8))).toEqual({ plato: null, limite: 10 })
+  })
+
+  it('o gráfico usa a regra e não guarda mais a janela de 18 meses', () => {
+    const fonte = FONTES_DE_TEXTO.graficos
+    const corpo = fonte.slice(
+      fonte.indexOf('export function RampaAlunos('),
+      fonte.indexOf('export function FluxoCaixa('),
+    )
+    expect(corpo).toContain('eixoDaRampa(maturacaoMeses, curva, pts)')
+    expect(corpo).not.toMatch(/const limite\s*=/)
+    expect(corpo).not.toMatch(/,\s*18\s*\)/)
   })
 })
