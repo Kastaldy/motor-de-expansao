@@ -149,16 +149,16 @@ const CHEQUE_AVISO_RAZAO = 1.2
      carencia = 0                   entra por `opcionais` (None é filtrado) e cai no
                                     default da dataclass `Premissas`, SIM_CARENCIA_ALUGUEL_MESES
      taxa_minima_negocio = 25% a.a. mesmo caminho, SIM_TAXA_MINIMA_NEGOCIO_AA
-
-   SEM PADRÃO PRÓPRIO, e por isso sem número anunciado como padrão:
-     juros_equipamentos_am — o backend resolve `float(juros or 0.0)`, ou seja 0% a.m.
-       O "1,8% a.m." é da planilha e do adaptador LEGADO (`viabilidade()` em
-       dimensionamento/simulador.py), que esta rota não percorre. Afirmar 1,8 como
-       padrão seria mentir — por isso ele entra como SUGESTÃO, ver o bloco abaixo.
-     prazo_equipamentos — `int(... or 36) if equip > 0 else 0`: o 36 é condicional a
-       haver equipamento; sem ele o padrão é 0. A faixa validada é ge=1, le=60.
-     obra / equipamentos — o CAPEX padrão (SIM_CAPEX_DEFAULT) só entra com OS DOIS
-       vazios; preenchendo um, o outro vira 0,0.
+     obra = 1.500.000               `investimento_do_body`, via SIM_OBRA_DEFAULT
+     equipamentos = 1.200.000       idem, SIM_EQUIPAMENTOS_DEFAULT
+     prazo_equipamentos = 36        idem, SIM_PRAZO_EQUIPAMENTOS_DEFAULT (0 se o
+                                    equipamento digitado for 0)
+     juros_equipamentos_am = 1,8%   idem, SIM_JUROS_EQUIPAMENTOS_AM_DEFAULT
+   Os quatro últimos têm padrão PRÓPRIO desde 2026-10-28 (decisão de Felipe). Até ali
+   eram só SUGESTÃO: com obra e equipamentos vazios o motor usava um CAPEX único de
+   2.340.000 sem financiamento, preencher um zerava o outro e o juros vazio era 0% —
+   digitar o número cinza mudava o payback (Campinas: 52 -> 39 meses só de confirmar a
+   obra). Valor digitado, inclusive 0, é honrado.
    --------------------------------------------------------------------------- */
 const PADRAO_PARCELAS_OBRA = '4'
 const PADRAO_PARCELAS_FRANQUIA = '4'
@@ -169,34 +169,20 @@ const PADRAO_TAXA_NEGOCIO = '25'
  *  depois do 1º cálculo a caixa mostra o `premissas.share_balcao` realmente usado. */
 const PADRAO_PCT_BALCAO = '69'
 
-/* SUGESTAO x PADRAO — a distincao NAO e' cosmetica ---------------------------
-   Acima, "padrao" e' o numero que o motor aplica quando o campo fica vazio, cada um
-   conferido no backend. Abaixo sao SUGESTOES de ponto de partida (pedido de Juan,
-   2026-08-05) que o motor NAO aplica:
-     Obra / Equipamentos -> nao tem padrao proprio. O CAPEX so' entra com OS DOIS
-       vazios; preenchendo um, o outro vira 0,0.
-     Prazo financ.       -> o padrao real e' 36, nao 60.
-     Juros equip.        -> o padrao real e' 0% (`float(juros or 0.0)` em
-       `_investimento`). Os 1,8% da planilha vivem no adaptador legado
-       `viabilidade()` de dimensionamento/simulador.py, que a rota web nao chama.
-   O placeholder mostra SO' O NUMERO: "sugestao 1.500.000" nao cabia na caixa depois
-   que o adorno da unidade passou a ocupar a direita dela (Juan, 2026-08-05: "sem a
-   palavra sugestao, pois nao da' pra visualizar"). O preco assumido e' que estes
-   quatro ficam visualmente iguais aos que anunciam padrao de verdade — a ressalva
-   vive no `title` de cada campo, que nao disputa largura com o adorno.
-
-   O risco que sobra, e que o `title` do juros deixa explicito: deixar o campo vazio
-   vendo 1,8 na tela faz o calculo rodar SEM custo de financiamento — a PMT some do
-   fluxo de caixa e o payback melhora sozinho. Quem quiser a sugestao, digita. */
-const SUGESTAO_OBRA = '1.500.000'
-const SUGESTAO_EQUIPAMENTOS = '1.200.000'
-const SUGESTAO_PRAZO_EQUIP = '60'
-/** As MESMAS sugestões e o mesmo padrão acima, em número (reais): onde o operador
- *  escolhe a moeda, a caixa mostra o valor CONVERTIDO em vez do texto em reais. */
-const SUGESTAO_OBRA_REAIS = 1_500_000
-const SUGESTAO_EQUIPAMENTOS_REAIS = 1_200_000
+/* Os quatro padrões do investimento abaixo TÊM de casar com o config do motor
+   (SIM_OBRA_DEFAULT, SIM_EQUIPAMENTOS_DEFAULT, SIM_PRAZO_EQUIPAMENTOS_DEFAULT,
+   SIM_JUROS_EQUIPAMENTOS_AM_DEFAULT): é o número que o campo vazio entrega. Ficam FIXOS
+   na caixa (via `fixa`), e não pelo eco do payload: o eco anunciaria o número DIGITADO
+   como se fosse o padrão. */
+const PADRAO_OBRA = '1.500.000'
+const PADRAO_EQUIPAMENTOS = '1.200.000'
+const PADRAO_PRAZO_EQUIP = '36'
+/** Os MESMOS padrões acima, em número (reais): onde o operador escolhe a moeda, a caixa
+ *  mostra o valor CONVERTIDO em vez do texto em reais. */
+const PADRAO_OBRA_REAIS = 1_500_000
+const PADRAO_EQUIPAMENTOS_REAIS = 1_200_000
 const PADRAO_TAXA_FRANQUIA_REAIS = 160_000
-const SUGESTAO_JUROS_EQUIP = '1,8'
+const PADRAO_JUROS_EQUIP = '1,8'
 
 /**
  * Placeholder = valor usado pelo motor no último cálculo; sem cálculo ainda, o texto
@@ -204,25 +190,22 @@ const SUGESTAO_JUROS_EQUIP = '1,8'
  * propósito: é a MESMA grafia que o campo mostraria se o número fosse digitado — sem
  * zero à direita, com a mesma vírgula.
  *
- * Serve aos campos cujo padrão do motor É o número certo a anunciar (parcelas, taxa de
- * franquia, carência, taxa mínima). Para os quatro campos de SUGESTÃO existe `fixa()`.
+ * Serve às parcelas, taxa de franquia, carência e taxa mínima. Os quatro campos do
+ * investimento (obra, equipamentos, prazo, juros) usam `fixa()`.
  */
 function dica(usado: number | null | undefined, reserva: string, casas = 0): string {
   return formatarNumero(usado, casas) || reserva
 }
 
 /**
- * Placeholder que NÃO ecoa o motor: a sugestão fica de pé antes e depois do cálculo.
+ * Placeholder que NÃO ecoa o motor: o padrão fica de pé antes e depois do cálculo.
  *
- * Existe porque, nestes quatro campos, o valor "usado" engana. Obra e Equipamentos não
- * têm padrão próprio: com os dois vazios o motor aplica o CAPEX compartilhado
- * (2.340.000, app.py:1357) e devolve isso como `investimento.obra` — então, depois do
- * primeiro cálculo, a caixa da Obra passava a anunciar 2.340.000 como se fosse a
- * referência, apagando a sugestão e escondendo que preencher um dos dois zera o outro.
- * Prazo e juros têm o mesmo problema em menor escala (o eco vira 36 e 0).
+ * Nos quatro campos do investimento o eco engana: com a obra digitada, o prazo vazio e
+ * o equipamento em 0, o motor devolve prazo 0, e a caixa passaria a anunciar 0 como
+ * padrão. O número fixo é o padrão do config (ver o bloco acima).
  */
-function fixa(sugestao: string): string {
-  return sugestao
+function fixa(padrao: string): string {
+  return padrao
 }
 
 export default function ViabilityScreen({
@@ -1499,11 +1482,11 @@ export default function ViabilityScreen({
                 step={10000}
                 prefixo={simbolo}
                 rotulo={`Obra, em ${nomeMoeda}`}
-                placeholder={moedaLocal ? naMoeda(SUGESTAO_OBRA_REAIS) : fixa(SUGESTAO_OBRA)}
+                placeholder={moedaLocal ? naMoeda(PADRAO_OBRA_REAIS) : fixa(PADRAO_OBRA)}
                 title={
                   moedaLocal
-                    ? `Obra (equity do franqueado), em ${simbolo}. O número da caixa é SUGESTÃO, não o padrão: com Obra e Equipamentos vazios o motor usa um CAPEX único, e preencher um zera o outro.`
-                    : "Obra (equity do franqueado), em R$. O 1.500.000 da caixa é SUGESTÃO, não o padrão: Obra e Equipamentos não têm padrão próprio — com os dois vazios o motor usa um CAPEX único de 2.340.000, e preencher um zera o outro. Use as setas para variar de 10.000 em 10.000."
+                    ? `Obra (equity do franqueado), em ${simbolo}. O número da caixa é o padrão: vazio, o motor usa esse valor.`
+                    : "Obra (equity do franqueado), em R$. O 1.500.000 da caixa é o padrão: vazio, o motor usa esse valor. Use as setas para variar de 10.000 em 10.000."
                 }
               />
             </Campo>
@@ -1533,11 +1516,11 @@ export default function ViabilityScreen({
                 step={10000}
                 prefixo={simbolo}
                 rotulo={`Equipamentos, em ${nomeMoeda}`}
-                placeholder={moedaLocal ? naMoeda(SUGESTAO_EQUIPAMENTOS_REAIS) : fixa(SUGESTAO_EQUIPAMENTOS)}
+                placeholder={moedaLocal ? naMoeda(PADRAO_EQUIPAMENTOS_REAIS) : fixa(PADRAO_EQUIPAMENTOS)}
                 title={
                   moedaLocal
-                    ? `Equipamentos (parcela financiada), em ${simbolo}. O número da caixa é SUGESTÃO, não o padrão: vazio com a Obra preenchida vale ZERO equipamentos.`
-                    : "Equipamentos (parcela financiada), em R$. O 1.200.000 da caixa é SUGESTÃO, não o padrão: vazio com a Obra preenchida vale ZERO equipamentos. Use as setas para variar de 10.000 em 10.000."
+                    ? `Equipamentos (parcela financiada), em ${simbolo}. O número da caixa é o padrão: vazio, o motor usa esse valor. Para não financiar nada, digite 0.`
+                    : "Equipamentos (parcela financiada), em R$. O 1.200.000 da caixa é o padrão: vazio, o motor usa esse valor. Para não financiar nada, digite 0. Use as setas para variar de 10.000 em 10.000."
                 }
               />
             </Campo>
@@ -1551,8 +1534,8 @@ export default function ViabilityScreen({
                 max={60}
                 sufixo="meses"
                 rotulo="Prazo do financiamento dos equipamentos, em meses"
-                placeholder={fixa(SUGESTAO_PRAZO_EQUIP)}
-                title="Prazo do financiamento dos equipamentos, em meses (1 a 60). O 60 da caixa é SUGESTÃO; deixando vazio o motor usa 36. Sem equipamentos o prazo não tem efeito."
+                placeholder={fixa(PADRAO_PRAZO_EQUIP)}
+                title="Prazo do financiamento dos equipamentos, em meses (1 a 60). O 36 da caixa é o padrão: vazio, o motor usa esse valor. Sem equipamentos o prazo não tem efeito."
               />
             </Campo>
           </div>
@@ -1569,8 +1552,8 @@ export default function ViabilityScreen({
                 step={0.1}
                 sufixo="% a.m."
                 rotulo="Juros do financiamento dos equipamentos, em por cento ao mês"
-                placeholder={fixa(SUGESTAO_JUROS_EQUIP)}
-                title="Juros do financiamento dos equipamentos, em % ao mês (aceita vírgula). ATENÇÃO: o 1,8 da caixa é SUGESTÃO — deixando vazio o motor calcula com 0% e o financiamento sai sem custo, o que melhora o payback artificialmente. Use as setas para variar de 0,1 em 0,1."
+                placeholder={fixa(PADRAO_JUROS_EQUIP)}
+                title="Juros do financiamento dos equipamentos, em % ao mês (aceita vírgula). O 1,8 da caixa é o padrão: vazio, o motor usa esse valor. Use as setas para variar de 0,1 em 0,1."
               />
             </Campo>
             <Campo label="Carência aluguel">

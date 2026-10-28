@@ -181,6 +181,14 @@ SIM_TICKET_AGREGADOR = 82                # aba Simulador linha 11 (~R$82/aluno/m
 SIM_PERSONAL_MES_RECEITA = 5_000         # DRE linha 24 (receita fixa personal)
 SIM_ALUGUEL_MES = 20_000                 # N9
 SIM_CAPEX_DEFAULT = 2_340_000            # R9 formula cenario 0 (FC!C11:C16)
+                                         # LEGADO desde 2026-10-28: so' o corpo com `capex`/
+                                         # `capex_financiado_*` (API antiga) e `viabilidade()`.
+# Padrao POR CAMPO do investimento (decisao de Felipe, 2026-10-28): campo vazio vale isto,
+# os mesmos numeros que a tela da Viabilidade mostra em cinza. Ver `investimento_do_body`.
+SIM_OBRA_DEFAULT = 1_500_000             # Obra (equity do franqueado)
+SIM_EQUIPAMENTOS_DEFAULT = 1_200_000     # Equipamentos (parcela financiada)
+SIM_PRAZO_EQUIPAMENTOS_DEFAULT = 36      # meses do financiamento dos equipamentos
+SIM_JUROS_EQUIPAMENTOS_AM_DEFAULT = 0.018  # 1,8% a.m. (o custo da divida da planilha)
 
 # Custos fixos ABSOLUTOS mensais (nao no JSON — extraidos do Excel; DRE linhas 52-59,69 + Fopag 44)
 SIM_PESSOAL_MES = 50_128.16     # Fopag total c/ encargos (linha DRE 55)
