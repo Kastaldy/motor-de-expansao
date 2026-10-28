@@ -287,19 +287,46 @@ def investimento_do_body(body: ViabilidadeIn) -> dict[str, Any]:
       meses de contrato 1..N (M-4..M-1), junto da obra — antes saia inteira no M-4.
       Valor default do config (R$160 mil), sobrescrivivel pelo operador.
 
+    PADRAO POR CAMPO (decisao de Felipe, 2026-10-28): campo VAZIO vale o padrao proprio
+    do config -- obra SIM_OBRA_DEFAULT, equipamentos SIM_EQUIPAMENTOS_DEFAULT, prazo
+    SIM_PRAZO_EQUIPAMENTOS_DEFAULT, juros SIM_JUROS_EQUIPAMENTOS_AM_DEFAULT --, os mesmos
+    numeros que a tela mostra em cinza. Antes os dois vazios caiam num CAPEX unico de
+    2.340.000 sem financiamento, preencher um zerava o outro e o juros vazio era 0%: digitar
+    o numero cinza mudava o payback (Campinas: 52 -> 39 meses so' de confirmar a obra).
+    Valor DIGITADO, inclusive 0, e' honrado (`is None`, nunca `or`).
+
     Legado (`capex` + `capex_financiado_valor`/`_pct` + `juros_financiamento_am` +
-    `capex_parcelas_meses`): a fracao financiada vira EQUIPAMENTOS, o resto vira OBRA.
+    `capex_parcelas_meses`): so' quando obra e equipamentos vem vazios E o corpo traz um
+    campo legado de CAPEX -- a fracao financiada vira EQUIPAMENTOS, o resto vira OBRA,
+    com a semantica antiga intacta (juros vazio = 0%), para nao mudar quem integrou assim.
     """
     from motor_expansao.dimensionamento.config import (
-        SIM_CAPEX_DEFAULT,
+        SIM_EQUIPAMENTOS_DEFAULT,
+        SIM_JUROS_EQUIPAMENTOS_AM_DEFAULT,
+        SIM_OBRA_DEFAULT,
         SIM_PARCELAS_FRANQUIA_DEFAULT,
         SIM_PARCELAS_OBRA_DEFAULT,
+        SIM_PRAZO_EQUIPAMENTOS_DEFAULT,
         SIM_TAXA_FRANQUIA,
     )
 
     obra = float(body.obra) if body.obra is not None else None
     equip = float(body.equipamentos) if body.equipamentos is not None else None
-    if obra is None and equip is None:
+    legado = (
+        obra is None
+        and equip is None
+        and (
+            body.capex is not None
+            or body.capex_financiado_valor is not None
+            or body.capex_financiado_pct is not None
+        )
+    )
+    juros = body.juros_equipamentos_am
+    if juros is None:
+        juros = body.juros_financiamento_am
+    if legado:
+        from motor_expansao.dimensionamento.config import SIM_CAPEX_DEFAULT
+
         capex_total = float(body.capex) if body.capex is not None else float(SIM_CAPEX_DEFAULT)
         if body.capex_financiado_valor:
             equip = min(float(body.capex_financiado_valor), capex_total)
@@ -308,23 +335,21 @@ def investimento_do_body(body: ViabilidadeIn) -> dict[str, Any]:
         else:
             equip = 0.0
         obra = capex_total - equip
-    obra = float(obra or 0.0)
-    equip = float(equip or 0.0)
+        juros = float(juros or 0.0)
+    else:
+        obra = float(SIM_OBRA_DEFAULT) if obra is None else obra
+        equip = float(SIM_EQUIPAMENTOS_DEFAULT) if equip is None else equip
+        juros = float(SIM_JUROS_EQUIPAMENTOS_AM_DEFAULT) if juros is None else float(juros)
 
-    juros = body.juros_equipamentos_am
-    if juros is None:
-        juros = body.juros_financiamento_am
+    prazo = body.prazo_equipamentos or body.capex_parcelas_meses or SIM_PRAZO_EQUIPAMENTOS_DEFAULT
     franquia = SIM_TAXA_FRANQUIA if body.taxa_franquia is None else float(body.taxa_franquia)
     return {
-        "obra": obra,
+        "obra": float(obra),
         "parcelas_obra": int(body.parcelas_obra or SIM_PARCELAS_OBRA_DEFAULT),
-        "equipamentos": equip,
-        # Sem prazo declarado, mantem o default historico de 36 meses; equipamento
-        # zerado -> prazo 0 (o nucleo trata como nao-financiado).
-        "prazo_equipamentos": (
-            int(body.prazo_equipamentos or body.capex_parcelas_meses or 36) if equip > 0 else 0
-        ),
-        "juros_equipamentos_am": float(juros or 0.0),
+        "equipamentos": float(equip),
+        # Equipamento zerado -> prazo 0 (o nucleo trata como nao-financiado).
+        "prazo_equipamentos": int(prazo) if equip > 0 else 0,
+        "juros_equipamentos_am": float(juros),
         "taxa_franquia": float(franquia),
         "parcelas_franquia": int(body.parcelas_franquia or SIM_PARCELAS_FRANQUIA_DEFAULT),
     }
