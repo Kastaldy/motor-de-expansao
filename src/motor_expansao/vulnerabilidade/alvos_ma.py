@@ -610,20 +610,20 @@ def _parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         choices=sorted(FONTES_VALIDAS),
         default=None,
         help=(
-            "recorta a serie de snapshots ANTES de derivar churn/presenca. OMITIR NAO desliga o "
-            f"recorte: sem este argumento vale {list(FONTES_ENTREGAVEL_DEFAULT)}, que e' a "
-            "fronteira com o BLK-MA-20 (DEC-039, D9). A particao do totalpass e' GRAVADA desde a "
-            "primeira semana (para o cronometro de MIN_SEMANAS correr), mas nao entra no ranking. "
-            "Para consumir a serie inteira, use `--todas-as-fontes`"
+            "recorta a série de snapshots ANTES de derivar churn/presença. OMITIR NÃO desliga o "
+            f"recorte: sem este argumento vale {list(FONTES_ENTREGAVEL_DEFAULT)} (`resolver_fontes`; "
+            "DEC-039, D9, revista pela DEC-066). Desde a DEC-066 o TotalPass entra inteiro, na "
+            "oferta e na série, e quem o protege é o SINAL: o S1 está fora da conta "
+            "(`SINAIS_INATIVOS`). Para consumir a série inteira, use `--todas-as-fontes`"
         ),
     )
     recorte.add_argument(
         "--todas-as-fontes",
         action="store_true",
         help=(
-            "consome a serie INTEIRA, sem recorte. E' a porta que o BLK-MA-20 abre quando decidir "
-            "o grao do S1 e calibrar a dedup TP x WH; ate' la', usa-la poe o totalpass no ranking "
-            "com dedup arbitrada. Incompativel com `--fontes`"
+            "consome a série INTEIRA, sem recorte: desde a DEC-066, isso é ir além das fontes do "
+            "padrão (entra também a série `unidades`, das cadeias). Deixou de ser a porta entre o "
+            "TotalPass e o ranking, que virou o `SINAIS_INATIVOS`. Incompatível com `--fontes`"
         ),
     )
     p.add_argument(
