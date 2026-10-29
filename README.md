@@ -2,6 +2,8 @@
 
 Base territorial do MVP nacional do `motor-de-expansao`.
 
+> **Novo no projeto?** Comece pelo ["Comece por aqui"](docs/README.md#comece-por-aqui), que diz em palavras simples o que é o Motor e por onde ler conforme o que você faz, e deixe o [glossário](docs/glossario.md) aberto ao lado. Este README é o guia técnico de rodar e publicar o código.
+
 O contrato canônico do projeto está em `CLAUDE.md`; o status dos blocos fica em `tasks/backlog.md`, e o histórico de conclusão, em `tasks/completed.md`.
 
 O app de producao e o **piloto web** (`web/` — SPA React/Vite + deck.gl no front, FastAPI em `web/server/app.py` no back), que abre no **Inicio** (seletor de modo em duas trilhas: expandir a rede e operacoes) e tem as telas **Mapa Territorial** (Explorar uma regiao: funil de 5 camadas por UF e municipio; no Brasil a camada 5 e o Top 10 unico da DEC-077), **Oportunidades** (Top 10 de hexagonos), **Ponto** (analise de ponto ou imovel), **Viabilidade do ponto** (stress-test de um imovel), **Visao Executiva** (a rede Ultra real, via Growth API), **Oportunidades imobiliarias** (DEC-037) e **Acessos** (restrita por allowlist). Os relatorios em PDF (Pontual Censitario 1,0 km e Municipal) saem do Mapa e da Viabilidade. Em producao tudo roda num unico container (`motor_expansao_web`) em `piloto.ultra-expansao.tech`, atrás do Caddy, com o login próprio do piloto (DEC-067). Detalhes de produto em `web/README.md`; arquitetura em `docs/arquitetura_app_atual.md`.
@@ -316,11 +318,10 @@ O caminho de producao usa duas imagens publicadas no GHCR pelo CI e pinadas por 
 - `motor-expansao-web` (`Dockerfile.web`): o piloto — estagio Node builda o Vite, estagio Python serve SPA + API na porta 8899.
 - `motor-expansao-api` (`Dockerfile.api`): API GeoEspacial on-demand + bot Telegram (mesma imagem, dois containers).
 
-A imagem `motor-expansao-streamlit` morreu com o corte (DEC-022); fica retida no GHCR por algumas semanas so para rollback. O legado de PostGIS/Prefect de `fora_primeira_fase/api_postgis/` nao entra no caminho de producao; o banco de producao e outro, o servico `postgres` (`postgis/postgis:18-3.6`) do `docker-compose.prod.yml`, opcional por construcao (`MOTOR_DATABASE_URL` vazia = comportamento pre-banco; `docs/banco_deploy.md`).
+A imagem `motor-expansao-streamlit` morreu com o corte (DEC-022); fica retida no GHCR por algumas semanas so para rollback. O legado de PostGIS/Prefect de `fora_primeira_fase/api_postgis/` nao entra no caminho de producao; o banco de producao e outro, o servico `postgres` (`postgis/postgis:18-3.6`) do `docker-compose.prod.yml`, opcional no código (`MOTOR_DATABASE_URL` vazia = comportamento pré-banco; `docs/banco_deploy.md`), mas obrigatório no piloto BR desde o corte do P19, porque o login depende dele.
 
 ## Fora do caminho de producao
 
-- PostGIS obrigatorio
 - Prefect
 - pipelines nacionais pesados (rodam offline, fora dos containers)
 - modulos M2/M3, pesquisas e legados em `fora_primeira_fase/`

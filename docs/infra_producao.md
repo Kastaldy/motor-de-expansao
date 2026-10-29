@@ -1110,8 +1110,9 @@ requisição seguinte, sem restart); mudanças no `Caddyfile` seguem pedindo
 
 ## Gerenciar usuários do login (Authelia)
 
-> O login continua igual após a DEC-022: o Authelia protege `piloto.ultra-expansao.tech`
-> e `/tiles/` em `dashboard.ultra-expansao.tech` com a mesma base de usuários.
+> Até o corte do P19, o Authelia protegia `piloto.ultra-expansao.tech` e `/tiles/` em
+> `dashboard.ultra-expansao.tech` com a mesma base de usuários; desde o corte, o piloto BR tem login
+> próprio (abaixo), e o Authelia segue de pé para a instância AR.
 >
 > **Com o banco ligado no BR (desde 23/10/2026) e até o corte do P19 (feito em 27/10/2026), quem
 > usava o piloto brasileiro dependia de DOIS cadastros:** o Authelia autenticava (`users_database.yml`)

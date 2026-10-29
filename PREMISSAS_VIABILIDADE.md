@@ -489,15 +489,15 @@ Três divergências **conhecidas** entre o código e a fonte documental. A da fo
 ### (a) FOLHA — a nota tem DUAS dimensões: a ESTRUTURA e o NÍVEL, as duas decididas
 
 > **Decidido em 30/09/2026 (Felipe):** a folha de 25–26% das DREs estava inflada; `SIM_FOLHA_PCT` = 0,17
-> permanece, e o BLK-VIAB-11 foi cancelado (`tasks/backlog.md`). A tabela abaixo registra o conflito como foi
-> levantado; na linha do NÍVEL, vale esta decisão.
+> permanece, e o BLK-VIAB-11 foi cancelado (`tasks/backlog.md`). As tabelas abaixo registram o conflito como foi
+> levantado e como ele fechou.
 
 Desde a 3ª rodada é obrigatório separar as duas, porque foram resolvidas em momentos diferentes:
 
 | dimensão | pergunta | estado |
 |---|---|---|
 | **ESTRUTURA** | a folha é **custo fixo** ou **percentual da receita do mês**? | **DECIDIDA — custo fixo desde o mês 1** (Felipe, 2026-07-24). Regra e consequências em §4.1. Não rediscutir. |
-| **NÍVEL** | o percentual que **dimensiona** esse custo fixo é 17% ou 25-26%? | **PENDENTE de gate da controladoria** (BLK-VIAB-11 aberto, criticidade Média). |
+| **NÍVEL** | o percentual que **dimensiona** esse custo fixo é 17% ou 25-26%? | **DECIDIDO — 17% permanece** (Felipe, 2026-09-30: a folha de 25-26% das DREs estava inflada; o BLK-VIAB-11 foi cancelado). |
 
 **Sobre o nível:**
 
@@ -509,7 +509,7 @@ Desde a 3ª rodada é obrigatório separar as duas, porque foram resolvidas em m
 | **Impacto do nível (re-medido na 4ª rodada, 2026-07-25 — nas duas óticas e na régua de 30%)** | A **17%**: folha **R$ 49.003,79**, EBITDA **R$ 113.159,69 (39,26%)**, break-even **1.152,0**, payback **31**, **do negócio** TIR **31,74%** / VPL **R$ 312.177,18**, **do sócio** TIR **38,98%** / VPL **R$ 276.103,24**, cheque total **R$ 1.142.112,62** (mês 5), M60 **R$ 1.645.454,56**, `flag_viavel` **True**. **A 26%: folha R$ 74.946,97, EBITDA R$ 87.216,50 (30,26%), break-even 1.416,1, EBITDA do mês 1 de −R$ 69.407,65, cheque total R$ 1.297.571,83 (mês 7) e o payback NÃO OCORRE dentro dos 60 meses** (`inf`) — **do negócio** TIR **11,20%** / VPL **−R$ 623.616,27**, **do sócio** TIR **−1,05%** / VPL **−R$ 623.473,26**, acumulado de M60 **−R$ 40.745,08**, `flag_viavel` **False**. |
 | **O que a régua nova de 30% revela aqui** | A 26% a margem fica em **30,26%** — passa o mínimo de 30% **por 26 pontos-base**. Quem reprova o cenário é o **payback infinito**, não a margem. Ou seja: no nível de folha que 6 DREs reais apuraram, o critério de margem fica **na casa dos centavos** do limite. Isso é informação de decisão, não curiosidade: a folga de margem que o caso de referência parece ter (39,26% contra 30%) é **quase toda** dependente do nível de folha estar em 17%. |
 | **Atenção ao comparar com material anterior** | Duas revisões atrás esta linha dizia "payback 28 → 54 meses" e "VPL −R$ 174.670,13" (folha **percentual**, que diluía o custo na rampa). A revisão de 2026-07-24 já corrigiu para "não se paga no horizonte", mas citava **VPL −R$ 384.910,19 @ 12% a.a.** — taxa que **não existe mais**. Na régua de hoje o VPL a 26% é **−R$ 623 mil nas duas óticas**: quanto mais alta a taxa, mais pesado o desconto de um fluxo que só melhora no fim. |
-| **Status** | **PENDENTE de gate da controladoria.** É a decisão pendente de maior impacto do ciclo: sozinha, ela inverte a conclusão de go/no-go do Boulevard. |
+| **Status** | **DECIDIDO em 2026-09-30 (Felipe): 17% permanece.** Enquanto esteve pendente, era a decisão de maior impacto do ciclo: sozinha, ela invertia a conclusão de go/no-go do Boulevard. |
 
 ### (b) TAXA DE FRANQUIA — R$ 160.000 (código) × R$ 140.000 (planilha e spec)
 
@@ -558,7 +558,7 @@ justamente para o rótulo não precisar ser escrito à mão em nenhum consumidor
 negócio** — é o mesmo fluxo de caixa medido contra a régua certa. A TIR não se moveu um centavo (é
 raiz do fluxo, independe da taxa): o que se moveu foi a **exigência**.
 
-**O que continua pendente** não é taxa: são os itens de **§9** (nível da folha, taxa de franquia,
+**O que continua pendente** não é taxa: são os itens de **§9** (taxa de franquia,
 ticket de musculação 137 × 147) e de **§12** (matrícula e múltiplo de valuation), e a régua de **valor residual**,
 hoje em decisão com o Marcos.
 
