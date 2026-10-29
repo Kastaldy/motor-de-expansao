@@ -1051,6 +1051,50 @@ falha no chat, `exit != 0` no log (`/var/log/motor-snapshots/atualizacao_crescim
 estado real enquanto o repasse não acontecer). A linha de cron dele está no bloco da
 seção "Alertas automáticos (BLK-SEC-05)", mais abaixo.
 
+## Atualização mensal do pico padrão por estado (DEC-078, emenda de 29/10/2026)
+
+> Decisão e regra em `docs/decisions/DEC-078.md` (emenda de 29/10/2026). O cabeçalho do
+> script é o runbook detalhado.
+
+Todo dia 3, a rotina mede o pico de maturação de cada estado na base da Growth (o mesmo
+fechamento mensal da Visão Executiva), aplica o corte de 5 unidades maduras, o peso
+n/(n + 10) e o freio de 1 mês, e publica `data/staging/pico_rampa_por_uf.json` por troca
+atômica. A Viabilidade (tela, planilha, PDF e API) usa esse padrão quando o operador não
+escolhe o pico. Os 10 meses nacionais não mudam.
+
+**Script versionado:** `scripts/cron/run_pico_por_uf.sh` (molde da rotina do crescimento:
+log antes do lock, `flock`, credenciais por `-e NOME` sem valor, container avulso da imagem
+da API com `MOTOR_DATA_DIR` e o bind do `perfil.json` de produção). Antes de agendar, o modo
+seco é obrigatório: `DRY_RUN=1 /opt/motor-expansao-infra/run_pico_por_uf.sh` mede e imprime
+sem gravar (staging `:ro`) e sem Telegram.
+
+**Instalação (uma vez, manual, comando a comando — §6):**
+
+```bash
+install -d -m 0755 /opt/motor-expansao-infra
+cp /opt/motor-expansao/app/scripts/cron/run_pico_por_uf.sh /opt/motor-expansao-infra/
+chmod +x /opt/motor-expansao-infra/run_pico_por_uf.sh
+DRY_RUN=1 /opt/motor-expansao-infra/run_pico_por_uf.sh   # conferir o resumo antes de agendar
+```
+
+**Linha de crontab (dia 3 de cada mês, 04:00 UTC = 01:00 BRT):**
+
+```cron
+0 4 3 * * /opt/motor-expansao-infra/run_pico_por_uf.sh
+```
+
+**Requisito de imagem:** a imagem da api/bot precisa ter `motor_expansao.dimensionamento.pico_por_uf`
+(o wrapper checa e recusa imagem antiga). O web também precisa da imagem com a emenda para
+LER o arquivo. Deploy manual por digest, como sempre, ANTES de agendar.
+
+**Sem restart:** a leitura confere o mtime do arquivo a cada consulta; publicar já muda a
+tela e a API. **Desfazer:** apagar `data/staging/pico_rampa_por_uf.json` devolve todo o
+produto aos 10 meses na consulta seguinte.
+
+**O que o job NUNCA faz:** escrever fora de `staging/pico_rampa_por_uf.json`, mexer no M1,
+reiniciar container ou fazer deploy. Portão reprovado (`rc=2`): nada publicado, arquivo
+anterior intacto, aviso no chat. Log em `/var/log/motor-snapshots/pico_por_uf_*.log`.
+
 ## Serviço de rotas (Valhalla, DEC-074) — isócronas de "5 min" e "10 min de carro"
 
 Stack **separada e opcional** em `/opt/valhalla-infra` (versionada em `valhalla-infra/`, molde
