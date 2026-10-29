@@ -15932,3 +15932,130 @@ ganha o subcomando `banco` com a branch `feat/banco-completo`, é o **BLK-BANCO-
   entra.
 - **P19 (DEC-067):** o código está pronto e na imagem do ar, com `MOTOR_AUTENTICACAO_PROPRIA`
   desligada; o login segue 100% pelo Authelia. A execução do corte é o BLK-BANCO-01.
+
+---
+
+### BLK-RELPON-14 — Unificação do gerador de PDF + remoção do slide "Imagem do Entorno" + borda no hex central + cadastro de 68 redes
+
+| Campo | Valor |
+|---|---|
+| **Criticidade** | Alta |
+| **Status** | **Mergeado** (PR #158, 2026-07-28; o housekeeping anunciado em 2026-07-29 não chegou ao `completed.md`). Emenda de 2026-07-28 à [DEC-011](../docs/decisions/DEC-011.md) **PENDENTE DE APROVAÇÃO por Vinicius** — merge exige a label `aprovado-humano`. |
+| **ClickUp** | — |
+
+> **Criticidade Alta porque emenda a DEC-011** (Alta): a representação do raio de 5 km nos painéis
+> de Socioeconomia/Residual muda, e a emenda de 2026-07-22 daquela DEC dizia explicitamente "dois
+> raios distintos, cada um **ROTULADO** no próprio mapa". Nada de M1: é camada de visualização/
+> relatório (§5 guardrail permanente) — `setor_censitario_intersecao_area_1km`, raio de 1,0 km
+> (DEC-021), `score_priorizacao`, carteira, plano e artefatos oficiais ficam INTOCADOS.
+
+**Escopo (4 partes, decididas por Felipe):**
+
+1. **Unificação do gerador de PDF — a estética CLÁSSICA vence.** Ela já era o default de produção
+   no dashboard, na API e no bot; `gerar_pdf_relatorio_pontual_classico` passa a ser **A**
+   implementação única. `gerar_pdf_relatorio_pontual_censitario` vira **wrapper fino** que só
+   repassa os kwargs para a clássica, com `DeprecationWarning` — não quebra a branch piloto-web,
+   que ainda a chama pelo nome. As funções de página duplicadas do template "recente"
+   (`_cover_page`, `_socioeconomia_residual_page`, `_mapas_calor_page`, `_competitors_page`,
+   `_perfil_bairro_page`, `_credit_page`, `_entorno_page`) são **DELETADAS**; as compartilhadas
+   (`_big_numbers_page`, `_viabilidade_page`, `_fotos_imovel_page`, `_info_imovel_page`) **FICAM**.
+2. **Slide "Imagem do Entorno" REMOVIDO por completo** — página do PDF, camada PNG `entorno`,
+   constantes órfãs (`RAIO_ENTORNO_DISPLAY_KM`, `_ENTORNO_VALOR_LINHA`, o parâmetro `rotulo_escala`
+   e o override local de `zoom_bump`) e a chave `entorno` em `CAMADAS_CENSITARIAS`/`MAP_LAYER_TITLES`.
+   O PDF base cai de **8 → 7 páginas** (`/Count 7`, `PDF_SECTION_HEADERS` com 7 strings) e o teto com
+   as opcionais de **12 → 11**. Os ordinais de `_tema_bicolor` são absolutos: liberar o `-1` que só
+   servia a essa página **não desloca cor nenhuma**. Reverte o BLK-RELPON-11 (2026-07-22).
+3. **Raio dos painéis Socioeconomia e Residual Fitness: o VALOR não muda, a REPRESENTAÇÃO sai.**
+   `RAIO_RESIDUAL_DISPLAY_KM = 5.0` **PERMANECE** — continua definindo o ENQUADRAMENTO dos dois
+   painéis; encolhê-lo reintroduziria o mosaico chapado de 3 a 5 hexágonos medido no gate de
+   2026-07-21 (o motivo de existir do raio de exibição, DEC-011). O que sai é o desenho: **círculo
+   azul removido** e **rótulo "Raio X km" removido** do rodapé e do título. No lugar, o **hexágono
+   H3 res-7 que CONTÉM o ponto ganha uma borda fina de destaque** (`destaque_3857`,
+   `_HEX_CENTRAL_EDGE_COLOR` = o mesmo azul do antigo círculo, `_HEX_CENTRAL_LINEWIDTH = 3`) — só a
+   borda; o preenchimento continua vindo do `color_fn`, e sem hex central desenhável simplesmente
+   não há borda. As camadas de 1,0 km seguem com círculo + rótulo, byte-a-byte idênticas.
+4. **Cadastro de 68 redes** do coletor semanal (VinhoAbencoado/GymScraping, [DEC-013](../docs/decisions/DEC-013.md))
+   em `dashboard/competitors.py`: as redes já tinham CSV em `concorrentes/Unidades/unidades_<slug>.csv`,
+   mas caíam em `independente` porque `load_competitor_points` só itera `COMPETITOR_SPECS`. Entram nos
+   três registros — `COMPETITOR_SPECS`, estilos de marca (`label`/`short` de 3 chars único/cores,
+   reusando a paleta existente) e o registro de logos `logo_<slug>.png`. **10 redes ainda não têm PNG**
+   no GymScraping: `preload_logos` ignora o arquivo ausente e o pin cai no fallback de sigla, que é o
+   comportamento projetado. A normalização de nomes invertidos/slugs divergentes (`companhiafit`,
+   `malibu`, `marrafit`, `matchfit`, `moinhosfit`) acontece na **cópia dos PNGs para a VPS**, não no
+   registro.
+
+**Gate humano:** aprovação da emenda de 2026-07-28 à DEC-011 por Vinicius (o único ponto que sai do
+já decidido). As partes 1, 2 e 4 são estrutura de relatório/cadastro e não emendam DEC alguma.
+
+**Testes:** contagem de páginas e headers para `/Count 7` (e `/Count 11` no teto com as opcionais,
+em `test_relatorio_pontual_viabilidade.py`/`test_relatorio_pontual_orquestracao.py`); as 7 chaves de
+`CAMADAS_CENSITARIAS`; a bateria da camada/página `entorno` **removida**; ausência de círculo e de
+rótulo de raio nos dois painéis de 5 km; borda do hex central mudando pixels sem alterar a cor do
+choropleth; equivalência do wrapper depreciado com a clássica (mesmo PDF + `DeprecationWarning`);
+regressão de byte-identidade das camadas de 1,0 km.
+
+**Impacto cruzado:** `BLK-WEB-*` (piloto web) importa `gerar_pdf_relatorio_pontual_censitario` pelo
+nome — por isso o wrapper, e não a remoção do símbolo. Deploy: mudança em `dashboard/` **não**
+dispara o rebuild da imagem da API — republicar manualmente e conferir o smoke de
+`CAMADAS_CENSITARIAS` (7 chaves) em `docs/deploy_api_bot.md`.
+
+**Docs atualizadas:** `docs/relatorio_pontual_censitario.md` (§3/§6/§7), `docs/decisions/DEC-011.md`
+(emenda 2026-07-28, pendente), `docs/deploy_api_bot.md`, `docs/api_geoespacial_contrato.md`,
+`docs/api_geoespacial_uso.md`, `docs/api_geoespacial_openapi.yaml`, `docs/arquitetura_app_atual.md`.
+
+---
+
+## Fechamento de ciclo — BLK-RELPON-14 (2026-10-29)
+
+Registro a posteriori. O bloco acima foi movido do `tasks/backlog.md` em 2026-10-29 pelo
+`scripts/housekeeping_move_block.py`, byte a byte, com o Status original (que ainda diz "pendente").
+
+- **Código:** mergeado pelo PR #158 (`b37b5134`, 2026-07-28). O housekeeping anunciado em
+  2026-07-29 não chegou a este arquivo, e o bloco ficou aberto no backlog até 2026-10-29.
+- **Decisão:** a emenda de 2026-07-28 da DEC-011 (a representação do raio de 5 km sai dos painéis
+  de Socioeconomia e Residual Fitness; o valor do enquadramento fica) foi **aprovada por Vinicius
+  em 2026-10-29**, junto com as de 2026-07-29, 2026-08-10 e 2026-10-21.
+- Achado na conferência da higiene dos docs de 2026-10-29 (achado a-07).
+
+---
+
+## Fechamento de ciclo — BLK-CONC-ESTUDO (2026-08-12; registro a posteriori em 2026-10-29)
+
+Nunca teve bloco em `tasks/` nem registro aqui: o Fechamento do BLK-CONC-DUPLO (2026-08-14) já
+anotava isso. O histórico canônico da página de Conclusão é o §7 de
+`docs/relatorio_pontual_censitario.md`.
+
+- **Código:** commit `84b443ce`, de Juan, em 2026-08-12: "parecer do ponto no relatório do
+  Telegram, com régua só do estudo".
+- **Por quê:** a página de Conclusão existia desde 2026-08-06, mas só saía quando o PDF recebia o
+  payload de `viabilidade`, que o caminho API/bot não enviava. O bot entregava 7 páginas e nenhum
+  parecer.
+- **O que fez:** `gerar_pdf_ponto` passou a ligar `conclusao_so_estudo=True`, e o parecer roda no
+  modo **só-estudo**: avalia as metas censitárias do raio, a leitura de mercado e a ressalva de
+  censo indisponível. Os gates do imóvel e do retorno ficam **fora** da régua (não "sem dado"), os
+  cards de aluguel somem e a nota metodológica declara o que não foi avaliado.
+- **Gate E5:** 4 das 6 metas censitárias vermelhas ao mesmo tempo reprovam. O corte foi medido em
+  40 pontos reais de São Paulo: com 3, 65% da amostra reprovava; com 4, 60%. Conta a lista crua de
+  metas, não a exibida.
+- **Depois:** o E5 passou a valer nos dois modos com a emenda de 2026-08-14 da DEC-030; desde
+  2026-09-10 (PR #338) o modo só-estudo só liga quando o PDF fica sem cenário de viabilidade; desde
+  2026-10-14 o botão "Estudo" do piloto também o usa.
+- Achado na conferência da higiene dos docs de 2026-10-29 (achado a-07).
+
+---
+
+## Fechamento de ciclo — API: viabilidade e dados do imóvel no `POST /analisar` (PR #338, 2026-09-10, ad-hoc; registro a posteriori em 2026-10-29)
+
+- **Código:** commit `e64f37ee`, de Juan, mergeado em 2026-09-10 pelo PR #338.
+- **Por quê:** o gerador do PDF já aceitava `viabilidade` e `info_imovel`, mas a API não tinha
+  caminho até eles. Quem montava o `viabilidade_payload_v1` era o `_payload_viabilidade`, dentro de
+  `web/server/app.py`, e copiá-lo recriaria a segunda régua que o FIN-VIAB-01 existe para eliminar.
+- **O que fez:** **moveu** o bloco financeiro do piloto para
+  `src/motor_expansao/dimensionamento/payload_viabilidade.py`, com `staging_dir` e `setores_df`
+  como parâmetro; os consumidores do piloto seguem chamando `_payload_viabilidade`, agora um
+  adaptador fino. O `AnalisarRequest` ganhou `viabilidade`, `info_imovel` e `solicitante`, todos
+  opcionais, e o bot do Telegram segue recebendo o que recebia. O `conclusao_so_estudo` deixou de
+  ser fixo: com cenário de viabilidade, a Conclusão volta a carimbar o selo financeiro da DEC-030.
+- Os trechos do `docs/relatorio_pontual_censitario.md` que ainda negavam isso foram corrigidos na
+  higiene de 2026-10-29 (cartão t-392 e contradições c-04 e c-05).
+- Achado na conferência da higiene dos docs de 2026-10-29 (achado a-07).
