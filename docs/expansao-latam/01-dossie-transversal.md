@@ -2,7 +2,7 @@
 
 > **Leia junto com `01-consolidacao-auditoria.md`.** Este dossiê é a versão de campo, de 2026-10-16. A auditoria cruzada corrigiu alguns números e vereditos depois dele, e a versão corrigida vale sobre esta.
 
-- Data: 2026-10-16 | Escopo: fontes multi-país, escala H3, arquitetura/moeda/calibração | Repositório consultado só para leitura (`docs/plano_multipais.md`, `docs/decisions/DEC-047.md`, `data/perfis/AR/perfil.json`, `src/motor_expansao/pipelines/exportar_piloto_ar.py`, `docs/expansao-latam/`).
+- Data: 2026-10-16 | Escopo: fontes multi-país, escala H3, arquitetura/moeda/calibração | Repositório consultado só para leitura (`docs/archive/plano_multipais.md`, `docs/decisions/DEC-047.md`, `data/perfis/AR/perfil.json`, `src/motor_expansao/pipelines/exportar_piloto_ar.py`, `docs/expansao-latam/`).
 - Convenção: **medido** = número que eu calculei nesta sessão sobre dado baixado; **verificado** = abri a página/API e confirmei; **não verificado** = vem de busca, notícia ou memória e precisa de checagem antes de virar premissa.
 - Amostras baixadas (dados não confiáveis, lidos com Python isolado de diretório): `scratchpad/amostras/transversal/` — Kontur PY/CO/PE/MX/AR (GeoPackage H3 r8), RWI PY (CSV), WorldPop R2025A PY 25-29 anos 2025 (GeoTIFF), Natural Earth admin-0 10m, metadados CKAN do HDX. Scripts em `scratchpad/scripts_transv/`.
 
@@ -121,7 +121,7 @@ Leitura: **o México é o único país novo maior que a Argentina** (≈2,7× os
 
 ### 2.3 Armazenamento
 
-Proporções medidas no repositório (`docs/plano_multipais.md` §4 e `exportar_piloto_ar.py`): enriquecido BR **265 MB / 1.303.414 hex ≈ 0,2 KB/hex** (sem geometria); pacote AR `hexagonos_h3` **42 MB / 42.388 hex ≈ 1,0 KB/hex** (86 colunas, com `geometry_wkb`); `censo_radios` AR **93 MB / 66.502 radios ≈ 1,4 KB/unidade**; geo setorial BR **1,2 GB / 468.099 setores ≈ 2,6 KB/unidade**.
+Proporções medidas no repositório (`docs/archive/plano_multipais.md` §4 e `exportar_piloto_ar.py`): enriquecido BR **265 MB / 1.303.414 hex ≈ 0,2 KB/hex** (sem geometria); pacote AR `hexagonos_h3` **42 MB / 42.388 hex ≈ 1,0 KB/hex** (86 colunas, com `geometry_wkb`); `censo_radios` AR **93 MB / 66.502 radios ≈ 1,4 KB/unidade**; geo setorial BR **1,2 GB / 468.099 setores ≈ 2,6 KB/unidade**.
 
 | País | Pacote hexagonal (universo ≥ 3 hab/km², ~1 KB/hex) | Se fosse universo territorial completo | Malha fina para a superfície `ponto` (1,4-2,6 KB × nº de unidades) | Tiles `.mbtiles` (decisão 0.9 do plano) |
 |---|---|---|---|---|

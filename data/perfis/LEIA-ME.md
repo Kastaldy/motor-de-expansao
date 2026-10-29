@@ -1,6 +1,6 @@
 # `perfil.json` — o país deixa de ser constante e passa a ser declarado
 
-- Data: 2026-08-31 · Escopo: Bloco A da §5.0 / BLK-INTL-02 de `docs/plano_multipais.md`
+- Data: 2026-08-31 · Escopo: Bloco A da §5.0 / BLK-INTL-02 de `docs/archive/plano_multipais.md`
 - Arquivos: `data/perfis/AR/perfil.json` (Argentina, preenchida) e `data/perfis/BR/perfil.json` (Brasil, transcrito do código)
 - Este documento explica **como o arquivo é usado**, **o que é obrigatório**, **o que acontece quando falta**, e **o que muda quando o Felipe decidir as âncoras**.
 
@@ -52,7 +52,7 @@ O boot é **fail-closed**. As três formas de falha são diferentes de propósit
 
 ### 3.2 Campo obrigatório ausente ou nulo → o container não sobe
 
-> **Reescrito em 2026-08-31, e é a lista que vale.** A versão anterior desta tabela declarava `rotulos.*`, `particao.*`, `subdivisoes` e `fontes.instituto` **obrigatórios para o boot** — campos que **nenhuma linha deste repositório lê**. Com isso havia **três** schemas em circulação (esta tabela, a spec §1.2 e os dois `perfil.json` entregues) e os dois JSONs eram formalmente inválidos contra o loader que o commit A1 manda escrever. **O schema canônico passou a ser o da spec `docs/spec_bloco_a_perfil.md` §1.2** — era o único em que cada campo tinha a coluna "quem lê hoje" com `arquivo:linha`. Desde 2026-10-23 a própria spec avisa que o loader (`src/motor_expansao/perfil.py`) passou a exigir campos que ela não lista: para o schema vigente, vale o loader. Os dois `perfil.json` foram reescritos nele na mesma passada.
+> **Esta é a lista que vale.** O schema vigente é o que o loader (`src/motor_expansao/perfil.py`) exige; a tabela abaixo diz quem lê cada campo obrigatório. A spec do Bloco A (`docs/archive/spec_bloco_a_perfil.md` §1.2), de onde a lista saiu, não traz todos os campos que o loader exige hoje.
 
 Obrigatórios em qualquer país, para qualquer superfície:
 

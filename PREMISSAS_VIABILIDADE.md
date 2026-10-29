@@ -191,7 +191,7 @@ maduro e pagar integralmente desde o mês 1 é o que o caixa real faz.
 então a folha percentual e a folha fixa coincidem: R$ 49.003,79 nos dois modelos). O que muda são
 os meses de rampa e tudo que deriva deles — EBITDA do mês 1 de **−R$ 10.139,56 para −R$ 43.464,47**,
 break-even de **840,6 para 1.152,0** alunos totais, payback de **28 para 31 meses**. Números
-completos em §15 e no antes × depois de `docs/nota_impacto_fin_viab_01.md`.
+completos em §15.
 
 ---
 
@@ -478,12 +478,16 @@ motor**. Ficam documentadas aqui exatamente para que ninguém as "conserte" liga
 
 ## 9. Conflitos abertos
 
-Três divergências **conhecidas, não resolvidas**, entre o código e a fonte documental. Nenhuma
-bloqueia o ciclo; todas precisam de decisão nomeada.
+Três divergências **conhecidas** entre o código e a fonte documental. A da folha (a) foi decidida em
+30/09/2026; as outras duas seguem sem decisão nomeada. Nenhuma bloqueia o ciclo.
 
-### (a) FOLHA — a nota tem DUAS dimensões: a ESTRUTURA (decidida) e o NÍVEL (pendente)
+### (a) FOLHA — a nota tem DUAS dimensões: a ESTRUTURA e o NÍVEL, as duas decididas
 
-Desde a 3ª rodada é obrigatório separar as duas, porque só uma foi resolvida:
+> **Decidido em 30/09/2026 (Felipe):** a folha de 25–26% das DREs estava inflada; `SIM_FOLHA_PCT` = 0,17
+> permanece, e o BLK-VIAB-11 foi cancelado (`tasks/backlog.md`). A tabela abaixo registra o conflito como foi
+> levantado; na linha do NÍVEL, vale esta decisão.
+
+Desde a 3ª rodada é obrigatório separar as duas, porque foram resolvidas em momentos diferentes:
 
 | dimensão | pergunta | estado |
 |---|---|---|
@@ -507,7 +511,7 @@ Desde a 3ª rodada é obrigatório separar as duas, porque só uma foi resolvida
 | | |
 |---|---|
 | **Código** | `SIM_TAXA_FRANQUIA = 160 000,00`. |
-| **Fonte documental** | `data/staging/simulador_estrutura.json`, célula **`Simulador!R10`** → `valor_default: 140000`, natureza "contrato". E `docs/modelo_dimensionamento_expansao.md:276` → "Taxa de franquia · R10 · R$140k · contrato". |
+| **Fonte documental** | `data/staging/simulador_estrutura.json`, célula **`Simulador!R10`** → `valor_default: 140000`, natureza "contrato". E `docs/archive/modelo_dimensionamento_expansao.md` §8.2 → "Taxa de franquia · R10 · R$140k · contrato". |
 | **Decisão** | **Mantido R$ 160.000** por decisão de Felipe (2026-07-24): é o valor em produção e o que o comitê já viu. Passa a ser **editável pelo operador** (exposto no schema da API) e **parcelado em 4× sem juros** (§6.1), o que resolve o caso prático sem forçar a escolha do default. |
 | **Sensibilidade (re-medida na 4ª rodada, 2026-07-25)** | Com R$ 140.000: payback **30 meses** (contra 31), acumulado de M60 **R$ 1.665.454,56** (+R$ 20.000 exatos), **cheque total R$ 1.122.112,62** (contra R$ 1.142.112,62 — cai exatamente os R$ 20 mil, e o pior mês segue sendo o 5). **Do negócio:** TIR **32,21%** (era 31,74%) e VPL **R$ 331.631,23** (+R$ 19.454,05 — menos que os R$ 20 mil nominais, porque o desembolso é descontado). **Do sócio:** TIR **40,01%** (era 38,98%) e VPL **R$ 293.930,92**; o retorno do negócio vai a **46,99%** (era 46,55%) e o do sócio a **73,70%** (era 71,76%). A **taxa mínima do sócio sobe** para **27,13%**, porque um aporte menor eleva a alavancagem (D/E 1,8421 → 1,8919) — efeito que a régua de 12% a.a. era incapaz de mostrar. EBITDA, margem e break-even não mudam. |
 | **Status** | Divergência **aceita e documentada**, não resolvida. Reconciliar planilha × contrato real é tarefa de quem mantém a planilha. |
@@ -522,7 +526,7 @@ Desde a 3ª rodada é obrigatório separar as duas, porque só uma foi resolvida
 | | |
 |---|---|
 | **Frontend (histórico, até 2026-10-05)** | `web/src/screens/ViabilityScreen.tsx:34` → `TICKET_POR_STUDIO = [147, 157, 167, 177]` (0 → 147, 1 → 157, 2 → 167, 3 → 177). |
-| **Planilha** | `Simulador!J9` → `=IF(N12=0,137,IF(N12=1,147,IF(N12=2,157,IF(N12=3,167,0))))` → **[137, 147, 157, 167]**. Confirmado em `simulador_estrutura.json` e em `docs/modelo_dimensionamento_expansao.md:271` ("Mensalidade · J9 · R$137 por cenário"). |
+| **Planilha** | `Simulador!J9` → `=IF(N12=0,137,IF(N12=1,147,IF(N12=2,157,IF(N12=3,167,0))))` → **[137, 147, 157, 167]**. Confirmado em `simulador_estrutura.json` e em `docs/archive/modelo_dimensionamento_expansao.md` §8.2 ("Mensalidade · J9 · R$137 por cenário"). |
 | **Efeito** | A tela cobra **um degrau a mais** em todos os cenários de studio. O caso de referência (0 studios) roda a R$ 147 na tela e a R$ 137 na planilha. |
 | **Sensibilidade (re-medida na 4ª rodada, 2026-07-25)** | A R$ 137 o caso golden faz faturamento **R$ 269.412,97**, folha **R$ 45.800,20** (a régua de 17% acompanha o faturamento maduro menor), EBITDA **R$ 101.306,71 (37,60%)** — a margem **passa** o mínimo de 30% —, break-even **1.199,2**, cheque total **R$ 1.162.843,40** (mês 6) e payback **37 meses**: **estoura o critério de 36** e `flag_viavel` cai para **falso**. E o mais duro: **na régua nova o VPL fica NEGATIVO nas duas óticas** — **do negócio** TIR **24,79%** / VPL **−R$ 9.517,56**, **do sócio** TIR **25,66%** / VPL **−R$ 32.166,21**. A R$ 137 o ativo rende **abaixo** da taxa mínima do negócio (24,79% < 25,00%), e a alavancagem deixa de compensar. Com a taxa antiga de 12% a.a. o mesmo cenário exibia **VPL +R$ 416.749,97** e parecia um projeto folgado. |
 | **Status** | **Aberto só quanto a 137 × 147** (a escada por studio está sem objeto desde 2026-10-05). Não corrigido: mexer no ticket muda a conclusão de todos os cenários já apresentados, e a régua comercial vigente (R$ 147 como entrada) é decisão de produto, não de engenharia. Precisa de Felipe. |

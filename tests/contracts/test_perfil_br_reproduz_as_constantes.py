@@ -19,7 +19,7 @@ Ele trabalha em tres camadas, da mais forte para a mais fraca:
 3. **Contra os numeros escritos na spec**, como ancora final — se alguem mudar codigo e
    perfil juntos, esta camada ainda acusa.
 
-Spec: `docs/spec_bloco_a_perfil.md` §5.9 item 2 e §7 item 3.
+Spec: `docs/archive/spec_bloco_a_perfil.md` §5.9 item 2 e §7 item 3.
 """
 
 from __future__ import annotations

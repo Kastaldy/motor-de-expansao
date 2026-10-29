@@ -9973,7 +9973,7 @@ BLK-CENSO-02 exige registro explícito no gate (emenda ou DEC, conforme o desenh
 > - **z20 no Voyager PERDE os rótulos** → z19 é o teto, e o `_BASEMAP_ZOOM_BUMP = 1` faz overshoot
 >   nessa escala.
 > - Portas fechadas na verificação: **OpenAerialMap** (9 imagens em toda a Grande SP, parte CC BY-NC),
->   **tileserver self-hosted** (não existe neste repo, apesar do `PLANO_APP_WEB.md`), ortofotos
+>   **tileserver self-hosted** (não existe neste repo, apesar do `docs/archive/PLANO_APP_WEB.md`), ortofotos
 >   municipais (cobertura parcial; só o GeoSampa tem licença verificada, CC0).
 >
 > **A primeira decisão do gate deixou de ser "aprovar o Esri" e passou a ser "qual caminho seguir".**
@@ -14788,7 +14788,7 @@ pins com logo + cluster (M7/M16).
 | **Autonomia** | **manual (NÃO loop-safe)** — toolchain Node/Vite (fora do container Python do loop) + revisão visual humana + a busca por endereço usa **rede ao vivo** (DEC-010/Nominatim). NUNCA loop-safe. |
 
 **Contexto.** Frontend novo em `web/` (ou similar): **React + TypeScript + Vite + @tanstack/react-query**, `deck.gl`,
-`maplibre-gl`. Design system da **§7 do `PLANO_APP_WEB.md`** (cores, Manrope + JetBrains Mono, vidro/backdrop-blur,
+`maplibre-gl`. Design system da **§7 do `docs/archive/PLANO_APP_WEB.md`** (cores, Manrope + JetBrains Mono, vidro/backdrop-blur,
 raios, ícones line minimalistas).
 
 **Objetivo.** `AppShell` (Dock lateral com 5 destinos + área de conteúdo por tela), `CommandBar` (título +
@@ -15711,7 +15711,7 @@ comportamento correto dele.
 
 ### EPIC BLK-EXEC — Visão Executiva 2.0: de mapa territorial a dashboard acionável (DEC-023)
 
-> Contexto completo, medições e alternativas descartadas: `docs/plano_visao_executiva_2.md`.
+> Contexto completo, medições e alternativas descartadas: `docs/archive/plano_visao_executiva_2.md`.
 > Decisão: [DEC-023](../docs/decisions/DEC-023.md). Tudo **READ-ONLY sobre o M1**.
 
 **O problema.** A aba responde bem a "onde estão as unidades" e mal a "o que fazer com elas".

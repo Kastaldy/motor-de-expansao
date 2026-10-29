@@ -17,7 +17,7 @@ Decisão de 2026-09-02 (Felipe, pendência **BR-P2**): ligar nos **dois** paíse
 `geocode.validar_contra_bbox` saiu dos dois perfis — um campo que só poderia valer
 `true` é o "campo sem leitor" que a spec §1.4 recusa.
 
-Spec: `docs/spec_bloco_a_perfil.md` §2.3.
+Spec: `docs/archive/spec_bloco_a_perfil.md` §2.3.
 """
 
 from __future__ import annotations

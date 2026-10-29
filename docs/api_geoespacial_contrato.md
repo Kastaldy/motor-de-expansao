@@ -346,7 +346,7 @@ Parametrizada pela Decisao 3 = (a) (MVP minimo). Mapeada a G2/G3/G4 do ClickUp `
 
 ## 14. Guardrails
 
-- **§2 (fontes canonicas):** `config.py`/`CLAUDE.md`/`PRD.md` mandam nos parametros; ler o codigo real;
+- **§2 (fontes canonicas):** `config.py`/`CLAUDE.md` mandam nos parametros; ler o codigo real;
   toda mudanca com teste; nenhum PR com CI quebrado.
 - **§5 (READ-ONLY M1):** a API e camada paralela de consumo — nao recalcula nem altera
   `score_priorizacao`, `hex_score_estrutural`, carteira, plano, artefatos oficiais.
@@ -364,4 +364,4 @@ Parametrizada pela Decisao 3 = (a) (MVP minimo). Mapeada a G2/G3/G4 do ClickUp `
 - `docs/relatorio_pontual_censitario.md` — contrato do Relatorio Pontual Censitario (motor importado).
 - `tasks/backlog.md` — bloco BLK-API-01 + decomposicao BLK-API-02..07.
 - `fora_primeira_fase/api_postgis/main.py` — scaffold FastAPI legado (referencia).
-- CLAUDE.md §2/§4/§5; PRD.md.
+- CLAUDE.md §2/§4/§5.

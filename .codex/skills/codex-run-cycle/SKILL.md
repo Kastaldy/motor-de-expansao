@@ -17,7 +17,6 @@ Use these repo files as the shared protocol:
 
 - `CLAUDE.md`: canonical project rules and guardrails.
 - `README.md`: orchestration overview and project map.
-- `PRD.md`: active cycle and product context when relevant.
 - `tasks/current_task.md`: active task state.
 - `tasks/backlog.md`: pending tasks.
 - `tasks/completed.md`: completed cycle history.
@@ -42,7 +41,7 @@ When the user asks to run a cycle, act as the Codex "chefe" and perform this seq
    - alta: new feature or pipeline change.
    - critica: score, ranking, official M1 artifact, executive KPI, `score_priorizacao`, `hex_score_estrutural`, official portfolio or short-term plan.
    - estrategica: architecture redesign or new phase.
-4. Write `tasks/current_task.md` using the existing Claude format from `.claude/commands/run-cycle.md`. Create/use an isolated branch `ciclo/<ID>` from the current HEAD (`git switch -c ciclo/<ID>`, or `git switch ciclo/<ID>` if it already exists — re-entrant cycle); branching from HEAD does not touch the working tree, so unrelated edits (e.g. `M PRD.md`) stay put.
+4. Write `tasks/current_task.md` using the existing Claude format from `.claude/commands/run-cycle.md`. Create/use an isolated branch `ciclo/<ID>` from the current HEAD (`git switch -c ciclo/<ID>`, or `git switch ciclo/<ID>` if it already exists — re-entrant cycle); branching from HEAD does not touch the working tree, so unrelated edits stay put.
 5. Run the role sequence for the criticity:
    - baixa: Block Orchestrator -> Builder.
    - media: Block Orchestrator -> Planner -> Builder -> QA.
@@ -111,7 +110,7 @@ APROVADO POR [usuario] EM [data]
 - Keep every cycle to one block; put new work in backlog.
 - Do not overwrite `tasks/completed.md`; append only.
 - Respect existing user changes in the worktree and do not revert unrelated edits.
-- **Isolated branch/commit per cycle:** one isolated branch/commit per cycle (`ciclo/<ID>`); commit only the cycle's paths, never `git add -A`/`git add .`; never drag or revert unrelated edits (e.g. `PRD.md`).
+- **Isolated branch/commit per cycle:** one isolated branch/commit per cycle (`ciclo/<ID>`); commit only the cycle's paths, never `git add -A`/`git add .`; never drag or revert unrelated edits.
 - **Non-destructive rollback preferred:** prefer `git switch`/`git restore --staged`; destructive `git reset --hard`/`git branch -D` only with explicit human confirmation and never reaching unrelated edits (reinforces "do not revert unrelated edits" above).
 - **Versioned append-only handoff snapshot per role (including QA):** each role writes `context/handoff/AAAAMMDD-HHMMSS-<slug>.md` (seconds in the timestamp); never edit existing snapshots.
 - **NO-BYPASS of validation:** a "green" obtained by bypassing the real config/artifacts (`--config /dev/null`, a fixture that does not match the real `creation_rules`, mocking the critical path) counts as NOT-EXECUTED; the cycle cannot close as APROVADO. (Justification: BLK-OPS-01 five-defects episode.)

@@ -2,7 +2,7 @@
 
 Base territorial do MVP nacional do `motor-de-expansao`.
 
-O contrato canonico do projeto esta em `CLAUDE.md`; detalhes do ciclo ativo ficam em `PRD.md`.
+O contrato canônico do projeto está em `CLAUDE.md`; o status dos blocos fica em `tasks/backlog.md`, e o histórico de conclusão, em `tasks/completed.md`.
 
 O app de producao e o **piloto web** (`web/` — SPA React/Vite + deck.gl no front, FastAPI em `web/server/app.py` no back), que abre no **Inicio** (seletor de modo em duas trilhas: expandir a rede e operacoes) e tem as telas **Mapa Territorial** (Explorar uma regiao: funil de 5 camadas por UF e municipio; no Brasil a camada 5 e o Top 10 unico da DEC-077), **Oportunidades** (Top 10 de hexagonos), **Ponto** (analise de ponto ou imovel), **Viabilidade do ponto** (stress-test de um imovel), **Visao Executiva** (a rede Ultra real, via Growth API), **Oportunidades imobiliarias** (DEC-037) e **Acessos** (restrita por allowlist). Os relatorios em PDF (Pontual Censitario 1,0 km e Municipal) saem do Mapa e da Viabilidade. Em producao tudo roda num unico container (`motor_expansao_web`) em `piloto.ultra-expansao.tech`, atrás do Caddy, com o login próprio do piloto (DEC-067). Detalhes de produto em `web/README.md`; arquitetura em `docs/arquitetura_app_atual.md`.
 
@@ -170,14 +170,11 @@ O contrato de handoff do repositorio esta em `docs/handoff_repositorio.md`.
 ## Mapa de docs
 
 - `CLAUDE.md`: contrato canonico curto e guardrails permanentes.
-- `PRD.md`: visao de produto (versao de 2026-07-19, anterior ao corte do Streamlit); o status dos blocos vive em `tasks/backlog.md` e `tasks/completed.md`.
 - `web/README.md`: produto e telas do piloto web.
 - `docs/arquitetura_app_atual.md`: arquitetura do app atual (piloto web) + historia do Streamlit.
 - `docs/deploy_piloto_web.md`: runbook de deploy do piloto na VPS (digest, Caddy, Authelia).
 - `docs/handoff_repositorio.md`: checklist para compartilhar o repo com a equipe.
 - `docs/artefatos_dados.md`: manifesto de dados, politica de versionamento e artefatos externos.
-- `docs/streamlit_dashboard_m1.md`: governanca do dashboard Streamlit (HISTORICO — app aposentado pela DEC-022).
-- `docs/analise_pontual_entorno.md`: contrato de UX, metricas de raio e limites tecnicos da analise pontual e Visao Executiva Ultra.
 - `docs/modelo_mercado_hexagonos.md`: contrato tecnico da camada de mercado.
 - `docs/api_geoespacial_contrato.md`: contrato da API GeoEspacial on-demand (implementada; container `motor_expansao_api`, consumida pelo bot Telegram — runbook em `docs/deploy_api_bot.md`).
 - `fora_primeira_fase/README.md`: inventario dos codigos, docs e dados separados do deploy inicial.

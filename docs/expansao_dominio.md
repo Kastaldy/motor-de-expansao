@@ -1,7 +1,6 @@
-> **[HISTORICO]** Contrato de ciclo concluido (maio/2026). O plano de dominio segue VIVO: `gerar_plano_expansao_dominio` roda no `scripts/cron/run_regen_mercado.sh` e `plano_expansao_dominio.parquet` alimenta as zonas do Relatorio Municipal (`relatorio_municipal.py`, D2) e a API (`api/service.py`); parametros e schema abaixo ainda conferem com o codigo, e nenhum outro doc descreve esse artefato.
-
 # Expansao de Dominio — Contrato Tecnico
-> Versao: 2026-05-21 | Ciclo: Cenarios Multi-Hex e Dominio Hibrido (concluido)
+> Status: contrato vivo do `plano_expansao_dominio.parquet` (único documento com seus parâmetros e seu schema), gerado por `gerar_plano_expansao_dominio` com os parâmetros da §3 na regeneração semanal da camada de mercado (`scripts/cron/run_regen_mercado.sh`, DEC-059).
+> Quem lê: `api/service.py` (`_dominio_df`), ao montar o Relatório Municipal do piloto web e do bot; o relatório agrupa o plano em zonas por `cluster_id` (D2 da DEC-011), mas hoje nenhuma página desenha essas zonas: o mapa de Expansão de Domínio pinta zonas geométricas e, no Brasil, não sai (DEC-077).
 > Feature paralela ao M1: nao substitui score_priorizacao, carteira nem plano curto prazo.
 
 ## 1. Posicionamento
@@ -121,10 +120,10 @@ Um hex entra na base de candidatos apenas se:
 
 ## 8. Fontes e limitacoes
 
-- Concorrentes mapeados: grandes redes (Smart Fit, Bluefit, Panobianco); academias independentes ausentes.
-- Capacidade proxy de 2500 alunos por unidade; sem ajuste por formato de loja.
+- Concorrência que consome o residual: só academias de rede, isto é, o cadastro `concorrentes_mapeados` mais as unidades de rede que o agregador lista e o cadastro não tem (DEC-048), sem os estúdios boutique (DEC-056). As academias independentes ficam fora do consumo (DEC-048): o residual mede o espaço frente às redes, não um mercado vazio.
+- Capacidade por unidade: a real, informada pela rede, onde há dado (DEC-057); nas demais, o proxy de 2.500 alunos, sem ajuste por formato de loja. A Ultra entra com os alunos reais do hexágono e, onde esse dado falta, com 2.500 por unidade Ultra a até 2 km.
 - Populacao por `pop_hex_base` (censo 2022 quando disponivel, proxy M1 como fallback).
-- Score residual calibrado para publico geral fitness; sem segmentacao por faixa etaria alem do publico-alvo 18-45 definido no M1.
+- Score residual calibrado para o público geral de fitness, sem segmentação por faixa etária: a população de base é a total (no M1, `populacao_proxy` = `pop_total`), e a Ultra atende todas as idades.
 
 ## 9. Hardening operacional (Bloco 8)
 
@@ -132,7 +131,7 @@ Um hex entra na base de candidatos apenas se:
 - **Smoke de schema interno**: `validate_dominio_schema(df)` em `gerar_plano_expansao_dominio.py`; chamada automaticamente por `materializar()` antes de salvar.
 - `SCHEMA_DOMINIO_OBRIGATORIO` no pipeline e `DOMINIO_SCHEMA_MINIMO` em `constants.py` sao identicos por design — teste unitario valida a igualdade.
 - **Guardrail M1**: testes unitarios verificam que `SAIDA_PARQUET` e `SAIDA_CSV` nao apontam para paths de artefatos M1; testes de integracao (condicionais) verificam que `carteira` e `plano_cp` contem `score_priorizacao` intacto apos execucao do pipeline.
-- **Conflito de nomes pytest**: adicionados `__init__.py` a `tests/unit/`, `tests/integration/` e `tests/contracts/` para resolver colisao de modulos de mesmo nome.
+- **Conflito de nomes pytest**: `tests/unit/test_expansao_dominio.py` e `tests/integration/test_expansao_dominio.py` têm o mesmo nome; os `__init__.py` de `tests/unit/`, `tests/integration/` e `tests/contracts/` evitam a colisão de módulos e precisam ficar.
 
 ## 10. Score de Dominio Hibrido Censitario-Residual
 

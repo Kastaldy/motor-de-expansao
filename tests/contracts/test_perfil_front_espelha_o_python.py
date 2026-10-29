@@ -16,7 +16,7 @@ Há duas cópias do perfil brasileiro do lado do cliente, e as duas podem envelh
 
 Mesmo padrão de `tests/contracts/test_faixas_mapa_espelho.py`.
 
-Spec: `docs/spec_bloco_a_perfil.md` §3.5 e §5.9 item 5.
+Spec: `docs/archive/spec_bloco_a_perfil.md` §3.5 e §5.9 item 5.
 """
 
 from __future__ import annotations

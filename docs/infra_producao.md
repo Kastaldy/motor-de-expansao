@@ -16,6 +16,11 @@
 | SO | Ubuntu 22.04 LTS |
 | Recursos | 4 vCPU, 16 GB RAM, 200 GB NVMe, 4 GB swap |
 
+> **Swap do host.** O container `web` roda com `mem_limit` 8 GB e `memswap_limit` 10 GB
+> (`docker-compose.prod.yml`), o que supõe swap no host. Num servidor novo, criar antes de subir o stack
+> (como root): `fallocate -l 4G /swapfile && chmod 600 /swapfile`, `mkswap /swapfile && swapon /swapfile` e
+> `echo '/swapfile none swap sw 0 0' >> /etc/fstab`; conferir com `free -h` (linha `Swap` com 4 GB).
+
 > **DEC-022:** o subdomínio
 > `dashboard.ultra-expansao.tech` serve **apenas** `/tiles/*` (o
 > tileserver que alimenta o basemap dos PDFs de api, web e bot; o `publicUrl` do

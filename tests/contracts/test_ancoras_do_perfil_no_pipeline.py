@@ -12,7 +12,7 @@ nos quatro numeros de sempre. O que este arquivo prova, em ordem de importancia:
    `PERFIL.ancoras()` sem conversao, porque e o MESMO tipo.
 4. **`ancoras` e keyword-only.** Um terceiro posicional cairia onde `pop_abs` deveria ir.
 
-Spec: `docs/spec_bloco_a_perfil.md` §4.2.
+Spec: `docs/archive/spec_bloco_a_perfil.md` §4.2.
 """
 
 from __future__ import annotations

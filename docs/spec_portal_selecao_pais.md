@@ -1,7 +1,7 @@
 # SPEC — Portal de seleção de país na raiz `ultra-expansao.tech`
 
 - Data: 2026-08-31 | Status: **IMPLANTADA em 2026-09-03** — metade versionada no PR #313; bloco raiz do `Caddyfile` e Authelia aplicados na VPS, com backups cifrados no PR #316, aceite do §7.4.2 8/8 OK e Caddy v2.11.3 anotado | Decidida por Felipe em 2026-08-31
-- **Dono do arquivo: esta spec.** `docs/plano_multipais.md` e `docs/decisions/` têm outros donos e **não** são alterados por aqui — o ponteiro para esta spec é costurado depois, por outra pessoa.
+- **Dono do arquivo: esta spec.** `docs/archive/plano_multipais.md` e `docs/decisions/` têm outros donos e **não** são alterados por aqui — o ponteiro para esta spec é costurado depois, por outra pessoa.
 - Bloco sugerido: **BLK-INTL-13**. Criticidade: **CRITICA** — exige a label `critica-aprovada` do Felipe (§8). **Não** é `loop-safe`.
 - Depende de: **BLK-INTL-05** (criação dos grupos `expansao_*` no Authelia) — **satisfeita em 2026-09-03**, junto com o host AR do BLK-INTL-08; a ordem do §9 foi cumprida.
 - Esforço: **1 a 2 dias**, dos quais mais da metade é a migração de cache do 301 e o aviso ao time — não é código.
@@ -672,7 +672,7 @@ lá o `subject` é obrigatório, e é isso que o BLK-INTL-05 entrega.
 
 **Fica de fora desta spec:** a regra de `access_control` de `piloto-ar.ultra-expansao.tech`. Ela
 pertence ao **BLK-INTL-05 (Bloco D)** — **não** ao Bloco E, como versões anteriores desta spec diziam.
-`docs/plano_multipais.md:300` põe a regra do host AR dentro do Bloco D com todas as letras (*"o host AR
+`docs/archive/plano_multipais.md:300` põe a regra do host AR dentro do Bloco D com todas as letras (*"o host AR
 precisa de regra de qualquer jeito (senão o deny fecha), e acrescentar `subject: - "group:expansao_ar"`
 custa a mesma linha"*), `:512` a repete na entrega verificável do BLK-INTL-05, e o esforço de **1 dia**
 de `:506` **já está orçado com ela dentro** — atribuí-la ao Bloco E tiraria trabalho de um bloco sem
@@ -955,7 +955,7 @@ cabeça. É indisponibilidade total do caminho normal, sem erro no log, sem aler
    existe** — o usuário toma erro de TLS/host desconhecido, que é pior de diagnosticar que um 403
    porque nem chega ao Authelia.
    **A regra de `access_control` desse host não é deste passo**: ela é do **BLK-INTL-05 (Bloco D)**, que
-   já a orça (`docs/plano_multipais.md:300`, `:506`, `:512` — ver §6.2). Ou seja, ela chega no **passo
+   já a orça (`docs/archive/plano_multipais.md:300`, `:506`, `:512` — ver §6.2). Ou seja, ela chega no **passo
    1** e o host chega aqui; hoje o `access_control` tem duas regras (`authelia/configuration.yml:82-86`)
    e nenhuma é a argentina. **A ordem abaixo não muda por causa disso** — ela se apoia em quem escreve
    no `Caddyfile`, e o `Caddyfile` continua sendo do Bloco E.
@@ -1008,7 +1008,7 @@ Recomendo as duas etapas. Elas separam a mudança **arriscada** (roteamento por 
 |---|---|---|---|
 | 11 | `C:\dev\motor-de-expansao\authelia\users_database.yml` | grupos `expansao_br` (19 usuários) e `expansao_ar` | **BLK-INTL-05** |
 | 12 | `C:\dev\motor-de-expansao\Caddyfile` | bloco do host `piloto-ar.ultra-expansao.tech` — **escreve ANTES deste bloco** no mesmo arquivo CRITICO (§9) | **BLK-INTL-08** (Bloco E) |
-| 13 | `C:\dev\motor-de-expansao\authelia\configuration.yml` | regra `access_control` de `piloto-ar` — **com `subject`**, ao contrário da regra da raiz (§6.2) | **BLK-INTL-05 (Bloco D)** — e não o Bloco E: `plano_multipais.md:300` e `:512` a põem lá, e o esforço de `:506` já a orça (§6.2) |
+| 13 | `C:\dev\motor-de-expansao\authelia\configuration.yml` | regra `access_control` de `piloto-ar` — **com `subject`**, ao contrário da regra da raiz (§6.2) | **BLK-INTL-05 (Bloco D)** — e não o Bloco E: `docs/archive/plano_multipais.md:300` e `:512` a põem lá, e o esforço de `:506` já a orça (§6.2) |
 | 14 | `C:\dev\motor-de-expansao\web\` | link "trocar de país" → `https://ultra-expansao.tech/?escolher=1` dentro do piloto (§4.2, obrigação 1) | **a definir** |
-| 15 | `C:\dev\motor-de-expansao\docs\plano_multipais.md` | ponteiro para esta spec | **outra pessoa** — não é editado por aqui |
+| 15 | `C:\dev\motor-de-expansao\docs\archive\plano_multipais.md` | ponteiro para esta spec | **outra pessoa** — não é editado por aqui |
 | 16 | `C:\dev\motor-de-expansao\docs\decisions\DEC-0XX.md` | registrar a decisão do portal (recomendado). **Pegar o ID por `ls docs/decisions/DEC-*.md` no momento do commit, não na abertura da branch** — foi assim que a DEC-045 foi tomada debaixo do plano multipaís | a criar |

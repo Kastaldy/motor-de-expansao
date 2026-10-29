@@ -73,6 +73,10 @@ Nao versionar. Baixar em: <https://www.ibge.gov.br/estatisticas/downloads-estati
 |---------|-----------|---------|
 | `data/ultra/Ultra.csv` | Localizacoes das unidades Ultra (legado) | latin-1, sep=";", 1 linha de metadado antes do header |
 | `data/ultra/dados_academias.xlsx` | Dados operacionais das unidades | Excel |
+| `data/ultra/logo_ultra.png` | Logo da Ultra nos PDFs e no pin da Ultra (`censo_report.py`, `relatorio_municipal.py`, `competitors.py`) | PNG |
+| `data/ultra/icone_ultra.png` | Ícone da Ultra nos PDFs (`censo_report.py`, `relatorio_municipal.py`); é o único arquivo de `data/ultra/` que está no git | PNG |
+| `data/ultra/relatorio_capa_bg.png` | Arte da capa dos PDFs (Pontual, Municipal e Comparação) | PNG |
+| `data/ultra/relatorio_conteudo_bg.png` | Fundo das páginas de conteúdo dos mesmos PDFs | PNG |
 | `concorrentes/unidades_smart_fit.csv` | Unidades Smart Fit geocodificadas | UTF-8 |
 | `concorrentes/unidades_bluefit.csv` | Unidades Bluefit geocodificadas | UTF-8 |
 | `concorrentes/unidades_panobianco.csv` | Unidades Panobianco geocodificadas | UTF-8 |
@@ -83,7 +87,11 @@ Os CSVs sao a FONTE do pipeline de concorrentes: `normalizar_concorrentes.py` os
 consolida em `data/staging/concorrentes_mapeados.parquet`, que e o que o piloto
 web e os PDFs consomem. Medir as duas pontas ao auditar cobertura.
 
-Politica: nao versionar. Solicitar acesso ao responsavel do projeto.
+Sem os PNGs de marca, o PDF sai válido, só sem a arte (`tests/unit/test_relatorio_pontual_censitario_export.py`).
+
+Politica: nao versionar (a exceção é o `icone_ultra.png`). Solicitar acesso ao responsavel do projeto. Ao
+preparar dados para um colaborador novo, nunca repassar `data/referencias/` (estudos reais com PII, inclui
+`Teste Modelo.pptx`) nem `.env`, `Caddyfile`, `authelia/` e `secrets/`.
 
 ## 5. Dados geograficos IBGE (`data/ibge/`) — versionados no git
 

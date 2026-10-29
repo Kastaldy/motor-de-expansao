@@ -4,7 +4,7 @@
 - **Insumos:** `00-baseline-argentina.md` (acoplamento e contrato), `01-dossie-*.md` (os 4 países + transversal), `anexos/auditoria-*.md`.
 - **Restrições herdadas, que este documento NÃO reabre:**
   - **DEC-047:** instância por país, país declarado no `perfil.json`, nenhum `if pais ==`, fronteira plataforma × pipeline.
-  - **Decisão 0.1 do `docs/plano_multipais.md`:** sem comparação entre países.
+  - **Decisão 0.1 do dono (DEC-047, seção «Decisões de subida do dono»):** sem comparação entre países.
   - **D4:** interface em português até ordem do dono.
   - **M1 READ-ONLY.**
   - **DEC-041:** o funil é triagem (política declarada), não previsão. A DEC-078 pôs na Viabilidade do BR uma sugestão de faturamento calibrada em unidades Ultra.

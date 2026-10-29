@@ -1,14 +1,14 @@
 {
   "schema_versao": 1,
   "_schema": "perfil-pais/1 (rotulo legado; o campo NORMATIVO e `schema_versao`, spec 1.2 - `_schema` e chave `_`-prefixada e o loader a IGNORA)",
-  "_nota": "Perfil da ARGENTINA. Vai em MOTOR_DATA_DIR/perfil.json da instancia AR. Lido UMA vez no import (ao lado de onde MOTOR_DATA_DIR ja e resolvido, web/server/app.py:99-108), congelado, sem I/O em caminho quente. Boot FAIL-CLOSED: perfil ausente, JSON invalido ou campo obrigatorio nulo derruba o container. Estrutura conforme docs/plano_multipais.md §6.2. Toda linha marcada 'DEFAULT PROVISORIO' esta listada em _pendencias no fim do arquivo.",
+  "_nota": "Perfil da ARGENTINA. Vai em MOTOR_DATA_DIR/perfil.json da instancia AR. Lido UMA vez no import (ao lado de onde MOTOR_DATA_DIR ja e resolvido, web/server/app.py:99-108), congelado, sem I/O em caminho quente. Boot FAIL-CLOSED: perfil ausente, JSON invalido ou campo obrigatorio nulo derruba o container. Estrutura conforme docs/archive/plano_multipais.md §6.2. Toda linha marcada 'DEFAULT PROVISORIO' esta listada em _pendencias no fim do arquivo.",
   "_procedencia": "Numeros da Argentina vem de: (a) pacote Motor-Argentina do Juan, 2026-07-23 (HANDOFF.md + docs/dicionario_dados.md); (b) medicao feita direto no parquet dados/hexagonos_h3 (42.388 hexagonos) em 2026-08-31; (c) codigos INDEC lidos das 24 particoes provincia= do proprio pacote. Onde nao ha fonte, o campo e null e aparece em _pendencias — nenhum numero foi inventado.",
   "pais": "AR",
   "nome": "Argentina",
   "_idioma": "es-AR (RECUSADO pela spec 1.4: sem leitor. `format.ts:6` le `locale`; o Accept-Language do geocoder le `geocode.idioma`, que aqui e \"es-AR,es\". Mantido `_`-prefixado como comentario.)",
   "locale": "es-AR",
   "moeda": {
-    "_nota": "Tres moedas convivem e confundir uma com a outra e a forma mais barata de produzir numero errado. `codigo` e a moeda do pais. `indicadores_renda` e a moeda em que a coluna de renda do parquet chega (renda_estimada_usd = renda_per_capita, o insumo do score — dicionario_dados.md, bloco Renda). `comparacao` e a moeda de leitura executiva (plano_multipais.md §6.2). A superficie `viabilidade` do dia 1 NAO usa nenhuma das tres: ela sai em BRL com tributo brasileiro (decisao 0.6) e carrega o aviso de `avisos.viabilidade_tributo_provisorio`.",
+    "_nota": "Tres moedas convivem e confundir uma com a outra e a forma mais barata de produzir numero errado. `codigo` e a moeda do pais. `indicadores_renda` e a moeda em que a coluna de renda do parquet chega (renda_estimada_usd = renda_per_capita, o insumo do score — dicionario_dados.md, bloco Renda). `comparacao` e a moeda de leitura executiva (docs/archive/plano_multipais.md §6.2). A superficie `viabilidade` do dia 1 NAO usa nenhuma das tres: ela sai em BRL com tributo brasileiro (decisao 0.6) e carrega o aviso de `avisos.viabilidade_tributo_provisorio`.",
     "codigo": "ARS",
     "simbolo": "$",
     "nome_exibicao": "peso argentino",
@@ -31,7 +31,7 @@
     "_nota_separadores": "es-AR usa ponto de milhar e virgula decimal, igual ao pt-BR. Nenhuma mudanca de mascara em relacao ao Brasil — o que muda e o simbolo e o codigo, nao a pontuacao."
   },
   "bbox": {
-    "_nota": "Guarda grosseira de coordenada (anti-absurdo), nao afirmacao de soberania. Substitui as seis copias divergentes do Brasil listadas em plano_multipais.md §3 item 3. RESOLVE A DECISAO 0.8: Buenos Aires (-34,6037 / -58,3816) fica CONFORTAVELMENTE dentro — o corte em -34,0 de src/motor_expansao/api/coord.py:13, web/src/lib/coord.ts:8 e web/src/lib/entrada-ponto.ts:44 e brasileiro e morre com este campo.",
+    "_nota": "Guarda grosseira de coordenada (anti-absurdo), nao afirmacao de soberania. Substitui as seis copias divergentes do Brasil listadas em docs/archive/plano_multipais.md §3 item 3. RESOLVE A DECISAO 0.8: Buenos Aires (-34,6037 / -58,3816) fica CONFORTAVELMENTE dentro — o corte em -34,0 de src/motor_expansao/api/coord.py:13, web/src/lib/coord.ts:8 e web/src/lib/entrada-ponto.ts:44 e brasileiro e morre com este campo.",
     "lat_min": -55.2,
     "lat_max": -21.6,
     "lng_min": -74.0,

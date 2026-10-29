@@ -1,8 +1,8 @@
 # Estado dos Modelos — Desempenho, Arquitetura e Uso
 
-> Síntese consolidada em 2026-07-08. Fonte de fácil acesso ao time sobre **o que os modelos do
-> Motor realmente preveem, como usá-los e o roadmap de implementação**. Complementa (não substitui)
-> o `CLAUDE.md` (§1–§8) e as decisões registradas (DEC-001 a DEC-014).
+> Fonte de fácil acesso ao time sobre **o que os modelos do Motor realmente preveem, com que erro e como
+> usá-los na decisão**. Complementa (não substitui) o `CLAUDE.md` (§1–§8) e as decisões registradas em
+> `docs/decisions/`; o andamento dos blocos de produto (epic BLK-VIAB) fica em `tasks/backlog.md`.
 
 ## TL;DR
 
@@ -10,7 +10,7 @@
   diferente. A arquitetura correta de uso é um **funil**: triagem macro → mercado → **imóvel real** → viabilidade.
 - Os modelos são bons **triadores** (ordem relativa — "onde olhar") e **fracos preditores de número
   absoluto** (quantos alunos).
-- A **demanda entra como PREMISSA editável**; desde a DEC-078 o valor pode vir **sugerido por um modelo de praça** que usa a geografia (isócrona de 10 min), só na Viabilidade de um imóvel dado.
+- A **demanda entra como PREMISSA editável**; o valor pode vir **sugerido por um modelo de praça** que usa a geografia (isócrona de 10 min, DEC-078), só na Viabilidade de um imóvel dado.
 - A ferramenta de viabilidade é de **ordem de grandeza** (MAPE ~30%): use as **faixas p10–p90 e o ranking
   relativo**, não o número pontual.
 
@@ -35,9 +35,10 @@ carteira, plano ou artefatos oficiais.
 
 | Modelo | Prevê bem? | Número honesto (out-of-fold onde aplicável) |
 |---|---|---|
-| Geografia → **magnitude de demanda** | ❌ Não | M1 `rho ≈ 0`; renda/pop com sinal nulo (DEC-001, backtest BLK-SCORE-02) |
+| Score territorial do M1 → **magnitude de demanda** | ❌ Não | M1 `rho ≈ 0`; renda/pop com sinal nulo (DEC-001, backtest BLK-SCORE-02) |
 | Demanda revelada (`membros`) | ⚠️ Só a fatia corporativa | R²_oof **+0,57 inflado** por circularidade Huff↔`membros` + viés corporativo; contra **alunos totais reais** cai para **~+0,08 a +0,16** |
 | Curva viabilidade (m²→densidade) | ✅ Ordem de grandeza | **MAPE ~30–32%**, R² ~0,19 (N=112: Ultra 54 + Eng Corpo 58); Ultra-só 26,8% |
+| Modelo de praça (Viabilidade, DEC-078: m², renda domiciliar e população da isócrona de 10 min de carro e estúdio → faturamento maduro, convertido em alunos) | ✅ Ordem de grandeza, só como **sugestão editável** para um imóvel dado | erro típico do faturamento **18,6%** deixando cada unidade de fora (39 de treino) e **20,6%** no teste (15 unidades, onde fica ~9,8% abaixo do real); R² 0,369 deixando cada uma de fora; faixa p10–p90 = p50 × 0,677 a 1,611, **provisória** (vem dos resíduos do próprio teste); fora do envelope do treino (ex.: m² de 940 a 2.800) sai com `flag_extrapolacao` |
 | Ranquear / triar (ordem relativa) | ✅ Sim | é o que a pilha faz bem |
 
 ### Achados-chave da validação (2026-07-07/08)
@@ -45,10 +46,10 @@ carteira, plano ou artefatos oficiais.
 - **`membros` é a fatia do benefício corporativo (~1/3 dos alunos reais).** Nas 54 unidades Ultra, o agregador
   (Gympass+TotalPass) é só **35,6%** do total. O eixo `disputa = 1 − share_huff` foi calibrado no próprio
   `membros`, então o R²_oof +0,57 é **parcialmente circular**. Contra um alvo independente (alunos totais),
-  o poder cai para ~+0,08 (limpo) / ~+0,16 (com Huff). Detalhe: memória `huff-membros-circularidade-teto-demanda`.
+  o poder cai para ~+0,08 (limpo) / ~+0,16 (com Huff). Fonte versionada: o achado (2026-07-07) virou regra nas "Decisões PRÉ-FIXADAS" do BLK-VIAB-02 em `tasks/completed.md` (alvo = alunos totais reais, nunca `membros`/agregador); a medição dos +0,08/+0,16 é a do `scripts/_scratch_atr_alvo_alunos_totais.py` (relatório em `data/analysis/atr_alvo_alunos_totais.md`).
 - **A curva de viabilidade generaliza entre redes** (MAPE Eng Corpo 30,3% ≈ Ultra 35,3% no pool de 112), **mas
   misturar portes diferentes na curva PIORA a rede menor** (Ultra: 26,8% base-54 → 35,3% base-112) e **extrapolar
-  fora do envelope (> 2.800 m²) é ruim (MAPE 85%)**.
+  fora do envelope (> 2.800 m²) é ruim (MAPE 85%)**. Este achado e os dois seguintes vêm do backtest BLK-VIAB-04-FU, resumido no "Contexto" dos BLK-VIAB-06 e BLK-VIAB-07 em `tasks/completed.md`.
 - **Afinar a curva por tamanho NÃO melhora a precisão** — o motor já usa janela ±20% de metragem, que está no
   ótimo; o pool global (densidade constante) é o pior. A precisão trava em **~30% MAPE**, o piso honesto do dado.
 - **A única alavanca de precisão restante é a homogeneidade de FORMATO/rede** (comparáveis do mesmo formato dão
@@ -78,34 +79,11 @@ carteira, plano ou artefatos oficiais.
 
 ---
 
-## 4. Roadmap de implementação
-
-O que **já existe e funciona:** M1/censitário/piloto web (produção, DEC-022); `viabilidade_ponto.py` (motor);
-BLK-VIAB-01/02/03 (base de imóveis → ranking por margem de segurança); BLK-VIAB-04/FU (backtest validado, N=112).
-
-Blocos para operacionalizar o produto (ver `tasks/backlog.md`, epic BLK-VIAB) — em 2026-10-23: VIAB-06 e VIAB-07 concluídos em 2026-07-08; a tela de Viabilidade existe no piloto web, embora o backlog ainda marque o VIAB-09 como pendente:
-
-| # | Bloco | Passo | Autonomia |
-|---|---|---|---|
-| 1 | **BLK-VIAB-09** — UI de Viabilidade de Imóvel no dashboard | Produto end-to-end (maior impacto) | Humano (UX) |
-| 2 | **BLK-VIAB-06** — Guardrail de envelope de metragem | Impede extrapolação ruim | **loop-safe** |
-| 3 | **BLK-VIAB-07** — Curva por formato (rótulo opcional) | Única alavanca de precisão restante | **loop-safe** |
-| 4 | **BLK-VIAB-08** — Geocoding + catchment dos candidatos | Liga pop/renda do entorno | Humano (rede/DEC-010) |
-| 5 | **BLK-VIAB-10** — Aquisição de metragem externa | Destrava melhorar a curva (gargalo VIAB-05) | Humano (dado externo) |
-
-**Recomendação:** o maior valor está em **ligar o produto end-to-end (BLK-VIAB-09)** — transforma o motor
-validado numa ferramenta que o time usa. Os blocos **VIAB-06/07 são loop-safe** (guardrail + precisão) e podem
-rodar autônomos; VIAB-08/09/10 são humanos (rede, UI e dado externo).
-
-**O que parar de fazer:** tentar prever demanda pela geografia; afinar a curva por tamanho (retornos decrescentes).
-
----
-
-## 5. Referências
+## 4. Referências
 
 - **Decisões:** DEC-001 (não recalibrar M1), DEC-008 (metodologia out-of-fold), DEC-009 (pivô property-first; revogada pela DEC-078), DEC-078 (Viabilidade v2: demanda sugerida pelo modelo de praça e curva de rampa).
 - **Relatórios (gitignored, `data/analysis/`):** `viabilidade_candidatos.md`, `viabilidade_backtest_ultra.md`,
   `viabilidade_backtest_multirede.md`, `atr_alvo_alunos_totais.md`.
 - **Código:** `src/motor_expansao/dimensionamento/viabilidade_ponto.py` (motor), `backtest_viabilidade.py`
-  (validação), `demanda_revelada/` (camada de demanda revelada).
+  (validação), `demanda_v2.py` e `v2_coeficientes.json` (modelo de praça), `demanda_revelada/` (camada de demanda revelada).
 - **Contexto de mercado/residual:** `docs/modelo_mercado_hexagonos.md`.

@@ -6,7 +6,7 @@
   - `anexos/fase0-a-acoplamento-e-contrato.md` traz o mapa de acoplamento com `arquivo:linha`, as contagens de grep e o contrato completo.
   - `anexos/fase0-b-receita-argentina.md` traz as fontes AR, a linha do tempo, os PRs e os 23 problemas, cada um com sua lição.
   - Este documento é a síntese. Quando ele e o anexo divergirem, vale o anexo, que traz a evidência.
-- **Regra de leitura:** o `docs/plano_multipais.md` (2026-08-31) está **defasado**. Os Blocos A–E, o portal (BLK-INTL-13) e a cauda de correções de setembro e outubro já estão no código. Onde o plano e o código divergem, vale o **código**.
+- **Regra de leitura:** o `docs/archive/plano_multipais.md` (2026-08-31) está **defasado**. Os Blocos A–E, o portal (BLK-INTL-13) e a cauda de correções de setembro e outubro já estão no código. Onde o plano e o código divergem, vale o **código**.
 
 ---
 

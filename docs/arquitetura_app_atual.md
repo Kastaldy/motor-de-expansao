@@ -97,7 +97,7 @@ o inventário histórico descreve esses módulos como vivos).
 
 ## A.3 Modelo de interação (por que a arquitetura mudou)
 
-O diagnóstico do ciclo BLK-REV (ver `docs/system_design_referencia.md` §2 e a
+O diagnóstico do ciclo BLK-REV (ver `docs/archive/system_design_referencia.md` §2 e a
 parte B §6 abaixo) mostrou que o gargalo do app antigo era o ciclo
 rerun/reserialização do Streamlit + pydeck, não o volume de dados. O piloto adota
 o padrão dos produtos de referência: **instância deck.gl persistente no cliente**

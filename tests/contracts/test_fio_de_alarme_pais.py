@@ -25,7 +25,7 @@ três tabelas (`UNIDADE`, `CENSO`, `PONTOS`) e **um** ternário,
 ternário credita o INDEC a ela. Um teste que reprovasse os dois igualmente seria
 desligado na primeira semana; um que reprove só o ternário é o que dá para manter.
 
-Spec: `docs/spec_bloco_a_perfil.md` §5.9 item 3.
+Spec: `docs/archive/spec_bloco_a_perfil.md` §5.9 item 3.
 """
 
 from __future__ import annotations

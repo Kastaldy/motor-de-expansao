@@ -3,7 +3,7 @@
 - **Data:** 2026-10-16 · **Base:** worktree `trabalho-main` em `a59b0e7` (sincronizada com `origin/main`) · **Modo:** somente leitura, nenhum arquivo do repositório alterado.
 - **Escopo:** levar o Motor de Expansão para Colômbia, Paraguai, México e Peru. Brasil e Argentina já estão no ar.
 - **Método:** leitura direta do código, mais quatro varreduras paralelas (viabilidade, ingestão/normalização, deploy/acesso/API/bot, front). Cada `arquivo:linha` foi conferido na data. O que não foi conferido está marcado **não verificado**. O grafo (`graphify` MCP) não conectou nesta sessão; usei grep e leitura.
-- **Regra de leitura:** o `docs/plano_multipais.md` (2026-08-31) está defasado. Os Blocos A a E, o BLK-INTL-13 (portal) e as correções de setembro e outubro já estão no código. Onde o plano e o código divergem, este documento segue o **código**.
+- **Regra de leitura:** o `docs/archive/plano_multipais.md` (2026-08-31) está defasado. Os Blocos A a E, o BLK-INTL-13 (portal) e as correções de setembro e outubro já estão no código. Onde o plano e o código divergem, este documento segue o **código**.
 
 ---
 
