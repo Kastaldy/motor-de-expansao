@@ -64,7 +64,7 @@ Base: o bot/API lê a partição enriquecida da UF (a da tela), com a coluna `uf
 - Arte: capa escura (roxo/navy) com hexágonos de contorno (magenta/turquesa/laranja) e barras de acento.
 
 ### Página 2 — Bairros Oficiais
-- Inserida pelo **BLK-RELMUN-06**, logo após a Visão Geral: ancora o território em nomes que o
+- Inserida pelo **BLK-RELMUN-06**; vem logo após a Capa: ancora o território em nomes que o
   time reconhece ANTES de a leitura virar hexágono — mesma posição que o slide ocupa no material
   de referência do time de Expansão (estudo GeoFusion).
 - Título da banda: **"Bairros Oficiais - Cidade - UF"**.
@@ -177,7 +177,7 @@ Base: o bot/API lê a partição enriquecida da UF (a da tela), com a coluna `uf
   - **Unidades Concorrentes** = XX
   - **Unidades Ultra** = XX
 - Box **"Como calculamos o espaço"**:
-  - "Soma dos hexágonos amarelos ÷ 2.500"
+  - "Soma dos hexágonos destacados / 2.500" (no Brasil, "Residual das regiões com 2.000 ou mais / 2.500")
   - `XXXX + XXXX + XXXX + XXXX + XXXX = XXXX`
   - `÷ 2.500 → XX`
 - Sem legenda (2026-10-21); o rodapé do PNG declara o recorte de academias desenhado.
@@ -255,7 +255,7 @@ A moeda dos mapas e da tabela vem do perfil (`simbolo_renda`, #374).
 - **Nome de bairro fora dos hexágonos.** Desde 2026-10-20 nenhum hexágono leva nome de bairro — `render_mapas_municipio` ainda aceita `hexes_rotulados`, mas `_render_mapa_municipio` não o lê mais (no Brasil o service passa `None`). Antes disso, em 2026-09-17, o nome tinha ficado só nos 5 hexágonos de "Onde crescer" (até então saía em todo hexágono aprovado; São Paulo, naquela data: 154 placas).
 - **Pins só da Ultra** (`TOP_REDES_NO_MAPA = 0`). O corte foi em dois passos no mesmo dia: primeiro as 5 maiores redes (`principais_redes`), que em São Paulo ainda davam 370 pins porque só a Smart Fit tinha 171 naquela data, e depois nenhuma — Resumo e Domínio respondem ONDE HÁ ESPAÇO, e a concorrência tem duas páginas próprias. O rodapé do PNG declara o recorte em segunda linha ("no mapa, só as unidades Ultra; as 491 concorrentes estão em Pressão concorrencial e Espaço e academias", em São Paulo naquela data), e as contagens cheias seguem nos painéis. Voltar a desenhar as N maiores redes é mudar a constante.
 
-**Domínio com os 10 melhores e zoom na melhor área.** A camada de Domínio numera só os 10 melhores pela régua de "Onde crescer" (`service.TOP_HEXES_DOMINIO`, por `selecionar_onde_crescer`; no Brasil a página de Domínio não sai — DEC-077). O Domínio enquadra esses hexágonos (`_focus_bounds_mercator(hexes_foco=...)`); o Resumo enquadra os mesmos escolhidos com margem folgada (`_FOCUS_PAD_FRAC_RESUMO`) e **sem os pins no cálculo** — enquadrar todos os aprovados devolvia a cidade inteira, porque em São Paulo eles vão de norte a sul — uma unidade num hexágono afastado esticava o quadro e trazia junto a cauda cinza. O mapa do Resumo desenha também os hexágonos não aprovados, que são o contexto: quem prioriza os verdes no ZOOM é o enquadramento. O mapa de "Onde crescer" fecha nos 5 escolhidos (`relatorio_praca_mapas.quadro_onde_crescer`), e os demais mapas têm uma aproximação leve (`_FOCUS_MIN_SPAN_M` = 5.000 m e `_FOCUS_PAD_FRAC` = 0,08).
+**Domínio com os 10 melhores e zoom na melhor área.** A camada de Domínio numera só os 10 melhores pela régua de "Onde crescer" (`service.TOP_HEXES_DOMINIO`, por `selecionar_onde_crescer`; a página "Onde crescer" mostra outras listas, e no Brasil a página de Domínio não sai — DEC-077). O Domínio enquadra esses hexágonos (`_focus_bounds_mercator(hexes_foco=...)`); o Resumo enquadra os mesmos escolhidos com margem folgada (`_FOCUS_PAD_FRAC_RESUMO`) e **sem os pins no cálculo** — enquadrar todos os aprovados devolvia a cidade inteira, porque em São Paulo eles vão de norte a sul — uma unidade num hexágono afastado esticava o quadro e trazia junto a cauda cinza. O mapa do Resumo desenha também os hexágonos não aprovados, que são o contexto: quem prioriza os verdes no ZOOM é o enquadramento. O mapa de "Onde crescer" fecha nos até 10 hexágonos das duas listas (`relatorio_praca_mapas.render_onde_crescer_duas_listas`), e os demais mapas têm uma aproximação leve (`_FOCUS_MIN_SPAN_M` = 5.000 m e `_FOCUS_PAD_FRAC` = 0,08).
 
 **Mapa do Resumo sem o número em cada hexágono (2026-09-17).** O Residual de cada hexágono destacado saía numa plaquinha magenta sobre o mapa (São Paulo, naquela data: 154 delas). A pedido do Juan, o relatório pede o mapa sem elas (`rotular_valores=False`); os valores seguiam na tabela "Comparação das Regiões" (que saiu em 2026-10-20), e o total segue no box "Como calculamos o espaço", que ficou intacto naquela mudança. Quem chama `_render_mapa_municipio` direto continua com o default `True`; `test_rotulo_de_valor_fica_acima_do_marcador_blk_relpon_09_fu1` chama o render direto, com `rotular_valores=True` explícito, e assim segue travando a ordem rótulo-sobre-pin.
 
@@ -282,7 +282,7 @@ O PDF sai pelo piloto web (`POST /api/relatorio/municipal`) e pela API/bot (`POS
   gracioso (sem `dominio_df`/sem o município): Páginas 8–9 em modo simplificado, sem exceção.
 - **D3 — mapas COM TILES ONLINE:** `contextily`/EPSG:3857, cache `data/cache/basemap_tiles/`,
   import lazy, fallback offline gracioso (canvas claro SEM ruas), default `basemap=False` em
-  CI/teste (DEC-011 parte 1, estende a DEC-004). Com `API_BASEMAP_TILES_URL` o fundo vem do tileserver OpenMapTiles próprio (a mesma env do Pontual) e o crédito no rodapé é "(c) OpenStreetMap - OpenMapTiles"; sem ela, o CARTO Voyager, com "© OpenStreetMap, © CARTO" (BLK-BASEMAP-02/06).
+  CI/teste (DEC-011 parte 1, estende a DEC-004). Com `API_BASEMAP_TILES_URL` o fundo vem do tileserver OpenMapTiles próprio (a mesma env do Pontual) e o crédito no rodapé é "(c) OpenStreetMap - OpenMapTiles"; sem ela, o CARTO Voyager, com "(c) OpenStreetMap, (c) CARTO" (BLK-BASEMAP-02/06).
 - **D4 — Mercado disponível / Residual:** `Σ oferta_efetiva_disponivel` do município (alunos).
 - **D5 — faixas do Score Censitário:** Alto ≥70 / Médio-alto 50–70 / Médio 30–50 / Baixo <30
   (cores via `RESIDUAL_SCORE_BANDS`/`score_band_to_color`).

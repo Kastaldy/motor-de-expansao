@@ -42,14 +42,14 @@ um valor é editar esta tabela primeiro.
 
 > **`login` e `logout` têm PRODUTOR** (`db/eventos.registrar_login` /
 > `registrar_logout`), pela epic do **P19**. Enquanto o Authelia
-> autentica, a entrada não passa pelo backend — o piloto só recebe o `Remote-User` já resolvido.
+> autentica (onde a chave está vazia; no BR, até o corte do P19), a entrada não passa pelo backend — o piloto só recebe o `Remote-User` já resolvido.
 >
-> **Produtor E CHAMADOR existem; o que falta é a chave.** `POST /api/login` chama `registrar_login` e `registrar_login_recusado`, e `POST /api/logout`
+> **Produtor E CHAMADOR existem; a escrita depende da chave.** `POST /api/login` chama `registrar_login` e `registrar_login_recusado`, e `POST /api/logout`
 > chama `registrar_logout` (`web/server/app.py`). As duas
-> rotas respondem **404** enquanto `MOTOR_AUTENTICACAO_PROPRIA` estiver vazia, então hoje nenhuma
-> linha de `login` é escrita **em produção** — não por falta de chamador, mas porque o caminho
-> inteiro está dormente. Quem ligar a chave passa a ver as linhas no mesmo instante, sem mudar
-> uma linha de código.
+> rotas respondem **404** enquanto `MOTOR_AUTENTICACAO_PROPRIA` estiver vazia, e aí nenhuma
+> linha de `login` é escrita — não por falta de chamador, mas porque o caminho
+> inteiro fica dormente. Com a chave ligada, as linhas aparecem no mesmo instante, sem mudar
+> uma linha de código. No BR ela está ligada desde o corte do P19 (27/10/2026, `docs/infra_producao.md`); onde ainda está vazia, quem autentica é o Authelia.
 >
 > **Por que isto é reposição, e não conveniência.** O `docs/trilha_acesso_piloto.md` registra as
 > tentativas de login do Authelia — **sucesso e falha**, com usuário e IP — como a **camada 3** da
@@ -237,15 +237,13 @@ que alguém mude o próprio acesso pela tela. Trocar a própria senha é o opost
 **só** a própria pessoa deveria poder fazer. `metadados` leva apenas `primeira_vez` (booleano) —
 nunca a senha, nunca o hash, nunca parte de nenhum dos dois.
 
-> **O que a criação NÃO resolve, e continua valendo.** Criar linha em `usuarios` **não** cria a
-> pessoa no `authelia/users_database.yml`, que é quem autentica até o **P19** ser executado. A tela
+> **O que a criação NÃO resolve com o login próprio desligado.** Com `MOTOR_AUTENTICACAO_PROPRIA` vazia, criar linha em `usuarios` **não** cria a
+> pessoa no `authelia/users_database.yml`, que é quem autentica nesse caso. A tela
 > avisa isso em voz alta depois de criar, com o login a cadastrar; sem esse aviso a criação seria uma
-> armadilha silenciosa — a pessoa apareceria na lista e não entraria, sem pista do porquê.
+> armadilha silenciosa — a pessoa apareceria na lista e não entraria, sem pista do porquê. Com a chave ligada (o BR, desde o corte do P19, em 27/10/2026), a pessoa já entra com a senha inicial, e a tela pede o cadastro no Authelia só para o rollback do corte continuar possível.
 >
 > `senha_hash` guarda, desde a D26, um PHC Argon2id de
-> verdade, produzido só por `motor_expansao.db.senhas.gerar`. O que ela ainda **não** faz é
-> autenticar — a senha existe, é verificável e tem ciclo de vida, mas o caminho do login segue no
-> Authelia. É preparação para o corte do P19, não o corte.
+> verdade, produzido só por `motor_expansao.db.senhas.gerar`. No BR, desde o corte do P19 (27/10/2026), é ela que autentica: o `POST /api/login` confere a senha digitada contra este hash; com a chave vazia, o login volta a passar pelo Authelia.
 
 **Os dois gestos sobre a senha DE OUTRA PESSOA (15/09/2026).** A tela de administração tem os dois gestos, e cada
 um tem o seu tipo:
@@ -254,7 +252,7 @@ um tem o seu tipo:
   marca de troca. É o caminho de quem esqueceu a senha. `metadados.tinha_senha_propria` diz se o
   gesto **apagou** uma senha que a pessoa escolheu: a diferença entre arrumar o acesso de quem nunca
   entrou e derrubar a senha de alguém. Registra **sempre**, mesmo quando a pessoa já estava na
-  inicial — "já estava assim" não é verificável pelo hash, que pode guardar qualquer coisa.
+  senha inicial compartilhada — "já estava assim" não é verificável pelo hash, que pode guardar qualquer coisa.
 - **`usuario.troca_exigida`** — liga `deve_trocar_senha_usuario` sem mexer na senha, depois de uma
   suspeita de vazamento. A migration `016` previa o gesto, e a coluna só andava numa direção. Aqui
   "já estava assim" é verificável (é um booleano), então vale a regra da tela: sem mudança, sem
@@ -360,7 +358,7 @@ recomendação que este contrato pressupõe.
 `usuario.reativado`, escritos pela tela de administração de usuários. Cada um sai na **mesma transação** da mudança que descreve
 (`motor_expansao.db.usuarios`).
 
-**Grava (desde a D26):** `usuario.criado` e `usuario.senha_definida`, pela mesma tela e pela mesma
+**Grava (desde a D26):** `usuario.criado`, pela mesma tela, e `usuario.senha_definida`, pela troca da própria senha (`PATCH /api/me/senha`), com a mesma
 regra de unidade de trabalho. **Desde 15/09**, também `usuario.senha_redefinida` e
 `usuario.troca_exigida`. Com eles, os **sete** tipos da §2.7 têm produtor.
 
@@ -377,7 +375,7 @@ banco não abre porta nenhuma. É a situação de `login`/`logout` no fim desta 
 existem, e as linhas aparecem com a chave ligada. `usuario.criado` segue gravando nos dois estados.
 
 **Grava (desde 16/09):** `dossie.baixado` (§2.2), pelo **`GET` do PDF** — e não pelo gesto
-`abrir-dossie`, que dispara mesmo quando o imóvel não tem dossiê (ver a correção no fim da §2.4).
+`abrir-dossie`, que dispara mesmo quando o imóvel não tem dossiê (ver a nota no fim da §2.4).
 E `imovel.visita_marcada` / `imovel.visita_desmarcada` (§2.4), pelos dois gestos que aquela seção
 manda subir; os outros cinco continuam só na trilha da DEC-027. E `viabilidade.calculada` (§2.5),
 pela rota que devolve o payload — com as PREMISSAS, sem alvo, pela razão medida que está no fim
@@ -392,10 +390,9 @@ enquanto o log em arquivo existir — e a família inteira da §2.6, que depende
 
 **`login` e `logout`** têm
 **produtor** (`registrar_login`/`registrar_logout`) **e chamador** — as rotas `POST /api/login` e
-`POST /api/logout` os invocam (`web/server/app.py`). O que ainda impede a
-escrita é a **chave**: as duas rotas respondem 404 com `MOTOR_AUTENTICACAO_PROPRIA` vazia. Então
-quem ler esta seção procurando linhas de `login` no banco não vai achar **até o corte** — e no dia
-do corte elas aparecem sozinhas, sem mudança de código.
+`POST /api/logout` os invocam (`web/server/app.py`). O que condiciona a
+escrita é a **chave**: as duas rotas respondem 404 com `MOTOR_AUTENTICACAO_PROPRIA` vazia. Com a chave vazia não há linhas de `login` no banco; com ela ligada (no BR, desde o corte
+do P19), elas aparecem sozinhas, sem mudança de código.
 
 **O esquema comporta tudo isto.** A D24 fechou a última pendência de modelo e a `014` criou os
 índices que faltavam; a `015` acrescentou a capacidade que separa ver o painel de mudar quem entra.

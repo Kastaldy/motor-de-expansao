@@ -40,8 +40,8 @@ telegram-bot ──HTTP──> api ──Parquets locais──> motor censo_*
 **Docs interativos** (`/docs` Swagger UI e `/redoc`): disponíveis **apenas** quando
 `API_ENVIRONMENT != "production"`. Em produção, usar `docs/api_geoespacial_openapi.yaml` localmente.
 
-**Raio fixo: 1,0 km — no Relatório Pontual.** Não é parâmetro de entrada — é o método canônico
-`setor_censitario_intersecao_area_1km`, INTOCÁVEL (CLAUDE.md §4). O Relatório Municipal não usa
+**Raio padrão: 1,0 km — no Relatório Pontual.** Não é número de entrada — é o método canônico
+`setor_censitario_intersecao_area_1km`, INTOCÁVEL (CLAUDE.md §4); só o PDF Estudo troca de recorte, pelo campo `alcance` (raio de 2 km ou 5/10 min de carro, DEC-074, Emenda 3; ver "Estudo por alcance"). O Relatório Municipal não usa
 raio: agrega o município inteiro.
 Dois mapas do PDF pontual usam escala só de **render** (nunca de análise): os painéis de
 Socioeconomia e de Residual Fitness são **enquadrados** por um raio automático, de 3 a 7 km conforme a região (`censo_map.raio_enquadramento_hex_km`; os 5 km de `RAIO_RESIDUAL_DISPLAY_KM` são só fallback), ambos
@@ -137,7 +137,7 @@ ou **PDF** (8 páginas sem `viabilidade`: as 7 de base + a Conclusão só-estudo
 **`viabilidade` não repete `lat`/`lng`** — a coordenada é a do próprio request (ou a resolvida
 do `maps_url`). Dois lugares para o mesmo ponto seria um lugar para eles discordarem.
 
-**`demanda` é premissa de quem pede** (a tela do piloto sugere uma demanda pelo modelo de praça, DEC-078, que a API não usa). A API não deriva demanda da
+**`demanda` é premissa de quem pede** (pela DEC-078, a tela do piloto sugere uma demanda pelo modelo de praça, que a API não usa). A API não deriva demanda da
 geografia: sem o objeto `viabilidade`, o relatório sai sem as páginas financeiras — não sai com
 uma demanda arbitrada.
 

@@ -38,8 +38,7 @@ Fixadas por Felipe (2026-06-09) e reafirmadas na DEC-005 (2026-06-10):
 5. **READ-ONLY sobre o M1 (§5).** A API e camada paralela de consumo: NAO recalcula nem altera
    `score_priorizacao`, `hex_score_estrutural`, carteira, plano curto prazo, plano dominio ou
    qualquer artefato oficial do M1.
-6. **Parametros canonicos imutaveis.** `H3_RESOLUTION=7`, pesos `renda=0.40`/`pop=0.60`, **raio fixo
-   1.0 km** (`RAIO_CENSITARIO_DEFAULT_KM`) e o **metodo de intersecao** censitario
+6. **Parametros canonicos imutaveis.** `H3_RESOLUTION=7`, pesos `renda=0.40`/`pop=0.60`, **raio padrão de 1,0 km** (`RAIO_CENSITARIO_DEFAULT_KM`; desde a Emenda 3 da DEC-074, o PDF Estudo da API aceita outro recorte pelo campo `alcance`) e o **metodo de intersecao** censitario
    (`setor_censitario_intersecao_area_1km`) so mudam por DEC explicita — apenas DESCRITOS aqui.
    (Emenda DEC-021, 2026-07-29: raio e rotulo do metodo passaram de 1,5 km/`..._1p5km` para
    1,0 km/`..._1km`; o metodo de intersecao em si e os demais parametros seguem os da DEC-005.)
@@ -79,9 +78,9 @@ A API importa (e NUNCA edita) as funcoes abaixo, com as assinaturas reais confir
   a IMPLEMENTACAO UNICA (**BLK-RELPON-14**): a gemea `gerar_pdf_relatorio_pontual_censitario` e wrapper fino
   DEPRECIADO (`DeprecationWarning`) que repassa os kwargs para esta. Paginas OPCIONAIS: `fotos` (a API nao a usa — o corpo
   e' JSON) e `info_imovel` entram logo apos a capa, `viabilidade` entre Big Numbers e
-  Realizacao (1 pagina, ou 2 quando ha `graficos`) e a Conclusao antes da Realizacao. A API passa `info_imovel` e `viabilidade` quando o request os traz e liga `conclusao_so_estudo` sem `viabilidade` (8 paginas por default) — teto do gerador de 12 paginas (11 na API, que nao manda fotos), mais a vista aerea (DEC-018) quando ha `API_ARCGIS_API_KEY`. O carimbo de versao no rodape
+  Realizacao (1 pagina, ou 2 quando ha `graficos`) e a Conclusao antes da Realizacao. A API passa `info_imovel` e `viabilidade` quando o request os traz e liga `conclusao_so_estudo` sem `viabilidade` (8 paginas por default) — teto do gerador de 12 páginas sem a praça, 14 com as duas que `praca` acrescenta (só o piloto a passa; 11 na API, que não manda fotos nem praça), mais a vista aerea (DEC-018) quando ha `API_ARCGIS_API_KEY`. O carimbo de versao no rodape
   (Decisao 6) esta **PREVISTO E NAO IMPLEMENTADO**: hoje o rodape e credito Ultra + atribuicao
-  CARTO (`_draw_footer`) e o unico carimbo por pagina e a marca d'agua `Ultra Academia |
+  CARTO (`_draw_footer`) e os carimbos por página são as duas marcas d'água: a diagonal "ARQUIVO CONFIDENCIAL" e a `Ultra Academia |
   {solicitante}`; a API chama o gerador sem passar versao alguma.
 - `dashboard.censo_map.render_mapas_censitarios_combinados(lat: float, lng: float, setores_df: pd.DataFrame, *, raio_km: float = RAIO_CENSITARIO_DEFAULT_KM, competitors_df=None, ultra_df=None, width: int = MAPA_WIDTH_PADRAO, height: int = MAPA_HEIGHT_PADRAO, basemap: bool = True, logos_dir: Path | None = None, ultra_logo_dir: Path | None = None, street_ceil: int | None = None, street_gain: float | None = None, street_cap: int | None = None, choropleth_alpha: int | None = None, hexes_df: pd.DataFrame | None = None, labels_overlay: bool = True, geometria_wgs84: BaseGeometry | None = None, result: dict | None = None, geometria_tipo: str | None = None) -> dict[str, bytes]` (default 1280x760)
   — retorna ate 7 PNGs para o PDF: `{"densidade","renda","score","renda_domiciliar","socioeconomia","residual","concorrentes"}`.
@@ -310,8 +309,8 @@ isolado do bloco legado `[api]` (isolamento pedido por esta secao).
 extra `[api]`); essas libs sao do desenho PostGIS antigo e nao tem uso no MVP on-demand.
 
 **Guardrail de deploy:** as deps da API ficam em extras (`[api_mvp]` + `[basemap]`/`[geocoder]`),
-fora do install base, para nao acoplar o motor compartilhado `dashboard/` — e as imagens que o
-embarcam, como a `motor-expansao-web` — as deps da API. (Ha um import dashboard -> `api.maps_geocoder`,
+fora do install base, para não acoplar o motor compartilhado `dashboard/` às deps da API: cada imagem que o
+embarca instala só os extras de que precisa (a `motor-expansao-web` leva `[api_mvp]` e `[basemap]`, porque o backend do piloto também é FastAPI e desenha os mapas do PDF, mas não o `[geocoder]`). (Ha um import dashboard -> `api.maps_geocoder`,
 mas sem arrastar dependencia — ver a excecao no §4.)
 
 ## 12. O que se aproveita do scaffold legado (`fora_primeira_fase/api_postgis/main.py`)

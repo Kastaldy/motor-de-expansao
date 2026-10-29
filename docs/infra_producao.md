@@ -18,8 +18,8 @@
 
 > **DEC-022:** o subdomínio
 > `dashboard.ultra-expansao.tech` serve **apenas** `/tiles/*` (o
-> tileserver que alimenta o basemap dos PDFs de api, web e bot; o `publicUrl` e os styles do
-> openmaptiles apontam para ele) — a raiz do subdomínio redireciona **301** para
+> tileserver que alimenta o basemap dos PDFs de api, web e bot; o `publicUrl` do
+> openmaptiles aponta para ele (os styles usam `mbtiles://{brazil}` e herdam o endereço do `publicUrl`)) — a raiz do subdomínio redireciona **301** para
 > `piloto.ultra-expansao.tech`.
 
 ## Stack
@@ -200,7 +200,7 @@ de qualquer `scp`, **reiniciar é obrigatório** — `docker compose -f docker-c
 - **Imagem:** `gymscraping:local` — `Dockerfile` no próprio repo do scraper (Chrome + webdriver-manager +
   Chromium do Playwright). Reconstruída a cada run (cache acelera).
 - **Runner:** **`/opt/gymscraping-infra/run_weekly_90.sh`**, cuja fonte versionada é
-  **`scripts/cron/run_weekly_90.sh`** (instalação por `cp` + `chmod +x`,
+  **`scripts/cron/run_weekly_90.sh`** (neste repo; instalação por `cp` + `chmod +x`,
   manual, como a dos outros wrappers). Faz, em sequência:
   0. **Preserva a safra anterior** em `$INFRA/safra_anterior` **antes** do `git checkout -- Unidades/`
      (BLK-COLETA-01). O descarte é o preço do fast-forward, e o backup impede a perda: sem
@@ -552,7 +552,7 @@ manual, comando a comando (§6 do `CLAUDE.md`).
 
 > **O cron dos agregadores NÃO usa o wrapper de domingo.** Invocar
 > `run_snapshot_concorrentes.sh` com
-> `--fontes totalpass wellhub` na cadência dos agregadores pularia a curadoria inteira — a escolha do diretório do WellHub e a guarda de
+> `FONTES="totalpass wellhub"` na cadência dos agregadores pularia a curadoria inteira — a escolha do diretório do WellHub e a guarda de
 > frescor, que são a razão deste bloco existir. Os dois wrappers são distintos e não se substituem.
 
 **Passo 0 do wrapper: a rotação do consolidado, e por que `--no-resume` não bastava**
@@ -666,10 +666,8 @@ a última mudança, logo vale `k-1` com hash constante, contra o denominador `ST
 `26` é o menor N que ainda satura o `v4` com uma fonte perdendo **metade** das semanas (26 semanas,
 50% de falha → 13 observações → `semanas_sem_mudanca = 12` → `v4 = 1,0000`, exatamente no piso).
 Custo em disco medido em 2026-08-26 (42.535 linhas/semana somando as três fontes, 151,7
-bytes/linha): **160,0 MB** — não é restrição num NVMe de 200 GB. O que restringe é a **leitura**:
-`ler_snapshots` carrega a série inteira em memória e o pico de RSS medido cresce ~70,5 MB por semana
-retida (N=13 → 999 MB; N=26 → 1,9 GB). Numa KVM4 de 16 GB com 6 containers permanentes, 1,9 GB é
-folgado.
+bytes/linha): **160,0 MB** — não é restrição num NVMe de 200 GB. O que restringiria é a **leitura** sem recorte: com a série inteira em memória, o pico de RSS medido cresce ~70,5 MB por semana
+retida (N=13 → 999 MB; N=26 → 1,9 GB); hoje `ler_snapshots` recorta na varredura (DEC-064). Numa KVM4 de 16 GB, 1,9 GB é folgado (a conta foi feita com 6 containers permanentes; hoje são pelo menos 8).
 
 **Ordem de aplicação — ela é a defesa contra o modo destrutivo.** A partição tem **duas**
 chaves (`semana=AAAA-SS/fonte=<fonte>/`), porque duas cadências escrevem na mesma semana ISO e, com
@@ -695,7 +693,7 @@ uma chave só, `delete_matching` faria a segunda apagar a primeira.
    > `{"migrar_layout": [...], "ambiguas": [...], "dry_run": True}` com **todas** as semanas ambíguas
    > de uma vez. Se `ambiguas` não vier vazia, **não migre**:
    > resolva à mão primeiro.
-3. Concluir os três passos pendentes do **BLK-MA-06** (cópia do wrapper semanal, `DRY_RUN=1`, linha
+3. Conferir os três passos do **BLK-MA-06**, já aplicados na VPS (cópia do wrapper semanal, `DRY_RUN=1`, linha
    no `run_weekly_90.sh`). É ele quem prova o caminho dos CSVs e o `API_IMAGE`.
 4. Atualizar o clone `/opt/gymscraping` (traz o `GymScraping` #11 — a caixa exata de `TotalPass/`;
    sem ele o passo 1 do wrapper aborta com mensagem própria).
@@ -782,9 +780,9 @@ passaria despercebido para sempre. Limiar `MONITOR_AGREGADOR_MAX_DIAS` (default 
 > sempre na semana 1. A régua nova pode **adiantar** o alerta em até ~1 dia, nunca atrasá-lo — direção
 > segura para um monitor. Chave ilegível cai no mtime e **diz** que caiu, no texto do alerta.
 
-**Fronteira com o BLK-MA-20 (DEC-039, D9; DEC-066).** A partição do **TotalPass é gravada desde a
-primeira semana** (o cronômetro de `MIN_SEMANAS = 8` são 8 semanas na cadência real — cada semana
-de espera é irrecuperável). A dedup TP × WH foi calibrada contra par real
+**Fronteira com o BLK-MA-20 (DEC-039, D9; DEC-066).** A partição do **TotalPass** entra na série desde a
+primeira semana em que ele é coletado (o cronômetro de `MIN_SEMANAS = 8` são 8 semanas na cadência real — cada semana
+de espera é irrecuperável); na VPS o coletor dele está arquivado, e o lote de domingo fotografa só `unidades wellhub`. A dedup TP × WH foi calibrada contra par real
 (a régua de 50 m foi medida e MANTIDA) e o TotalPass entra **inteiro** — oferta
 E série. O erro de 36,99% do `s1` medido por hexágono é real e é
 o motivo de ele não pesar — quem o contém é o `SINAIS_INATIVOS`, não um recorte de

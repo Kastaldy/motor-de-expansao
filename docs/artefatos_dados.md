@@ -56,7 +56,7 @@ Politica: nao versionar no git (bloqueado por `*.parquet` e `*.csv` no `.gitigno
 | `hexagonos_mercado_mapeado.parquet` | 204 MB | `calcular_colunas_mercado.py` | `modelo_hibrido_expansao.py`; piloto web (residual do ponto no Relatorio Pontual) |
 | `concorrentes_mapeados.parquet` | 250 KB | `normalizar_concorrentes.py` | piloto web (pins), API/PDFs, `modelo_hibrido_expansao.py` |
 | `unidades_ultra_performance_hex.parquet` | 53 KB | `calcular_penetracao_ultra_hex.py` | piloto web (pins Ultra; fallback da faixa de alunos) |
-| `growth_api_historico.parquet` | 3.4 MB | `scripts/ingerir_growth_api.py` (ingestao semanal, DEC-013) | piloto web (Visao Executiva — a tela responde 404 sem ele) |
+| `growth_api_historico.parquet` | 3.4 MB | `scripts/ingerir_growth_api.py` (ingestão diária na VPS, `scripts/cron/run_growth_daily.sh`; DEC-053) | piloto web (Visao Executiva — a tela responde 404 sem ele) |
 | `base_calibracao_maduras.parquet` | 21 KB | `scripts/consolidar_base_calibracao.py` | piloto web (semente p50 da demanda na Viabilidade) |
 | `uplift_renda_domiciliar_municipio.parquet`, `uplift_composicao_setor.parquet` | — | pipeline de renda domiciliar | piloto web + API/PDFs (renda media domiciliar; em producao — `MOTOR_DATA_DIR` setado — a subida do piloto e da API RECUSA sem eles, E0. O `fator_temporal_renda.json` saiu: os fatores sao versionados na imagem, `src/motor_expansao/renda/fatores/<PAIS>/`, DEC-075) |
 

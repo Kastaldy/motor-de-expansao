@@ -83,7 +83,7 @@ periodicidade. As cinco escolhas abaixo são de produto, e cada uma tem um porqu
 | **Só o balcão paga** (`apenas_balcao = True`) | O aluno de agregador (Gympass/TotalPass) não tem contrato com a academia: o agregador remunera **por acesso**. Cobrar anuidade dele seria inventar receita de um contrato que não existe. |
 | **Elegibilidade derivada do churn**, não fixada à mão | Pedido literal de Felipe: "nem todos os alunos chegam a 12 meses". `(1 − churn)^12` = `0,94^12` = **47,59%**. Como é derivada, mexer no churn ajusta a elegibilidade sozinho — não há um número mágico paralelo para alguém esquecer de atualizar. `SIM_ANUIDADE_ELEGIVEL_PCT` continua existindo como escotilha: se for preenchido com um número, ele **vence** a derivação. |
 | **Reconhecimento pro-rata mensal** (`99 ÷ 12` a partir do mês 12), não um lançamento único | Os aniversários dos alunos se espalham pelo ano inteiro. Um lançamento único no mês 12 criaria um **degrau falso** no caixa e no gráfico de FCF acumulado, deslocando o mês de virada do payback sem nenhum ganho de precisão econômica. Mesma lógica da simplificação do adicional de IRPJ (§11). |
-| **O mês de referência do steady-state é o 12, não o 8** | Consequência estrutural, não escolha estética: só a partir do mês 12 o regime é pleno (alunos **maduros** *e* anuidade **em cobrança**). Se a DRE de steady ficasse no mês 8, ela ficaria sem a anuidade enquanto o break-even já a considera — duas réguas diferentes para o mesmo cenário, que é exatamente a classe de defeito que este ciclo existe para matar. |
+| **O mês de referência do steady-state é o primeiro com alunos maduros e anuidade em cobrança (o 12 no padrão), não o fim da rampa** | Consequência estrutural, não escolha estética: só a partir do mês 12 o regime é pleno (alunos **maduros** *e* anuidade **em cobrança**). Se a DRE de steady ficasse no mês 8, ela ficaria sem a anuidade enquanto o break-even já a considera — duas réguas diferentes para o mesmo cenário, que é exatamente a classe de defeito que este ciclo existe para matar. |
 
 **O mês é servido, não recalculado.** O motor devolve `mes_referencia_steady`
 (= `max(maturacao_meses, anuidade_mes_inicio)` = **12**) e a API o expõe em
@@ -139,7 +139,7 @@ Nas duas o split balcão/agregador/studios é o mesmo (`Premissas.split_alunos`)
 | `SIM_PESSOAL_MES` | `50 128,16` | R$/mês | Fopag com encargos (DRE linha 55) | **congelado (legado)** | `config.py`; **não alimenta mais a folha** — só default de `viabilidade()`/`gerar_serie_mensal()` |
 | `pessoal_mes_override` | `None` | R$/mês | escotilha de compatibilidade | Engenharia (compat) | `Premissas`; quando preenchido, este valor absoluto **substitui** o dimensionamento por percentual (`folha_pct` é ignorado). A folha já é fixa nos dois modos |
 | `SIM_OUTROS_FIXOS_MES` | `38 150,00` | R$/mês | Excel, DRE linhas 52-59 e 69 — **seis** componentes que fecham exatamente nos 38.150: IPTU 2.000 + água/luz 17.000 + telefone 500 + limpeza 14.000 + tecnologia 2.150 + assessorias 2.500. | Controladoria | `config.py` → `Premissas.outros_fixos_mes` |
-| `aluguel_mes` | — (input) | R$/mês | **input manual do operador** — escopo fechado, não é estimado pelo motor | Operador | `Premissas.aluguel_mes` |
+| `aluguel_mes` | — (input) | R$/mês | **input do operador**; com o campo vazio, a tela envia metragem × R$/m² mediano dos anúncios do município e do tipo de imóvel (DEC-080) — o simulador não estima aluguel | Operador | `Premissas.aluguel_mes` |
 | `SIM_CUSTO_PRE_OPERACIONAL_MES` | `0.0` | R$/mês | **explicitação de ausência** — hoje o modelo assume zero custo de contratação/treinamento/pré-venda | Felipe | `config.py` → `Premissas.custo_pre_operacional_mes`; linhas M-4..M-1 |
 | `SIM_CUSTO_STUDIO` | `6 000,00` | R$/mês por studio | fopag adicional por studio extra | Felipe | `config.py` → `Premissas.custo_studio_mes` → `custo_studios_mes` (n × valor); entra na linha `outros_fixos` da série (reajusta como os demais fixos) e também em coluna própria `custo_studios`; payload `dre.custo_studios`. **Não é somado em `outros_fixos_mes` pelo payload** |
 | `SIM_STUDIOS_DEFAULT` | `0` | un. (0..3) | configuração padrão de unidade | Felipe | `config.py`; **declarada e não consumida** — ver §8 |
@@ -256,7 +256,7 @@ denominador de capex cheio), e o modelo se beneficiava do financiamento duas vez
 ### 6.1 Taxa de franquia parcelada em 4× sem juros (decisão de Felipe, 2026-07-24)
 
 A taxa é parcelada em **4× sem juros** — em vez de sair **inteira do caixa no M-4**, junto da primeira parcela da obra —, nos meses de **contrato 1..N** (os mesmos M-4..M-1 da
-obra), o que deixa a pré-abertura plana em **R$ 190.000 por mês** (obra 150.000 + franquia 40.000).
+obra), o que deixa a pré-abertura plana em **R$ 190.000 por mês** no caso de referência (obra 150.000 + franquia 40.000).
 
 **Isto é só timing de caixa, e o efeito é pequeno de propósito:** as quatro parcelas cabem
 inteiras dentro da janela de pré-abertura, então **no mês 1 o desembolso acumulado já é o mesmo**.

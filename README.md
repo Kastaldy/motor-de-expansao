@@ -4,7 +4,7 @@ Base territorial do MVP nacional do `motor-de-expansao`.
 
 O contrato canonico do projeto esta em `CLAUDE.md`; detalhes do ciclo ativo ficam em `PRD.md`.
 
-O app de producao e o **piloto web** (`web/` — SPA React/Vite + deck.gl no front, FastAPI em `web/server/app.py` no back), que abre no **Inicio** (seletor de modo em duas trilhas: expandir a rede e operacoes) e tem as telas **Mapa Territorial** (Explorar uma regiao: funil de 5 camadas por UF e municipio; no Brasil a camada 5 e o Top 10 unico da DEC-077), **Oportunidades** (Top 10 de hexagonos), **Ponto** (analise de ponto ou imovel), **Viabilidade do ponto** (stress-test de um imovel), **Visao Executiva** (a rede Ultra real, via Growth API), **Oportunidades imobiliarias** (DEC-037) e **Acessos** (restrita por allowlist). Os relatorios em PDF (Pontual Censitario 1,0 km e Municipal) saem do Mapa e da Viabilidade. Em producao tudo roda num unico container (`motor_expansao_web`) em `piloto.ultra-expansao.tech`, atras de Caddy + Authelia. Detalhes de produto em `web/README.md`; arquitetura em `docs/arquitetura_app_atual.md`.
+O app de producao e o **piloto web** (`web/` — SPA React/Vite + deck.gl no front, FastAPI em `web/server/app.py` no back), que abre no **Inicio** (seletor de modo em duas trilhas: expandir a rede e operacoes) e tem as telas **Mapa Territorial** (Explorar uma regiao: funil de 5 camadas por UF e municipio; no Brasil a camada 5 e o Top 10 unico da DEC-077), **Oportunidades** (Top 10 de hexagonos), **Ponto** (analise de ponto ou imovel), **Viabilidade do ponto** (stress-test de um imovel), **Visao Executiva** (a rede Ultra real, via Growth API), **Oportunidades imobiliarias** (DEC-037) e **Acessos** (restrita por allowlist). Os relatorios em PDF (Pontual Censitario 1,0 km e Municipal) saem do Mapa e da Viabilidade. Em producao tudo roda num unico container (`motor_expansao_web`) em `piloto.ultra-expansao.tech`, atrás do Caddy, com o login próprio do piloto (DEC-067). Detalhes de produto em `web/README.md`; arquitetura em `docs/arquitetura_app_atual.md`.
 
 O **motor compartilhado** (`src/motor_expansao/dashboard/` — dados, censo, relatorios, concorrentes, viabilidade) continua vivo e e consumido pelo piloto, pela API GeoEspacial, pelo bot Telegram e pelo `fase1_bi_exports`; so a UI Streamlit saiu do repo (DEC-022).
 
@@ -103,7 +103,7 @@ Runbook completo: `docs/deploy_piloto_web.md`. API GeoEspacial + bot: `docs/depl
 Recomendacoes operacionais:
 
 - montar `/opt/motor-expansao/data/{outputs,staging,ibge,ultra}` e `concorrentes/` como volumes `:ro`;
-- expor o app somente atras do Caddy + Authelia (subdominio `piloto.ultra-expansao.tech`);
+- expor o app somente atrás do Caddy, com o login próprio do piloto (DEC-067; subdomínio `piloto.ultra-expansao.tech`);
 - `dashboard.ultra-expansao.tech` fica vivo APENAS para `/tiles/*` (tileserver dos PDFs); a raiz redireciona 301 para o piloto (DEC-022);
 - nao embutir dados ou secrets na imagem Docker;
 - deploy e sempre passo manual do Felipe, por digest (DEC-016/§6 do CLAUDE.md — auto-merge nao deploya).

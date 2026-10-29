@@ -28,7 +28,7 @@ Defeitos novos, conferidos no código:
    - Inferido do código, **não medido**: a maioria dos pontos argentinos sai com `flag_zona_morta=True` e motivo `renda<500`.
    - Esse flag também alimenta o selo DEMOGRÁFICO (gate E4) da Conclusão do PDF.
 3. **Mapa de setores do front pinta renda e densidade com a régua brasileira.** `RENDA_DOMICILIAR_SETOR_BANDS` e `DENSIDADE_BANDS` têm literais em `web/src/lib/colors.ts:358-380` (a de renda é domiciliar, #473, E1 da DEC-075, com os cortes BR 2.000/4.000/8.000/14.000 e rótulo por `moedaRenda()`).
-   - O backend já serve `reguas.bandas_renda_setor`/`bandas_densidade_setor` em `/api/me` (`app.py:4292-4297`), mas nada em `web/src` lê esses campos (zero ocorrências de `bandas_`).
+   - O backend já serve `reguas.bandas_renda_setor`/`bandas_densidade_setor` em `/api/me` (`app.py:5323-5324`), mas nada em `web/src` lê esses campos (zero ocorrências de `bandas_`), e as de renda são per capita: não servem ao calor de renda, que é domiciliar (`app.py:5276-5278`).
    - O PR 2 do front, previsto em `tests/contracts/test_perfil_front_espelha_o_python.py:83-86`, não foi feito.
    - Efeito, pela nota do perfil AR: 99,88% da população cai na 1ª faixa.
 4. **Renda em USD rotulada "R$" em telas que a AR alcança:**
@@ -391,7 +391,7 @@ Esforço grosseiro para 1 dev: **P** < 0,5 dia · **M** 0,5-2 dias · **G** 3-10
 |---|---|---|---|---|
 | S1 | Critério de renda da ficha do ponto em R$ 4.500 (`settings.RENDA_MIN`) + rótulo "R$" | `app.py:6478-6481`, `:6808` | **Sim**: reprova todo ponto | P: campo `reguas.renda_min_ficha` no perfil (BR = 4.500) + teste nos dois perfis |
 | S2 | Zona morta: `RENDA_ZONA_MORTA_MIN = 500` R$ e `POP_ZONA_MORTA_MIN` literais → flag e selo DEMOGRÁFICO (E4) | `viabilidade_ponto.py:54`, `:72`, `:542`; `censo_report.py:1792-1803` | **Provável** (inferido, não medido) | P-M: perfil + medir na base AR |
-| S3 | Choropleth de renda e densidade do MAPA web com cortes BR; o backend já serve as bandas | `web/src/lib/colors.ts:358-377` | **Sim** | M (PR 2 previsto) |
+| S3 | Choropleth de renda e densidade do MAPA web com cortes BR; o backend já serve as bandas de densidade (as de renda que ele serve são per capita) | `web/src/lib/colors.ts:358-377` | **Sim** | M (PR 2 previsto) |
 | S4 | Renda USD rotulada "R$" (PontoScreen, DetalheRegiao, Recomendacao) e "$" de peso sobre USD (`UNIDADE_MOEDA`) e sobre reais (`fmtBrl`) | `PontoScreen.tsx:645-646`, `DetalheRegiao.tsx:67`, `Recomendacao.tsx:139`, `format.ts:169`, `recomendacao.ts:206`, `ViabilityCharts.tsx:1125` (o `BlocoViabilidadePonto.tsx` foi apagado no #457) | **Sim** | M; e estender a guarda anti-moeda para `components/` e `screens/` com allowlist da viabilidade |
 | S5 | `mascara.ts` pt-BR fixo; perfil declara separadores sem leitor | `mascara.ts:81`, `:172`, `:187`, `:226`, `:248-257` | Não (es-AR coincide). **MX/PE sim** | M (o módulo é puro, tem testes) |
 | S6 | Join do crescimento por `cod6` IBGE | `app.py:1104-1108` | Latente (a AR não tem o artefato) | P: chave declarada no contrato ou casamento por código inteiro |

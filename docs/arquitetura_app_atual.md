@@ -17,7 +17,7 @@ O app de produção é o **piloto web** em `web/`: uma SPA **React + Vite + deck
 que embrulha as funções puras do motor compartilhado e lê os Parquets read-only
 (`MOTOR_DATA_DIR`). Em produção, **um único container** (`motor_expansao_web`,
 imagem `motor-expansao-web`) serve o `dist/` do Vite via `StaticFiles` e a API em
-`/api/*` na mesma porta, atrás de Caddy + Authelia no subdomínio
+`/api/*` na mesma porta, atrás do Caddy, com o login próprio do piloto (DEC-067), no subdomínio
 `piloto.ultra-expansao.tech`. O subdomínio `dashboard.ultra-expansao.tech` ficou
 vivo **apenas** como host de `/tiles/*` (tileserver que alimenta o basemap dos
 PDFs); a raiz redireciona 301 para o piloto (DEC-022 §3).
@@ -107,9 +107,9 @@ reenviar hexes nem re-executar backend. O backend só entra quando há dado novo
 
 A carga é **lazy por UF**: o backend lê só a partição `uf=XX` de
 `data/outputs/hexagonos_dashboard_enriquecido/` (a 1ª leitura de uma UF carrega a
-partição inteira e demora alguns segundos — esperado). Cores e tooltip do mapa
+partição inteira e demora alguns segundos — esperado). As cores do mapa
 seguem `score_band_to_color` (faixas de 10 pontos,
-corte `<5k hab` em cinza).
+corte `<5k hab` em cinza), menos na camada 4, pintada pela classe de crescimento do hexágono, e na camada 5, pintada no Brasil pelo segmento do Top 10 (DEC-077) e na AR pela faixa M1.
 
 ## A.4 Dados consumidos
 

@@ -2,7 +2,7 @@
 
 Runbook do serviço **`web`** do `docker-compose.prod.yml` — o piloto (frontend Vite +
 backend FastAPI num único container, servindo o SPA e a API na porta interna `8899`),
-publicado em `piloto.ultra-expansao.tech`, atrás do Caddy + Authelia. O piloto é **O app de produção** (DEC-022); não
+publicado em `piloto.ultra-expansao.tech`, atrás do Caddy, com o login próprio do piloto (DEC-067). O piloto é **O app de produção** (DEC-022); não
 há app paralelo.
 
 > **Guardrails.** Execução no VPS é **sempre passo humano, comando a comando** (CLAUDE.md §6).
@@ -446,7 +446,7 @@ docker compose -f docker-compose.prod.yml exec web curl -fsS http://127.0.0.1:88
 # banco ligado: o web subiu com a URL do papel `app`? Conta sem imprimir a senha — tem de dar 1
 docker inspect -f '{{range .Config.Env}}{{println .}}{{end}}' motor_expansao_web | grep -c '^MOTOR_DATABASE_URL=postgresql://app:'
 ```
-Abrir `https://piloto.ultra-expansao.tech` → login Authelia → piloto.
+Abrir `https://piloto.ultra-expansao.tech` → login → piloto (desde o corte do P19, o login é o do próprio piloto).
 
 **Rollback**: apontar `WEB_IMAGE` para o digest anterior e repetir `unset` + `pull` + `up -d --no-deps web`. Migration
 aplicada não volta com a imagem (§8 do `docs/banco_deploy.md`).
@@ -558,7 +558,7 @@ ordem:
    mapa (a 1ª leitura chama `carregar_uf_completo`, `web/server/app.py:836` —
    `read_parquet` **sem projeção de colunas**, e o parquet AR carrega `geometry_wkb`
    por linha, coluna que o enriquecido BR não tem) e ler `docker stats
-   motor_expansao_web_ar`. O `2g/3g` do compose é **PROVISÓRIO E NÃO MEDIDO**
+   motor_expansao_web_ar`. Na AR isso já foi medido (Bloco E, 03/09/2026: 108 MiB depois de varrer as 24 partições, folga de ~20×) e o teto ficou mantido; o `2g/3g` do compose vale como ponto de partida para o próximo país
    (`perfil.operacao.mem_limit_alvo`); fixar o valor medido (regime < 70% do teto) no
    compose **e** no perfil, no mesmo commit.
 6. **Caddy + Authelia** *(na VPS, com aprovação do Felipe, comando a comando)*:

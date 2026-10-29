@@ -18,7 +18,7 @@ Hierarquia de decisao:
 | Conceito | Definicao |
 | --- | --- |
 | **Cidade/regiao** | Agrupamento por `cod_municipio` (IBGE). |
-| **Cluster** | Conjunto contíguo de hexes H3 res7 dentro do mesmo `cod_municipio`, com score residual mínimo e sem flag de canibalizacao Ultra. Adjacencia via `h3.k_ring(hex, 1)`. |
+| **Cluster** | Conjunto contíguo de hexes H3 res7 dentro do mesmo `cod_municipio`, com score residual mínimo e sem flag de canibalizacao Ultra. Adjacência via `h3.grid_disk(hex, 1)`. |
 | **Hex ancora** | Hex selecionado pelo algoritmo greedy como candidato prioritario de abertura. Maximiza residual incremental capturado no cluster. |
 | **Residual capturado** | Fracao de `oferta_efetiva_disponivel` que uma unidade aberta no hex ancora consegue servir, usando decaimento linear ate 2 km. |
 | **Sobreposicao** | Interseccao do raio de captura (2 km) de uma nova ancora com raio de ancora ja selecionada; penaliza a escolha greedy. |
