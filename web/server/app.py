@@ -9305,6 +9305,38 @@ def cobertura_uf(uf: str, municipio: str | None = None, limite: int = 15000) -> 
     )
 
 
+@functools.lru_cache(maxsize=1)
+def _tabela_aluguel():
+    """Régua de aluguel da DEC-080, do MESMO parquet da aba imobiliária. Cacheada por processo
+    como o resto do piloto (o parquet muda com restart). `None` sem o arquivo."""
+    from motor_expansao.dimensionamento.aluguel_referencia import carregar_tabela
+
+    try:
+        return carregar_tabela(OPORTUNIDADES_PATH)
+    except Exception as erro:  # noqa: BLE001 -- sem régua, a tela segue com o aluguel digitado
+        print(f"[aluguel-referencia] base ilegível ({erro})", file=sys.stderr)
+        return None
+
+
+@app.get("/api/aluguel-referencia")
+def aluguel_referencia(
+    tipo: str, uf: str | None = None, municipio: str | None = None
+) -> dict[str, Any]:
+    """R$/m² de referência para o tipo de imóvel no município (DEC-080).
+
+    Município × tipo com pelo menos 5 anúncios; senão UF × tipo; senão Brasil × tipo. 404
+    quando a instância não tem a base de imóveis (a tela segue sem a régua) ou o tipo não
+    existe. READ-ONLY.
+    """
+    tabela = _tabela_aluguel()
+    if tabela is None:
+        raise HTTPException(404, "Base de imóveis indisponível nesta instância.")
+    ref = tabela.consultar(tipo, uf, municipio)
+    if ref is None:
+        raise HTTPException(404, "Sem referência de aluguel para esse tipo de imóvel.")
+    return ref.para_dict()
+
+
 @app.get("/api/faixa-alunos")
 def faixa_alunos(m2: float, formato: str | None = None) -> dict[str, Any]:
     """Faixa de alunos (p10/p50/p90) da curva tamanho->densidade para uma metragem.

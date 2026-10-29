@@ -1,5 +1,6 @@
 /** Cliente do backend do piloto. Tudo passa pelo proxy /api do Vite. */
 
+import type { AluguelReferencia, TipoImovelAluguel } from './aluguel-referencia'
 import type {
   AcaoImobiliaria,
   AcessosFicha,
@@ -871,6 +872,14 @@ export const api = {
     pedir<SetoresHeatmapPayload>(
       `/api/municipio/${encodeURIComponent(uf)}/${encodeURIComponent(municipio)}/setores-heatmap`,
     ),
+
+  /** Régua de aluguel (DEC-080): R$/m² mediano dos anúncios por município × tipo. */
+  aluguelReferencia: (tipo: TipoImovelAluguel, uf?: string, municipio?: string) => {
+    const q = new URLSearchParams({ tipo })
+    if (uf) q.set('uf', uf)
+    if (municipio) q.set('municipio', municipio)
+    return pedir<AluguelReferencia>(`/api/aluguel-referencia?${q.toString()}`, {}, 30_000)
+  },
 
   faixaAlunos: (m2: number, formato?: string) => {
     const q = new URLSearchParams({ m2: String(m2) })
