@@ -1,6 +1,5 @@
-> Handoff de repositorio criado em maio/2026 para o deploy inicial (Streamlit).
-> **Revisado em 2026-08-03 (DEC-022):** o Streamlit foi aposentado; o app de producao
-> e o piloto web (`web/`). As secoes abaixo descrevem o estado atual; runbooks vigentes
+> O app de producao
+> e o piloto web (`web/`, DEC-022). As secoes abaixo descrevem o estado atual; runbooks vigentes
 > em `docs/deploy_piloto_web.md` e `docs/infra_producao.md`.
 
 # Handoff do repositorio

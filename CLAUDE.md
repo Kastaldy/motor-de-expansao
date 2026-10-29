@@ -26,7 +26,7 @@
 **Regras operacionais rapidas (dia a dia):**
 - **Grafo antes de varredura:** para "como X funciona", "o que chama Y", "onde vive Z", consultar o grafo PRIMEIRO — tool MCP `graphify` (`.mcp.json` na raiz) ou `python -m graphify query "<pergunta>"`; Grep/Read amplo só depois que o grafo não resolver. Instalação e armadilhas: §7 + `docs/grafo_conhecimento.md`.
 - **Resposta ao Felipe:** recomendação/decisão primeiro, em até 2 linhas; evidência e detalhe só sob demanda.
-- **Nunca declarar incapacidade** (scp, mover arquivo, chamar API) sem UMA tentativa real. VPS: `scp` e `ssh` remoto funcionam via `~/.ssh/id_ultra_mcp` (chave de automação; `~/.ssh/id_ultra` é a do OPERADOR, para o Felipe — papéis distintos no `~/.ssh/config`, revogar uma não derruba a outra); MCP `ssh-vps-ultra` read/edit = SIM. Capacidade não é autorização: cada comando na VPS exige confirmação explícita do Felipe, um a um (§6). Até 2026-08-29 esta linha dizia `ssh` = NÃO, e o agente terceirizava ao Felipe comandos que ele mesmo podia rodar.
+- **Nunca declarar incapacidade** (scp, mover arquivo, chamar API) sem UMA tentativa real. VPS: `scp` e `ssh` remoto funcionam via `~/.ssh/id_ultra_mcp` (chave de automação; `~/.ssh/id_ultra` é a do OPERADOR, para o Felipe — papéis distintos no `~/.ssh/config`, revogar uma não derruba a outra); MCP `ssh-vps-ultra` read/edit = SIM. Capacidade não é autorização: cada comando na VPS exige confirmação explícita do Felipe, um a um (§6).
 - **Deploy:** desde 2026-08-14 o path-filter do `publish-api` cobre `dashboard/` e `dimensionamento/` (a imagem api/bot serve o PDF por eles) — o gotcha antigo ("mudança só em dashboard/ não rebuilda api/bot") ACABOU. Republish manual: `gh workflow run ci.yml --ref main -f publish_api=true` (`docs/deploy_api_bot.md`). Deploy sempre manual, por digest (§6).
 - **Background longo** (deploy/suíte/workflow): prometer aviso e notificar proativamente ao concluir.
 
@@ -64,7 +64,7 @@ hex_score_estrutural = 100 * (0.40 * renda_pct_nacional + 0.60 * pop_pct_naciona
 score_priorizacao = clip(hex_score_estrutural + ajuste_executivo, 0, 100)
 score_oficial = score_priorizacao
 ```
-- Inputs oficiais: `renda_per_capita` e `populacao_proxy` (= `pop_total`; trava 18-45 removida em 2026-05-15). Pesos aprovados: `renda=0.40`, `pop=0.60`.
+- Inputs oficiais: `renda_per_capita` e `populacao_proxy` (= `pop_total`). Pesos aprovados: `renda=0.40`, `pop=0.60`.
 - Campos mínimos: `renda_pct_nacional`, `pop_pct_nacional`, `hex_score_estrutural`, `ajuste_executivo`, `score_priorizacao`, `score_oficial`, `score_oficial_nome`, `score_percentil_nacional`.
 - Artefatos oficiais: `brasil_estrutural.parquet`, `brasil_priorizados.parquet`, `hexagonos_brasil_oportunidades.parquet`, `hexagonos_brasil_dashboard.parquet`, `hexagonos_mapa_sample.parquet`, `top_oportunidades_resumo.csv`, `resumo_por_uf.csv`.
 
@@ -82,7 +82,7 @@ score_oficial = score_priorizacao
 ## 5. Ciclos concluidos
 - Baseline pytest: medir no momento (`pytest --collect-only -q`). Contagens citadas em ciclos antigos (497, 532, 2006 em 2026-07-27...) são históricas, não tripwire de regressão.
 - Histórico dos ciclos: `tasks/completed.md` (fonte única de conclusão) e `docs/`; o da era Streamlit (Blocos 5-19) está em `docs/archive/claude_md_secoes_4_5_ate_2026-10.md`. Não reproduzir aqui.
-- App de produção = piloto web (`web/src/App.tsx`): abre no `Início` (seletor de modo em duas trilhas, expandir a rede e operações) e tem as telas `Mapa` (Explorar uma região), `Oportunidades` (Top 10, DEC-077), `Ponto` (análise de ponto ou imóvel), `Viabilidade`, `Executiva`, `Oportunidades imobiliárias` (DEC-037) e `Acessos` (restrita por allowlist, emenda da DEC-027). Os ícones `Expansão de domínio` e `Carteira e plano` (fora do piloto, DEC-020) saíram em 2026-09-02 a pedido do Juan; o tipo mantém `tela: null` para um destino futuro. O Streamlit de 5 tabs foi aposentado pela DEC-022 (2026-08-03).
+- App de produção = piloto web (`web/src/App.tsx`): abre no `Início` (seletor de modo em duas trilhas, expandir a rede e operações) e tem as telas `Mapa` (Explorar uma região), `Oportunidades` (Top 10, DEC-077), `Ponto` (análise de ponto ou imóvel), `Viabilidade`, `Executiva`, `Oportunidades imobiliárias` (DEC-037) e `Acessos` (restrita por allowlist, emenda da DEC-027). Os ícones `Expansão de domínio` e `Carteira e plano` (fora do piloto, DEC-020) saíram; o tipo mantém `tela: null` para um destino futuro.
 - Domínio Híbrido: `score_dominio_hibrido = clip(0.60*score_setor_2022_calibrado + 0.40*score_oportunidade_residual, 0, 100)`, com fallback para componente único e rastreabilidade em `motivo_dominio`.
 - Regra visual canônica: faixas de 10 pontos (0-10 a 90-100) via `RESIDUAL_SCORE_BANDS` (`dashboard/constants.py`) e `score_band_to_color` (`dashboard/utils.py`); M1 colore por `score_priorizacao` (no mapa do piloto, a camada 5 pinta pela `faixa_oportunidade`, BLK-MAPA-FAIXAS-01, e no Brasil pelo segmento do Top 10 da DEC-077), censitário por `score_setor_2022_calibrado`, híbrido por `score_expansao_hibrido`, residual por `score_oportunidade_residual`.
 - Guardrail permanente: visualizações, análise radial e interações de mapa não podem recalcular nem alterar `score_priorizacao`, `hex_score_estrutural`, carteira, plano curto prazo, plano domínio ou artefatos oficiais do M1 sem aprovação explícita.

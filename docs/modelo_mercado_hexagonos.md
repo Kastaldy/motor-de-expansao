@@ -45,7 +45,7 @@ Colunas adicionais disponiveis:
 
 - `lat`, `lng`
 - `cod_municipio`, `nome_municipio`
-- `pop_total`, `n_domicilios`, `densidade_dom` (trava 18-45 removida em 2026-05-15; `populacao_proxy` = `pop_total`)
+- `pop_total`, `n_domicilios`, `densidade_dom` (`populacao_proxy` = `pop_total`)
 - `renda_pct_nacional`, `pop_pct_nacional`
 
 ### 2.3 Base censitaria complementar
@@ -181,7 +181,7 @@ Regras de leitura:
 | `tam_renda_base` | float | `renda_per_capita_setor_2022_calibrada` quando `demanda_granularidade='hex_censo'` e a coluna estiver preenchida; senao `renda_per_capita` |
 | `tam_indice_demanda` | float | `score_expansao_hibrido` quando `flag_hex_hibrido_elegivel=True` e `score_expansao_hibrido.notna()`; senao `score_priorizacao` |
 | `tam_indice_demanda_norm` | float | `tam_indice_demanda / 100.0` |
-| `tam_pop_total_base` | float | `populacao_proxy` (= `pop_total`; trava 18-45 removida em 2026-05-15) |
+| `tam_pop_total_base` | float | `populacao_proxy` (= `pop_total`) |
 | `tam_populacao_hex` | float | alias auditavel de `pop_hex_base` para sizing absoluto do Bloco 5 |
 | `taxa_fitness_mercado_calibrada` | float | taxa de penetracao fitness calibrada em runtime por `calibrar_taxa_fitness_mercado(df)` (DEC-060): mediana de `(consumo_concorrentes_1km_area + oferta_consumida_ultra_real) / pop_hex_base` nos hexes que CONTEM academia (`n_concorrentes_no_hex > 0`) e populacao > 0; clip `[0.05, 0.50]`; fallback `TAXA_FITNESS_MERCADO_FALLBACK = 0.10` se < 10 hexes na mascara; artefato sem essas colunas cai na formula antiga (2 km do centroide x 2000) e AVISA; medido: **17,35%** na DEC-060 (era 28,52%), 17,63% apos a DEC-066 |
 | `taxa_fitness_calibrada` | float | alias de `taxa_fitness_mercado_calibrada` mantido para compatibilidade retroativa |
@@ -255,7 +255,7 @@ ela tambem fecha desde a DEC-050/DEC-051: `anexar_pressao_1km_area` passa `hex_i
 | --- | --- | --- |
 | `oferta_efetiva_1km_area` | float | soma dos `share` de todos os concorrentes que cobrem o hex (share renormalizado sobre os hexagonos da base desde a DEC-050/DEC-051; so' concorrente com disco 100% fora da base contribui zero) |
 | `n_concorrentes_influencia_1km` | int | quantos concorrentes distintos tem `share > 0` no hex |
-| `consumo_concorrentes_1km_area` | float | soma, concorrente a concorrente, de `share * capacidade_alunos` — capacidade REAL da unidade quando medida (DEC-057 / BLK-CAPACIDADE-01, 1.202 de 4.951 unidades), senao o proxy `2500`; deixou de ser `oferta_efetiva_1km_area * capacidade_default_concorrente_alunos` |
+| `consumo_concorrentes_1km_area` | float | soma, concorrente a concorrente, de `share * capacidade_alunos` — capacidade REAL da unidade quando medida (DEC-057 / BLK-CAPACIDADE-01, 1.202 de 4.951 unidades), senao o proxy `2500` |
 | `gap_competitivo_1km_area` | float | `1 / (1 + oferta_efetiva_1km_area)` |
 | `pressao_concorrencial_score_1km_area` | float | `100 * (1 - gap_competitivo_1km_area)` |
 
@@ -310,8 +310,7 @@ travados por teste - os parquets sao gitignored, entao o CI nao regride se mudar
   quem reproduzir chega a 84 e conclui que o numero esta errado.
   Concentra-se no Sul, onde a celula e' menor: uma
   medicao restrita a SP/MG/RJ/PR/BA acha so' 5 casos e sugere que e' desprezivel.
-  Conter o alcance nao impede o consumo de um hex especifico de diminuir; uma versao
-  anterior deste paragrafo afirmava "nunca sobe", o que nao decorre do teste.
+  Conter o alcance nao impede o consumo de um hex especifico de diminuir.
 
 - **LIMITACAO CONHECIDA - massa retida na borda da base (CORRIGIDA na DEC-050/DEC-051).** Antes do
   fix, `anexar_pressao_1km_area` fazia `merge` contra o DataFrame de hexes e o share que caia em
@@ -358,10 +357,8 @@ Colunas de corte de populacao (materializadas no pipeline via helper compartilha
 Leitura:
 
 - `flag_sam` representa o que o modelo atual considera atendivel agora.
-- O gate (DEC-006/DEC-007) substituiu `top_municipio` por Faixa M1 elegivel + populacao `>= 5000`
-  na regua `populacao_corte_hex`. A DEC-007 reverteu 2 sub-decisoes da DEC-006: o gate deixou de
-  exigir `flag_viavel` (some o filtro de renda `renda_target_proxy >= RENDA_MIN` e o guard `pop >= 1`
-  que vinham de brinde) e deixou de exigir `not flag_canibalizacao_ultra_1km` (o SAM passa a INCLUIR
+- O gate (DEC-006/DEC-007) e Faixa M1 elegivel + populacao `>= 5000`
+  na regua `populacao_corte_hex`. O gate nao exige `flag_viavel` (sem o filtro de renda `renda_target_proxy >= RENDA_MIN` e o guard `pop >= 1`) nem `not flag_canibalizacao_ultra_1km` (o SAM INCLUI
   areas Ultra `< 1 km`). O SAM existe fora do recorte top-20%/UF, e o corte `>= 5000` sobre
   `populacao_corte_hex` e o unico filtro remanescente (forte, nao aniquilador).
 

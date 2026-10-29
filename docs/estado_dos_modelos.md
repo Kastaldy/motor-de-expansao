@@ -9,7 +9,7 @@
 - O Motor **não é um modelo**; é uma **pilha de camadas paralelas**, cada uma respondendo uma pergunta
   diferente. A arquitetura correta de uso é um **funil**: triagem macro → mercado → **imóvel real** → viabilidade.
 - Os modelos são bons **triadores** (ordem relativa — "onde olhar") e **fracos preditores de número
-  absoluto** (quantos alunos). Era a doutrina da DEC-009 (revogada pela DEC-078 em 2026-10-21), aqui quantificada.
+  absoluto** (quantos alunos).
 - A **demanda entra como PREMISSA editável**; desde a DEC-078 o valor pode vir **sugerido por um modelo de praça** que usa a geografia (isócrona de 10 min), só na Viabilidade de um imóvel dado.
 - A ferramenta de viabilidade é de **ordem de grandeza** (MAPE ~30%): use as **faixas p10–p90 e o ranking
   relativo**, não o número pontual.
@@ -66,7 +66,7 @@ carteira, plano ou artefatos oficiais.
 
 1. **Triagem decide ONDE olhar, não QUANTOS alunos.** M1/censitário/residual estreitam o mapa para regiões
    promissoras. Não os leia como oráculo de magnitude.
-2. **Demanda entra como PREMISSA editável** (DEC-009, revogada pela DEC-078). O operador, os comparáveis ou,
+2. **Demanda entra como PREMISSA editável** (DEC-078). O operador, os comparáveis ou,
    na Viabilidade, a sugestão do modelo de praça trazem a demanda; o software faz a conta de viabilidade.
 3. **A decisão é property-first:** o operador traz um imóvel real (m² + aluguel) → o motor devolve faixa de
    alunos, break-even, aluguel-teto, **margem de segurança** e sensibilidade. Use **faixas (p10–p90)**, nunca o

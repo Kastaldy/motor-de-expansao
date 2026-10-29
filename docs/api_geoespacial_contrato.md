@@ -31,8 +31,7 @@ Fixadas por Felipe (2026-06-09) e reafirmadas na DEC-005 (2026-06-10):
    `censo_report.py` como interface ESTAVEL; nunca os edita (trilha do Vini — dashboard/PDF/UX).
    Mudancas nesses modulos sao solicitadas, nao feitas pela trilha da API.
 3. **Codigo novo so em `src/motor_expansao/api/`** (pasta disjunta). Nada de logica da API fora dela.
-4. **Dependencias so em extra opcional** do `pyproject.toml`, fora do install base (regra escrita
-   quando o deploy base era o Streamlit, aposentado pela DEC-022, 2026-08-03; segue valendo para nao
+4. **Dependencias so em extra opcional** do `pyproject.toml`, fora do install base (para nao
    inflar as imagens `motor-expansao-web`/`motor-expansao-api`). Materializado no extra `[api_mvp]`
    (mais `[basemap]`/`[geocoder]`, pos-contrato) — o `[api]` e o bloco LEGADO PostGIS e nao deve ser
    instalado (§11).
@@ -76,25 +75,22 @@ A API importa (e NUNCA edita) as funcoes abaixo, com as assinaturas reais confir
 - `dashboard.censo_report.gerar_pdf_relatorio_pontual_classico(result: dict[str, Any], mapas: dict[str, bytes] | bytes | None = None, *, residual: dict[str, Any] | None = None, perfil_bairro: dict[str, Any] | None = None, ultra_dir: Path | str | None = None, solicitante: str | None = None, report_id: str | None = None, rotulo: str | None = None, now: datetime | None = None, fotos: list[bytes] | None = None, info_imovel: dict[str, Any] | None = None, viabilidade: dict[str, Any] | None = None, foto_satelite: bytes | None = None, foto_satelite_grande: bool = False, origem_centroide_hex: bool = False, conclusao_so_estudo: bool = False, aviso_rodape: str | None = None, praca: PracaDoPonto | None = None, recorte: Mapping[str, Any] | None = None) -> bytes`
   — gera o PDF de 7 paginas (Capa -> Socioeconomia e Residual Fitness -> Mapas
   de calor -> Concorrentes -> Perfil do Bairro/Distrito -> Big Numbers -> Realizacao), **offline, sem
-  PII**. E a variante CLASSICA, default de producao desde o BLK-EST-05 e, desde o **BLK-RELPON-14**,
-  a IMPLEMENTACAO UNICA: a gemea `gerar_pdf_relatorio_pontual_censitario` virou wrapper fino
-  DEPRECIADO (`DeprecationWarning`) que repassa os kwargs para esta. A pagina "Imagem do Entorno"
-  (BLK-RELPON-11) foi REMOVIDA no mesmo bloco (8 -> 7 paginas). Paginas OPCIONAIS: `fotos` (a API nao a usa — o corpo
+  PII**. E a variante CLASSICA e
+  a IMPLEMENTACAO UNICA (**BLK-RELPON-14**): a gemea `gerar_pdf_relatorio_pontual_censitario` e wrapper fino
+  DEPRECIADO (`DeprecationWarning`) que repassa os kwargs para esta. Paginas OPCIONAIS: `fotos` (a API nao a usa — o corpo
   e' JSON) e `info_imovel` entram logo apos a capa, `viabilidade` entre Big Numbers e
   Realizacao (1 pagina, ou 2 quando ha `graficos`) e a Conclusao antes da Realizacao. A API passa `info_imovel` e `viabilidade` quando o request os traz e liga `conclusao_so_estudo` sem `viabilidade` (8 paginas por default) — teto do gerador de 12 paginas (11 na API, que nao manda fotos), mais a vista aerea (DEC-018) quando ha `API_ARCGIS_API_KEY`. O carimbo de versao no rodape
   (Decisao 6) esta **PREVISTO E NAO IMPLEMENTADO**: hoje o rodape e credito Ultra + atribuicao
   CARTO (`_draw_footer`) e o unico carimbo por pagina e a marca d'agua `Ultra Academia |
   {solicitante}`; a API chama o gerador sem passar versao alguma.
 - `dashboard.censo_map.render_mapas_censitarios_combinados(lat: float, lng: float, setores_df: pd.DataFrame, *, raio_km: float = RAIO_CENSITARIO_DEFAULT_KM, competitors_df=None, ultra_df=None, width: int = MAPA_WIDTH_PADRAO, height: int = MAPA_HEIGHT_PADRAO, basemap: bool = True, logos_dir: Path | None = None, ultra_logo_dir: Path | None = None, street_ceil: int | None = None, street_gain: float | None = None, street_cap: int | None = None, choropleth_alpha: int | None = None, hexes_df: pd.DataFrame | None = None, labels_overlay: bool = True, geometria_wgs84: BaseGeometry | None = None, result: dict | None = None, geometria_tipo: str | None = None) -> dict[str, bytes]` (default 1280x760)
-  — retorna ate 7 PNGs para o PDF: `{"densidade","renda","score","renda_domiciliar","socioeconomia","residual","concorrentes"}` (a chave `entorno` saiu no BLK-RELPON-14).
-  As chaves `residual` e `socioeconomia` (esta desde o BLK-RELPON-13) sao CONDICIONAIS (so aparecem com `hexes_df`, a coluna do dado e ao menos 1 hex desenhavel; ausentes ->
+  — retorna ate 7 PNGs para o PDF: `{"densidade","renda","score","renda_domiciliar","socioeconomia","residual","concorrentes"}`.
+  As chaves `residual` e `socioeconomia` sao CONDICIONAIS (so aparecem com `hexes_df`, a coluna do dado e ao menos 1 hex desenhavel; ausentes ->
   fallback textual no slide); as demais sao incondicionais. **Nota de deploy:** com
   `basemap=True` busca tiles online (DEC-004); a API deve permitir `basemap=False` como fallback
   gracioso/offline quando o ambiente nao tiver internet. **Nota de render:** API e piloto passam os mesmos
   `street_ceil=215`, `street_gain=1.3`, `street_cap=200` (arruamento mais visivel sob o choropleth);
-  nenhum dos dois sobrescreve `choropleth_alpha` — vale o default do modulo, 200, desde 2026-07-29
-  (antes 110 na API e 255 no piloto) — e os dois usam o canvas DEFAULT `1280x760` (`MAPA_WIDTH_PADRAO`,
-  desde 2026-07-23), entao o enquadramento e' o mesmo. Fontes, faixas e
+  nenhum dos dois sobrescreve `choropleth_alpha` — vale o default do modulo, 200 — e os dois usam o canvas DEFAULT `1280x760` (`MAPA_WIDTH_PADRAO`), entao o enquadramento e' o mesmo. Fontes, faixas e
   metodo geometrico sao o mesmo render.
 - `dashboard.data.read_censo_geo_partition(base_dir: Path, uf: str, cod_municipio: str | None = None) -> pd.DataFrame`
   — loader dos Parquets `data/outputs/setores_censitarios_2022_geo/uf=XX/cod_municipio=NNNNNNN`
@@ -315,8 +311,7 @@ extra `[api]`); essas libs sao do desenho PostGIS antigo e nao tem uso no MVP on
 
 **Guardrail de deploy:** as deps da API ficam em extras (`[api_mvp]` + `[basemap]`/`[geocoder]`),
 fora do install base, para nao acoplar o motor compartilhado `dashboard/` — e as imagens que o
-embarcam, como a `motor-expansao-web` — as deps da API (a regra nasceu para proteger o deploy base
-do Streamlit, aposentado pela DEC-022, 2026-08-03). (Ha um import dashboard -> `api.maps_geocoder`,
+embarcam, como a `motor-expansao-web` — as deps da API. (Ha um import dashboard -> `api.maps_geocoder`,
 mas sem arrastar dependencia — ver a excecao no §4.)
 
 ## 12. O que se aproveita do scaffold legado (`fora_primeira_fase/api_postgis/main.py`)

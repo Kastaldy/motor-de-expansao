@@ -70,11 +70,10 @@ Base: o bot/API lê a partição enriquecida da UF (a da tela), com a coluna `uf
 - Título da banda: **"Bairros Oficiais - Cidade - UF"**.
 - **Mapa** do município INTEIRO com o **limite territorial de cada bairro** (contorno vermelho),
   a divisa do município (contorno preto) e um **número** dentro de cada bairro; o nome vai no
-  índice ao lado (desde 2026-10-20: o mapa único de São Paulo cabia 29 de 96 nomes e a placa
+  índice ao lado (com o nome no mapa, o de São Paulo cabia 29 de 96 nomes e a placa
   cruzava a divisa). A área **sem bairro na base** sai **sem cor, só com contorno cinza** — nunca
-  como se fosse divisa oficial. Desde 2026-10-22 (Juan, SJC) ela não tem preenchimento: é quase
-  sempre mata, parque ou zona rural, e o fundo de ruas (OpenMapTiles) mostra isso; o cinza de
-  alpha 90 (Tangará da Serra, 2026-08-19) tapava o verde. Vale para todos os mapas por bairro.
+  como se fosse divisa oficial — e sem preenchimento: é quase
+  sempre mata, parque ou zona rural, e o fundo de ruas (OpenMapTiles) mostra isso; um cinza por cima tapa o verde. Vale para todos os mapas por bairro.
 - **Em partes** (`dividir_bairros_em_partes`): quando os números não cabem num quadro, a página
   vira uma visão geral com as partes coloridas e numeradas + **uma página por parte** ("Parte k
   de K"), com zoom só nela, os vizinhos em cinza, mini-mapa de localização e o índice dos seus
@@ -155,8 +154,7 @@ Base: o bot/API lê a partição enriquecida da UF (a da tela), com a coluna `uf
 ### Página 5 — Visão Geral do Município
 - **Só fora do Brasil desde 2026-10-22** (Juan): no PDF com a resposta única (DEC-077) a página
   não sai — ver a tabela "No Brasil" acima.
-- Inserida pelo **BLK-RELMUN-01-FU1** (2026-06-23), logo após a capa — é o slide que faltava
-  neste doc até 2026-07-27.
+
 - Título da banda: **"Visão Geral do Município - Cidade - UF"**.
 - **Mapa** com zoom nos **aprovados** (bbox dos hexágonos verdes ou dos bairros aprovados, margem
   de 2% — Juan, 2026-10-20), **sem legenda e sem nomes**. Verde = aprovado com dado próprio;
@@ -171,9 +169,8 @@ Base: o bot/API lê a partição enriquecida da UF (a da tela), com a coluna `uf
 ### Página 6 — Resumo da Região (01)
 - Título "Cidade - UF" / subtítulo "Potencial de entrada de novas unidades".
 - **Mapa** (por bairro no modo bairro; de hexágonos no modo hexágono e no fallback) só com os pins da Ultra
-  (`TOP_REDES_NO_MAPA = 0`) e sem o número de **vagas/consumo** em cada hexágono (`rotular_valores=False`, 2026-09-17).
-  Hexágonos verdes = aprovados (espaço disponível), cinza = o resto. **Sem legenda** desde
-  2026-10-21 (Juan): o aprovado por fallback municipal deixou de sair em amarelo e sai no mesmo
+  (`TOP_REDES_NO_MAPA = 0`) e sem o número de **vagas/consumo** em cada hexágono (`rotular_valores=False`).
+  Hexágonos verdes = aprovados (espaço disponível), cinza = o resto. **Sem legenda** (Juan): o aprovado por fallback municipal sai no mesmo
   verde, porque também conta no espaço.
 - Painel lateral **"RESUMO DA REGIÃO"** — tabela `Indicador | Qtd.`, nesta ordem desde 2026-10-20:
   - **Espaço para academias** = XX
@@ -248,8 +245,8 @@ Base: o bot/API lê a partição enriquecida da UF (a da tela), com a coluna `uf
 `service.montar_pdf_municipio` — o preparo único do motor e do bot (#373) — monta `praca=PracaDaCidade` (`service._praca_da_cidade`) e o PDF ganha **quatro páginas** (11 -> 15; no Brasil, com a resposta única da DEC-077, 8 -> 12). Sem `praca` o PDF sai o de antes; as páginas são condicionais e ficam fora de `PDF_SECTION_HEADERS`. Cores pelos ordinais 12..15 de `_tema_bicolor`, então nenhuma página existente troca de cor. Falha no preparo deixa o PDF sair sem as quatro; falha de um mapa vira "Mapa indisponível". Lógica pura em `dashboard/relatorio_praca.py`, PNGs em `dashboard/relatorio_praca_mapas.py`, testes em `tests/unit/test_relatorio_municipal_praca.py`.
 
 - **Mapas de calor da cidade** (depois de Residual Fitness): renda média domiciliar e densidade por hexágono, lado a lado. Renda pelo mesmo mapa por hexágono do card do mapa (`motor_expansao.renda.renda_domiciliar_por_hex`, desde o #460; a tabela de regiões saiu em 2026-10-20); sem ele a coluna fica nula, nunca cai na per capita. Densidade = população de leitura (`COLS_POPULACAO`, que começa pelo dado de setor — de propósito, diferente da precedência do funil; ver Manaus abaixo) sobre a área da célula, e não `densidade_pop_setor_hab_km2`, que é do setor. Cores do slide "Mapas de calor" do pontual; cortes pelos quintis da própria cidade (`quebras_por_quantil`), porque a pergunta é "quais bairros desta praça".
-- **Pressão concorrencial** (depois de Residual Fitness): um disco de `RAIO_INFLUENCIA_M` (1 km, DEC-051) por academia do município — o recorte do slide Concorrentes (`filtrar_pins_do_municipio`) — sobre a cidade inteira. Com mais de `LOGOS_MAX_CIDADE` (120) academias as logos viram pontos, senão escondem os discos. **Desde 2026-10-22 (Juan)** o raio é a leitura, não o ponto exato: os discos saem por tipo — independente por baixo, rede no meio, Ultra por cima — com a borda de rede e Ultra mais forte (`_DISCO_REALCE`), para o raio de rede não sumir sob o âmbar das independentes (SJC: 139 de 166); pontos de 7/9/11 px (independente/rede/Ultra, eram 4) e logos de rede/Ultra em 40 px; quadro mais fechado (2,5%–97,5% das academias a partir de 60, folga de meio raio), com as que ficam fora contadas no subtítulo. A pressão do Relatório Pontual não muda. Painel: concorrentes, independentes, Ultra, % dos hexágonos com o centro sob algum raio, % com 3+ raios (`N_DISCOS_DISPUTA`), máximo num hexágono e as 5 redes com mais unidades (`pressao_na_cidade`).
-- **Onde crescer** (depois de Bairros por Zona; no Brasil, depois de Como chegamos ao Espaço): desde 2026-10-20, duas tabelas de 5 hexágonos pelo valor absoluto — maior residual e maior score socioeconômico (`relatorio_praca.top_por_coluna`) —; no Brasil, Mata Virgem e Premium da recomendação única (DEC-077). A régua antiga, `selecionar_onde_crescer` (elegível = residual > 0 **e** renda domiciliar >= mediana da cidade; ordem pelo `indice_praca` da DEC-041, desempate por renda e `hex_id`), só numera o Top 10 do Domínio, fora do Brasil. O índice é calculado por `dashboard/praca_indice.py`, o MESMO módulo da camada 5 do funil — ele saiu de `web/server/` para `src/` porque o container da API não importa `web/server`, e `web/server/praca_indice.py` virou alias (`sys.modules`). Leitura só do PDF: funil, `/api/hexagonos` e índice não mudam.
+- **Pressão concorrencial** (depois de Residual Fitness): um disco de `RAIO_INFLUENCIA_M` (1 km, DEC-051) por academia do município — o recorte do slide Concorrentes (`filtrar_pins_do_municipio`) — sobre a cidade inteira. Com mais de `LOGOS_MAX_CIDADE` (120) academias as logos viram pontos, senão escondem os discos. **O raio é a leitura, não o ponto exato** (Juan): os discos saem por tipo — independente por baixo, rede no meio, Ultra por cima — com a borda de rede e Ultra mais forte (`_DISCO_REALCE`), para o raio de rede não sumir sob o âmbar das independentes (SJC: 139 de 166); pontos de 7/9/11 px (independente/rede/Ultra) e logos de rede/Ultra em 40 px; quadro fechado em 2,5%–97,5% das academias a partir de 60 (folga de meio raio), com as que ficam fora contadas no subtítulo. Isso vale só para o Municipal: a pressão do Relatório Pontual tem regra própria. Painel: concorrentes, independentes, Ultra, % dos hexágonos com o centro sob algum raio, % com 3+ raios (`N_DISCOS_DISPUTA`), máximo num hexágono e as 5 redes com mais unidades (`pressao_na_cidade`).
+- **Onde crescer** (depois de Bairros por Zona; no Brasil, depois de Como chegamos ao Espaço): duas tabelas de 5 hexágonos pelo valor absoluto — maior residual e maior score socioeconômico (`relatorio_praca.top_por_coluna`) —; no Brasil, Mata Virgem e Premium da recomendação única (DEC-077). `selecionar_onde_crescer` (elegível = residual > 0 **e** renda domiciliar >= mediana da cidade; ordem pelo `indice_praca` da DEC-041, desempate por renda e `hex_id`), só numera o Top 10 do Domínio, fora do Brasil. O índice é calculado por `dashboard/praca_indice.py`, o MESMO módulo da camada 5 do funil — fica em `src/` porque o container da API não importa `web/server`, e `web/server/praca_indice.py` é alias (`sys.modules`). Leitura só do PDF: funil, `/api/hexagonos` e índice não mudam.
 - **Como a cidade está indo** (depois de Pressão concorrencial): a linha do município em `crescimento_municipal.parquet` da staging (`linha_crescimento_municipal`, por `cod6` e, sem ele, por `UF|NOME`), lida pelo service para o bot e o motor terem a mesma página — a base do bot não traz as colunas `cres_*`. Frase = `v_frase`. Município sem linha (inclusive AR, que não tem a camada) mostra "Sem dado de crescimento para este município.".
 
 A moeda dos mapas e da tabela vem do perfil (`simbolo_renda`, #374).
@@ -258,7 +255,7 @@ A moeda dos mapas e da tabela vem do perfil (`simbolo_renda`, #374).
 - **Nome de bairro fora dos hexágonos.** Desde 2026-10-20 nenhum hexágono leva nome de bairro — `render_mapas_municipio` ainda aceita `hexes_rotulados`, mas `_render_mapa_municipio` não o lê mais (no Brasil o service passa `None`). Antes disso, em 2026-09-17, o nome tinha ficado só nos 5 hexágonos de "Onde crescer" (até então saía em todo hexágono aprovado; São Paulo, naquela data: 154 placas).
 - **Pins só da Ultra** (`TOP_REDES_NO_MAPA = 0`). O corte foi em dois passos no mesmo dia: primeiro as 5 maiores redes (`principais_redes`), que em São Paulo ainda davam 370 pins porque só a Smart Fit tinha 171 naquela data, e depois nenhuma — Resumo e Domínio respondem ONDE HÁ ESPAÇO, e a concorrência tem duas páginas próprias. O rodapé do PNG declara o recorte em segunda linha ("no mapa, só as unidades Ultra; as 491 concorrentes estão em Pressão concorrencial e Espaço e academias", em São Paulo naquela data), e as contagens cheias seguem nos painéis. Voltar a desenhar as N maiores redes é mudar a constante.
 
-**Domínio com os 10 melhores e zoom na melhor área (2026-09-17).** A camada de Domínio pintava e numerava os 154 hexágonos aprovados que São Paulo tinha naquela data; passa a numerar só os 10 melhores pela régua de "Onde crescer" (`service.TOP_HEXES_DOMINIO`, por `selecionar_onde_crescer`; desde 2026-10-20 a página "Onde crescer" mostra outras listas, e no Brasil a página de Domínio não sai — DEC-077). O Domínio enquadra esses hexágonos (`_focus_bounds_mercator(hexes_foco=...)`); o Resumo enquadra os mesmos escolhidos com margem folgada (`_FOCUS_PAD_FRAC_RESUMO`) e **sem os pins no cálculo** — enquadrar todos os aprovados devolvia a cidade inteira, porque em São Paulo eles vão de norte a sul — uma unidade num hexágono afastado esticava o quadro e trazia junto a cauda cinza. O mapa do Resumo continua desenhando os hexágonos não aprovados, que são o contexto: o pedido era priorizar os verdes no ZOOM quando houvesse cinza nas pontas, e quem faz isso é o enquadramento, o mapa de "Onde crescer" fecha nos 5 escolhidos (`relatorio_praca_mapas.quadro_onde_crescer`), e os demais mapas ganharam uma aproximação leve (`_FOCUS_MIN_SPAN_M` 6.000 -> 5.000 m e `_FOCUS_PAD_FRAC` 0,16 -> 0,08).
+**Domínio com os 10 melhores e zoom na melhor área.** A camada de Domínio numera só os 10 melhores pela régua de "Onde crescer" (`service.TOP_HEXES_DOMINIO`, por `selecionar_onde_crescer`; no Brasil a página de Domínio não sai — DEC-077). O Domínio enquadra esses hexágonos (`_focus_bounds_mercator(hexes_foco=...)`); o Resumo enquadra os mesmos escolhidos com margem folgada (`_FOCUS_PAD_FRAC_RESUMO`) e **sem os pins no cálculo** — enquadrar todos os aprovados devolvia a cidade inteira, porque em São Paulo eles vão de norte a sul — uma unidade num hexágono afastado esticava o quadro e trazia junto a cauda cinza. O mapa do Resumo desenha também os hexágonos não aprovados, que são o contexto: quem prioriza os verdes no ZOOM é o enquadramento. O mapa de "Onde crescer" fecha nos 5 escolhidos (`relatorio_praca_mapas.quadro_onde_crescer`), e os demais mapas têm uma aproximação leve (`_FOCUS_MIN_SPAN_M` = 5.000 m e `_FOCUS_PAD_FRAC` = 0,08).
 
 **Mapa do Resumo sem o número em cada hexágono (2026-09-17).** O Residual de cada hexágono destacado saía numa plaquinha magenta sobre o mapa (São Paulo, naquela data: 154 delas). A pedido do Juan, o relatório pede o mapa sem elas (`rotular_valores=False`); os valores seguiam na tabela "Comparação das Regiões" (que saiu em 2026-10-20), e o total segue no box "Como calculamos o espaço", que ficou intacto naquela mudança. Quem chama `_render_mapa_municipio` direto continua com o default `True`; `test_rotulo_de_valor_fica_acima_do_marcador_blk_relpon_09_fu1` chama o render direto, com `rotular_valores=True` explícito, e assim segue travando a ordem rótulo-sobre-pin.
 
@@ -270,10 +267,9 @@ A moeda dos mapas e da tabela vem do perfil (`simbolo_renda`, #374).
 
 ## Decisões do gate humano (APROVADO por Vinicius, 2026-06-22 — DEC-011) — IMPLEMENTADO
 
-Implementação em `src/motor_expansao/dashboard/relatorio_municipal.py` (módulo NOVO, disjunto;
+Implementação em `src/motor_expansao/dashboard/relatorio_municipal.py` (módulo disjunto;
 helpers de layout reimplementados localmente — o Relatório Pontual fica BYTE-A-BYTE intocado).
-A superfície original era o expander "Relatório Municipal" em `render_mapa_territorial` (pages.py) do
-Streamlit, aposentado pela DEC-022; hoje o PDF sai pelo piloto web (`POST /api/relatorio/municipal`) e pela API/bot (`POST /api/v1/analisar-municipio`), pelo mesmo preparo `service.montar_pdf_municipio`. READ-ONLY sobre o M1.
+O PDF sai pelo piloto web (`POST /api/relatorio/municipal`) e pela API/bot (`POST /api/v1/analisar-municipio`), pelo mesmo preparo `service.montar_pdf_municipio`. READ-ONLY sobre o M1.
 
 - **D1 — hexágono DESTACADO ("amarelo"):** `oferta_efetiva_disponivel >= 2000` (`OFERTA_DESTAQUE_MIN`; o termo
   `sam_fitness_potencial >= 3000` saiu na emenda do BLK-RELMUN-03, e o rótulo do residual sobre cada
@@ -286,7 +282,7 @@ Streamlit, aposentado pela DEC-022; hoje o PDF sai pelo piloto web (`POST /api/r
   gracioso (sem `dominio_df`/sem o município): Páginas 8–9 em modo simplificado, sem exceção.
 - **D3 — mapas COM TILES ONLINE:** `contextily`/EPSG:3857, cache `data/cache/basemap_tiles/`,
   import lazy, fallback offline gracioso (canvas claro SEM ruas), default `basemap=False` em
-  CI/teste, atribuição "© OpenStreetMap, © CARTO" no rodapé. (DEC-011 parte 1, estende a DEC-004.) Emenda BLK-BASEMAP-02/06: com `API_BASEMAP_TILES_URL` o fundo vem do tileserver OpenMapTiles próprio (a mesma env do Pontual) e o crédito passa a "(c) OpenStreetMap - OpenMapTiles"; o CARTO Voyager fica só como fallback.
+  CI/teste (DEC-011 parte 1, estende a DEC-004). Com `API_BASEMAP_TILES_URL` o fundo vem do tileserver OpenMapTiles próprio (a mesma env do Pontual) e o crédito no rodapé é "(c) OpenStreetMap - OpenMapTiles"; sem ela, o CARTO Voyager, com "© OpenStreetMap, © CARTO" (BLK-BASEMAP-02/06).
 - **D4 — Mercado disponível / Residual:** `Σ oferta_efetiva_disponivel` do município (alunos).
 - **D5 — faixas do Score Censitário:** Alto ≥70 / Médio-alto 50–70 / Médio 30–50 / Baixo <30
   (cores via `RESIDUAL_SCORE_BANDS`/`score_band_to_color`).
@@ -294,8 +290,7 @@ Streamlit, aposentado pela DEC-022; hoje o PDF sai pelo piloto web (`POST /api/r
   `carregar_poligono_municipio`, BLK-RELMUN-05) e, sem ela, por H3 res-7 (pin cai num `hex_id` do município; reusa `hex_id_res7` quando presente, senão deriva via `h3`) — `filtrar_pins_do_municipio`. Anti-PII: só `rede`/contagem.
 - **D7 — redação das zonas:** 1 Âncora central / 2 Flancos laterais / 3 Cerco.
 - **D8 — Página 11:** breakdown só das redes de concorrentes realmente mapeadas + carimbo de versão
-  do contrato (`VERSAO_CONTRATO_MUNICIPAL`), desde 2026-10-20 no `/Info` do PDF (o rodapé saiu;
-  emenda da DEC-005).
+  do contrato (`VERSAO_CONTRATO_MUNICIPAL`) no `/Info` do PDF, não no rodapé (emenda da DEC-005).
 - **D9 — Página 9 (bairros) IMPLEMENTADA (BLK-RELMUN-02):** lista os bairros REAIS agrupados pelas
   3 zonas geométricas (Âncora central / Flancos laterais / Cerco), fonte **bairro do CNEFE 2022 por setor** (DEC-076), com o IBGE Censo 2022
   `NM_BAIRRO` → subdistrito → distrito como reserva (coluna `nome_bairro` agora materializada em

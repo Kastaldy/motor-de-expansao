@@ -7,7 +7,7 @@
   - **Decisão 0.1 do `docs/plano_multipais.md`:** sem comparação entre países.
   - **D4:** interface em português até ordem do dono.
   - **M1 READ-ONLY.**
-  - **DEC-041:** o funil é triagem (política declarada), não previsão. A DEC-043 foi revogada pela DEC-078 em 21/10/2026, que pôs na Viabilidade do BR uma sugestão de faturamento calibrada em unidades Ultra.
+  - **DEC-041:** o funil é triagem (política declarada), não previsão. A DEC-078 pôs na Viabilidade do BR uma sugestão de faturamento calibrada em unidades Ultra.
 
 ---
 
@@ -263,7 +263,7 @@ O golden de Londrina continua travando o BR. Cada país ganha seu próprio golde
 | Google Places como base persistida | Os termos proíbem armazenar e cachear (verificado). No máximo, verificação pontual manual |
 | Relative Wealth Index (Meta) em superfície servida | CC BY-NC (verificado): uso comercial proibido |
 | Contornar anti-bot de portais imobiliários | MX (LFDA art. 114 Bis) e CO (termos da Ciencuadras) tornam isso risco jurídico. A superfície `imobiliaria` só entra com parceria ou licença |
-| Previsão de desempenho por praça | DEC-041 (funil = política declarada); a DEC-043 foi revogada pela DEC-078, cuja sugestão de faturamento depende de unidades Ultra para calibrar |
+| Previsão de desempenho por praça | DEC-041 (funil = política declarada); a sugestão de faturamento da DEC-078 depende de unidades Ultra para calibrar |
 
 ---
 
@@ -340,7 +340,7 @@ O golden de Londrina continua travando o BR. Cada país ganha seu próprio golde
   3. **teste de falso-veto com a Smart Fit**: fração das unidades dela em hexágono "frio" (score < corte ou pop < 5.000) abaixo de um teto declarado antes da medição;
   4. **backtest de ordenação** com aberturas da Smart Fit 2021–2025;
   5. **ranking cego** de 20–30 praças com o time local (Spearman como diagnóstico, não como nota).
-- Ressalvas escritas: a amostra Smart Fit é condicionada no desfecho, então prova falso-veto e não acerto (DEC-042). Há circularidade (ela escolhe ponto com lógica parecida). Nada de R² de faturamento (DEC-041; a DEC-043 foi revogada pela DEC-078).
+- Ressalvas escritas: a amostra Smart Fit é condicionada no desfecho, então prova falso-veto e não acerto (DEC-042). Há circularidade (ela escolhe ponto com lógica parecida). Nada de R² de faturamento (DEC-041).
 - Relação: confirmava a DEC-043, revogada pela DEC-078 em 21/10/2026; apoia-se na DEC-041 (o funil segue política declarada). Detalhe em `02-matriz-viabilidade.md` §5.
 
 ### D10 — Ordem de entrada dos países e escopo geográfico por país

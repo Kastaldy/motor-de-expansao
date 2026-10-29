@@ -1,9 +1,7 @@
 # Arquitetura do app atual — inventário e mapa de dependências
 
-> Nasceu como artefato do BLK-REV-02 (epic BLK-REV, 2026-07-08), descrevendo o
-> dashboard Streamlit. Atualizado em **2026-08-03 (DEC-022)**: o Streamlit foi
-> aposentado e o app de produção passou a ser o **piloto web**. A **parte A**
-> descreve o app atual; a **parte B** preserva, como HISTÓRIA, o inventário do
+> A **parte A**
+> descreve o app atual, o **piloto web**; a **parte B** preserva, como HISTÓRIA, o inventário do
 > Streamlit (é o registro mais detalhado da arquitetura que o corte removeu, e o
 > motor compartilhado descrito lá continua vivo). READ-ONLY sobre o M1 nas duas
 > partes.
@@ -32,8 +30,8 @@ O app abre na tela de **Início** (menu de modos: análise de ponto, explorar um
   está indo → aberturas) com drill-down até o município, multi-hex, filtro
   "MELHORES", busca por coordenada/link/endereço e geração dos Relatórios Municipal
   e Pontual. **Duas camadas quase não cortam:** a 4 é contexto e não corta ninguém,
-  e a 3 desde a DEC-041 só elimina saturação extrema (mais de `CONC_ADENSAR_MAX`
-  concorrentes cujo disco de influência de 1 km alcança o hexágono — `n_concorrentes_influencia_1km`, DEC-057) — ter concorrente por perto deixou de desqualificar, porque
+  e a 3 (DEC-041) só elimina saturação extrema (mais de `CONC_ADENSAR_MAX`
+  concorrentes cujo disco de influência de 1 km alcança o hexágono — `n_concorrentes_influencia_1km`, DEC-057) — ter concorrente por perto não desqualifica, porque
   a oferta instalada já foi descontada na camada 2. No Brasil, a camada 5 ("Para onde crescer")
   é o **Top 10 único da DEC-077** — 5 Mata Virgem (renda domiciliar ≥ R$ 4.500 e residual ≥ 2.000 alunos,
   ordem por residual) + 5 Premium (score censitário ≥ 50 e população ≥ 10 mil, ordem por população),
@@ -107,11 +105,11 @@ o padrão dos produtos de referência: **instância deck.gl persistente no clien
 reenviar hexes nem re-executar backend. O backend só entra quando há dado novo
 (troca de UF/município, geocoding, relatório, viabilidade).
 
-A carga continua **lazy por UF**: o backend lê só a partição `uf=XX` de
+A carga é **lazy por UF**: o backend lê só a partição `uf=XX` de
 `data/outputs/hexagonos_dashboard_enriquecido/` (a 1ª leitura de uma UF carrega a
 partição inteira e demora alguns segundos — esperado). Cores e tooltip do mapa
-são porte 1:1 do dashboard antigo (`score_band_to_color`, faixas de 10 pontos,
-corte `<5k hab` em cinza), então a leitura visual não mudou com a troca de stack.
+seguem `score_band_to_color` (faixas de 10 pontos,
+corte `<5k hab` em cinza).
 
 ## A.4 Dados consumidos
 
@@ -406,7 +404,7 @@ Ambos geram PDF com **fpdf2** (classe `_UltraPDF(FPDF)`, páginas 16:9 widescree
 PDF 1.4, compressão OFF para auditabilidade anti-PII).
 
 **Relatório Pontual Censitário — `censo_report.py`:**
-- `gerar_pdf_relatorio_pontual_classico(result, mapas=None, *, residual=None, perfil_bairro=None, ultra_dir=None, solicitante=None, rotulo=None, now=None, fotos=None, info_imovel=None, viabilidade=None, foto_satelite=None, foto_satelite_grande=False) -> bytes` — **7 páginas**: Capa → Socioeconomia e Residual Fitness (BLK-RELPON-10) → Mapas de calor (**grid 2×2**: Densidade/Renda/Score/Renda média domiciliar, cada PNG embutido) → Concorrentes → Perfil do Bairro/Distrito (BLK-RELPON-07) → Big Numbers (grid 4×2 de 8 métricas) → Realização/Crédito. A página "Imagem do Entorno" (mapa de quadra, BLK-RELPON-11) foi **removida no BLK-RELPON-14** (8 → 7). Recebe os PNGs de mapa já compostos (por `mapas`), embute e adiciona marca d'água; não faz fetch de tiles aqui (os PNGs vêm de `censo_map`). As páginas OPCIONAIS (`fotos`, `info_imovel`, `viabilidade`) não alteram essa ordem base; com todas presentes o teto é 11. É a variante que o dashboard baixa e que a API/bot entrega e, desde o BLK-RELPON-14, o **gerador único**: `gerar_pdf_relatorio_pontual_censitario` é um wrapper fino depreciado (`DeprecationWarning`) que repassa os kwargs para esta.
+- `gerar_pdf_relatorio_pontual_classico(result, mapas=None, *, residual=None, perfil_bairro=None, ultra_dir=None, solicitante=None, rotulo=None, now=None, fotos=None, info_imovel=None, viabilidade=None, foto_satelite=None, foto_satelite_grande=False) -> bytes` — **7 páginas**: Capa → Socioeconomia e Residual Fitness (BLK-RELPON-10) → Mapas de calor (**grid 2×2**: Densidade/Renda/Score/Renda média domiciliar, cada PNG embutido) → Concorrentes → Perfil do Bairro/Distrito (BLK-RELPON-07) → Big Numbers (grid 4×2 de 8 métricas) → Realização/Crédito. Recebe os PNGs de mapa já compostos (por `mapas`), embute e adiciona marca d'água; não faz fetch de tiles aqui (os PNGs vêm de `censo_map`). As páginas OPCIONAIS (`fotos`, `info_imovel`, `viabilidade`) não alteram essa ordem base; com todas presentes o teto é 11. É a variante que o dashboard baixa e que a API/bot entrega e o **gerador único**: `gerar_pdf_relatorio_pontual_censitario` é um wrapper fino depreciado (`DeprecationWarning`) que repassa os kwargs para esta.
 - Público auxiliar: `gerar_csv_setores_censitarios`, `gerar_payloads_download_relatorio_censitario`, `render_downloads_relatorio_censitario`.
 - Deps: `censo_point` (constante de método), `api.maps_geocoder` (`build_search_url`).
 

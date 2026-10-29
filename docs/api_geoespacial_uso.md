@@ -44,10 +44,8 @@ telegram-bot ──HTTP──> api ──Parquets locais──> motor censo_*
 `setor_censitario_intersecao_area_1km`, INTOCÁVEL (CLAUDE.md §4). O Relatório Municipal não usa
 raio: agrega o município inteiro.
 Dois mapas do PDF pontual usam escala só de **render** (nunca de análise): os painéis de
-Socioeconomia e de Residual Fitness são **enquadrados** por um raio automático, de 3 a 7 km conforme a região (`censo_map.raio_enquadramento_hex_km`,
-desde 2026-09-17; os 5 km de `RAIO_RESIDUAL_DISPLAY_KM` ficaram só como fallback), ambos
-**condicionais** — viram fallback textual sem a base de mercado/hexágonos. Desde o **BLK-RELPON-14**
-o enquadramento deixou de ser **desenhado**: sem círculo e sem rótulo "Raio X km"; o ponto aparece
+Socioeconomia e de Residual Fitness são **enquadrados** por um raio automático, de 3 a 7 km conforme a região (`censo_map.raio_enquadramento_hex_km`; os 5 km de `RAIO_RESIDUAL_DISPLAY_KM` são só fallback), ambos
+**condicionais** — viram fallback textual sem a base de mercado/hexágonos. O enquadramento não é **desenhado** (**BLK-RELPON-14**): sem círculo e sem rótulo "Raio X km"; o ponto aparece
 pelo pin central e pela borda fina do hexágono H3 que o contém.
 
 ---
@@ -139,7 +137,7 @@ ou **PDF** (8 páginas sem `viabilidade`: as 7 de base + a Conclusão só-estudo
 **`viabilidade` não repete `lat`/`lng`** — a coordenada é a do próprio request (ou a resolvida
 do `maps_url`). Dois lugares para o mesmo ponto seria um lugar para eles discordarem.
 
-**`demanda` é premissa de quem pede** (a regra vinha da DEC-009, revogada pela DEC-078 em 21/10/2026: a tela do piloto passou a sugerir uma demanda pelo modelo de praça, que a API não usa). A API não deriva demanda da
+**`demanda` é premissa de quem pede** (a tela do piloto sugere uma demanda pelo modelo de praça, DEC-078, que a API não usa). A API não deriva demanda da
 geografia: sem o objeto `viabilidade`, o relatório sai sem as páginas financeiras — não sai com
 uma demanda arbitrada.
 
@@ -248,7 +246,7 @@ busca de tiles de mapa). Chamadas subsequentes ao mesmo município são mais rá
 
 Faixa plausível de alunos para uma metragem, da curva tamanho→densidade dos comparáveis Ultra.
 
-**Não é previsão de demanda** (a regra vinha da DEC-009, revogada pela DEC-078 em 21/10/2026; esta rota segue sem usar a praça). Ela depende **só** de `m2` e da base de comparáveis —
+**Não é previsão de demanda** (esta rota não usa a praça). Ela depende **só** de `m2` e da base de comparáveis —
 não recebe `lat`/`lng` e não sabe nada da praça. Dois imóveis do mesmo tamanho em cidades opostas
 recebem a mesma faixa.
 

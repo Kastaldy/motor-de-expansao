@@ -1,6 +1,6 @@
 ---
 name: deploy
-description: Conduz o deploy de produção do Motor (piloto web + API/bot Telegram) na VPS, por digest imutável, passo a passo. Cobre os path-filters do publish-web e do publish-api (desde 2026-08-14 o publish-api também rebuilda com mudança em dashboard/ e dimensionamento/; commit só em pipelines/, docs/ ou testes não publica nenhuma das duas) e a matriz de capacidade da VPS. Use ao pedir "faça o deploy", "leve para prod", "suba na VPS", "atualize produção".
+description: Conduz o deploy de produção do Motor (piloto web + API/bot Telegram) na VPS, por digest imutável, passo a passo. Cobre os path-filters do publish-web e do publish-api (o publish-api também rebuilda com mudança em dashboard/ e dimensionamento/; commit só em pipelines/, docs/ ou testes não publica nenhuma das duas) e a matriz de capacidade da VPS. Use ao pedir "faça o deploy", "leve para prod", "suba na VPS", "atualize produção".
 ---
 
 # /deploy — deploy de produção por digest (web + API/bot)
@@ -20,9 +20,9 @@ absoluto).** Esta skill organiza o procedimento e não dispensa a confirmação 
   (serviços `api` + `telegram-bot`). Runbook: `docs/deploy_api_bot.md`.
 
 ## Gotcha crítico (a causa nº 1 de "o bot ficou velho")
-O `publish-api` tem **filtro de path**, que desde 2026-08-14 cobre `dashboard/` e `dimensionamento/`
-(depois também `renda/` e `perfil.py`): mudança só em `dashboard/` JÁ rebuilda a imagem `api`/`telegram-bot`.
-O gotcha que sobra é o inverso — commit só em `pipelines/`, `docs/` ou testes fica fora dos dois filtros e
+O `publish-api` tem **filtro de path**, que cobre `dashboard/` e `dimensionamento/`
+(e também `renda/` e `perfil.py`): mudança só em `dashboard/` rebuilda a imagem `api`/`telegram-bot`.
+O gotcha é o inverso — commit só em `pipelines/`, `docs/` ou testes fica fora dos dois filtros e
 não publica nada (ver 3b). Para republicar à mão após o merge:
 ```
 gh workflow run ci.yml --ref main -f publish_api=true
@@ -38,8 +38,7 @@ gh workflow run ci.yml --ref main -f publish_api=true
 ## Passos
 1. **Determinar o alvo.** `git diff --name-only origin/main~1 origin/main` (ou os paths do ciclo):
    mudou `web/`, `src/motor_expansao/(dashboard|dimensionamento|api|db|renda)/` ou `perfil.py`? → nova imagem `web`.
-   Tocou `src/motor_expansao/(api|dashboard|dimensionamento|renda)/` ou `perfil.py`? → nova imagem `api` também
-   (o `dashboard/` entrou no filtro em 2026-08-14). Só `pipelines/`, `docs/` ou testes? → nenhuma imagem
+   Tocou `src/motor_expansao/(api|dashboard|dimensionamento|renda)/` ou `perfil.py`? → nova imagem `api` também. Só `pipelines/`, `docs/` ou testes? → nenhuma imagem
    republica (ver 3b) — decide se precisa do `publish_api=true`/`publish_web=true`.
 2. **Confirmar CI verde + imagem publicada no GHCR** (deploy só por digest de imagem que passou CI). Se faltar imagem → disparar o dispatch correspondente (comandos acima) e **aguardar** (prometa "te aviso quando publicar" + PushNotification).
 3. **Na VPS (cada comando com confirmação do Felipe, §6):** pinar `WEB_IMAGE`/`API_IMAGE` por **digest** no `.env` → `pull` → `up -d --no-deps` dos serviços afetados (`web`, `api`, `telegram-bot` e, se o `WEB_IMAGE` mudou, o `web_ar` do `docker-compose.ar.yml`, que lê o MESMO digest) → healthcheck.

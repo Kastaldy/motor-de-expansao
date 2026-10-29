@@ -2,9 +2,8 @@
 
 Runbook do serviço **`web`** do `docker-compose.prod.yml` — o piloto (frontend Vite +
 backend FastAPI num único container, servindo o SPA e a API na porta interna `8899`),
-publicado em `piloto.ultra-expansao.tech`, atrás do Caddy + Authelia. Desde a **DEC-022
-(2026-08-03)** o piloto é **O app de produção** — o dashboard Streamlit foi aposentado, não
-há mais app paralelo.
+publicado em `piloto.ultra-expansao.tech`, atrás do Caddy + Authelia. O piloto é **O app de produção** (DEC-022); não
+há app paralelo.
 
 > **Guardrails.** Execução no VPS é **sempre passo humano, comando a comando** (CLAUDE.md §6).
 > Deploy é **por digest imutável**, nunca `:latest` cego. O piloto é **READ-ONLY sobre o M1**
@@ -154,7 +153,7 @@ piloto.
 Ela mora **fora** do `MOTOR_DATA_DIR` de propósito: assim nenhum artefato do M1 fica sob
 um mount de escrita e o guardrail READ-ONLY do backend continua valendo sem exceção.
 
-> **DEC-027 (2026-08-17):** o cadastro deixou de ser o único `:rw` — o `web` ganhou um
+> **DEC-027:** além do cadastro, o `web` tem um
 > **segundo** mount de escrita, `/opt/motor-expansao/logs/acesso:/app/logs/acesso:rw`
 > (trilha de acesso), também fora do `MOTOR_DATA_DIR`. A lista exata dos DOIS é travada
 > por `test_compose_monta_somente_cadastro_e_trilha_como_volumes_de_escrita`. Preparo do
@@ -254,9 +253,9 @@ Regras de operação:
 - A SPA esconde as abas via `GET /api/me`; o bloqueio real é o middleware (403 nas
   rotas da aba vetada). Rota nova sem regra reprova em
   `tests/unit/test_piloto_web_acesso.py` (cobertura obrigatória).
-- Solução **temporária** até o banco de identidade (plano de 2026-08-07). **O banco já existe no código:** com
+- Com
   `MOTOR_DATABASE_URL` preenchida, o RBAC por capacidade do banco (`REGRAS_POR_CAPACIDADE`, `web/server/acesso.py`)
-  passa a mandar e este JSON deixa de ser consultado. É o estado da produção BR desde 23/10/2026; o JSON segue
+  manda e este JSON não é consultado. É o estado da produção BR desde 23/10/2026; o JSON segue
   valendo na AR (sem banco) e volta a valer no BR se a URL for esvaziada (§8 do `docs/banco_deploy.md`). Conferir
   com `grep -c '^MOTOR_DATABASE_URL=.' .env` — `1` é preenchida; o `-c` conta a linha sem imprimir a senha.
 
@@ -465,9 +464,8 @@ aplicada não volta com a imagem (§8 do `docs/banco_deploy.md`).
 - [ ] `GET /api/health` responde `{"status":"ok"}` + `renda_fatores` (versão dos fatores de renda e `fixada_por_env`, E0) no container. **É só isso que ele
       responde** — foi emudecido pelo pentest Onda B #8, então ele fica verde com os
       artefatos faltando. Prova que o container está de pé, e nada além disso.
-- [ ] **`artefatos_faltando` vem vazio** — em `GET /api/acessos/saude-artefatos`, que é
-      para onde o inventário mudou (rota de admin: `Remote-User` em
-      `MOTOR_ACESSOS_ADMIN_USUARIOS`, senão 404). É o item que faltava aqui: os
+- [ ] **`artefatos_faltando` vem vazio** — em `GET /api/acessos/saude-artefatos` (rota de admin: `Remote-User` em
+      `MOTOR_ACESSOS_ADMIN_USUARIOS`, senão 404). Os
       parquets de crescimento (`crescimento_municipal`, `crescimento_hex`) não vêm no
       git nem na imagem — chegam só pelo bind mount `/opt/motor-expansao/data/staging`.
       Sem eles o piloto sobe normal e o **passo 4 sai vazio e sem cor, em silêncio**,
