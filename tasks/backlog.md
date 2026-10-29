@@ -3620,7 +3620,7 @@ Decidir qual, aplicar no compose por PR, e a aplicação na VPS é passo manual 
 | **Criticidade** | **Média** — o passo é fail-soft por desenho e os apps seguem com os arquivos anteriores; o dano é obsolescência silenciosa, não corrupção. |
 | **Prioridade** | **Média** — está quebrado há 3 semanas e ninguém soube. |
 | **Esteira** | `[aplicação na VPS: passo MANUAL, comando a comando — §6]` + PR neste repositório (o lote de domingo é versionado em `scripts/cron/run_weekly_90.sh` desde 2026-09-17, PR #377; a cópia em `/opt/gymscraping-infra/` é instalação) |
-| **Status** | Pendente |
+| **Status** | **Em andamento** — conserto do repositório pronto na branch `fix/achados-conferencia` (`b02e805a`, 29/10/2026, ainda sem PR); aplicação na VPS pendente |
 | **Depende de** | — |
 | **Autonomia** | **manual (NÃO loop-safe)** — VPS + repositório irmão. NUNCA marcar loop-safe. |
 
@@ -3649,6 +3649,8 @@ DEC-059 existe para impedir (lá, nove domingos sem propagar moveram 60,46% dos 
 além das logos. O passo 4.5 do mesmo script (pins M&A) lê os **feeds CRUS montados**, não este
 diretório (decisão de 2026-09-02, comentada na linha 257) — mas eu não tracei todos os consumidores.
 Primeiro entregável do bloco: traçar isso.
+
+**Conferido em produção em 29/10/2026** (achado a-02 da conferência da higiene dos docs; leitura só de contagens, com simulacro antes): o domingo de **25/10 falhou de novo**, com 1 linha `AVISO: sync falhou` e 2 de `PerfilInvalidoError` no `weekly_20261025-060001.log`. O diretório segue em **06/09 10:15** (204 arquivos, 97 logos; 53 dias), e o script instalado em `/opt/gymscraping-infra/run_weekly_90.sh` não tem `MOTOR_DATA_DIR` (0 linhas). Os consertos (a) e (b) estão no repositório, na branch `fix/achados-conferencia` (commit `b02e805a`, ainda sem PR), com dois testes de contrato; a aplicação na VPS segue manual. O traçado dos consumidores dos `unidades_*.csv` continua por fazer.
 
 ---
 
