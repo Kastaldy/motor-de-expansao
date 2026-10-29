@@ -7,7 +7,12 @@ import type {
 } from '../lib/types'
 import { Glass } from './primitives'
 import { TEXTO_SEM_DADO } from '../lib/constants'
-import { mesFimDaRampa } from '../lib/viabilidade-rampa'
+import {
+  eixoDaRampa,
+  larguraDaLinhaDaGrade,
+  mesFimDaRampa,
+  mesesDaGrade,
+} from '../lib/viabilidade-rampa'
 
 /* ---------------------------------------------------------------------------
    Graficos da Viabilidade. Formas herdadas do template de referencia.
@@ -614,6 +619,14 @@ function LinhaReceita({
  * com o pico escolhido) ou, pela API pública, da rampa linear; o desenho
  * é o mesmo (é a série do motor), e `maturacaoMeses` é o fim da rampa SERVIDO
  * (`mes_maturidade_rampa`), não o parâmetro da reta.
+ *
+ * O eixo X termina 2 meses depois do pico (pedido de 28/10/2026; antes ia a no mínimo 18
+ * meses): a regra e os casos de borda moram em `eixoDaRampa`.
+ *
+ * Cada mês do eixo, do 0 ao penúltimo, tem uma linha tracejada vertical (pedidos do mesmo
+ * dia), desenhada atrás da área e da linha: a de grade, no cinza próprio dela
+ * (`--line-grid`), ou, no mês do platô, o marcador na cor de destaque. Quais meses ganham
+ * grade mora em `mesesDaGrade`, e a largura do traço, em `larguraDaLinhaDaGrade`.
  */
 export function RampaAlunos({
   serie,
@@ -653,10 +666,9 @@ export function RampaAlunos({
     )
   }
 
-  // Horizonte curto: a rampa se lê nos primeiros meses; o platô já aparece plano.
-  const mat =
-    maturacaoMeses != null && maturacaoMeses > 0 ? Math.round(maturacaoMeses) - desloc : null
-  const limite = Math.min(pts[pts.length - 1].mes, Math.max((mat ?? 8) + 6, 18))
+  // Horizonte curto: o eixo termina 2 meses depois do pico, com o platô já plano. `mat` é o
+  // platô SERVIDO, na unidade do eixo (o mês de vida, na curva); null sem fim servido.
+  const { plato: mat, limite } = eixoDaRampa(maturacaoMeses, curva, pts)
   const visiveis = pts.filter((p) => p.mes <= limite)
   const plateau = Math.max(...visiveis.map((p) => p.v))
 
@@ -671,6 +683,8 @@ export function RampaAlunos({
     .join(' ')
   const area = `0,${H} ${linha} ${W},${H}`
   const xMat = mat != null && mat <= limite ? x(mat) : null
+  // Uma linha de grade por mês de dentro do eixo; o mês do platô fica com o marcador.
+  const grade = mesesDaGrade(limite, mat)
 
   return (
     <Glass
@@ -705,6 +719,25 @@ export function RampaAlunos({
               <stop offset="100%" stopColor="var(--ac)" stopOpacity="0.02" />
             </linearGradient>
           </defs>
+          {/* Grade: um tracejado por mês, ATRÁS da área e da linha. Cinza próprio da
+              grade (`--line-grid`) e traço mais curto e mais aberto ("2 4") que o do
+              marcador do platô (cor de destaque, "3 3"), para os dois não se confundirem.
+              Sem `crispEdges` de propósito: com a tela em escala fracionária (125%, 150%)
+              ele assenta umas linhas em 1 pixel e outras em 2, e a grade sai com
+              espessuras diferentes. */}
+          {grade.map((m) => (
+            <line
+              key={m}
+              x1={x(m)}
+              y1="0"
+              x2={x(m)}
+              y2={H}
+              stroke="var(--line-grid)"
+              strokeWidth={larguraDaLinhaDaGrade(m)}
+              strokeDasharray="2 4"
+              vectorEffect="non-scaling-stroke"
+            />
+          ))}
           <polygon points={area} fill="url(#rampaGrad)" />
           {xMat != null && (
             <line

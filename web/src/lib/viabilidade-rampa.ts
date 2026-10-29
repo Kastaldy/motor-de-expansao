@@ -99,6 +99,93 @@ export function mesFimDaRampa(p: PremissasRampa | null | undefined): number | nu
   return Number.isFinite(m) && m > 0 ? Math.round(m) : null
 }
 
+/** Meses que o eixo do gráfico "Rampa de alunos" mostra DEPOIS do pico (pedido de 28/10/2026). */
+export const MESES_DEPOIS_DO_PICO = 2
+
+/** Um ponto da série de alunos, com o mês JÁ na unidade do eixo do gráfico. */
+export interface PontoDaRampa {
+  mes: number
+  v: number
+}
+
+/** 1º mês em que a série atinge o seu máximo (a série vem em ordem de mês). */
+function mesDoMaximo(pontos: readonly PontoDaRampa[]): number {
+  let melhor = pontos[0]
+  for (const p of pontos) if (p.v > melhor.v) melhor = p
+  return melhor.mes
+}
+
+/**
+ * Eixo X do gráfico "Rampa de alunos": vai até 2 meses depois do pico (pedido do dono do
+ * produto em 28/10/2026: "12 meses mostra 14, 8 meses mostra 10"). Antes o eixo ia a no
+ * mínimo 18 meses (`max(platô + 6, 18)`), largo demais: num pico de 8 a subida ocupava
+ * menos da metade da largura.
+ *
+ * `fimDaRampa` é o `mes_maturidade_rampa` servido (via `mesFimDaRampa`), o 1º mês de
+ * OPERAÇÃO com a demanda cheia. Na curva observada o eixo conta o MÊS DE VIDA (mês 0 = a
+ * inauguração) e o platô cai em `fimDaRampa - 1`, que é o pico escolhido: o motor serve
+ * `mes_maturidade_rampa` = pico + 1. Na rampa linear (só pela API) o eixo é o mês de
+ * operação e o platô é o próprio `fimDaRampa`. Nos dois casos o eixo termina no platô + 2,
+ * sem piso nem teto: pico 1 mostra 3 meses; pico 36, 38.
+ *
+ * O eixo nunca passa do último mês da série: série mais curta que o platô + 2 termina
+ * nela, e o marcador do platô some quando ele fica fora (quem desenha testa
+ * `plato <= limite`). Sem fim servido (premissas ausentes), o eixo ancora no 1º mês em que
+ * a própria série atinge o seu máximo: a mesma regra sem número fixo, e o máximo da série,
+ * que é o valor do cabeçalho, nunca fica fora do eixo. Esse mês LIDO da série não vira
+ * `plato`: o rótulo "platô no mês N" e o marcador só afirmam o que o payload serviu.
+ *
+ * `pontos` vem em ordem de mês, já na unidade do eixo, e não é vazio (o gráfico só desenha
+ * com 2 pontos ou mais).
+ */
+export function eixoDaRampa(
+  fimDaRampa: number | null,
+  curva: boolean,
+  pontos: readonly PontoDaRampa[],
+): { plato: number | null; limite: number } {
+  const plato =
+    fimDaRampa != null && Number.isFinite(fimDaRampa) && fimDaRampa > 0
+      ? Math.round(fimDaRampa) - (curva ? 1 : 0)
+      : null
+  const ancora = plato ?? mesDoMaximo(pontos)
+  return { plato, limite: Math.min(pontos[pontos.length - 1].mes, ancora + MESES_DEPOIS_DO_PICO) }
+}
+
+/**
+ * Meses com linha de grade vertical no gráfico "Rampa de alunos" (pedido do dono do
+ * produto em 28/10/2026: "uma linha tracejada vertical para cada mês"). São os meses
+ * inteiros do eixo, do 0 ao `limite - 1`, e com eles todo mês do eixo, menos o último, tem
+ * exatamente UMA linha vertical:
+ * - o mês do platô (o `plato` de `eixoDaRampa`) fica de fora: ele já tem o marcador
+ *   próprio, tracejado na cor de destaque, e duas linhas no mesmo x embaralhariam os dois
+ *   tracejados. Platô ausente ou fora do eixo (série curta) não tira mês nenhum, e aí
+ *   também não há marcador;
+ * - o mês 0, a borda esquerda, ganha linha (pedido do mesmo dia: "a linha do mês 0 para o
+ *   1 completa"), com o traço mais largo de `larguraDaLinhaDaGrade`;
+ * - o `limite`, a borda direita, não ganha ("pode ser cortada, visto que vira uma reta"):
+ *   no fim do eixo a curva já está no platô, plana, e o mês está rotulado embaixo ("mês N").
+ *
+ * Pico 1 (eixo de 0 a 3, marcador no 1) dá os meses 0 e 2; pico 10 (eixo de 0 a 12), do 0
+ * ao 9 e o 11. Eixo degenerado (`limite` <= 0 ou não finito) não tem grade.
+ */
+export function mesesDaGrade(limite: number, plato: number | null): number[] {
+  const meses: number[] = []
+  if (!Number.isFinite(limite)) return meses
+  for (let m = 0; m < limite; m++) if (m !== plato) meses.push(m)
+  return meses
+}
+
+/**
+ * Largura do traço da linha de grade de um mês, em px de tela (o traço não escala com o
+ * SVG). O mês 0 cai na borda esquerda, e o `<svg>` recorta o que passa do próprio
+ * contorno: com o traço centrado na borda, a metade de fora some, e uma linha de 1 px
+ * sairia com metade da tinta das outras (medido a 100% em 28/10/2026). Com 2 px, a metade
+ * que fica tem 1 px, como as demais.
+ */
+export function larguraDaLinhaDaGrade(mes: number): number {
+  return mes === 0 ? 2 : 1
+}
+
 /**
  * O que a rampa muda no steady-state. Com o regime pleno até o mês 12 ela só move o
  * caixa e o payback. Depois do mês 12 (pico tardio), o motor mede o regime pleno no

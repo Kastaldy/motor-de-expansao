@@ -804,3 +804,31 @@ describe('os tres scores da ficha do hexagono se leem nos dois temas', () => {
     }
   })
 })
+
+/* ---------------------------------------------------------------------------------
+   A GRADE DO GRAFICO "RAMPA DE ALUNOS" (Viabilidade).
+
+   Nasceu em 2026-10-28 no `--line-dashed`, a hairline mais forte dos dois temas, e saiu
+   discreta: ~1,6:1 sobre o cartao, nos DOIS. O dono pediu "um pouco" mais de contraste
+   no mesmo dia, e a grade ganhou token proprio (`--line-grid`) em vez de reforcar o
+   `--line-dashed`, que tambem pinta uma borda tracejada da Viabilidade.
+
+   A regua tem piso E teto: abaixo de 1,9 a grade volta ao que era; acima de 2,1 deixa de
+   ser o "um pouco" do pedido — a grade e' fundo, e subir mais e' decisao nova com o dono.
+   --------------------------------------------------------------------------------- */
+describe('a grade da Rampa de alunos fica um pouco mais forte, nos dois temas', () => {
+  for (const [nome, obter] of [
+    ['claro', blocoClaro],
+    ['escuro', blocoEscuro],
+  ] as const) {
+    it(`no tema ${nome}, ~2:1 sobre o cartao, acima do --line-dashed de antes`, () => {
+      const b = obter()
+      expect(b['--line-grid'], `--line-grid no ${nome}`).toBeTruthy()
+      const cartao = compor(b['--surf-card'], b['--bg-base'])
+      const medir = (token: string) => contraste(compor(b[token], cartao), cartao)
+      expect(medir('--line-grid')).toBeGreaterThanOrEqual(1.9)
+      expect(medir('--line-grid')).toBeLessThanOrEqual(2.1)
+      expect(medir('--line-grid')).toBeGreaterThan(medir('--line-dashed'))
+    })
+  }
+})

@@ -5,14 +5,18 @@ import { describe, expect, it } from 'vitest'
 
 import * as rampa from './viabilidade-rampa'
 import {
+  MESES_DEPOIS_DO_PICO,
   PICO_RAMPA_MAX,
   PICO_RAMPA_MIN,
   PICO_RAMPA_OBSERVADO,
   ajudaDaRampa,
   casaNoMes1,
   ebitdaDosPrimeirosMeses,
+  eixoDaRampa,
   formaDoPayload,
+  larguraDaLinhaDaGrade,
   mesFimDaRampa,
+  mesesDaGrade,
   notaDaRampa,
   passoPico,
   picoExibido,
@@ -261,5 +265,192 @@ describe('a tela trata a Viabilidade como produto único', () => {
     expect(TELA).toContain('aria-label="Aumentar o pico de maturação"')
     expect(TELA).toContain('mes_pico_rampa: picoParaEnviar(picoRampa)')
     expect(TELA).not.toContain('Pico de maturação, em meses')
+  })
+})
+
+/* ---------------------------------------------------------------------------
+   Eixo do gráfico "Rampa de alunos" (pedido de 28/10/2026): termina 2 meses depois do
+   pico, e não mais em no mínimo 18 meses. O payload serve `mes_maturidade_rampa` = pico +
+   1 (mês de OPERAÇÃO), conferido no motor (`premissas_do_body` + a série mensal) para os
+   picos 1, 2, 8, 10, 12 e 36; na rampa linear, o próprio N.
+   --------------------------------------------------------------------------- */
+
+// Alunos por MÊS DE VIDA de uma curva com pico `pico`, no formato da do motor (80% no mês
+// 0, 68% no mês 1, demanda cheia do pico em diante), já no eixo do gráfico; 60 meses.
+function serieCurva(pico: number, meses = 60): { mes: number; v: number }[] {
+  const demanda = 2500
+  return Array.from({ length: meses }, (_, mes) => {
+    if (mes === 0) return { mes, v: demanda * 0.8 }
+    if (mes >= pico) return { mes, v: demanda }
+    return { mes, v: demanda * (0.68 + (0.32 * (mes - 1)) / (pico - 1)) }
+  })
+}
+
+describe('eixo do gráfico "Rampa de alunos" (pedido de 28/10/2026)', () => {
+  it('vai até 2 meses depois do pico: pico 8 mostra 10, 10 mostra 12 e 12 mostra 14', () => {
+    expect(MESES_DEPOIS_DO_PICO).toBe(2)
+    for (const [pico, fimDoEixo] of [
+      [8, 10],
+      [10, 12],
+      [12, 14],
+    ]) {
+      // a tela recebe o fim servido (pico + 1); na curva o eixo é o mês de vida
+      expect(eixoDaRampa(pico + 1, true, serieCurva(pico))).toEqual({
+        plato: pico,
+        limite: fimDoEixo,
+      })
+    }
+  })
+
+  it('lê o fim da rampa do payload pelo mesmo caminho da tela (mesFimDaRampa)', () => {
+    expect(eixoDaRampa(mesFimDaRampa(CURVA), true, serieCurva(10))).toEqual({
+      plato: 10,
+      limite: 12,
+    })
+    expect(eixoDaRampa(mesFimDaRampa(CURVA_PICO_6), true, serieCurva(6))).toEqual({
+      plato: 6,
+      limite: 8,
+    })
+  })
+
+  it('sem piso nem teto: pico 1 mostra 3 meses e o pico máximo (36), 38', () => {
+    expect(eixoDaRampa(2, true, serieCurva(1))).toEqual({ plato: 1, limite: 3 })
+    expect(eixoDaRampa(PICO_RAMPA_MAX + 1, true, serieCurva(PICO_RAMPA_MAX))).toEqual({
+      plato: PICO_RAMPA_MAX,
+      limite: PICO_RAMPA_MAX + 2,
+    })
+  })
+
+  it('rampa linear (só pela API): eixo em mês de operação e platô no próprio fim servido', () => {
+    const reta = Array.from({ length: 60 }, (_, i) => ({ mes: i + 1, v: Math.min(i + 1, 8) * 250 }))
+    expect(eixoDaRampa(mesFimDaRampa(LINEAR), false, reta)).toEqual({ plato: 8, limite: 10 })
+  })
+
+  it('série mais curta que o pico + 2: o eixo termina nela e o marcador do platô some', () => {
+    // o gráfico só desenha o marcador com `plato <= limite`
+    expect(eixoDaRampa(13, true, serieCurva(12, 6))).toEqual({ plato: 12, limite: 5 })
+  })
+
+  it('sem fim servido: ancora no 1º mês com o máximo da série e não inventa platô', () => {
+    expect(eixoDaRampa(null, true, serieCurva(10))).toEqual({ plato: null, limite: 12 })
+    expect(eixoDaRampa(null, true, serieCurva(20))).toEqual({ plato: null, limite: 22 })
+    // fim não finito conta como ausente, como em `mesFimDaRampa`
+    expect(eixoDaRampa(Number.NaN, true, serieCurva(8))).toEqual({ plato: null, limite: 10 })
+  })
+
+  it('o gráfico usa a regra e não guarda mais a janela de 18 meses', () => {
+    const fonte = FONTES_DE_TEXTO.graficos
+    const corpo = fonte.slice(
+      fonte.indexOf('export function RampaAlunos('),
+      fonte.indexOf('export function FluxoCaixa('),
+    )
+    expect(corpo).toContain('eixoDaRampa(maturacaoMeses, curva, pts)')
+    expect(corpo).not.toMatch(/const limite\s*=/)
+    expect(corpo).not.toMatch(/,\s*18\s*\)/)
+  })
+})
+
+/* ---------------------------------------------------------------------------
+   Grade do gráfico "Rampa de alunos" (pedido de 28/10/2026: "uma linha tracejada vertical
+   para cada mês"). Todo mês do eixo, do 0 ao penúltimo, tem exatamente UMA linha
+   vertical: a de grade ou, no mês do platô, o marcador que já existia. O mês 0 ganha a
+   linha inteira (pedido do mesmo dia: "a linha do mês 0 para o 1 completa"): ali o SVG
+   corta a metade de fora do traço, e por isso ele tem o dobro da largura. O fim do eixo
+   fica sem linha ("pode ser cortada, visto que vira uma reta").
+   --------------------------------------------------------------------------- */
+
+/** Meses inteiros de `de` a `ate`, inclusive. */
+const meses = (de: number, ate: number) => Array.from({ length: ate - de + 1 }, (_, i) => de + i)
+
+describe('grade de meses do gráfico "Rampa de alunos" (pedido de 28/10/2026)', () => {
+  it('uma linha por mês do eixo, do 0 ao penúltimo: picos 1, 8, 10, 12 e 36', () => {
+    // [pico, linhas de grade]: o eixo vai de 0 a pico + 2 e os meses com linha são 0 a
+    // pico + 1; o do platô fica com o marcador, então sobram `pico + 1` linhas de grade
+    for (const [pico, linhas] of [
+      [1, 2],
+      [8, 9],
+      [10, 11],
+      [12, 13],
+      [PICO_RAMPA_MAX, 37],
+    ]) {
+      const { plato, limite } = eixoDaRampa(pico + 1, true, serieCurva(pico))
+      const grade = mesesDaGrade(limite, plato)
+      expect(grade, `pico ${pico}`).toHaveLength(linhas)
+      // nenhum mês fica sem linha nem ganha duas: grade + marcador = 0 a limite - 1
+      expect([...grade, plato!].sort((a, b) => a - b), `pico ${pico}`).toEqual(meses(0, limite - 1))
+    }
+    expect(mesesDaGrade(3, 1)).toEqual([0, 2]) // pico 1: eixo de 0 a 3, marcador no 1
+    expect(mesesDaGrade(10, 8)).toEqual([0, 1, 2, 3, 4, 5, 6, 7, 9]) // pico 8: eixo de 0 a 10
+  })
+
+  it('o mês 0 ganha linha e o fim do eixo não', () => {
+    for (const limite of [3, 10, 12, 14, 38]) {
+      const grade = mesesDaGrade(limite, null)
+      expect(grade).toEqual(meses(0, limite - 1))
+      expect(grade).toContain(0)
+      expect(grade).not.toContain(limite)
+    }
+  })
+
+  it('a linha do mês 0 tem o dobro da largura: o SVG corta a metade de fora da borda', () => {
+    expect(larguraDaLinhaDaGrade(0)).toBe(2)
+    for (const mes of meses(1, PICO_RAMPA_MAX + 1)) {
+      expect(larguraDaLinhaDaGrade(mes), `mês ${mes}`).toBe(1)
+    }
+    // a metade que fica dentro do SVG tem a largura das outras linhas
+    expect(larguraDaLinhaDaGrade(0) / 2).toBe(larguraDaLinhaDaGrade(1))
+  })
+
+  it('platô fora do eixo ou ausente não tira mês nenhum', () => {
+    // série mais curta que o pico + 2: o marcador some (platô 12, eixo até 5)
+    const curta = eixoDaRampa(13, true, serieCurva(12, 6))
+    expect(mesesDaGrade(curta.limite, curta.plato)).toEqual([0, 1, 2, 3, 4])
+    // sem fim servido: não há marcador, e todo mês do eixo, menos o último, tem grade
+    const semFim = eixoDaRampa(null, true, serieCurva(10))
+    expect(mesesDaGrade(semFim.limite, semFim.plato)).toEqual(meses(0, 11))
+  })
+
+  it('rampa linear (só pela API): a mesma regra, no mês de operação', () => {
+    const reta = Array.from({ length: 60 }, (_, i) => ({ mes: i + 1, v: Math.min(i + 1, 8) * 250 }))
+    const { plato, limite } = eixoDaRampa(mesFimDaRampa(LINEAR), false, reta)
+    expect(mesesDaGrade(limite, plato)).toEqual([0, 1, 2, 3, 4, 5, 6, 7, 9])
+  })
+
+  it('eixo de um mês fica só com a borda esquerda; eixo degenerado, sem grade (nem laço infinito)', () => {
+    // série de 2 pontos (meses 0 e 1): o eixo vai de 0 a 1
+    expect(mesesDaGrade(1, null)).toEqual([0])
+    for (const limite of [0, -3, Number.NaN, Number.POSITIVE_INFINITY]) {
+      expect(mesesDaGrade(limite, null)).toEqual([])
+    }
+  })
+
+  it('o gráfico desenha a grade ATRÁS da área e da linha, distinta do marcador do platô', () => {
+    const fonte = FONTES_DE_TEXTO.graficos
+    const corpo = fonte.slice(
+      fonte.indexOf('export function RampaAlunos('),
+      fonte.indexOf('export function FluxoCaixa('),
+    )
+    expect(corpo).toContain('mesesDaGrade(limite, mat)')
+    const iGrade = corpo.indexOf('{grade.map(')
+    expect(iGrade, 'a grade não é desenhada').toBeGreaterThan(-1)
+    // no SVG, a ordem do código é a ordem de pintura: o que vem antes fica atrás
+    expect(iGrade).toBeLessThan(corpo.indexOf('<polygon points={area}'))
+    expect(iGrade).toBeLessThan(corpo.indexOf('<polyline'))
+    const linha = corpo.slice(iGrade, corpo.indexOf('/>', iGrade))
+    const marcador = corpo.slice(corpo.indexOf('{xMat != null && ('), corpo.indexOf('<polyline'))
+    const attr = (trecho: string, nome: string) =>
+      new RegExp(`\\s${nome}="([^"]*)"`).exec(trecho)?.[1]
+    // tracejada, fina e sem deformar com o preserveAspectRatio="none"
+    expect(attr(linha, 'strokeDasharray')).toBeTruthy()
+    // o traço do mês 0 é mais largo: na borda, o SVG corta a metade de fora
+    expect(linha).toContain('strokeWidth={larguraDaLinhaDaGrade(m)}')
+    expect(attr(linha, 'vectorEffect')).toBe('non-scaling-stroke')
+    // sem crispEdges: em escala de tela fracionária ele dá 1 px a umas linhas e 2 a outras
+    expect(linha).not.toContain('crispEdges')
+    // cor própria da grade, do design system (não a de destaque), e outro tracejado
+    expect(attr(linha, 'stroke')).toBe('var(--line-grid)')
+    expect(attr(marcador, 'stroke')).toBe('var(--ac)')
+    expect(attr(marcador, 'strokeDasharray')).toBe('3 3')
+    expect(attr(linha, 'strokeDasharray')).not.toBe(attr(marcador, 'strokeDasharray'))
   })
 })

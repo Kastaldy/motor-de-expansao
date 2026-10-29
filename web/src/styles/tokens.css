@@ -80,6 +80,11 @@
   --line-mid: rgba(255, 255, 255, 0.1);
   --line-strong: rgba(255, 255, 255, 0.12);
   --line-dashed: rgba(255, 255, 255, 0.16);
+  /* Grade de grafico (as linhas de mes da "Rampa de alunos", na Viabilidade). Nasceu no
+     --line-dashed, a ~1,6:1 sobre o cartao (--surf-card sobre --bg-base), e o dono pediu
+     "um pouco" mais de contraste (2026-10-28): ~2,0:1 aqui e no claro. Token proprio para
+     nao reforcar junto a borda tracejada que tambem e' pintada com o --line-dashed. */
+  --line-grid: rgba(255, 255, 255, 0.22);
 
   /* --- Texto (6 niveis do template) ---------------------------------------- */
   --tx-max: #eef3f8;
@@ -588,6 +593,8 @@
   --line-mid: rgba(58, 58, 58, 0.16);
   --line-strong: rgba(58, 58, 58, 0.2);
   --line-dashed: rgba(58, 58, 58, 0.26);
+  /* Grade de grafico: ~2,0:1 sobre o cartao, como no escuro (ver o --line-grid do :root). */
+  --line-grid: rgba(58, 58, 58, 0.36);
 
   /* --- Texto (os mesmos 6 papeis, do mais forte ao mais apagado) ------------ */
   /* Terceira rodada (2026-09-09): a escala inteira sai do cinza-azulado para o
