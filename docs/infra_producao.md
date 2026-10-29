@@ -394,10 +394,15 @@ a defesa deles é a validação, que impede a publicação ruim em vez de desfaz
 
 > **Por que existe:** o mount `$REPO/Unidades:/app/concorrentes:ro` do passo anterior vale **só dentro do
 > container de regen** — ele alimenta o *parquet*. O diretório **`/opt/motor-expansao/concorrentes`**, que os
-> serviços `api` e `web` montam em `/app/concorrentes`, **não era tocado por ninguém**. Medido em
-> 2026-07-29: estava congelado desde 2026-05-28 com 39 CSVs e 39 logos, enquanto o parquet já tinha 106 redes.
-> Efeito visível: o Streamlit (que lê os CSVs, não o parquet) perdia **68 das 107 redes** no mapa, e os pins do
-> piloto web e dos PDFs caíam no **fallback de sigla** por falta de `logo_<slug>.png`.
+> serviços `api` e `web` montam em `/app/concorrentes`, **não é escrito por nenhum outro passo do lote de
+> domingo** (à mão, sim: ver o "custo conhecido" e a execução sob demanda, abaixo). Sem este passo ele
+> congela, e logo nova não chega a ele: no piloto web e nos PDFs, o pin da rede que ficou sem
+> `logo_<slug>.png` cai no **fallback de sigla**.
+> Antes dele, nenhum passo do ciclo o tocava: medido em 2026-07-29, estava congelado desde 2026-05-28 com 39 CSVs
+> e 39 logos, enquanto o parquet já tinha 106 redes. O registro completo, com o efeito no Streamlit
+> (aposentado pela DEC-022), está em `tasks/completed.md`, BLK-CONC-SYNC-01. Medido em 2026-09-29, o
+> próprio passo falhava desde 2026-09-20 e o diretório estava parado em 2026-09-06 — ver **BLK-SAUDE-08**
+> (pendente em 2026-10-29) em `tasks/backlog.md`.
 
 O passo roda `scripts/sync_concorrentes_dashboard.py` (cópia instalada em `/opt/gymscraping-infra/`) dentro da
 imagem da `api`, com `GymScraping` em `:ro` e o diretório dos apps como destino. Duas regras importam:
@@ -816,14 +821,16 @@ O recorte é imposto por código **na ausência de gesto**: `alvos_ma` sem `--fo
 > `SINAIS_INATIVOS` sem levar o sinal ao grão por ACADEMIA ressuscita, no mesmo instante, o erro de
 > 36,99% que a DEC-066 mediu. Os dois atos são inseparáveis.
 
-O flag `--todas-as-fontes` continua existindo e continua sendo o gesto EXPLÍCITO para consumir a
-série **inteira** — hoje isso significa "além das duas do default" (incompatível com `--fontes`, e o
-log sai em `WARNING`). O que ele deixou de ser é a porta que separava o TotalPass do ranking: essa
-porta virou o `SINAIS_INATIVOS`. A primeira implementação do recorte tinha `default=None` e, com
-isso, a propriedade que a DEC-039 rejeitou com a frase *"é prosa: a cadeia roda com as duas fontes
-sem editar uma linha"* — o gesto que vazava era **não digitar o flag**, e duas das três receitas
-canônicas do próprio repositório o omitiam. A lição sobrevive à DEC-066 e é por isso que o default
-continua sendo declarado em toda receita copiável.
+O flag `--todas-as-fontes` é o gesto EXPLÍCITO para consumir a série **inteira** — desde a DEC-066,
+isso significa "além das duas do default" (incompatível com `--fontes`, e o log sai em `WARNING`). O
+que ele deixou de ser, com a DEC-066, é a porta que separava o TotalPass do ranking: essa porta virou
+o `SINAIS_INATIVOS`. Sem nenhum dos dois flags, o recorte vale: o `--fontes` continua com
+`default=None` no `argparse`, e é `resolver_fontes` que troca essa ausência por
+`FONTES_ENTREGAVEL_DEFAULT`, antes de qualquer leitura. A primeira implementação do recorte (DEC-039, emenda 1, E3) tinha o
+mesmo `default=None` sem essa troca e, com isso, a propriedade que a DEC-039 rejeitou com a frase
+*"é prosa: a cadeia roda com as duas fontes sem editar uma linha"* — o gesto que vazava era **não
+digitar o flag**, e duas das três receitas canônicas do próprio repositório o omitiam. A lição sobrevive à DEC-066 e é por isso que o default continua sendo declarado, em
+prosa, ao lado de toda receita copiável, que omite `--fontes` de propósito.
 
 ### Entregável de M&A no piloto (BLK-MA-19 — os pins de academia no Mapa Territorial)
 
@@ -1121,16 +1128,19 @@ requisição seguinte, sem restart); mudanças no `Caddyfile` seguem pedindo
 > O login continua igual após a DEC-022: o Authelia protege `piloto.ultra-expansao.tech`
 > e `/tiles/` em `dashboard.ultra-expansao.tech` com a mesma base de usuários.
 >
-> **Com o banco ligado no BR (desde 23/10/2026), quem usa o piloto brasileiro depende de DOIS
-> cadastros:** o Authelia autentica (`users_database.yml`) e o banco autoriza (a linha da pessoa
-> em `usuarios`, com o perfil). Sem a linha no banco ela entra e abre o piloto vazio; sem a
-> entrada no Authelia ela não entra. A instância AR não tem banco e segue pelo `acesso_abas.json`
+> **Com o banco ligado no BR (desde 23/10/2026) e até o corte do P19 (feito em 27/10/2026), quem
+> usava o piloto brasileiro dependia de DOIS cadastros:** o Authelia autenticava (`users_database.yml`)
+> e o banco autorizava (a linha da pessoa em `usuarios`, com o perfil). Sem a linha no banco ela
+> entrava e abria o piloto vazio; sem a entrada no Authelia ela não entrava. **Desde o corte, no BR,
+> quem autentica é o próprio piloto, pela senha do banco** (`MOTOR_AUTENTICACAO_PROPRIA` ligada e o
+> `forward_auth` do Caddy apontando para o nosso `/api/verify`, DEC-067, D4) — ver o aviso "Depois do
+> corte do P19", abaixo. A instância AR não tem banco e segue pelo Authelia e pelo `acesso_abas.json`
 > dela. Os gestos de senha do banco — "Trocar a minha senha", "Redefinir senha" e "Exigir troca" —
 > só aparecem e só funcionam com `MOTOR_AUTENTICACAO_PROPRIA` ligada (P19); até o corte, a senha
-> que vale é a do Authelia, e a coluna "Senha (banco)" da tela de Acessos fala da senha do banco.
-> Esse comportamento e o nome da coluna chegam com a imagem da mudança de 24/10/2026. Na que estava no ar
-> nesse dia (`d1cc438e…`), eles ainda aparecem (o cadeado, para todos) e não devem ser usados até o
-> corte: o cadeado pede a senha inicial sorteada, e a temporária de "Redefinir senha" não abre a entrada.
+> que valia era a do Authelia, e a coluna "Senha (banco)" da tela de Acessos fala da senha do banco.
+> Esse comportamento e o nome da coluna chegaram com a imagem da mudança de 24/10/2026. Na que estava no ar
+> nesse dia (`d1cc438e…`), eles ainda apareciam (o cadeado, para todos) e não deviam ser usados antes do
+> corte: o cadeado pedia a senha inicial sorteada, e a temporária de "Redefinir senha" não abria a entrada.
 
 ### Adicionar usuário
 
