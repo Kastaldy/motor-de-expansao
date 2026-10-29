@@ -21,7 +21,7 @@ A regra (fechada pelo usuario nos GATES 1 e 2; DEC-077) -- numeros na regua, nun
 - Fora da conta, de proposito: concorrencia, viabilidade, aluguel, score_priorizacao (M1),
   Ultra e distancia. NAO existe regra de proximidade/1 km aqui.
 - "Nao vamos mostrar estimado": residual cuja populacao veio da media da cidade
-  (`fonte_pop_hex_base != "censo_2022_setor"`) nunca e Mata Virgem (com a regua BR v1) e o
+  (`fonte_pop_hex_base` fora de `FONTES_MEDIDAS`) nunca e Mata Virgem (com a regua BR v1) e o
   NUMERO estimado nunca sai: `residual=None`, `residual_medido=False`.
 
 Logica de tres valores (nada e imputado). "Nao e Mata Virgem" precisa de PROVA: um hexagono sem
@@ -52,9 +52,13 @@ COL_RESIDUAL = "oferta_efetiva_disponivel"
 COL_SCORE = "score_setor_2022_calibrado"
 #: Populacao do Censo 2022 no hexagono. NUNCA `populacao_corte_hex` (repete o total da cidade).
 COL_POPULACAO = "pop_total_setor_2022"
-#: De onde saiu a populacao-base do residual: so `FONTE_MEDIDA` conta como medido.
+#: De onde saiu a populacao-base do residual: so `FONTES_MEDIDAS` contam como medido.
 COL_FONTE_POP = "fonte_pop_hex_base"
 FONTE_MEDIDA = "censo_2022_setor"
+#: Populacao do Censo pela MALHA (fracao de area dos setores): o hexagono de orla e de beira
+#: de rio, onde nenhum centroide de setor cai dentro (emenda da DEC-077).
+FONTE_MEDIDA_MALHA = "censo_2022_malha"
+FONTES_MEDIDAS: tuple[str, ...] = (FONTE_MEDIDA, FONTE_MEDIDA_MALHA)
 #: Renda domiciliar do card (R$/mes), calculada por `montar.py` com o k da malha. NAO vem do
 #: artefato: o nucleo nao faz conta de renda (ponto unico da renda, DEC-072).
 COL_RENDA = "renda_domiciliar"
@@ -353,7 +357,7 @@ def _entrada(hexes: pd.DataFrame, *, renda_disponivel: bool) -> _Entrada:
         residual=_float64(hexes[COL_RESIDUAL]),
         score=_float64(hexes[COL_SCORE]),
         populacao=_float64(hexes[COL_POPULACAO]),
-        medido=(fonte == FONTE_MEDIDA).astype(bool),
+        medido=fonte.isin(FONTES_MEDIDAS).astype(bool),
     )
 
 

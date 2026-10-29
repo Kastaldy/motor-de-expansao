@@ -175,8 +175,8 @@ Regras de leitura:
 | coluna | tipo | regra exata |
 | --- | --- | --- |
 | `demanda_granularidade` | string | `hex_censo` quando `flag_censo_elegivel=True` e `pop_total_setor_2022.notna()`; senao `municipio_proxy` |
-| `pop_hex_base` | float | `pop_total_setor_2022` quando > 0 (independente de `flag_censo_elegivel`); senao `populacao_proxy / total_hex_municipio` quando > 0; senao `null` |
-| `fonte_pop_hex_base` | string | `censo_2022_setor`, `m1_municipal_proxy_per_hex` ou `sem_populacao_valida` |
+| `pop_hex_base` | float | `pop_total_setor_2022` quando > 0 (independente de `flag_censo_elegivel`); senao `populacao_proxy / total_hex_municipio` quando > 0; senao `null`. Onde o traco por centroide deixa `pop_total_setor_2022` nula (orla e beira de rio: nenhum centroide de setor cai no hexagono), ela e preenchida com `pop_malha` de `censo2022_hex_da_malha.parquet` (fracao de area; `preencher_populacao_da_malha`, emenda da DEC-077) |
+| `fonte_pop_hex_base` | string | `censo_2022_setor` (soma por centroide), `censo_2022_malha` (populacao da malha, so onde o centroide nao alcanca), `m1_municipal_proxy_per_hex` (media da cidade: residual ESTIMADO) ou `sem_populacao_valida`. A recomendacao (DEC-077) aceita como medido `censo_2022_setor` e `censo_2022_malha` (`FONTES_MEDIDAS`) |
 | `tam_populacao_base` | float | `pop_total_setor_2022` quando `demanda_granularidade='hex_censo'`; senao `populacao_proxy` |
 | `tam_renda_base` | float | `renda_per_capita_setor_2022_calibrada` quando `demanda_granularidade='hex_censo'` e a coluna estiver preenchida; senao `renda_per_capita` |
 | `tam_indice_demanda` | float | `score_expansao_hibrido` quando `flag_hex_hibrido_elegivel=True` e `score_expansao_hibrido.notna()`; senao `score_priorizacao` |
