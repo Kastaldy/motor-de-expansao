@@ -583,6 +583,62 @@ def _colunas_e3_presentes(malha_path: Path) -> list[str]:
     return [c for c in COLS_RENDA_MALHA if c in nomes]
 
 
+#: Rotulo de `fonte_pop_hex_base` para a populacao que veio da MALHA (fracao de area dos
+#: setores), e nao da soma por centroide. IDENTIFICADOR: sem acento (CLAUDE.md §2).
+FONTE_POP_MALHA = "censo_2022_malha"
+#: Coluna TRANSITORIA que marca, linha a linha, quem teve a populacao preenchida pela malha.
+#: `calcular_colunas_mercado.calcular` a consome para o rotulo e a remove do artefato.
+COL_POP_DA_MALHA = "_pop_da_malha"
+
+
+def preencher_populacao_da_malha(
+    censo: pd.DataFrame,
+    malha_path: Path = DEFAULT_OUTPUT_PATH,
+) -> pd.DataFrame:
+    """Preenche `pop_total_setor_2022` NULA com `pop_malha` -- a regra de `anexar_score`.
+
+    POR QUE. O traco censitario soma os setores pelo CENTROIDE. No hexagono de orla e de
+    beira de rio (os de borda do criterio de overlap, DEC-003) a maior parte da area e'
+    agua e nenhum centroide cai dentro: a populacao fica nula e o mercado cai no proxy
+    municipal (`populacao_proxy / total_hex_municipio`), que e' a media da cidade. A malha
+    reparte cada setor pela area de intersecao e mede o lugar. O enriquecido ja' carrega
+    `pop_malha` nesses hexagonos (`admitir_orfaos_da_malha`), e o mercado nao -- o residual
+    saia de um numero e a tela mostrava outro.
+
+    So' PREENCHE: quem tem populacao pelo centroide fica intacto, bit a bit. Marca quem foi
+    preenchido em `COL_POP_DA_MALHA`, para o rotulo `FONTE_POP_MALHA`.
+
+    IDEMPOTENTE. `calcular_colunas_mercado` le o proprio artefato como entrada; na segunda
+    passada a populacao preenchida ja' esta la' e passaria por "centroide". Por isso quem o
+    artefato ja' rotulou como malha volta a NaN antes do preenchimento e e' relido da malha.
+
+    Pura: nao muta `censo`. Sem o parquet da malha, a coluna marca `False` em todas as linhas
+    e a populacao fica como veio (quem exige a malha e' o `main` do mercado, que aborta).
+    """
+    out = censo.copy()
+    out[COL_POP_DA_MALHA] = False
+    if (
+        not Path(malha_path).exists()
+        or out.empty
+        or "hex_id" not in out.columns
+        or "pop_total_setor_2022" not in out.columns
+    ):
+        return out
+
+    pop = pd.to_numeric(out["pop_total_setor_2022"], errors="coerce")
+    if "fonte_pop_hex_base" in out.columns:
+        pop = pop.mask(out["fonte_pop_hex_base"].astype("object").eq(FONTE_POP_MALHA))
+
+    malha = pd.read_parquet(malha_path, columns=["hex_id", "pop_malha"])
+    pop_malha = pd.to_numeric(
+        out["hex_id"].map(malha.set_index("hex_id")["pop_malha"]), errors="coerce"
+    )
+    preencher = pop.isna() & pop_malha.gt(0)
+    out["pop_total_setor_2022"] = pop.where(~preencher, pop_malha)
+    out[COL_POP_DA_MALHA] = preencher.to_numpy(dtype=bool)
+    return out
+
+
 #: Procedencia dos hexagonos ADMITIDOS (nao apenas revalorados) pela malha.
 FONTE_ORFAO_ADMITIDO = "malha_setorial_orfao_admitido"
 
