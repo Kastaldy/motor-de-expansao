@@ -48,6 +48,7 @@ from motor_expansao.dashboard.pdf_base import (
     rodape,
     texto_da_marca,
 )
+from motor_expansao.perfil import resolver_perfil
 
 #: Teto de itens no deck. O mesmo `MAX_COMPARADOS` da tela e o mesmo tamanho da paleta de
 #: identidade: acima disso duas colunas repetiriam cor e o slide deixaria de distinguir.
@@ -184,8 +185,15 @@ def _valor_com_unidade(valor: float | None, unidade: str) -> str:
     """
     if valor is None:
         return "-"
-    if unidade == "R$":
-        return f"R$ {_milhar(valor)}"
+    # As chaves sao as sentinelas de `web/src/lib/format.ts` (`UNIDADE_RENDA`/`UNIDADE_MOEDA`),
+    # que a tela manda em `porDimensao[].unidade`. Ate' 2026-10-29 este ramo comparava com o
+    # literal "R$", que a tela deixou de mandar em 2026-09-02: desde entao a renda saia SEM
+    # simbolo no deck, tambem no Brasil (achado a-03). O simbolo vem do perfil, e a renda
+    # sai na moeda da RENDA: na Argentina, USD, e nao o "$" do peso.
+    if unidade in ("renda", "moeda"):
+        moeda = resolver_perfil().moeda
+        simbolo = moeda.simbolo_renda() if unidade == "renda" else moeda.simbolo
+        return f"{simbolo} {_milhar(valor)}"
     if unidade == "%":
         return f"{valor:.1f}".replace(".", ",") + "%"
     if unidade == "score":

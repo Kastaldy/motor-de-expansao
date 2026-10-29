@@ -20,6 +20,13 @@ com tributo brasileiro, como provisório declarado. Um símbolo parametrizado al
 "$" numa tela cujos números continuam sendo reais: pior que o provisório assumido, porque
 some com o único sinal de que são reais. Saem com o BLK-INTL-11, não antes.
 
+*Emenda de 2026-10-29 (achado a-03 da conferência da higiene dos docs).* Sem guarda nenhuma
+fora de `lib`, o "R$" cravado sobre RENDA ficou em telas que a Argentina abre — a ficha do
+ponto, o detalhe da região e a recomendação escreviam "R$" sobre renda em DÓLAR (defeito S4
+de `docs/expansao-latam/00-baseline-argentina.md`). Fora de `lib` passa a valer uma SEGUNDA
+guarda, com lista declarada e catraca (`_R_FORA_DE_LIB`, no fim deste arquivo); a de `lib`
+segue de tolerância zero.
+
 **3. Um seletor só de literal de string não serviria.** Das 11 ocorrências que havia em
 `web/src/lib`, apenas 3 eram `Literal` de string; as seis de `brl`/`brlCurto` eram
 TEMPLATE literal — exatamente os sítios que este bloco existe para mover. Por isso a
@@ -30,6 +37,7 @@ Spec: `docs/spec_bloco_a_perfil.md` §2.7 e §5.9 item 6.
 
 from __future__ import annotations
 
+import json
 import re
 from pathlib import Path
 
@@ -156,3 +164,126 @@ def test_a_varredura_separa_codigo_de_comentario(fonte: str, espera: bool) -> No
 def test_bloco_de_varias_linhas_e_ignorado_ate_o_fim() -> None:
     fonte = "/*\n * R$ no meio de um bloco\n */\nconst a = 1\n"
     assert not any(_MOEDA.search(linha) for _, linha in _linhas_de_codigo(fonte))
+
+
+# ----------------------------------------------------------------------------------------
+# Fora de `web/src/lib`: telas, componentes e o resto de `web/src` (emenda de 2026-10-29)
+# ----------------------------------------------------------------------------------------
+_SRC = _REPO / "web" / "src"
+
+#: arquivo (relativo a `web/src`) -> (linhas com "R$" em código, superfície que tem de seguir
+#: FECHADA fora do Brasil ou `None`, motivo). A contagem foi medida em 2026-10-29 e é CATRACA
+#: nos dois sentidos: uma linha NOVA num arquivo listado reprova como num arquivo de fora, e
+#: uma que SAI pede para baixar o número. Assim a lista encolhe junto com o BLK-INTL-11 em vez
+#: de virar licença.
+_R_FORA_DE_LIB: dict[str, tuple[int, str | None, str]] = {
+    "screens/ViabilityScreen.tsx": (
+        8, None, "decisão 0.6: a viabilidade sobe em REAIS fora do Brasil até o BLK-INTL-11",
+    ),
+    "components/ViabilityCharts.tsx": (1, None, "decisão 0.6, como a ViabilityScreen"),
+    "components/ViabilityNotes.tsx": (
+        1, None, "decisão 0.6; e o adicional do IRPJ (R$ 20 mil/mês) é lei brasileira",
+    ),
+    "screens/OportunidadesImobiliariasScreen.tsx": (
+        16, "imobiliaria",
+        "anúncios do coletor de imóveis (aluguel, R$/m²) e renda do território, tudo do Brasil",
+    ),
+    "components/FichaImovel.tsx": (
+        7, None,
+        "ficha do imóvel do coletor brasileiro; abre também pelo pin do Mapa, mas o pin só "
+        "existe onde há o artefato de imóveis",
+    ),
+    "components/HexMap.tsx": (
+        1, None, "dica do pin de IMÓVEL (R$/m²): o pin só existe onde há o artefato de imóveis",
+    ),
+    "components/exec/FichaMapa.tsx": (
+        3, "executiva", "Visão Executiva: renda do censo brasileiro e preço de plano em reais",
+    ),
+}
+
+
+def _fontes_fora_de_lib() -> list[Path]:
+    return [
+        p
+        for p in sorted(_SRC.rglob("*"))
+        if p.is_file()
+        and p.suffix in (".ts", ".tsx")
+        and not p.relative_to(_SRC).as_posix().startswith("lib/")
+        and ".test." not in p.name
+        and ".d." not in p.name
+    ]
+
+
+def _linhas_com_moeda(arquivo: Path) -> list[str]:
+    return [
+        f"{n}: {linha.strip()}"
+        for n, linha in _linhas_de_codigo(arquivo.read_text(encoding="utf-8"))
+        if _MOEDA.search(linha)
+    ]
+
+
+def test_o_escopo_fora_de_lib_nao_esta_vazio() -> None:
+    fontes = _fontes_fora_de_lib()
+    assert len(fontes) >= 50, "web/src fora de lib com menos arquivos que o esperado"
+    assert any(p.suffix == ".tsx" for p in fontes), "a varredura deixou de ver .tsx"
+
+
+def test_sem_moeda_cravada_fora_de_lib_alem_do_declarado() -> None:
+    novos: list[str] = []
+    contagem_mudou: list[str] = []
+    for arquivo in _fontes_fora_de_lib():
+        rel = arquivo.relative_to(_SRC).as_posix()
+        linhas = _linhas_com_moeda(arquivo)
+        if rel not in _R_FORA_DE_LIB:
+            novos.extend(f"web/src/{rel}:{linha}" for linha in linhas)
+        elif len(linhas) != _R_FORA_DE_LIB[rel][0]:
+            contagem_mudou.append(
+                f"web/src/{rel}: {len(linhas)} linhas, a lista declara {_R_FORA_DE_LIB[rel][0]}"
+            )
+    assert not novos, (
+        "Símbolo de moeda cravado fora de `web/src/lib`. Renda sai por `renda()`/`moedaRenda()`\n"
+        "e dinheiro na moeda oficial por `brl()`/`moeda()`: numa instância que serve outra\n"
+        "moeda, o literal escreve o símbolo errado e nenhum teste brasileiro percebe.\n\n"
+        "Achado em:\n  " + "\n  ".join(novos)
+    )
+    assert not contagem_mudou, (
+        "A contagem de `R$` mudou num arquivo declarado. Se SUBIU, a linha nova precisa de\n"
+        "`moeda()`/`moedaRenda()` ou de decisão visível aqui; se DESCEU, baixe o número em\n"
+        "`_R_FORA_DE_LIB` (ou tire o arquivo, se zerou).\n\n  " + "\n  ".join(contagem_mudou)
+    )
+
+
+def test_todo_arquivo_declarado_existe() -> None:
+    """Arquivo renomeado ou apagado deixaria uma entrada morta, e a catraca não veria o novo."""
+    faltando = [rel for rel in _R_FORA_DE_LIB if not (_SRC / rel).is_file()]
+    assert not faltando, f"Entradas de `_R_FORA_DE_LIB` sem arquivo: {faltando}"
+
+
+def test_superficie_so_do_brasil_segue_fechada_nos_outros_paises() -> None:
+    """Parte da lista se justifica porque a superfície só abre no Brasil. Se ela abrir noutro
+    país, o "R$" desses arquivos passa a aparecer lá sobre dado que não é em reais, e o motivo
+    deixa de valer sem nenhum outro teste ficar vermelho."""
+    abertas: list[str] = []
+    perfis = sorted((_REPO / "data" / "perfis").glob("*/perfil.json"))
+    assert len(perfis) >= 2, "a varredura de perfis não achou os perfis do repositório"
+    for perfil in perfis:
+        dados = json.loads(perfil.read_text(encoding="utf-8"))
+        if dados["pais"] == "BR":
+            continue
+        superficies = set(dados["superficies"])
+        for rel, (_, superficie, _) in _R_FORA_DE_LIB.items():
+            if superficie is not None and superficie in superficies:
+                abertas.append(f"{dados['pais']}: `{superficie}` abriu e web/src/{rel} escreve R$")
+    assert not abertas, "\n".join(abertas)
+
+
+def test_as_telas_do_a03_nao_entram_na_lista() -> None:
+    """As telas que a Argentina abre e que escreviam "R$" sobre renda em dólar não podem
+    entrar na lista: seria o caminho mais curto para fazer a guarda passar."""
+    for rel in (
+        "screens/PontoScreen.tsx",
+        "components/DetalheRegiao.tsx",
+        "components/Recomendacao.tsx",
+        "components/TabelaRanking.tsx",
+    ):
+        assert rel not in _R_FORA_DE_LIB, rel

@@ -1,4 +1,4 @@
-import { num } from '../lib/format'
+import { UNIDADE_MOEDA, UNIDADE_RENDA, num, valorComUnidade } from '../lib/format'
 import type { RankingComparacao } from '../lib/ranking-comparacao'
 
 /**
@@ -266,9 +266,15 @@ function fracaoNaLinha(
   return Math.abs(valor) / teto
 }
 
-function formatar(v: number | null, unidade: string): string {
+/**
+ * Dinheiro passa por `valorComUnidade`, que escolhe o símbolo num lugar só: a renda na moeda
+ * da RENDA, o resto na oficial. Até 2026-10-29 esta função comparava a unidade com o literal
+ * 'R$', que a comparação deixou de mandar em 2026-09-02, e a renda saía SEM símbolo na
+ * tabela, também no Brasil (achado a-03). Exportada para `moeda-da-renda.test.ts`.
+ */
+export function formatar(v: number | null, unidade: string): string {
   if (v == null) return num(v)
-  if (unidade === 'R$') return `R$ ${num(v)}`
+  if (unidade === UNIDADE_RENDA || unidade === UNIDADE_MOEDA) return valorComUnidade(v, unidade)
   if (unidade === '%') return `${num(v, 1)}%`
   if (unidade === 'p.p.') return `${v > 0 ? '+' : ''}${num(v, 1)}`
   if (unidade === 'score') return num(v, 1)

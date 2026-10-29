@@ -10,7 +10,12 @@ import {
   pctVar,
   renda,
   rotuloMes,
+  UNIDADE_MOEDA,
+  UNIDADE_RENDA,
+  valorComUnidade,
 } from './format'
+import { DIMENSOES } from './comparacao'
+import { DIMENSOES_PONTO } from './comparacao-pontos'
 import { TEXTO_SEM_DADO } from './constants'
 import { _resetarPerfilParaTeste, definirPerfil, type PerfilCliente } from './perfil'
 
@@ -88,6 +93,34 @@ describe('renda — NUNCA o simbolo da moeda oficial quando ela diverge do indic
 
   it('null -> sem-dado', () => {
     expect(renda(null)).toBe(TEXTO_SEM_DADO)
+  })
+})
+
+describe('valorComUnidade — a renda das comparacoes sai na moeda da RENDA', () => {
+  afterEach(() => {
+    _resetarPerfilParaTeste()
+  })
+
+  it('no Brasil a renda sai com R$', () => {
+    expect(valorComUnidade(4500, UNIDADE_RENDA)).toBe('R$ 4.500')
+  })
+
+  it('na Argentina a renda sai em USD, e a moeda oficial segue com o simbolo do peso', () => {
+    // Defeito S4 do baseline da Argentina (achado a-03, 2026-10-29): as duas dimensoes de
+    // renda usavam `UNIDADE_MOEDA`, e a comparacao escrevia "$ 508" — peso — sobre 508 DOLARES.
+    definirPerfil(AR)
+    expect(valorComUnidade(508, UNIDADE_RENDA)).toBe('USD 508')
+    expect(valorComUnidade(508, UNIDADE_MOEDA)).toBe('$ 508')
+  })
+
+  it('as dimensoes de renda das duas comparacoes usam a sentinela da RENDA', () => {
+    const rendas = [...DIMENSOES, ...DIMENSOES_PONTO].filter((d) => d.chave.startsWith('renda'))
+    expect(rendas.map((d) => d.chave)).toEqual(['renda', 'renda_domiciliar'])
+    for (const d of rendas) expect(d.unidade).toBe(UNIDADE_RENDA)
+  })
+
+  it('sem valor, sem simbolo', () => {
+    expect(valorComUnidade(null, UNIDADE_RENDA)).toBe(TEXTO_SEM_DADO)
   })
 })
 

@@ -8041,9 +8041,14 @@ def _criterios_do_ponto(
 
     itens = [
         crit("populacao", f"População {onde}", censo.get("populacao"), pop_minima, "pessoas"),
+        # `"renda"` e' a sentinela `UNIDADE_RENDA` de `web/src/lib/format.ts`, NAO o simbolo:
+        # a tela escreve a renda na moeda da RENDA do perfil. Ate' 2026-10-29 ia "R$" cravado,
+        # e a ficha escrevia "R$" sobre a renda em DOLAR da Argentina (achado a-03). A regua
+        # (`RENDA_MIN`, em reais) segue a mesma nos dois paises: e' o S1 do baseline da AR
+        # (`docs/expansao-latam/00-baseline-argentina.md`), ainda aberto.
         crit(
             "renda_domiciliar", "Renda domiciliar",
-            censo.get("renda_media_domiciliar"), float(settings.RENDA_MIN), "R$",
+            censo.get("renda_media_domiciliar"), float(settings.RENDA_MIN), "renda",
         ),
         crit(
             "score", "Potencial socioeconômico",

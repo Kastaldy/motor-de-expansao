@@ -36,7 +36,7 @@ import {
 import type { RotuloPartido } from '../lib/comparacao'
 import type { AlvoCaptura } from '../lib/captura-mapa'
 import { classificarEntrada, linkGoogleMaps, type EntradaClassificada } from '../lib/entrada-ponto'
-import { alunos, num } from '../lib/format'
+import { alunos, num, renda } from '../lib/format'
 import { leituraDoMercado } from '../lib/mercado-ponto'
 import { ehEstudoDaUnidade, ofertaDeEstudoUltra, type OfertaEstudoUltra } from '../lib/estudo-ultra'
 import { chaveDaCoordenada } from '../lib/comparacao-pontos'
@@ -1000,8 +1000,8 @@ function Ficha({
           <FilaApoio>
             <NumeroApoio rotulo="População" valor={num(censo.populacao)} />
             <NumeroApoio rotulo="Domicílios" valor={num(censo.domicilios)} />
-            <NumeroApoio rotulo="Renda per capita" valor={comPrefixo('R$ ', censo.renda_per_capita)} />
-            <NumeroApoio rotulo="Renda domiciliar" valor={comPrefixo('R$ ', censo.renda_media_domiciliar)} />
+            <NumeroApoio rotulo="Renda per capita" valor={renda(censo.renda_per_capita)} />
+            <NumeroApoio rotulo="Renda domiciliar" valor={renda(censo.renda_media_domiciliar)} />
             <NumeroApoio rotulo="Densidade" valor={comSufixo(censo.densidade_hab_km2, ' hab/km²')} />
           </FilaApoio>
         </div>
@@ -1377,12 +1377,10 @@ function Secao({
   )
 }
 
-/* Prefixo/sufixo só entram quando HÁ número: "R$ —" e "— hab/km²" leem como se o
-   dado existisse e valesse zero. Sem dado, fica só o travessão de `num`. */
-function comPrefixo(prefixo: string, v: number | null): string {
-  return v == null ? num(v) : `${prefixo}${num(v)}`
-}
-
+/* Sufixo só entra quando HÁ número: "— hab/km²" lê como se o dado existisse e valesse
+   zero. Sem dado, fica só o travessão de `num`. A renda segue a mesma regra por `renda()`,
+   de `lib/format`, que também põe o símbolo da moeda da RENDA: o `comPrefixo('R$ ', …)`
+   que estava aqui escrevia "R$" sobre a renda em dólar da Argentina (achado a-03). */
 function comSufixo(v: number | null, sufixo: string): string {
   return v == null ? num(v) : `${num(v)}${sufixo}`
 }

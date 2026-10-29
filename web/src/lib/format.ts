@@ -148,11 +148,31 @@ export function pctVar(v: number | null | undefined, casas = 1): string {
  * duas telas de comparacao cravavam `unidade: 'R$'` e o `valorComUnidade` comparava com
  * o literal — ou seja, o simbolo da moeda era ao mesmo tempo o VALOR exibido e a CHAVE
  * de despacho. Numa instancia com outra moeda os dois se separam, e comparar com o
- * simbolo passaria a nao casar em silencio, caindo no `num(v)` sem unidade nenhuma.
+ * simbolo passaria a nao casar em silencio, caindo no `num(v)` sem unidade nenhuma. Foi o
+ * que aconteceu: a tabela do ranking (`TabelaRanking.formatar`) e o PDF de comparacao
+ * seguiram comparando com 'R$', e a renda saiu sem simbolo desde 2026-09-02 (achado a-03
+ * da conferencia de 2026-10-29).
+ *
+ * E' a moeda OFICIAL do pais. A renda tem sentinela propria, `UNIDADE_RENDA`, logo abaixo.
  *
  * IDENTIFICADOR, entao sem acento e nunca exibido (CLAUDE.md §2).
  */
 export const UNIDADE_MOEDA = 'moeda'
+
+/**
+ * Unidade "renda" de uma `Dimensao` — a irma de `UNIDADE_MOEDA`, como `renda()` e' a irma
+ * de `brl()`. A renda do pacote pode chegar numa moeda DIFERENTE da oficial (Argentina:
+ * renda em USD, moeda ARS), e as duas dimensoes de renda das comparacoes usavam
+ * `UNIDADE_MOEDA`: escreviam "$" de peso sobre dolar (defeito S4 de
+ * `docs/expansao-latam/00-baseline-argentina.md`; achado a-03).
+ *
+ * A chave e' uma so' nos dois runtimes: o servidor manda a MESMA sentinela no criterio de
+ * renda da ficha do ponto (`_criterios_do_ponto`), e o PDF de comparacao a le de volta em
+ * `porDimensao[].unidade` (`relatorio_comparacao._valor_com_unidade`).
+ *
+ * IDENTIFICADOR, entao sem acento e nunca exibido (CLAUDE.md §2).
+ */
+export const UNIDADE_RENDA = 'renda'
 
 /**
  * O valor de uma `Dimensao` na unidade dela.
@@ -160,12 +180,14 @@ export const UNIDADE_MOEDA = 'moeda'
  * Vive aqui porque a comparacao passou a ter DOIS desenhos — a tabela A x B e os blocos
  * por parametro — e os dois precisam escrever o mesmo numero do mesmo jeito. Com a funcao
  * duplicada, a primeira mudanca de casa decimal faria as duas telas discordarem sobre o
- * mesmo dado.
+ * mesmo dado. Pelo mesmo motivo a tabela do ranking e a ficha do ponto passam por aqui nas
+ * unidades de DINHEIRO: o simbolo e' escolhido num lugar so'.
  *
  * `p.p.` sai assinado: ponto percentual e' VARIACAO, e ali o sinal e' a informacao.
  */
 export function valorComUnidade(v: number | null, unidade: string): string {
   if (v == null) return num(v)
+  if (unidade === UNIDADE_RENDA) return `${moedaRenda()} ${num(v)}`
   if (unidade === UNIDADE_MOEDA) return `${moeda()} ${num(v)}`
   if (unidade === '%') return `${num(v, 1)}%`
   if (unidade === 'p.p.') return `${pctVar(v, 1).replace('%', '')} p.p.`
