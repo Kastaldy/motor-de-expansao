@@ -26,7 +26,24 @@ import {
   pctFrac,
   rotuloMes,
 } from '../lib/format'
+import {
+  aluguelDeReferencia,
+  diferencaPct,
+  ROTULO_SELETOR_TIPO_IMOVEL,
+  ROTULO_TIPO_IMOVEL,
+  textoDaBase,
+  textoDaDiferenca,
+  TIPO_IMOVEL_PADRAO,
+  TIPOS_IMOVEL_ALUGUEL,
+  type AluguelReferencia,
+  type TipoImovelAluguel,
+} from '../lib/aluguel-referencia'
 import { formatarNumero } from '../lib/mascara'
+import {
+  ESTILO_ROTULO_ALCANCE,
+  ESTILO_TRILHO_ALCANCE,
+  estiloDaOpcaoAlcance,
+} from '../lib/seletor-alcance'
 import {
   avisoDoRecorteDoRelatorio,
   dicaDoRelatorioCompleto,
@@ -208,6 +225,98 @@ function fixa(padrao: string): string {
   return padrao
 }
 
+/** Aluguel do vazio quando a instância não tem a base de imóveis (o padrão de antes da DEC-080). */
+const ALUGUEL_SEM_BASE_REAIS = 20_000
+
+/**
+ * O SELETOR DO TIPO DO IMÓVEL (DEC-080), no mesmo visual do seletor de alcance da ficha do
+ * ponto (DEC-074): controle segmentado, marcado CHEIO. Trocar o tipo troca a régua de aluguel.
+ */
+function SeletorTipoImovel({
+  atual,
+  onTrocar,
+}: {
+  atual: TipoImovelAluguel
+  onTrocar: (tipo: TipoImovelAluguel) => void
+}) {
+  return (
+    <div style={{ display: 'grid', gap: 6, marginBottom: 10 }}>
+      <span id="rotulo-tipo-imovel" style={ESTILO_ROTULO_ALCANCE}>
+        {ROTULO_SELETOR_TIPO_IMOVEL}
+      </span>
+      <div role="radiogroup" aria-labelledby="rotulo-tipo-imovel" style={ESTILO_TRILHO_ALCANCE}>
+        {TIPOS_IMOVEL_ALUGUEL.map((t) => {
+          const marcado = t === atual
+          return (
+            <button
+              key={t}
+              type="button"
+              role="radio"
+              aria-checked={marcado}
+              onClick={() => onTrocar(t)}
+              style={estiloDaOpcaoAlcance(marcado)}
+            >
+              {ROTULO_TIPO_IMOVEL[t]}
+            </button>
+          )
+        })}
+      </div>
+    </div>
+  )
+}
+
+/**
+ * O QUADRO DO ALUGUEL DE REFERÊNCIA (DEC-080): o R$/m² e o aluguel para a metragem, a base
+ * em fato neutro (sem selo, sem fonte, sem data) e, com o aluguel digitado, a comparação.
+ */
+function QuadroAluguelReferencia({
+  referencia,
+  m2,
+  aluguelDigitado,
+}: {
+  referencia: AluguelReferencia | null
+  m2: number
+  aluguelDigitado: number | null
+}) {
+  const valor = aluguelDeReferencia(referencia, m2)
+  if (!referencia || valor == null) return null
+  const pct = diferencaPct(aluguelDigitado, valor)
+  return (
+    <div
+      style={{
+        marginTop: 10,
+        padding: '10px 12px',
+        borderRadius: 10,
+        border: '1px solid var(--line-soft)',
+        background: 'var(--surf-chip)',
+        display: 'grid',
+        gap: 4,
+      }}
+    >
+      <span style={{ font: '600 11px/1.3 var(--f-ui)', color: 'var(--tx-sub)' }}>
+        Aluguel de referência
+      </span>
+      <span style={{ font: '700 14px/1.3 var(--f-ui)', color: 'var(--tx-strong)' }}>
+        {brl(referencia.rs_m2, false, 2)}/m² · {brl(valor)}/mês para {num(m2)} m²
+      </span>
+      <span style={{ font: '400 11px/1.4 var(--f-ui)', color: 'var(--tx-sub)' }}>
+        {textoDaBase(referencia)}
+      </span>
+      {pct != null && aluguelDigitado != null && (
+        <span
+          style={{
+            font: `${pct > 0 ? 700 : 600} 12.5px/1.4 var(--f-ui)`,
+            color: pct > 0 ? 'var(--neg-forte)' : 'var(--pos-text)',
+            whiteSpace: 'nowrap',
+          }}
+        >
+          Seu aluguel: {textoDaDiferenca(pct)}
+        </span>
+      )}
+    </div>
+  )
+}
+
 export default function ViabilityScreen({
   ponto,
   onVoltar,
@@ -233,8 +342,26 @@ export default function ViabilityScreen({
   definirExibicaoMonetaria(moedaLocal ? { simbolo, porReal: 1 / reaisPorUn } : null)
   // Com seletor de moeda o aluguel abre VAZIO: R$ 20.000 lido como US$ 20.000 seria
   // um número que ninguém escolheu (a mesma família do 800 da demanda).
-  const [aluguel, setAluguel] = useState<number | undefined>(moedaLocal ? undefined : 20000)
-  const aluguelReais = paraReais(aluguel, reaisPorUn)
+  //
+  // DEC-080: no Brasil o aluguel também abre VAZIO, e o vazio vale o ALUGUEL DE REFERÊNCIA
+  // (metragem × R$/m² mediano dos anúncios do município e do tipo do imóvel) — o mesmo
+  // número que a caixa mostra em cinza e o que vai para a conta (regra da DEC-079). Sem a
+  // base de imóveis na instância, o vazio segue valendo os R$ 20.000 de antes.
+  const [aluguel, setAluguel] = useState<number | undefined>(undefined)
+  const [tipoImovel, setTipoImovel] = useState<TipoImovelAluguel>(TIPO_IMOVEL_PADRAO)
+  const [refAluguel, setRefAluguel] = useState<AluguelReferencia | null>(null)
+  /** A referência mais recente, lida por `calcular` logo após a busca (o estado só chega
+   *  no próximo render, e a conta da chegada ao ponto sairia com a referência velha). */
+  const refAluguelAgora = useRef<AluguelReferencia | null>(null)
+  const aluguelDigitadoReais = paraReais(aluguel, reaisPorUn)
+  const aluguelRefReais = moedaLocal ? null : aluguelDeReferencia(refAluguel, m2)
+  /** O aluguel que entra na conta: o digitado; vazio, a referência (só no Brasil). */
+  function aluguelDaConta(): number | null {
+    if (aluguelDigitadoReais != null) return aluguelDigitadoReais
+    if (moedaLocal) return null
+    return aluguelDeReferencia(refAluguelAgora.current, m2) ?? ALUGUEL_SEM_BASE_REAIS
+  }
+  const aluguelReais = aluguelDaConta()
   /** Valor em reais escrito na moeda escolhida, para o texto de uma caixa vazia. */
   const naMoeda = (reais: number) => formatarNumero(Math.round(reais / reaisPorUn), 0)
   // Ticket de MUSCULAÇÃO = mensalidade R$/mês do plano de balcão (P2-12). O ticket
@@ -367,6 +494,19 @@ export default function ViabilityScreen({
     }
   }
 
+  /** Régua de aluguel do ponto para o tipo (DEC-080); `null` sem base ou sem resposta. */
+  async function buscarReferencia(tipo: TipoImovelAluguel): Promise<AluguelReferencia | null> {
+    return api.aluguelReferencia(tipo, ponto?.uf, ponto?.municipio).catch(() => null)
+  }
+
+  /** Troca o tipo do imóvel: troca a régua e, com o aluguel vazio, o aluguel da conta. */
+  async function trocarTipoImovel(tipo: TipoImovelAluguel) {
+    setTipoImovel(tipo)
+    const r = await buscarReferencia(tipo)
+    refAluguelAgora.current = r
+    setRefAluguel(r)
+  }
+
   function montarPayload(
     demandaUsar: number,
     sug: DemandaV2Out | null = sugestaoV2,
@@ -379,7 +519,7 @@ export default function ViabilityScreen({
       lng: alvoLng!,
       m2,
       // Tudo que é dinheiro vai ao motor em REAIS (fator 1 onde a tela já é em reais).
-      aluguel: aluguelReais ?? 0,
+      aluguel: aluguelDaConta() ?? 0,
       ticket: ticketDaConta,
       // % digitado -> FRAÇÃO (o contrato). Vazio some do JSON e o motor usa o padrão.
       share_balcao: mixEditavel ? fracaoDoPercentual(pctBalcao) : undefined,
@@ -507,6 +647,12 @@ export default function ViabilityScreen({
     setSugestaoV2(null)
     ;(async () => {
       let seed = demanda
+      if (!moedaLocal) {
+        const r = await buscarReferencia(tipoImovel)
+        if (!vivo) return
+        refAluguelAgora.current = r
+        setRefAluguel(r)
+      }
       try {
         const f = await api.faixaAlunos(m2)
         if (!vivo) return
@@ -966,6 +1112,10 @@ export default function ViabilityScreen({
               STUDIOS FICA COMO ESTA': 0..3, um digito, nunca tem separador de milhar
               para exibir e a faixa ja' esta' no rotulo. Mascarar so' custaria o clamp
               e as setas nativas, sem entregar nada. */}
+          {!moedaLocal && (
+            <SeletorTipoImovel atual={tipoImovel} onTrocar={(t) => void trocarTipoImovel(t)} />
+          )}
+
           <div style={{ display: 'flex', gap: 10 }}>
             <Campo label="Metragem">
               <CampoNumero
@@ -987,17 +1137,31 @@ export default function ViabilityScreen({
               <CampoNumero
                 valor={aluguel}
                 onValor={setAluguel}
-                onVazio={moedaLocal ? () => setAluguel(undefined) : undefined}
+                onVazio={() => setAluguel(undefined)}
                 maxDigitos={moedaLocal && moedaEntrada === 'local' ? 10 : 7}
                 min={0}
                 step={moedaLocal && moedaEntrada === 'local' ? 100000 : 1000}
                 prefixo={simbolo}
                 rotulo={`Aluguel em ${nomeMoeda} por mês`}
-                placeholder={moedaLocal ? 'Informe' : undefined}
-                title={`Aluguel pedido, em ${simbolo}/mês.`}
+                placeholder={
+                  moedaLocal ? 'Informe' : naMoeda(aluguelRefReais ?? ALUGUEL_SEM_BASE_REAIS)
+                }
+                title={
+                  moedaLocal
+                    ? `Aluguel pedido, em ${simbolo}/mês.`
+                    : 'Aluguel pedido, em R$/mês. Vazio usa o aluguel de referência do município para o tipo e a metragem.'
+                }
               />
             </Campo>
           </div>
+
+          {!moedaLocal && (
+            <QuadroAluguelReferencia
+              referencia={refAluguel}
+              m2={m2}
+              aluguelDigitado={aluguelDigitadoReais ?? null}
+            />
+          )}
 
           <div style={{ display: 'flex', gap: 10, marginTop: 10 }}>
             {moedaLocal ? (

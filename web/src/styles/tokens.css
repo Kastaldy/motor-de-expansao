@@ -315,6 +315,9 @@
   --pos-pill: #7fe6a6;
   --neg: #ff7a8a;
   --neg-bar: #d9556a;
+  /* Vermelho de ALERTA forte (aluguel acima da referência, DEC-080): --neg é coral e se
+     perde no fundo escuro e no azul do claro. */
+  --neg-forte: #ff3b4f;
   --warn: #d9a441;
   --warn-text: #e9c07a;
   /* Azul de INFORMACAO. Segue SEM uso: foi testado na regra do KPI em destaque do
@@ -736,6 +739,7 @@
   --pos-pill: #0a6f3b;
   --neg: #d32d4d;
   --neg-bar: #b82440;
+  --neg-forte: #c00020;
   --warn: #a9770f;
   --warn-text: #865d0a;
   --info: #1d4ed8;
