@@ -5,7 +5,7 @@
 > `src/motor_expansao/dimensionamento/simulador.py`. Backend, frontend e PDF apenas
 > **leem** o resultado — nenhuma fórmula financeira pode ser reescrita fora do simulador.
 >
-> Ciclo: **FIN-VIAB-01** (reconciliação do simulador) · Atualizado em **2026-07-25**, com acréscimos de **2026-10-05** (studios com ticket próprio, DEC-068) e **2026-10-21/22** (demanda do modelo de praça e curva de rampa, DEC-078)
+> Ciclo: **FIN-VIAB-01** (reconciliação do simulador) · Atualizado em **2026-07-25**, com acréscimos de **2026-10-05** (studios com ticket próprio, DEC-068), **2026-10-21/22** (demanda do modelo de praça e curva de rampa, DEC-078) e **2026-10-28** (padrão do investimento por campo, DEC-079)
 > (**4ª rodada** — a régua de retorno foi refeita: a taxa de desconto de 12% a.a. **saiu** e deu
 > lugar à **taxa mínima do negócio de 25% a.a.**, a **taxa mínima do sócio passou a ser derivada**
 > (não é mais parâmetro), TIR e VPL passaram a existir em **duas óticas separadas**, entrou o
@@ -225,14 +225,14 @@ R$ 20.000/mês → IR/CSLL = **R$ 29.362,42/mês**.
 
 | parâmetro | default | unidade | fonte | quem pode alterar | onde vive |
 |---|---|---|---|---|---|
-| `obra` | — (input) | R$ | CAPEX de obra, pago em parcelas **sem juros** (equity) | Operador | argumento de `simular()`; payload `investimento.obra` |
+| `obra` | `1 500 000` (`SIM_OBRA_DEFAULT`) | R$ | CAPEX de obra, pago em parcelas **sem juros** (equity); o padrão é o número cinza da tela (DEC-079) | Operador | `config.py` → padrão em `investimento_do_body`; argumento de `simular()`; payload `investimento.obra` |
 | `SIM_PARCELAS_OBRA_DEFAULT` | `4` | parcelas | cronograma padrão de obra (M-4..M-1) | Operador | `config.py` → argumento `parcelas_obra` |
-| `equipamentos` | — (input) | R$ | CAPEX financiado (Price) | Operador | argumento de `simular()`; payload `investimento.equipamentos` |
-| `prazo_equipamentos` | — (input) | meses | contrato de financiamento | Operador | argumento de `simular()` |
-| `juros_equipamentos_am` | — (input) | % ao mês | contrato de financiamento | Operador | argumento de `simular()` |
+| `equipamentos` | `1 200 000` (`SIM_EQUIPAMENTOS_DEFAULT`) | R$ | CAPEX financiado (Price); o padrão é o número cinza da tela (DEC-079), e 0 digitado não financia nada | Operador | `config.py` → padrão em `investimento_do_body`; argumento de `simular()`; payload `investimento.equipamentos` |
+| `prazo_equipamentos` | `36` (`SIM_PRAZO_EQUIPAMENTOS_DEFAULT`) | meses | contrato de financiamento; padrão da DEC-079 | Operador | `config.py` → padrão em `investimento_do_body`; argumento de `simular()` |
+| `juros_equipamentos_am` | `0.018` (`SIM_JUROS_EQUIPAMENTOS_AM_DEFAULT`) | % ao mês | contrato de financiamento; padrão da DEC-079 (o custo da dívida da planilha, 1,8% a.m.) | Operador | `config.py` → padrão em `investimento_do_body`; argumento de `simular()` |
 | `SIM_TAXA_FRANQUIA` | `160 000,00` | R$ | conflito **B** na §9 (planilha diz 140.000) | Felipe + Comitê | `config.py` → argumento `taxa_franquia`; **editável pelo operador** |
 | `SIM_PARCELAS_FRANQUIA_DEFAULT` | `4` | parcelas **sem juros** | decisão de Felipe, 2026-07-24 — ver §6.1 | Felipe + Comitê | `config.py` → argumento `parcelas_franquia` de `gerar_serie_mensal_completa()` e `simular()`; parcelas nos meses de **contrato 1..N** (M-4..M-1 com N=4), junto da obra |
-| `SIM_CAPEX_DEFAULT` | `2 340 000` | R$ | `Simulador!R9`, cenário 0 (`FC!C11:C16`) | **congelado (legado)** | `config.py`; só o caminho `viabilidade()` legado |
+| `SIM_CAPEX_DEFAULT` | `2 340 000` | R$ | `Simulador!R9`, cenário 0 (`FC!C11:C16`) | **congelado (legado)** | `config.py`; só o corpo legado da API (`capex`/`capex_financiado_*`, com obra e equipamentos vazios) e o adaptador `viabilidade()` (DEC-079) |
 | `SIM_ALUGUEL_MES` | `20 000` | R$/mês | `Simulador!N9` | **congelado (legado)** | `config.py`; o aluguel real é input manual |
 | `SIM_MESES_PRE_ABERTURA` | `4` | meses | linha do tempo M-4..M-1 | Felipe | `config.py` → `Premissas.meses_pre_abertura` |
 | `SIM_HORIZONTE_MESES` | `60` | meses | **escopo fechado** (horizonte de 60 meses) | Comitê + DEC | `config.py` → `Premissas.horizonte_meses` |
@@ -248,6 +248,8 @@ R$ 20.000/mês → IR/CSLL = **R$ 29.362,42/mês**.
 | `SIM_CAPEX_RENOVACAO` | `0.0` | R$ | **explicitação de ausência** — o corte em 60 meses ignora CAPEX de renovação | Comitê + DEC | `config.py` → `Premissas.capex_renovacao` |
 | `SIM_MARGEM_VIAVEL_MIN` | **`0.30`** | % de margem EBITDA | **decisão de Felipe, 2026-07-25** — era `0.10`; a régua antiga aprovava cenário de margem 12% que ninguém levaria a comitê. Ver §6.4 | Comitê + DEC | `config.py` → `flag_viavel` |
 | `SIM_PAYBACK_VIAVEL_MAX` | `36` | meses | critério de `flag_viavel` (era literal em `simulador.py`) | Comitê + DEC | `config.py` |
+
+**Padrão por campo do investimento (DEC-079, decisão de Felipe em 2026-10-28).** Campo vazio vale o padrão próprio (obra 1.500.000, equipamentos 1.200.000, 36 meses a 1,8% a.m.), que é o mesmo número que a tela mostra em cinza: digitar o cinza dá o mesmo resultado que deixar vazio. Vale no motor inteiro: tela, PDF, Excel, API pública e bot. Valor digitado, inclusive 0, é honrado; para não financiar nada, digita-se 0 em Equipamentos. Antes, obra e equipamentos vazios viravam um CAPEX único de 2.340.000 sem financiamento, preencher um zerava o outro e o juros vazio era 0%. O corpo legado da API (`capex`, `capex_financiado_valor`/`_pct`, `juros_financiamento_am`, `capex_parcelas_meses`), com obra e equipamentos vazios, segue a regra antiga. Travado em `tests/unit/dimensionamento/test_investimento_padrao.py`.
 
 **A PMT é nominal e não sofre reajuste.** O reajuste anual é um degrau por ano cheio a partir do
 mês 13; a pré-abertura não reajusta.
