@@ -13201,12 +13201,18 @@ async def relatorio_pontual(
     e sem `so_estudo`. Sem unidade na tolerancia -> 400.
 
     `alcance` (`raio_2km`/`carro_5min`/`carro_10min`) OU `geometria` (o GeoJSON do desenho),
-    campos Form (DEC-074, fase 2 da DEC-071): o Estudo do RECORTE escolhido na ficha. So' com
-    `so_estudo` -- o relatorio completo (viabilidade, zona morta) e' do raio de 1 km, e um
-    PDF com o selo demografico num recorte e o financeiro em outro seria dois estudos
-    colados. O servidor RECALCULA o recorte (a isocrona sai do cache do servico de rotas, o
-    desenho passa pelo mesmo validador da ficha) -- nunca confia num poligono "de alcance"
-    vindo do cliente. Sem os campos (ou com `raio_1km`), comportamento identico ao de antes.
+    campos Form (DEC-074, fase 2 da DEC-071): o RECORTE escolhido na ficha. O `alcance` vale no
+    Estudo e, desde a Emenda 4 da DEC-074 (PROPOSTA), tambem no relatorio COMPLETO -- o
+    Simulador leva o alcance da ficha (relato do Vinicius, 27/10/2026: o relatorio da
+    Viabilidade saia no raio de 1 km de um ponto lido em 5 min de carro). No completo o
+    TERRITORIO le o recorte exatamente como no Estudo (carga, motor, mapas, mercado com o
+    fator da regua, Big Numbers e o selo demografico); o financeiro, a zona morta (captacao
+    propria de 1,5 km, DEC-042) e a demanda sugerida (isocrona de 10 min do modelo,
+    DEC-078) nao dependem dele. A `geometria` segue SO' com `so_estudo`: na Viabilidade a
+    area desenhada e' o ponto central, e o relatorio completo dela e' o raio de 1 km. O
+    servidor RECALCULA o recorte (a isocrona sai do cache do servico de rotas, o desenho
+    passa pelo mesmo validador da ficha) -- nunca confia num poligono "de alcance" vindo do
+    cliente. Sem os campos (ou com `raio_1km`), comportamento identico ao de antes.
 
     Esta funcao so faz a parte ASSINCRONA (ler os uploads) e delega o resto ao
     threadpool — ver `_gerar_relatorio_pontual_pdf`.
@@ -13283,8 +13289,10 @@ async def relatorio_pontual(
         )
 
 
+# Desde a Emenda 4 da DEC-074 so' a AREA DESENHADA cai aqui: o alcance chega ao completo.
 MSG_RECORTE_SO_NO_ESTUDO = (
-    "O relatório completo é do raio de 1 km; para o recorte use o Estudo."
+    "O relatório completo da área desenhada é do raio de 1 km em volta do ponto central; "
+    "para a área use o Estudo."
 )
 MSG_RECORTE_DUPLO = "Envie o alcance OU a área desenhada, não os dois."
 MSG_GEOMETRIA_MALFORMADA = "Área desenhada inválida: o campo não é um GeoJSON legível."
@@ -13322,9 +13330,11 @@ def _resolver_recorte_do_pdf(
     """Campos Form do Estudo -> recorte pronto, ou `None` (o raio de 1 km de sempre).
 
     Recusas em portugues (400), na ordem do mais barato ao mais caro: os dois campos
-    juntos; recorte sem `so_estudo`; estudo da unidade Ultra na area desenhada (nos alcances
-    ele vale, emenda do item 6 da DEC-074); geometria ilegivel ou fora das travas do desenho. Servico de rotas fora -> 503 (pela
-    mesma `_resolver_alcance` da ficha: o PDF e a tela recusam com as mesmas frases).
+    juntos; area desenhada sem `so_estudo` (o ALCANCE vale tambem no relatorio completo,
+    Emenda 4 da DEC-074); estudo da unidade Ultra na area desenhada (nos alcances ele vale,
+    emenda do item 6 da DEC-074); geometria ilegivel ou fora das travas do desenho; alcance
+    fora da lista. Servico de rotas fora -> 503 (pela mesma `_resolver_alcance` da ficha: o
+    PDF e a tela recusam com as mesmas frases).
     """
     from motor_expansao.dashboard.alcance_ponto import ALCANCE_RAIO_1KM
     from motor_expansao.dashboard.censo_point import (
@@ -13337,7 +13347,10 @@ def _resolver_recorte_do_pdf(
     if alcance == ALCANCE_RAIO_1KM:
         # O estudo de sempre: pedir o raio de 1 km explicitamente nao muda nada.
         return None
-    if not so_estudo:
+    # Emenda 4 da DEC-074: o ALCANCE passa tambem no relatorio completo (o Simulador leva o
+    # alcance da ficha). A AREA DESENHADA segue so' no Estudo: na Viabilidade ela e' o ponto
+    # central, e o completo dela e' o raio de 1 km em volta dele (a tela nem a envia).
+    if geometria and not so_estudo:
         raise HTTPException(400, MSG_RECORTE_SO_NO_ESTUDO)
     if excluir_ultra_proxima and geometria:
         raise HTTPException(400, MSG_ULTRA_SEM_DESENHO)
@@ -13413,9 +13426,12 @@ def _gerar_relatorio_pontual_pdf(
 
     `so_estudo=True`: PDF so' demografico -- ver a docstring da rota.
 
-    `recorte` (DEC-074, so' com `so_estudo`, ja' validado pela rota): carga de vizinhos,
-    motor censitario, mercado, mapas e textos do PDF passam a ler o RECORTE. Cada chamada
-    so' ganha kwarg novo quando ha' recorte -- sem ele, as chamadas sao as de antes.
+    `recorte` (DEC-074, ja' validado pela rota: o Estudo e, pela Emenda 4, o relatorio
+    completo da Viabilidade -- este so' com o alcance, nunca com a area desenhada): carga de
+    vizinhos, motor censitario, mercado, mapas e textos do PDF passam a ler o RECORTE. O
+    financeiro (`viabilidade_inputs_json`) NAO o le: o motor financeiro roda na coordenada do
+    proprio cenario, e a zona morta dele e' a captacao de 1,5 km (DEC-042). Cada chamada so'
+    ganha kwarg novo quando ha' recorte -- sem ele, as chamadas sao as de antes.
     """
     if so_estudo:
         # Cinto de seguranca: o modo existe para NAO sair dado financeiro. Zerar aqui, e nao

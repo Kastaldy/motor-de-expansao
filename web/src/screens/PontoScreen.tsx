@@ -41,6 +41,7 @@ import { leituraDoMercado } from '../lib/mercado-ponto'
 import { ehEstudoDaUnidade, ofertaDeEstudoUltra, type OfertaEstudoUltra } from '../lib/estudo-ultra'
 import { chaveDaCoordenada } from '../lib/comparacao-pontos'
 import {
+  alcanceParaSimulador,
   estadoDoEstudo,
   estadoDoSimulador,
   estiloDoBotaoEstudo,
@@ -348,7 +349,8 @@ export default function PontoScreen({
    * quando existem. Aqui existem, e são a coordenada EXATA que o operador colou: é por
    * isso que o estudo lá não cai no centroide do hexágono, que fica a até ~1,5 km do
    * imóvel. Os demais campos do `Hex` a Viabilidade não consulta; ficam `null` em vez de
-   * receber zero inventado.
+   * receber zero inventado. O modo (`estudoUltra`) e o ALCANCE (DEC-074, Emenda 4) vão
+   * direto ao PDF de lá.
    */
   const irParaSimulador = () => {
     if (!ficha || !onAnalisarPonto) return
@@ -379,6 +381,9 @@ export default function PontoScreen({
       /* O nome acima carrega " (unidade Ultra)" no estudo da unidade: o PDF do Simulador
          tem de calcular no mesmo modo (emenda da DEC-070). */
       ...(ehEstudoDaUnidade(ficha) ? { estudoUltra: true } : {}),
+      /* E o ALCANCE da ficha (DEC-074, Emenda 4): o relatório completo de lá sai no mesmo
+         recorte. Só fora do raio de 1 km; a área desenhada não leva (vai pelo ponto central). */
+      ...alcanceParaSimulador(ficha),
     })
   }
 

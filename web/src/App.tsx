@@ -21,7 +21,7 @@ import {
   type EstadoDaSenha,
 } from './lib/troca-de-senha'
 import { api, ApiError, repetirEm503 } from './lib/api'
-import { definirAlcances } from './lib/alcance'
+import { definirAlcances, type Alcance } from './lib/alcance'
 import { assinarQuedaDeSessao, entrarNovamente } from './lib/sessao'
 import type { AlvoCaptura } from './lib/captura-mapa'
 import {
@@ -81,6 +81,15 @@ export interface PontoEscolhido {
    * senão a capa afirma o modo e os números saem do estudo de ponto. Só aparece quando `true`.
    */
   estudoUltra?: boolean
+  /**
+   * O ALCANCE da ficha de onde o ponto saiu (DEC-074, Emenda 4): `raio_2km`, `carro_5min`
+   * ou `carro_10min`. O relatório completo da Viabilidade sai NESSE recorte, como o Estudo
+   * da ficha — o relato do Vinicius (27/10/2026) era o ponto de 5 min de carro virando o
+   * raio de 1 km no PDF. Só aparece fora do raio de 1 km: ausente é o raio de 1 km de
+   * sempre, e o ponto do clique num hexágono do mapa nunca o traz. A área desenhada também
+   * não: na Viabilidade ela é o ponto central, e o relatório dela é o raio de 1 km.
+   */
+  alcance?: Alcance
 }
 
 export default function App() {

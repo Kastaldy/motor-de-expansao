@@ -958,12 +958,13 @@ export const api = {
      */
     excluirUltraProxima?: boolean
     /**
-     * O RECORTE do Estudo quando não é o raio de 1 km (fase 2 da DEC-071, DEC-074): o
-     * alcance (`raio_2km`, `carro_5min`, `carro_10min`) OU a área desenhada (o Polygon do desenho). Vão no
-     * CORPO (FormData), nunca na query — 50 vértices estourariam o orçamento da URL (o HTTP
-     * 431 que este relatório já conheceu). Só com `soEstudo`: o relatório completo é do
-     * raio de 1 km. O servidor RECALCULA a isócrona pelo alcance; não confia em polígono
-     * mandado pela tela.
+     * O RECORTE quando não é o raio de 1 km (fase 2 da DEC-071, DEC-074): o alcance
+     * (`raio_2km`, `carro_5min`, `carro_10min`) OU a área desenhada (o Polygon do desenho).
+     * Vão no CORPO (FormData), nunca na query — 50 vértices estourariam o orçamento da URL (o
+     * HTTP 431 que este relatório já conheceu). O ALCANCE vale no Estudo e, desde a Emenda 4
+     * da DEC-074, também no relatório completo (o Simulador leva o alcance da ficha); a ÁREA
+     * DESENHADA só com `soEstudo` — no completo ela é o ponto central, no raio de 1 km. O
+     * servidor RECALCULA a isócrona pelo alcance; não confia em polígono mandado pela tela.
      */
     alcance?: Alcance
     geometria?: { type: 'Polygon'; coordinates: [number, number][][] }
@@ -996,7 +997,10 @@ export const api = {
        servidor anterior à DEC-074 recusar um pedido que ele sabe atender. */
     if (opts.soEstudo && opts.geometria) {
       fd.append('geometria', JSON.stringify(opts.geometria))
-    } else if (opts.soEstudo && opts.alcance && opts.alcance !== 'raio_1km') {
+    } else if (opts.alcance && opts.alcance !== 'raio_1km') {
+      /* Com e sem o Estudo (DEC-074, Emenda 4): o relatório completo da Viabilidade também
+         sai no alcance da ficha. Antes este ramo exigia `soEstudo` e DESCARTAVA o alcance
+         calado — o ponto de 5 min de carro virava o raio de 1 km no PDF do Simulador. */
       fd.append('alcance', opts.alcance)
     }
 
