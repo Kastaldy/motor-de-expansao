@@ -1,5 +1,10 @@
 # Deploy do Piloto Web (produção)
 
+> **Em poucas palavras**
+> - **Do que trata:** Como colocar o site no servidor e publicar versões novas, no Brasil e na Argentina: os arquivos de dados necessários, o login e a conferência final.
+> - **Quando ler:** Na hora de publicar uma versão nova do site, enviar um arquivo de dados ao servidor ou conferir se tudo voltou funcionando.
+> - **Atenção:** O modelo de configuração do login é anterior a 27/10/2026: copiá-lo desfaz, em silêncio, o login próprio do Motor no Brasil. Arquivo de dados novo exige reiniciar o site.
+
 Runbook do serviço **`web`** do `docker-compose.prod.yml` — o piloto (frontend Vite +
 backend FastAPI num único container, servindo o SPA e a API na porta interna `8899`),
 publicado em `piloto.ultra-expansao.tech`, atrás do Caddy, com o login próprio do piloto (DEC-067). O piloto é **O app de produção** (DEC-022); não

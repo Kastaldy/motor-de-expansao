@@ -1,5 +1,10 @@
 # API GeoEspacial — Contrato tecnico (G1 / BLK-API-01)
 
+> **Em poucas palavras**
+> - **Do que trata:** O serviço que gera relatórios para outros sistemas, usado pelo robô do Telegram: recebe um ponto ou uma cidade e devolve números ou o relatório em PDF.
+> - **Quando ler:** Para ligar outro sistema ao Motor ou entender o que o robô do Telegram pede e recebe ao gerar um estudo.
+> - **Atenção:** O texto nasceu como plano, em junho de 2026, e mistura o previsto com o que existe: o carimbo de versão no PDF, por exemplo, ainda não foi feito.
+
 > Documento de contrato/design produzido no bloco **BLK-API-01** (G1). Define a arquitetura,
 > a superficie de endpoints, os schemas e a decomposicao de blocos para que o Juan implemente
 > G2 sem re-discussao. **ZERO codigo de producao neste bloco** — este arquivo descreve o que

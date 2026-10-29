@@ -1,5 +1,10 @@
 # Contrato: Relatorio Pontual Censitario 1 km
 
+> **Em poucas palavras**
+> - **Do que trata:** O relatório em PDF de um endereço: como ele mede população, renda, concorrência e mercado ainda livre no entorno (raio padrão de 1,0 km) e o que cada página mostra.
+> - **Quando ler:** Para entender um número, uma cor ou uma página do PDF de um endereço, ou antes de pedir mudança nele.
+> - **Atenção:** São estimativas: cada área pequena do Censo conta pela parte que cai no entorno, sem precisão de quarteirão. Não há veredito único: com simulação, região e imóvel são julgados em separado.
+
 > **DEC-021 (2026-07-29, autorizada por Felipe): o raio passou de 1,5 km para 1,0 km.**
 > Este documento foi atualizado para o raio vigente. O metodo de intersecao continua o
 > mesmo (ponderacao por area de intersecao setor x circulo, calculada em runtime); mudou

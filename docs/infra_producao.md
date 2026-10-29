@@ -1,5 +1,10 @@
 # Infraestrutura de Produção — Motor de Expansão Ultra Academia
 
+> **Em poucas palavras**
+> - **Do que trata:** O servidor onde o site roda: o que há nele, como publicar ou desfazer uma versão nova, tarefas agendadas, login, alertas e o que fazer em incidentes.
+> - **Quando ler:** Antes de mexer no servidor, ou quando algo sai do ar, um dado não atualiza ou é preciso dar ou tirar acesso de alguém.
+> - **Atenção:** Mexer no servidor é sempre passo manual, confirmado comando a comando. Desde 27/10/2026, no Brasil, tirar alguém só do login antigo não basta; a Argentina ainda usa esse login.
+
 ## Visão geral
 
 | Componente | Valor |

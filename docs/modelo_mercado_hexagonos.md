@@ -1,5 +1,10 @@
 # Modelo de Mercado por Hexagono
 
+> **Em poucas palavras**
+> - **Do que trata:** Como o Motor calcula, em cada hexágono do mapa (área de uns 5 km²), a procura por academia, quanto dela já é atendida e o mercado ainda livre.
+> - **Quando ler:** Para entender de onde sai o número de mercado ainda livre de um hexágono, ou antes de usá-lo para estimar quantas unidades cabem numa região.
+> - **Atenção:** A conta desconta só as redes de academia e a própria Ultra. Academias independentes não entram, então parte do mercado livre pode já ser atendida por elas.
+
 Especificacao da camada de mercado por hexagono usando apenas variaveis ja disponiveis no repositorio em 2026-04-23.
 
 Status do piloto em 2026-04-23:

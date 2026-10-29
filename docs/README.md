@@ -1,5 +1,35 @@
 # Índice de `docs/`
 
+## Comece por aqui
+
+**O que é o Motor de Expansão.** É o sistema da Ultra Academia (rede de academias low-cost, para o público de
+massa) que ajuda a decidir onde abrir unidades novas. Ele divide o país em hexágonos de uns 5 km² e cruza, em
+cada um, a população e a renda do Censo 2022 do IBGE, as academias concorrentes e as unidades da própria rede.
+O resultado chega por um site, por relatórios em PDF (de um endereço ou de uma cidade), por um robô no Telegram
+e por um serviço que gera relatórios para outros sistemas. Hoje há duas instâncias no ar: Brasil e Argentina.
+
+Ele responde a quatro perguntas: onde expandir; quem já atua ali; quanto mercado ainda está livre; e, para um
+imóvel concreto, se a unidade se paga. A primeira tem um ranking oficial (o M1), que só muda por decisão
+registrada; as outras são análises complementares, que não mexem nele.
+
+**Por onde ler, conforme o que você faz:**
+
+- **Gestão e negócio:** o [glossário](glossario.md) → [estado_dos_modelos.md](estado_dos_modelos.md) (o que
+  cada análise prevê, com que erro e como usar) → [relatorio_pontual_censitario.md](relatorio_pontual_censitario.md)
+  (o PDF de um endereço) → o [`PREMISSAS_VIABILIDADE.md`](../PREMISSAS_VIABILIDADE.md) (as premissas da
+  simulação financeira) → as decisões, em [decisions/](decisions/README.md).
+- **Desenvolvimento:** o `CLAUDE.md` da raiz (as regras do projeto) →
+  [arquitetura_app_atual.md](arquitetura_app_atual.md) → [m1_outputs_oficiais.md](m1_outputs_oficiais.md) e
+  [modelo_mercado_hexagonos.md](modelo_mercado_hexagonos.md) → o `web/README.md` →
+  [grafo_conhecimento.md](grafo_conhecimento.md) → o `tasks/backlog.md`.
+- **Operação (servidor e publicação):** [infra_producao.md](infra_producao.md) →
+  [deploy_piloto_web.md](deploy_piloto_web.md) → [deploy_api_bot.md](deploy_api_bot.md) →
+  [banco_deploy.md](banco_deploy.md) → [backup_restore.md](backup_restore.md).
+
+Os documentos principais abrem com um quadro "Em poucas palavras"; o texto abaixo dele segue técnico.
+
+## Índice dos documentos
+
 Mapa de navegação dos contratos e runbooks do Motor de Expansão. Legenda de status:
 **[canônico]** fonte atual · **[histórico]** descreve um estado antigo (ver o canônico apontado).
 

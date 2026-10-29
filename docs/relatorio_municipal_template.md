@@ -1,5 +1,10 @@
 # Template de referência — Relatório Municipal (BLK-RELMUN-01)
 
+> **Em poucas palavras**
+> - **Do que trata:** O relatório em PDF de uma cidade: cada página, sua ordem e a origem dos números, dos mapas de bairro e de mercado ainda livre à lista de onde expandir.
+> - **Quando ler:** Para entender uma página ou um número do PDF de uma cidade, ou antes de pedir mudança na estrutura dele.
+> - **Atenção:** No Brasil, várias páginas saem ou mudam para dar uma lista única de onde expandir. Leia antes a tabela do Brasil: ela prevalece sobre a descrição de cada página.
+
 > Transcrição estruturada do template enviado por Vini em 2026-06-22.
 > Original (NÃO versionado — anti-PII / convenção §5 de não versionar PDF/PPTX):
 > `C:\Users\Vinicius Cruz\Downloads\Template_Relatorio_Municipo.pdf` (+ `.pptx`).

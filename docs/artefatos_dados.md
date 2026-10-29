@@ -1,5 +1,10 @@
 # Manifesto de Artefatos de Dados
 
+> **Em poucas palavras**
+> - **Do que trata:** Os arquivos de dados de que o Motor depende: tamanho aproximado, quem produz e quem usa cada um. Quase todos ficam guardados à parte do código.
+> - **Quando ler:** Quando uma tela aparece vazia ou com erro por falta de dado, ou para descobrir de onde vem e quem usa um arquivo.
+> - **Atenção:** Confira quem usa cada arquivo: alguns são legados ou já não aparecem em tela. Os dados das unidades Ultra e dos concorrentes são restritos: peça acesso ao responsável.
+
 > Politica: dados brutos, staging e outputs pesados ficam fora do git.
 > Entram via volume Docker, S3/GCS ou copia manual documentada aqui.
 > Validar presenca com: `python scripts/check_artifacts.py`

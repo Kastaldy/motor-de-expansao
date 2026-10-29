@@ -1,5 +1,10 @@
 # Premissas do Simulador de Viabilidade
 
+> **Em poucas palavras**
+> - **Do que trata:** As premissas da simulação financeira de uma unidade nova: cada valor padrão (mensalidade, custos, impostos, investimento), de onde veio, quem pode mudá-lo e como ler o retorno.
+> - **Quando ler:** Antes de mudar um valor padrão da simulação, ou para entender por que um caso deu viável ou inviável.
+> - **Atenção:** O retorno tem duas leituras que nunca se misturam: a do negócio (a academia se paga?) e a do sócio (quanto rende o dinheiro dele). Diga sempre qual está usando.
+
 > **Fonte única.** Todo coeficiente financeiro do Motor de Viabilidade vive em
 > `src/motor_expansao/dimensionamento/config.py` e é consumido por
 > `src/motor_expansao/dimensionamento/simulador.py`. Backend, frontend e PDF apenas

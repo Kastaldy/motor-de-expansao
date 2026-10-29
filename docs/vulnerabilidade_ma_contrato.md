@@ -1,5 +1,10 @@
 # Contrato — Enriquecimento de Vulnerabilidade para M&A (Plano B)
 
+> **Em poucas palavras**
+> - **Do que trata:** Como o Motor aponta academias independentes que poderiam ser compradas: sinais de fragilidade, como sumir dos aplicativos de acesso a academias, em regiões de muita procura e pouco mercado livre.
+> - **Quando ler:** Ao montar ou revisar a lista de academias que poderiam ser compradas, ou para saber o que cada sinal mede e quanto pesa.
+> - **Atenção:** A pontuação é uma conta transparente, não uma previsão. Com menos de 8 semanas de histórico dos aplicativos, ela mede só a concorrência em volta, não a fragilidade.
+
 > **[canônico]** contrato dos sinais de vulnerabilidade de academias independentes (funil de M&A).
 > Responsável: Felipe Silva | Estratégia e Growth | Ultra Academia
 > Versão: 2026-07-23 (BLK-MA-01 — design/contrato; **ZERO código de produção**;

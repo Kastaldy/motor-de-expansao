@@ -1,4 +1,10 @@
 # Expansao de Dominio — Contrato Tecnico
+
+> **Em poucas palavras**
+> - **Do que trata:** O plano de domínio: em que ordem abrir unidades em cada cidade, escolhendo as áreas com mais mercado ainda livre, sem canibalizar unidades Ultra. É refeito toda semana.
+> - **Quando ler:** Para entender como o plano escolhe e ordena as áreas de abertura numa cidade e o que significa cada estratégia sugerida.
+> - **Atenção:** O plano é complementar: não substitui o ranking oficial de onde expandir nem a carteira. E hoje nenhuma página do relatório o desenha (ver o status abaixo).
+
 > Status: contrato vivo do `plano_expansao_dominio.parquet` (único documento com seus parâmetros e seu schema), gerado por `gerar_plano_expansao_dominio` com os parâmetros da §3 na regeneração semanal da camada de mercado (`scripts/cron/run_regen_mercado.sh`, DEC-059).
 > Quem lê: `api/service.py` (`_dominio_df`), ao montar o Relatório Municipal do piloto web e do bot; o relatório agrupa o plano em zonas por `cluster_id` (D2 da DEC-011), mas hoje nenhuma página desenha essas zonas: o mapa de Expansão de Domínio pinta zonas geométricas e, no Brasil, não sai (DEC-077).
 > Feature paralela ao M1: nao substitui score_priorizacao, carteira nem plano curto prazo.

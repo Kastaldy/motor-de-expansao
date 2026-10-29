@@ -1,5 +1,10 @@
 # `perfil.json` — o país deixa de ser constante e passa a ser declarado
 
+> **Em poucas palavras**
+> - **Do que trata:** A configuração de cada país: o mesmo programa atende Brasil e Argentina, e um arquivo dá a cada site sua moeda, as réguas da nota e os avisos.
+> - **Quando ler:** Para ver o que muda entre Brasil e Argentina, o que um país novo exige ou por que um site não subiu.
+> - **Atenção:** Os números da Argentina pedem cautela: a renda é estimada, com margem de erro de cerca de 15%, e a viabilidade de lá não serve para fechar contrato.
+
 - Data: 2026-08-31 · Escopo: Bloco A da §5.0 / BLK-INTL-02 de `docs/archive/plano_multipais.md`
 - Arquivos: `data/perfis/AR/perfil.json` (Argentina, preenchida) e `data/perfis/BR/perfil.json` (Brasil, transcrito do código)
 - Este documento explica **como o arquivo é usado**, **o que é obrigatório**, **o que acontece quando falta**, e **o que muda quando o Felipe decidir as âncoras**.

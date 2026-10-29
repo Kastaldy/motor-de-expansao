@@ -1,5 +1,10 @@
 # Arquitetura do app atual — inventário e mapa de dependências
 
+> **Em poucas palavras**
+> - **Do que trata:** Como o site do Motor está montado: as telas, os dados que cada uma usa e as peças que ele divide com o robô do Telegram.
+> - **Quando ler:** Antes de mudar uma tela ou um arquivo de dados do site, para saber o que mais seria afetado.
+> - **Atenção:** A parte B, a maior, é história: retrata o painel antigo como era em julho de 2026, antes de ser desligado em agosto. Não descreve o site de hoje.
+
 > A **parte A**
 > descreve o app atual, o **piloto web**; a **parte B** preserva, como HISTÓRIA, o inventário do
 > Streamlit (é o registro mais detalhado da arquitetura que o corte removeu, e o

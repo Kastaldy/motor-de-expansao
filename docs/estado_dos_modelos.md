@@ -1,5 +1,10 @@
 # Estado dos Modelos — Desempenho, Arquitetura e Uso
 
+> **Em poucas palavras**
+> - **Do que trata:** As análises do Motor, do ranking oficial de onde expandir à simulação financeira de uma unidade nova: o que cada uma responde, quanto erra e como usá-la.
+> - **Quando ler:** Antes de usar um número do Motor numa decisão, ou ao explicar a alguém o que cada análise consegue e não consegue prever.
+> - **Atenção:** As análises do mapa dizem onde olhar, não quantos alunos uma unidade terá. A estimativa de alunos da simulação dá só ordem de grandeza: use faixas, não o número exato.
+
 > Fonte de fácil acesso ao time sobre **o que os modelos do Motor realmente preveem, com que erro e como
 > usá-los na decisão**. Complementa (não substitui) o `CLAUDE.md` (§1–§8) e as decisões registradas em
 > `docs/decisions/`; o andamento dos blocos de produto (epic BLK-VIAB) fica em `tasks/backlog.md`.
