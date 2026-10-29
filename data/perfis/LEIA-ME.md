@@ -221,7 +221,7 @@ Cada pendência tem `campo`, `estado`, `decide`, `pergunta`, `default`, `justifi
 | P4 | `moeda.indicadores_renda` (USD ou ARS na tela) | default provisório (USD) | Felipe (produto) | não |
 | P5 | `reguas.metas_big_numbers` | **preenchido** em 2026-09-02 (Felipe: população mantida, renda per capita = 1,2 canastas) — o `_pendencias` do `AR/perfil.json` ainda diz "ausente" | Felipe + Expansão Internacional | não — a leitura de que `ponto` estava bloqueada foi corrigida |
 | P6 | `reguas.score_corte_quente` | default provisório (30,0) | Felipe | não — revisar **depois** de P1/P2 |
-| P7 | malha adm2 (`municipios_<COD>.geojson`) | **fechada** em 2026-09-03 (malha adm2 entregue, PR #312) — o `_pendencias` do `AR/perfil.json` ainda diz "ausente" | Juan produz / Felipe aceita | não — bloqueava o BLK-INTL-10 até 2026-09-03 |
+| P7 | malha adm2 (`municipios_<COD>.geojson`) | **fechada** em 2026-09-03 (malha adm2 entregue, PR #312) | Juan produz / Felipe aceita | não — bloqueava o BLK-INTL-10 até 2026-09-03 |
 | P8 | `operacao.mem_limit_alvo` | default provisório (2g) | **medição do Bloco E**, não pessoa | não |
 | P9 | `fontes.crescimento.*` (a metade `reguas.oferta_destaque_min` foi decidida por Juan em 2026-09-08: 802,5, ancorada na prioridade 'alta' do pipeline argentino) | default provisório | **dev (Bloco A/B)** — não é decisão do Felipe | não — `oportunidades` está fora de `superficies` |
 
