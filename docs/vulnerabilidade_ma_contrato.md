@@ -796,7 +796,8 @@ componentes `vi` por sinal (para auditoria) e das flags de qualidade.
 > desfecho observado contra o qual calibrá-lo.
 
 > **[emenda BLK-MA-04, 2026-07-30] Grão da linha, contrato de coluna e a coluna de ordenação.**
-> A saída do score é o contrato **`score_vulnerabilidade_v2`, de 22 colunas** (`v1`/20 até a DEC-026)
+> A saída do score é o contrato **`score_vulnerabilidade_v2`, de 22 colunas** (`v1`/20 até a DEC-026;
+> versão e contagem de 2026-08-10 — as vigentes saem de `contrato.py`, e a versão está na tabela "Versões de contrato vigentes" do §13)
 > (`CONTRATO_COLUNAS_SCORE` em `vulnerabilidade/contrato.py`; implementação em
 > `vulnerabilidade/score.py`, módulo **PURO quando os frames são injetados** — pelo modo de
 > conveniência `base_dir=` ele lê disco transitivamente, via extratores; o que vale em qualquer
@@ -809,7 +810,7 @@ componentes `vi` por sinal (para auditoria) e das flags de qualidade.
 > **NULA enquanto `flag_score_provisorio`** estiver ligada, e igual à primeira quando não estiver.
 > A proibição de ordenar carteira por um score de dois valores deixa de ser prosa e vira o **tipo da
 > saída**: um `sort_values` sobre frame provisório devolve NaN em todas as linhas. Reversível de
-> graça — a flag desliga sozinha quando o S3 amadurece.
+> graça — a flag desliga sozinha quando o S3 amadurece (desde a DEC-028, também com S4 ou S6 disponível).
 > **Linhas de regimes diferentes não são comparáveis entre si** (uma linha `{S1}` e uma `{S1,S3,S4}`
 > não estão na mesma régua): `sinais_disponiveis` + `n_sinais_disponiveis` existem na saída
 > exatamente para o BLK-MA-05 segmentar antes de ordenar.
@@ -1000,7 +1001,7 @@ Ajustada pelo **D3 = Não** (rating não é coletado → sinal 2 depende de ajus
 |---|---|---|
 | **BLK-MA-02** | Extrator de churn+staleness do histórico de snapshots (100% interno) + **limpeza de ruído** (linhas `0;0`/teste, entradas de tecnologia/onboarding, coords inconsistentes) + flags de série imatura (ramp-up); chave `slug` + `data_coleta`. É o núcleo 100%-reuso do Plano B. | D2 (S3/S4) |
 | **BLK-MA-03** | Presença em agregador (**sinal 1**, reuso via `fonte`) + (opcional/deferido) extensão de **ingestão** para o universo NOMEADO (D1-B, retém `slug`/`nome_estabelecimento`; **só ingestão, SEM ajuste de coletor**); anti-PII por construção; fixtures sintéticas. **Rating (sinal 2) NÃO entra aqui** — depende do BLK-MA-08. Entregue como insumo BRUTO hex-level (contrato `presenca_agregador_v1`); `v1`/pesos são BLK-MA-04. | sinal 1 + D1 |
-| **BLK-MA-04** | Score de vulnerabilidade (D4) sobre S1/S3/S4 (Plano B) + normalização + flags de qualidade. Entregue como contrato de coluna `score_vulnerabilidade_v1` (20 colunas na época; hoje `v2`/22 pela DEC-026; módulo PURO quando os frames são injetados — ver §8.5), uma linha por academia, com o **universo de M&A filtrado aqui**; os artefatos do D6 são BLK-MA-05. | D4 + D7 |
+| **BLK-MA-04** | Score de vulnerabilidade (D4) sobre S1/S3/S4 (Plano B) + normalização + flags de qualidade. Entregue como contrato de coluna `score_vulnerabilidade_v1` (20 colunas na época; `v2`/22 pela DEC-026, em 2026-08-10; a vigente está em "Versões de contrato vigentes", neste §13; módulo PURO quando os frames são injetados — ver §8.5), uma linha por academia, com o **universo de M&A filtrado aqui**; os artefatos do D6 são BLK-MA-05. | D4 + D7 |
 | **BLK-MA-05** | Lista priorizada de M&A (cruzamento com o hex quente, D5, **COM a INVERSÃO**) + entregável. | D5 + D6 |
 | **BLK-MA-06** | Integração ao cron semanal da VPS + runbook. | D8 |
 | **BLK-MA-07** | (Opcional/futuro, **gate + DEC próprios**) reputação **EXTERNA** (Google Places ou outra, público geral). Único ponto que reabre o §2. | — |
