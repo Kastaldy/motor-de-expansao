@@ -391,17 +391,20 @@ def _digest(p) -> str:
 
 
 def _sem_chave_nova(p):
-    """O payload sem `premissas.mes_pico_rampa`, a UNICA chave que a emenda acrescentou."""
+    """O payload sem as chaves que as emendas acrescentaram: `premissas.mes_pico_rampa`
+    (21/10/2026) e `premissas.pico_padrao` (29/10/2026, de onde veio o padrao do pico; sem
+    medicao publicada ele so' diz `padrao`). Todo o resto segue byte a byte."""
     q = copy.deepcopy(p)
     q["premissas"].pop("mes_pico_rampa")
+    q["premissas"].pop("pico_padrao")
     return q
 
 
 @pytest.mark.parametrize("modelo", [None, "densidade"])
 def test_modo_densidade_e_byte_a_byte_o_de_antes(modelo):
     """MUDANCA DA EMENDA de 21/10/2026: o corpo SEM forma deixou de ser a reta e passou a
-    ser a curva com o pico observado. O que continua byte a byte (fora a chave nova
-    `mes_pico_rampa`): a reta EXPLICITA e' o payload do antigo padrao. O corpo sem forma e'
+    ser a curva com o pico observado. O que continua byte a byte (fora as chaves novas
+    `mes_pico_rampa` e `pico_padrao`): a reta EXPLICITA e' o payload do antigo padrao. O corpo sem forma e'
     o MESMO payload da curva escolhida e do pico 10 (a curva em si mudou em 22/10/2026)."""
     extra = {} if modelo is None else {"modelo_demanda": modelo}
     reta = _payload(ViabilidadeIn(**GOLDEN, forma_rampa="reta", **extra))

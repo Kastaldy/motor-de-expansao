@@ -15,9 +15,11 @@ import {
   eixoDaRampa,
   formaDoPayload,
   larguraDaLinhaDaGrade,
+  mesCurto,
   mesFimDaRampa,
   mesesDaGrade,
   notaDaRampa,
+  origemDoPadrao,
   passoPico,
   picoExibido,
   picoParaEnviar,
@@ -452,5 +454,49 @@ describe('grade de meses do gráfico "Rampa de alunos" (pedido de 28/10/2026)', 
     expect(attr(marcador, 'stroke')).toBe('var(--ac)')
     expect(attr(marcador, 'strokeDasharray')).toBe('3 3')
     expect(attr(linha, 'strokeDasharray')).not.toBe(attr(marcador, 'strokeDasharray'))
+  })
+})
+
+describe('padrão do pico por estado (emenda de 29/10/2026 da DEC-078)', () => {
+  const SP = { meses: 11, origem: 'estado' as const, uf: 'SP', unidades_maduras: 17, competencia_corte: '2026-09' }
+  const GO = { meses: 10, origem: 'rede' as const, uf: 'GO', unidades_maduras: 0, competencia_corte: '2026-09' }
+  const SEM = { meses: 10, origem: 'padrao' as const, uf: null, unidades_maduras: null, competencia_corte: null }
+
+  it('a ajuda diz de onde veio o padrão, em uma linha', () => {
+    expect(ajudaDaRampa({ ...CURVA, mes_pico_rampa: 11, pico_padrao: SP })).toBe(
+      'Padrão de SP: 11 meses, de 17 unidades maduras. Recalcule para atualizar o payback.',
+    )
+    expect(ajudaDaRampa({ ...CURVA, pico_padrao: GO })).toBe(
+      'Padrão da rede: 10 meses (GO tem menos de 5 maduras). Recalcule para atualizar o payback.',
+    )
+    for (const pp of [SP, GO, SEM]) {
+      // pedido de 22/10/2026: a ajuda é UMA linha
+      expect(ajudaDaRampa({ ...CURVA, pico_padrao: pp }).length).toBeLessThanOrEqual(95)
+    }
+  })
+
+  it('sem medição publicada, a ajuda e a nota são as de antes', () => {
+    expect(origemDoPadrao(SEM)).toBeNull()
+    expect(origemDoPadrao(null)).toBeNull()
+    expect(ajudaDaRampa({ ...CURVA, pico_padrao: SEM })).toBe(ajudaDaRampa(CURVA))
+    expect(notaDaRampa({ ...CURVA, pico_padrao: SEM })).toBe(notaDaRampa(CURVA))
+  })
+
+  it('a nota metodológica explica a regra e o mês da medição', () => {
+    const nota = notaDaRampa({ ...CURVA, pico_padrao: SP })
+    expect(nota.startsWith(notaDaRampa(CURVA))).toBe(true)
+    expect(nota).toContain('5 ou mais unidades maduras')
+    expect(nota).toContain('no máximo 1 mês por vez (medição até set/2026).')
+  })
+
+  it('mês curto', () => {
+    expect(mesCurto('2026-09')).toBe('set/2026')
+    expect(mesCurto('2026-13')).toBeNull()
+    expect(mesCurto(null)).toBeNull()
+  })
+
+  it('o contador mostra o pico que o servidor usou, e sem escolha o pedido não manda pico', () => {
+    expect(picoExibido(null, { ...CURVA, mes_pico_rampa: 11, pico_padrao: SP })).toBe(11)
+    expect(picoParaEnviar(null)).toBeUndefined()
   })
 })

@@ -9529,6 +9529,31 @@ def _setores_para_catchment(lat: Any, lng: Any) -> pd.DataFrame | None:
         return None
 
 
+def _uf_do_ponto(lat: Any, lng: Any) -> str | None:
+    """UF da coordenada pela malha municipal -- para o padrao do pico por estado da
+    Viabilidade (emenda de 2026-10-29 da DEC-078).
+
+    A malha e' a MESMA do catchment e do `/api/ponto` (`_carregar_malha`, cacheada por
+    processo), e a resolucao nao depende de o municipio ter particao de setores: o estado
+    sai mesmo onde o catchment cai. NUNCA LEVANTA: sem UF, a Viabilidade usa os 10 do
+    motor, como antes da emenda.
+    """
+    from motor_expansao.api.service import _carregar_malha
+
+    try:
+        resolvido = _carregar_malha(str(IBGE_DIR)).resolver(float(lat), float(lng))
+    except Exception:  # noqa: BLE001 — o padrao do pico e' CONTEXTO, nunca erro
+        return None
+    return str(resolvido[0]).strip().upper() if resolvido else None
+
+
+def _pico_padrao_do_ponto(lat: Any, lng: Any) -> int:
+    """Os meses do padrao do pico para o estado do ponto (o mesmo que o payload usa)."""
+    from motor_expansao.dimensionamento.pico_por_uf import pico_padrao
+
+    return pico_padrao(_uf_do_ponto(lat, lng), STAGING_DIR).meses
+
+
 
 
 def _base_calibracao() -> tuple[pd.DataFrame | None, str]:
@@ -9557,6 +9582,7 @@ def _payload_viabilidade(body: ViabilidadeIn) -> dict[str, Any]:
             body,
             staging_dir=STAGING_DIR,
             setores_df=_setores_para_catchment(body.lat, body.lng),
+            uf=_uf_do_ponto(body.lat, body.lng),
         )
     except _viab_v2.V2Indisponivel as exc:  # so' no modo v2 (DEC-078 ampliada)
         _LOG_FALHA.warning("viabilidade: demanda sugerida indisponivel", exc_info=True)
@@ -13030,6 +13056,7 @@ def _viabilidade_pdf_payload(body: ViabilidadeIn) -> dict[str, Any] | None:
         body,
         staging_dir=STAGING_DIR,
         setores_df=_setores_para_catchment(body.lat, body.lng),
+        uf=_uf_do_ponto(body.lat, body.lng),
     )
 
 
@@ -13837,7 +13864,9 @@ def _gerar_simulador_xlsx_response(
     durante a geracao.
     """
     gerar = _gerador_simulador_xlsx()
-    premissas = _premissas_do_body(body)
+    # O MESMO padrao de pico do payload (emenda de 2026-10-29 da DEC-078): sem isto a
+    # planilha sairia nos 10 do motor e a tela, no padrao do estado.
+    premissas = _premissas_do_body(body, pico_padrao=_pico_padrao_do_ponto(body.lat, body.lng))
     inv = _investimento(body)
     # Modo v2 (DEC-078 ampliada): o bloco "Origem da demanda" da planilha, conferido pelo
     # MESMO token da Viabilidade. Modo densidade: nada, e a planilha e' a de antes.

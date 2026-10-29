@@ -1593,6 +1593,9 @@ def _viab_normalizado(viabilidade: Mapping[str, Any]) -> dict[str, Any]:
         # Pico de maturacao da curva (emenda da DEC-078, 21/10/2026): so' existe na curva
         # (na reta o payload o manda null). LEITURA do payload, como o resto do slide.
         "mes_pico_rampa": _viab_campo(viabilidade, "mes_pico_rampa", "premissas", "mes_pico_rampa"),
+        # De onde veio o PADRAO do pico (emenda de 2026-10-29 da DEC-078). Ausente (payload
+        # anterior ou sem medicao publicada) = a linha da rampa de sempre.
+        "pico_padrao": _viab_campo(viabilidade, "pico_padrao", "premissas", "pico_padrao"),
         # Reguas do veredito, servidas pelo proprio payload (`premissas.*`). A pagina de
         # Conclusao precisa saber se `flag_viavel=False` falhou em UM criterio ou nos DOIS,
         # e le os limites daqui em vez de importar `dimensionamento.config` -- e' a mesma
@@ -1662,7 +1665,33 @@ def _viab_linha_rampa(dados: Mapping[str, Any]) -> str | None:
     if mes < 1:
         return None
     # Curta de proposito: o rodape divide a altura com zona morta + origem da demanda.
-    return f"Rampa: curva observada, pico de maturação no mês {mes}."
+    origem = _viab_origem_do_pico(dados.get("pico_padrao"), mes)
+    return f"Rampa: curva observada, pico de maturação no mês {mes}{origem}."
+
+
+def _viab_origem_do_pico(padrao: Any, mes: int) -> str:
+    """De onde veio o pico (emenda de 2026-10-29 da DEC-078), curta e entre parenteses.
+
+    Vazia sem medicao publicada (`origem` = `padrao`, ou payload anterior): a linha sai
+    byte a byte a de antes. Com a escolha do operador diferente do padrao, diz os dois --
+    quem le o PDF precisa saber que o pico do estudo nao e' o do estado. Pontuacao ASCII
+    (CLAUDE.md §2): o PDF e' latin-1.
+    """
+    if not isinstance(padrao, Mapping) or padrao.get("origem") not in ("estado", "rede"):
+        return ""
+    try:
+        meses = int(padrao.get("meses"))
+    except (TypeError, ValueError):
+        return ""
+    uf = str(padrao.get("uf") or "").strip().upper()
+    do_estado = padrao.get("origem") == "estado" and bool(uf)
+    if meses != mes:
+        de_quem = f"de {uf}" if do_estado else "da rede"
+        return f" (escolhido no estudo; o padrão {de_quem} é {meses})"
+    if do_estado:
+        n = padrao.get("unidades_maduras")
+        return f" (padrão de {uf}, de {int(n)} unidades maduras)" if n else f" (padrão de {uf})"
+    return " (padrão da rede)"
 
 
 def _viab_unidade_breakeven(viabilidade: dict[str, Any]) -> str:

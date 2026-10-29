@@ -914,6 +914,10 @@ export interface PremissasViabilidade {
   curva_rampa?: number[] | null
   /** Pico de maturacao pedido (emenda da DEC-078). Na reta: null. */
   mes_pico_rampa?: number | null
+  /** De onde veio o PADRAO do pico (emenda de 2026-10-29 da DEC-078). Na reta: null.
+   *  Ausente = backend anterior a emenda. E' o padrao, nao o pico usado: com escolha do
+   *  operador os dois diferem. */
+  pico_padrao?: PicoPadrao | null
   horizonte_meses: number
   /* --- Anuidade (Simulador J10/J12) -----------------------------------------
      Linha de receita SEPARADA da mensalidade: R$ `anuidade_valor` UMA VEZ POR ANO
@@ -2689,4 +2693,16 @@ export interface AdminSenhaRedefinida {
 export interface AdminTrocaExigida {
   id_usuario: number
   mudou: boolean
+}
+
+/** O padrao do pico de maturacao para o estado do ponto (emenda de 2026-10-29 da DEC-078). */
+export interface PicoPadrao {
+  meses: number
+  /** `estado`: o estado tem padrao proprio (5+ unidades maduras). `rede`: ficou nos 10 da
+   *  rede. `padrao`: sem medicao publicada (os 10 do motor, como antes da emenda). */
+  origem: 'estado' | 'rede' | 'padrao'
+  uf: string | null
+  unidades_maduras: number | null
+  /** Ultimo mes completo da medicao, "AAAA-MM". */
+  competencia_corte: string | null
 }
