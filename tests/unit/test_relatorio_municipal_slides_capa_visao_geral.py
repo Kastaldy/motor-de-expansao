@@ -538,18 +538,33 @@ def test_numeros_do_mapa_de_espaco_saem_como_texto_do_pdf_e_nao_no_png(monkeypat
         assert t in pagina
 
 
+def test_regua_da_sintese_e_a_medida_na_producao():
+    """A régua da Síntese é a da emenda de 2026-10-29 da DEC-011, medida com
+    `scripts/medir_regua_sintese.py` na base da produção de 2026-10-25 (313 cidades com 100 mil+).
+
+    A primeira, de uma base local e sem script, punha 247 das 313 cidades em "Mercado maduro" e 293
+    em "Residual abaixo da maioria". Trocar estes números é remedir com o script e registrar na DEC,
+    não editar à mão.
+    """
+    assert rm._SINTESE_PENETRACAO_TERCOS == (33.0, 42.3, 49.8)
+    assert rm._SINTESE_RESIDUAL_MIL_TERCOS == (78.0, 90.0, 104.0)
+
+
 def test_sintese_le_a_penetracao_e_o_residual_da_cidade():
-    assert rm._texto_penetracao_sintese(41.8).startswith("Mercado maduro")
-    assert rm._texto_penetracao_sintese(15.0).startswith("Mercado em desenvolvimento")
-    assert rm._texto_penetracao_sintese(5.0).startswith("Mercado com espaço")
+    # Régua da emenda de 2026-10-29 da DEC-011: 33,0 / 42,3 / 49,8% e 78 / 90 / 104 por mil hab.
+    assert rm._texto_penetracao_sintese(65.8).startswith("Mercado maduro")  # São Paulo em 25/10
+    assert rm._texto_penetracao_sintese(42.3).startswith("Mercado em desenvolvimento")
+    assert rm._texto_penetracao_sintese(20.0).startswith("Mercado com espaço")
     assert rm._texto_penetracao_sintese(0.0).startswith("Mercado sem academias")
+    assert "(mediana das cidades com 100 mil+ hab.: 42,3%)" in rm._texto_penetracao_sintese(42.3)
     _v, alto = rm._texto_residual_sintese(
         {"residual_total_alunos": 200_000, "pop_total_municipio": 1_000_000, "soma_oferta_amarelos": 150_000})
     assert alto.startswith("Residual acima da maioria das cidades grandes") and "75% dele" in alto
-    _v, baixo = rm._texto_residual_sintese({"residual_total_alunos": 100_000, "pop_total_municipio": 1_000_000})
+    _v, baixo = rm._texto_residual_sintese({"residual_total_alunos": 60_000, "pop_total_municipio": 1_000_000})
     assert baixo.startswith("Residual abaixo da maioria das cidades grandes")
-    _v, meio = rm._texto_residual_sintese({"residual_total_alunos": 150_000, "pop_total_municipio": 1_000_000})
+    _v, meio = rm._texto_residual_sintese({"residual_total_alunos": 90_000, "pop_total_municipio": 1_000_000})
     assert meio.startswith("Residual na faixa típica das cidades grandes")
+    assert "(mediana das cidades grandes: 90)" in meio
     # A regua e' a MEDIANA (2026-10-21): "media" no texto contradizia o numero citado.
     assert all("média" not in t for t in (alto, baixo, meio))
 
