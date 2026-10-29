@@ -299,6 +299,41 @@ def test_o_pull_que_falha_GRITA_em_vez_de_sussurrar() -> None:
     assert "git pull --ff-only || echo" not in texto, "o `|| echo` que engolia a falha voltou"
 
 
+def test_o_sync_dos_concorrentes_resolve_o_perfil_de_producao() -> None:
+    """BLK-SAUDE-08: sem `MOTOR_DATA_DIR`, o sync procurava o `perfil.json` em `site-packages`.
+
+    Desde a DEC-047 o módulo resolve o perfil no IMPORT. Medido em 29/09: o passo falhava desde
+    20/09 com `PerfilInvalidoError`, e o diretório que os apps leem congelou em 06/09. Com a
+    variável, o loader é fail-closed em `$MOTOR_DATA_DIR/perfil.json` — por isso o bind do perfil
+    de produção vem junto, o mesmo par que a DEC-049 deu ao `telegram-bot`.
+    """
+    texto = "\n".join(_linhas_executaveis(WRAPPER))
+    i = texto.index("python /tmp/sync.py")
+    trecho = texto[texto.rindex("docker run", 0, i) : i]
+    assert "-e MOTOR_DATA_DIR=/app/data" in trecho, "o sync voltou a rodar sem MOTOR_DATA_DIR"
+    assert '-v "$MOTOR/data/perfil.json:/app/data/perfil.json:ro"' in trecho, (
+        "o sync tem MOTOR_DATA_DIR mas não monta o perfil: o loader fail-closed reprova o boot"
+    )
+
+
+def test_o_sync_que_falha_GRITA_e_nao_derruba_o_lote() -> None:
+    """Com `|| echo`, a falha do sync ficou três semanas num log que ninguém abre (BLK-SAUDE-08).
+
+    Mesmo molde do `git pull`: grita no log e avisa ops, mas NÃO aborta — os apps seguem com os
+    arquivos anteriores, e derrubar o domingo inteiro trocaria um dano por outro maior.
+    """
+    texto = "\n".join(_linhas_executaveis(WRAPPER))
+    assert "if ! docker run --rm --user 0:0 -e PYTHONIOENCODING=utf-8 -e MOTOR_DATA_DIR" in texto, (
+        "o sync voltou a ser tolerante em silêncio"
+    )
+    assert '_avisar_ops "sync do diretório de concorrentes dos apps FALHOU' in texto, (
+        "a falha do sync não avisa ops"
+    )
+    assert "AVISO: sync falhou; os apps seguem" not in texto, (
+        "o `|| echo` que engolia a falha voltou"
+    )
+
+
 def test_as_mensagens_de_ops_sao_ACENTUADAS() -> None:
     """`CLAUDE.md` §2: texto de usuário é acentuado, e o bot Telegram é canal de usuário.
 
