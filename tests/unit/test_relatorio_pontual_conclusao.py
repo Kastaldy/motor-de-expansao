@@ -333,11 +333,12 @@ def test_regua_demografica_e_identica_nos_dois_modos():
 
 
 def test_e5_nao_desloca_o_golden_do_recife():
-    """Segunda linha de defesa: nem se o E5 vazar para o modo completo o golden vira.
+    """O golden do Recife nao vira com o E5 valendo tambem no modo completo.
 
-    O gate ja esta preso ao so-estudo (`test_e5_nao_vale_no_modo_completo`), mas os 5
-    pontos reais falham no MAXIMO 1 meta cada -- muito abaixo do corte. Se alguem um dia
-    estender o E5 ao modo completo, a calibracao de Vinicius continua de pe.
+    Nasceu como segunda linha de defesa, quando o gate era so' do so-estudo. Desde a emenda de
+    2026-08-14 da DEC-030 ele vale nos dois modos (`test_e5_vale_nos_dois_modos`, que inverteu o
+    antigo `test_e5_nao_vale_no_modo_completo`), e este teste e' o que garante a calibracao: os 5
+    pontos reais falham no MAXIMO 1 meta cada -- muito abaixo do corte.
     """
     from motor_expansao.dashboard.censo_report import (
         _CONCLUSAO_METAS_ELIMINATORIO_MIN,

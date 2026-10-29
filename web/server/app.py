@@ -13173,7 +13173,8 @@ async def relatorio_pontual(
 
     Espelha a montagem da API de producao (`api/service.gerar_pdf_ponto`), mas usa
     o gerador com os kwargs opcionais que o piloto precisa (`fotos`, `info_imovel`,
-    `viabilidade`) — aqueles a rota de producao nao expoe.
+    `viabilidade`). Desde 2026-09-10 (PR #338) a rota da API tambem aceita `info_imovel` e
+    `viabilidade`; so' `fotos` segue exclusivo do piloto.
 
     `info_imovel` e `viabilidade_json` chegam como JSON serializado porque o corpo
     e multipart (por causa das fotos).
