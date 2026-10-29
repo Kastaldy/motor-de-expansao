@@ -221,7 +221,7 @@ Base: o bot/API lê a partição enriquecida da UF (a da tela), com a coluna `uf
 - Rodapé: "Motor de Expansão Ultra · IBGE + OSM".
 
 ### Página 10 — Síntese — Diagnóstico & Recomendação Estratégica
-- **Os cards 1 e 2 leem o número da cidade** (`_texto_penetracao_sintese`, `_texto_residual_sintese`) contra a régua das cidades com 100 mil+ hab. (terços — p33 / mediana / p67 — medidos na base local em 2026-10-20: penetração 10,5% / 15,8% / 22,8%; residual por mil hab. 138 / 151 / 169; DEC-011, emenda de 2026-10-21, item 6, pendente de aprovação em 2026-10-29). Antes de 2026-10-20 diziam sempre "penetração baixa" e "residual significativo" — São Paulo (41,8% naquela base) saía como mercado com penetração baixa. Leitura de comparação, não previsão.
+- **Os cards 1 e 2 leem o número da cidade** (`_texto_penetracao_sintese`, `_texto_residual_sintese`) contra a régua das cidades com 100 mil+ hab. (terços — p33 / mediana / p67 — medidos na base local em 2026-10-20: penetração 10,5% / 15,8% / 22,8%; residual por mil hab. 138 / 151 / 169; DEC-011, emenda de 2026-10-21, item 6, aprovada em 2026-10-29). Antes de 2026-10-20 diziam sempre "penetração baixa" e "residual significativo" — São Paulo (41,8% naquela base) saía como mercado com penetração baixa. Leitura de comparação, não previsão.
 - 3 cards (acento magenta / turquesa / laranja):
   - **~XX,X% de penetração** → "Mercado com Oportunidade": penetração fitness atual baixa,
     grande espaço para crescimento.
