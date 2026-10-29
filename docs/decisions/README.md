@@ -21,7 +21,7 @@ Emendas entram no próprio arquivo da DEC, não no índice.
 - [DEC-008](DEC-008.md) — Supersessão do BLK-SCORE-05 pela epic BLK-DIM (Motor de Dimensionamento e Viabilidade)
 - [DEC-009](DEC-009.md) — Pivô da epic BLK-DIM para "property-first" (viabilidade/break-even) — **REVOGADA pela DEC-078 (2026-10-21)**
 - [DEC-010](DEC-010.md) — Resolução de endereço por fetch HTTP na barra de busca do dashboard (BLK-UI-08)
-- [DEC-011](DEC-011.md) — Fundo de ruas por tiles online no Relatório Municipal (BLK-RELMUN-01); critério dos hexágonos destacados — emendas de 2026-07-28, 2026-07-29, 2026-08-10 e 2026-10-21 **APROVADAS** por Vinicius em 2026-10-29; as duas de 2026-10-22 seguem pendentes
+- [DEC-011](DEC-011.md) — Fundo de ruas por tiles online no Relatório Municipal (BLK-RELMUN-01); critério dos hexágonos destacados — emendas de 2026-07-28, 2026-07-29, 2026-08-10, 2026-10-21 e as duas de 2026-10-22 **APROVADAS** por Vinicius em 2026-10-29; a de 2026-10-29 (régua da Síntese medida na produção) também aprovada, com o código ainda fora da `main`
 - [DEC-012](DEC-012.md) — Adoção da camada paralela de Demanda Revelada (H3 res-7, sem PII; BLK-TP-01)
 - [DEC-013](DEC-013.md) — Coleta recorrente de concorrentes (GymScraping) automatizada na VPS + integração ao residual
 - [DEC-014](DEC-014.md) — Score de retenção territorial (camada paralela M2 READ-ONLY sobre o M1; BLK-LTV-04)
