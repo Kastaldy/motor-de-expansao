@@ -77,11 +77,12 @@ TABELAS_DO_MODELO = (
     "municipios",
     "perfil_permissoes_historico",
     "sessoes",
+    "usuario_paises",
 )
 NUMEROS_DA_SECAO_ZERO = {
-    "indices": 49,  # 35 explicitos + 12 de PK + 2 de UNIQUE (a 018/D30 somou 2 + o dela de PK)
-    "constraints CHECK": 14,  # a 018 (D30) e a 019: `ck_usuarios_prazo_exige_troca`
-    "chaves estrangeiras": 12,  # a 018 (D30): `sessoes.id_usuario`
+    "indices": 50,  # 35 explicitos + 13 de PK + 2 de UNIQUE (a 021/DEC-081 somou o indice da PK de usuario_paises)
+    "constraints CHECK": 15,  # a 018 (D30), a 019 (`ck_usuarios_prazo_exige_troca`) e a 021/DEC-081 (`chk_usuario_paises_sigla`)
+    "chaves estrangeiras": 13,  # a 018 (D30): `sessoes.id_usuario`; a 021/DEC-081: `usuario_paises.id_usuario`
     "triggers": 7,  # 5 ate' a 016; a 017 (D29) somou a guarda de coerencia nas duas regioes
     "colunas geometricas": 7,
 }

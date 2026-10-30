@@ -207,6 +207,10 @@ def _exigir_migracoes(con: Any) -> None:
                     "AND column_name = 'senha_expira_em_usuario'"
                 ).fetchone(),
             ),
+            # usuario_paises (migration 021, DEC-081): o SQL_VALIDAR/SQL_IDENTIDADE fazem LEFT
+            # JOIN nela. Sem esta checagem, um banco migrado so' ate' a 020 passaria por aqui e
+            # estouraria UndefinedTable cru la' dentro, em vez de pular com "rode db aplicar".
+            ("usuario_paises", con.execute("SELECT to_regclass('usuario_paises')").fetchone()[0]),
         )
         if existe is None
     ]
