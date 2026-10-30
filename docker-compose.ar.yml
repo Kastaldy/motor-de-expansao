@@ -67,6 +67,21 @@ services:
       # DESLIGADO (404), igual ao BR. Quem entra na lista tambem precisa do grupo
       # expansao_ar no Authelia, senao nem chega ao container.
       MOTOR_ACESSOS_ADMIN_USUARIOS: ${MOTOR_ACESSOS_ADMIN_USUARIOS_AR:-}
+      # ── Banco + login proprio (DEC-081): a AR passa a autenticar pela plataforma ──
+      # Var AR-ESPECIFICA de proposito: os dois composes leem o MESMO .env da VPS, entao reusar
+      # `MOTOR_DATABASE_URL` herdaria o valor do BR (que aponta para o alias de servico
+      # `postgres:5432`, valido so' dentro do compose BR). A URL da AR usa o CONTAINER_NAME
+      # `motor_expansao_postgres:5432`, que cruza projects na rede app_app_net -- e e' o MESMO
+      # Postgres do BR, porque o cadastro e' UNICO (DEC-081): uma tabela `usuarios`, pais por
+      # pessoa. Default VAZIO -> o compose versionado nao liga nada.
+      #
+      # ORDEM FAIL-CLOSED (Estagio 2 da DEC-081; VPS, manual): preencher `MOTOR_DATABASE_URL_AR`,
+      # POR SI, ja' troca o controle de abas para o RBAC deny-by-default -- faca isso SO' DEPOIS
+      # de os usuarios AR terem linha em `usuarios` com perfil E o pais AR em `usuario_paises`. E
+      # ligue `MOTOR_AUTENTICACAO_PROPRIA` ANTES de repontar o `forward_auth` do piloto-ar (senao
+      # o /api/verify responde 404/503 e o Caddy derruba a AR).
+      MOTOR_DATABASE_URL: ${MOTOR_DATABASE_URL_AR:-}
+      MOTOR_AUTENTICACAO_PROPRIA: ${MOTOR_AUTENTICACAO_PROPRIA_AR:-}
       # ── O que NAO entra, e por que ─────────────────────────────────────────────
       # API_BASEMAP_LABELS_URL / API_BASEMAP_TILES_URL: decisao 0.9 — o perfil AR
       #   declara basemap_labels_url_obrigatoria=false (mapa sem toponimo, com aviso

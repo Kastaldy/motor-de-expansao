@@ -47,9 +47,15 @@ def _cookies_da(resposta: Any) -> list[str]:
 
 
 def _sessao(id_usuario: int = 7, login: str = "vinicius") -> Any:
+    # DEC-081: `Identidade` passou a exigir `paises`. Login/logout sao rotas PUBLICAS (sem gate
+    # de pais), mas a construcao precisa do campo -- uso o pais DESTE processo (BR em teste).
     return db_sessoes.SessaoValida(
         identidade=Identidade(
-            id_usuario=id_usuario, login=login, perfil="growth", permissoes=frozenset()
+            id_usuario=id_usuario,
+            login=login,
+            perfil="growth",
+            permissoes=frozenset(),
+            paises=frozenset({pilot.PERFIL.pais}),
         ),
         id_sessao=42,
         ultimo_acesso=None,

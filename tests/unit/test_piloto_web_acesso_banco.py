@@ -41,7 +41,13 @@ def _identidade(monkeypatch: pytest.MonkeyPatch, permissoes: set[str] | None) ->
         if permissoes is None:
             return None
         return rbac.Identidade(
-            id_usuario=1, login="alguem", perfil="teste", permissoes=frozenset(permissoes)
+            id_usuario=1,
+            login="alguem",
+            perfil="teste",
+            permissoes=frozenset(permissoes),
+            # DEC-081: campo obrigatorio. Este duble alimenta o gate de CAPACIDADE (e o
+            # `/api/me`), nao o gate de PAIS -- o valor nao muda as assercoes aqui.
+            paises=frozenset({"BR"}),
         )
 
     monkeypatch.setattr(rbac, "identidade", falsa)
