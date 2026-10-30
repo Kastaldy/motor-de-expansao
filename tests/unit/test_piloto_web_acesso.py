@@ -210,6 +210,34 @@ def test_brasil_e_inerte_sob_o_gate_de_pais_para_TODA_rota_real() -> None:
     assert not bloqueadas, f"o gate de pais bloqueou o Brasil: {bloqueadas}"
 
 
+def test_rota_exige_pais_e_FAIL_CLOSED_com_as_excecoes_certas() -> None:
+    """DEC-081: `rota_exige_pais` decide se o gate de PAIS do portao (`PERFIL.pais in
+    identidade.paises`) alcanca a rota. FAIL-CLOSED: toda `/api/*` que exige sessao e NAO e'
+    pais-neutra nasce GATEADA -- rota nova inclusa, sem ninguem precisar lembrar de lista-la.
+
+    As excecoes sao de duas naturezas, e ambas tem de ficar FORA do gate:
+      * pais-NEUTRAS (`ROTAS_PAIS_NEUTRO`): self-routes que o apex serve a quem so' tem OUTRO
+        pais -- gatea-las trancaria o monopais estrangeiro fora do proprio seletor;
+      * publicas sem sessao: a borda pergunta por elas ANTES de existir identidade.
+    """
+    # Gateadas: uma rota de dados conhecida (exige sessao, nao e' neutra) e uma /api/* NOVA que
+    # ninguem listou -- o fail-closed tem de pega-la.
+    assert acesso.rota_exige_pais("/api/ufs") is True
+    assert acesso.rota_exige_pais("/api/rota-que-ninguem-listou-ainda") is True
+
+    # Pais-NEUTRAS: ficam de fora do gate.
+    for neutra in ("/api/me", "/api/me/senha", "/api/ciencia-confidencialidade"):
+        assert acesso.rota_exige_pais(neutra) is False, neutra
+
+    # Publicas sem sessao (login/logout/health/verify/verify-sessao): tambem de fora.
+    for publica in ("/api/health", "/api/verify", "/api/verify-sessao"):
+        assert acesso.rota_exige_pais(publica) is False, publica
+
+    # Estatico (fora de `/api/`): o gate so' vale para a API.
+    assert acesso.rota_exige_pais("/algo") is False
+    assert acesso.rota_exige_pais("/") is False
+
+
 # --- motivo_bloqueio (o que o middleware devolve) ------------------------------
 
 

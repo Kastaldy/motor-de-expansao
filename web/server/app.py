@@ -736,6 +736,15 @@ def _token_de_sessao(request: Request) -> str | None:
     A aceitacao dupla ERA deliberada e esta' declarada nos testes ("uma so' delas aceitando
     trancaria um dos dois ambientes"). O que faltava era o recorte: em DEV o prefixo nao vale
     (nao ha' https), entao o nome alternativo precisa ser aceito la' -- e SO' la'.
+
+    DEC-081 (Opcao F, 2026-10-30): o prefixo em producao e' `__Host-` (`acesso.COOKIE_SESSAO`),
+    host-only e SEM `Domain`. A DEC chegou a troca-lo por `__Secure-`+`Domain=.ultra-expansao.tech`
+    para um login unico num cookie so' (apex+BR+AR), mas a revisao adversarial mediu que isso
+    REABRE a fixacao descrita acima -- `__Secure-` nao proibe `Domain`, e a checagem de `Origin`
+    nas escritas NAO barra a escrita same-origin da propria vitima com o cookie plantado. Por isso
+    o cookie VOLTOU a `__Host-`: cada host tem a sua sessao e um irmao nao consegue planta-la (o
+    login unico seguro, por ticket entre hosts, fica como follow-up -- Opcao B). A LOGICA desta
+    funcao nao muda -- prefixado em prod; dev-sem-prefixo so' fora de prod.
     """
     prefixado = request.cookies.get(acesso.COOKIE_SESSAO)
     if prefixado:
@@ -782,6 +791,22 @@ async def _portao_de_sessao(request: Request, call_next):  # type: ignore[no-unt
         # `lib/sessao.ts` ja' trata 401 como queda de sessao SEM precisar de sonda -- e e'
         # por isso que o portao proprio torna a sonda dispensavel para este caso.
         return JSONResponse({"detail": "Sessão expirada ou inexistente."}, status_code=401)
+
+    # GATE DE PAIS (DEC-081), 2a camada (defesa em profundidade). O `/api/verify` ja' nega na
+    # borda, mas o backend NAO confia no veredito dela (mesmo principio da revalidacao de
+    # sessao): se a borda for contornada (acesso direto ao container na rede interna), o
+    # processo ainda barra quem nao tem o pais que ESTE processo serve. So' nas rotas gateadas
+    # -- as self-routes do apex (`ROTAS_PAIS_NEUTRO`) passam, senao um usuario so'-AR tomaria
+    # 403 em `/api/me` no processo que serve o apex. Membership, sem `if pais == 'XX'` (fio de
+    # alarme da DEC-047); conjunto de paises vazio => nega (fail-closed).
+    if acesso.rota_exige_pais(caminho) and PERFIL.pais not in sessao.identidade.paises:
+        return JSONResponse(
+            {
+                "detail": f"Sua conta não tem acesso a esta instância ({PERFIL.nome}).",
+                "motivo": "pais",
+            },
+            status_code=403,
+        )
 
     # A identidade da SESSAO passa a ser a identidade da requisicao, para os 19 leitores do
     # header seguirem funcionando sem uma linha de mudanca. E' injecao NOSSA sobre um scope
@@ -5202,6 +5227,11 @@ def me(
     estado = _estado_da_minha_senha(remote_user)
     if estado is not None:
         resposta["senha"] = estado
+    # DEC-081: os PAISES que esta pessoa pode acessar, para o portal do apex montar os cartoes.
+    # Distinto de `resposta["perfil"]["pais"]`, que e' o pais do PROCESSO. AUSENTE sem banco.
+    paises = _paises_da_requisicao(remote_user)
+    if paises is not None:
+        resposta["paises"] = paises
     return resposta
 
 
@@ -5250,6 +5280,36 @@ def _estado_da_minha_senha(remote_user: object) -> dict[str, bool] | None:
         return db_usuarios.estado_da_senha(login)
     except Exception:  # noqa: BLE001 - ver o docstring: nada aqui pode derrubar o /api/me
         _LOG_D17.debug("estado da senha indisponivel para %s", login, exc_info=True)
+        return None
+
+
+def _paises_da_requisicao(remote_user: object) -> list[str] | None:
+    """Os paises que ESTA PESSOA pode acessar (DEC-081), para o portal do apex montar os
+    cartoes. `None` quando nao da' para saber (sem banco, ou falha) -- a chave `paises` fica
+    AUSENTE, como `senha`/`perfil`. Lista ORDENADA com banco e pessoa resolvida; `[]` com banco
+    e pessoa sem pais nenhum (o apex renderiza "sem acesso"). Distinto de
+    `resposta["perfil"]["pais"]`, que e' o pais do PROCESSO.
+
+    So' devolve os paises de QUEM CHAMA (a identidade vem do cookie da sessao, via
+    `login_da_requisicao`), entao nao vaza o acesso de outra pessoa. ENGOLE A FALHA pelo mesmo
+    motivo de `_estado_da_minha_senha`: `/api/me` e' a 1a chamada da SPA e nada acessorio pode
+    derruba-la -- banco fora, banco nao configurado ou migration da 021 nao aplicada caem todos
+    no mesmo `None`, e a SPA simplesmente nao mostra cartao nenhum.
+    """
+    if not acesso.banco_no_comando():
+        return None
+    try:
+        from motor_expansao.db import rbac
+
+        login = acesso.login_da_requisicao(remote_user)
+        if not login:
+            return None
+        identidade = rbac.identidade(login)
+        if identidade is None:
+            return None
+        return sorted(identidade.paises)
+    except Exception:  # noqa: BLE001 - nada aqui pode derrubar o /api/me
+        _LOG_D17.debug("paises indisponiveis para a requisicao", exc_info=True)
         return None
 
 
@@ -5893,7 +5953,9 @@ def _cookie_de_sessao(resposta: Response, token: str, *, lembrar: bool) -> None:
       * `secure` + `samesite="lax"` -- o cookie nao viaja em http nem em requisicao
         cross-site de terceiro; `lax` e nao `strict` porque `strict` quebraria a volta do
         `rd=` (a pessoa clica no link do piloto e chegaria deslogada);
-      * `path="/"` -- a SPA e a API moram no mesmo host, e o prefixo `__Host-` EXIGE isto.
+      * `path="/"` -- a SPA e a API moram no mesmo host; o `__Host-` EXIGE isto (sem `Path=/`
+        o navegador recusa o cookie). SEM `domain` de proposito: o `__Host-` proibe `Domain`, e
+        e' isso que trava a sessao a UM host (Opcao F da DEC-081; ver `acesso.COOKIE_SESSAO`).
 
     `max_age` e' o eixo de "lembrar de mim" (decisao 2, opcao (a) -- FIEL): com a caixinha,
     cookie PERSISTENTE de 8h, que sobrevive a fechar e reabrir o navegador; sem ela, cookie
@@ -6104,7 +6166,13 @@ def logout(request: Request) -> Response:
     # e' aceito nem para apagar, e o nome de dev existe justamente porque ali nao ha' https.
     seguro = acesso.em_producao()
     for nome in (acesso.COOKIE_SESSAO, acesso.COOKIE_SESSAO_DEV):
-        resposta.delete_cookie(key=nome, path="/", secure=seguro, httponly=True, samesite="lax")
+        resposta.delete_cookie(
+            key=nome,
+            path="/",
+            secure=seguro,
+            httponly=True,
+            samesite="lax",
+        )
     return resposta
 
 
@@ -6124,6 +6192,61 @@ CABECALHOS_DE_VERIFICACAO = ("Remote-User", "Remote-Groups", "Remote-Email")
 #: PUBLICA, entao um laco de requisicoes viraria um aviso por request -- e a mensagem existe
 #: para o operador achar um erro de ORDEM no deploy, que nao muda de linha para linha.
 _verify_desligado_logado = False
+
+
+def _prelude_forward_auth(request: Request):
+    """Parte COMUM de `/api/verify` e `/api/verify-sessao` (DEC-081): valida o COOKIE e devolve
+    a `SessaoValida`, ou uma `Response` de negacao -- 404 se `MOTOR_AUTENTICACAO_PROPRIA`
+    estiver desligada, 503 se o banco cair, 401 se nao houver sessao viva. O que DIFERE entre as
+    duas rotas e' o GATE DE PAIS, que fica so' em `/api/verify` e NAO aqui. Uma redacao so' do
+    prelude, pela licao da DEC-044 (duas redacoes da mesma regra desencontram em silencio). Ver
+    o docstring de `/api/verify` para o porque de cada status.
+    """
+    global _verify_desligado_logado
+    from motor_expansao.db import sessoes as db_sessoes
+
+    if not db_sessoes.ligada():
+        if not _verify_desligado_logado:
+            _LOG_D17.warning(
+                "/api/verify chamado com MOTOR_AUTENTICACAO_PROPRIA DESLIGADA — se o Caddy ja' "
+                "aponta para ca', ligue a env ANTES de trocar o alvo do forward_auth"
+            )
+            _verify_desligado_logado = True
+        return JSONResponse({"detail": "Not Found"}, status_code=404)
+
+    token = _token_de_sessao(request)
+    try:
+        sessao = db_sessoes.validar(token or "")
+    except Exception:  # noqa: BLE001 — ver "BANCO FORA DO AR" no docstring de /api/verify
+        _LOG_D17.exception("/api/verify: falha ao validar a sessao")
+        return JSONResponse(
+            {"detail": "Sessão indisponível no momento."},
+            status_code=503,
+            headers={"Cache-Control": "no-store"},
+        )
+    if sessao is None:
+        return JSONResponse(
+            {"detail": "Sessão expirada ou inexistente."},
+            status_code=401,
+            headers={"Cache-Control": "no-store"},
+        )
+    return sessao
+
+
+def _resposta_200_forward_auth(sessao) -> Response:  # type: ignore[no-untyped-def]
+    """Os headers que o `copy_headers` do Caddy copia no 200 do forward_auth. `Remote-Email`
+    vazio e `Remote-Groups`=perfil: ver o docstring de `/api/verify`. `no-store` porque os
+    headers sao a identidade de uma pessoa e nao podem ser reusados por um intermediario.
+    """
+    return Response(
+        status_code=200,
+        headers={
+            "Remote-User": _valor_de_cabecalho(sessao.identidade.login),
+            "Remote-Groups": _valor_de_cabecalho(sessao.identidade.perfil),
+            "Remote-Email": "",
+            "Cache-Control": "no-store",
+        },
+    )
 
 
 @app.get("/api/verify", include_in_schema=False)
@@ -6170,39 +6293,24 @@ def verify(request: Request) -> Response:
     -- o Caddy repassa status E corpo da negacao, entao a pessoa le' a mesma frase venha ela
     da borda ou de dentro. Duas respostas para a mesma causa e' como elas passam a divergir.
     """
-    global _verify_desligado_logado
-    from motor_expansao.db import sessoes as db_sessoes
+    resultado = _prelude_forward_auth(request)
+    if isinstance(resultado, Response):
+        return resultado
+    sessao = resultado
 
-    if not db_sessoes.ligada():
-        # FAIL-CLOSED, e a ordem de aplicacao na VPS depende disso: o Caddy nega tudo que nao
-        # for 2xx, entao apontar o `forward_auth` para ca' ANTES de ligar
-        # `MOTOR_AUTENTICACAO_PROPRIA` derruba o piloto inteiro. Responder 200 aqui evitaria a
-        # queda e seria muito pior: o piloto ficaria PUBLICO enquanto ninguem percebesse.
-        # O `warning` existe para o operador achar a causa em um `docker logs`, em vez de
-        # investigar um 404 generico espalhado por todas as rotas.
-        if not _verify_desligado_logado:
-            _LOG_D17.warning(
-                "/api/verify chamado com MOTOR_AUTENTICACAO_PROPRIA DESLIGADA — se o Caddy ja' "
-                "aponta para ca', ligue a env ANTES de trocar o alvo do forward_auth"
-            )
-            _verify_desligado_logado = True
-        raise HTTPException(404, "Not Found")
-
-    token = _token_de_sessao(request)
-    try:
-        sessao = db_sessoes.validar(token or "")
-    except Exception:  # noqa: BLE001 — ver "BANCO FORA DO AR" no docstring
-        _LOG_D17.exception("/api/verify: falha ao validar a sessao")
+    # GATE DE PAIS (DEC-081), 1a camada (na borda). So' libera se o pais que ESTE processo serve
+    # (`PERFIL.pais`, do `perfil.json` -- DEC-047) estiver entre os paises da pessoa. 403, NUNCA
+    # 404: distinto de `motivo_bloqueio_pais` ("a instancia oferece esta rota?"). O APEX NAO
+    # passa por aqui -- usa `/api/verify-sessao`, pais-neutro. Membership, sem literal de pais
+    # (fio de alarme da DEC-047); conjunto vazio => nega. A mensagem nomeia a instancia mas NAO
+    # lista os paises da pessoa (vazamento).
+    if PERFIL.pais not in sessao.identidade.paises:
         return JSONResponse(
-            {"detail": "Sessão indisponível no momento."},
-            status_code=503,
-            headers={"Cache-Control": "no-store"},
-        )
-
-    if sessao is None:
-        return JSONResponse(
-            {"detail": "Sessão expirada ou inexistente."},
-            status_code=401,
+            {
+                "detail": f"Sua conta não tem acesso a esta instância ({PERFIL.nome}).",
+                "motivo": "pais",
+            },
+            status_code=403,
             headers={"Cache-Control": "no-store"},
         )
 
@@ -6229,15 +6337,25 @@ def verify(request: Request) -> Response:
     # lido. Carregar o e-mail custaria PII atravessando a borda (e logs de borda) para ninguem,
     # e uma coluna a mais em `SQL_VALIDAR` -- que e' exatamente o custo por requisicao que a
     # remocao de `deve_trocar_senha_usuario` acabou de tirar de la', em 25/09.
-    return Response(
-        status_code=200,
-        headers={
-            "Remote-User": _valor_de_cabecalho(sessao.identidade.login),
-            "Remote-Groups": _valor_de_cabecalho(sessao.identidade.perfil),
-            "Remote-Email": "",
-            "Cache-Control": "no-store",
-        },
-    )
+    return _resposta_200_forward_auth(sessao)
+
+
+@app.get("/api/verify-sessao", include_in_schema=False)
+def verify_sessao(request: Request) -> Response:
+    """O `forward_auth` do APEX (DEC-081): PAIS-NEUTRO.
+
+    Identico ao `/api/verify` -- mesmo prelude (`_prelude_forward_auth`: 404 desligado, 503
+    banco fora, 401 sem sessao) e mesmos headers no 200 (`_resposta_200_forward_auth`) --, mas
+    SEM o gate de pais. O apex e' o SELETOR de paises: tem de admitir QUALQUER pessoa
+    autenticada, inclusive quem so' tem um pais diferente do que o processo que serve o apex
+    carrega -- senao o monopais do outro pais seria trancado fora do proprio seletor. A
+    separacao por pais no apex e' feita na TELA (os cartoes vem de `/api/me`, campo `paises`),
+    nao na borda; o gate por pais de cada HOST segue em `/api/verify`.
+    """
+    resultado = _prelude_forward_auth(request)
+    if isinstance(resultado, Response):
+        return resultado
+    return _resposta_200_forward_auth(resultado)
 
 
 def _derrubar_sessoes(id_alvo: int, *, autor: int, motivo: str) -> None:
@@ -14489,6 +14607,34 @@ def entrar_html() -> Any:
     caminho = _DIST_DIR / "entrar.html"
     if not caminho.is_file():
         raise HTTPException(status_code=404, detail="entrar.html nao existe neste build")
+    return FileResponse(
+        str(caminho),
+        media_type="text/html",
+        headers={"Cache-Control": "no-store", "Vary": "Host"},
+    )
+
+
+@app.get("/portal.html", include_in_schema=False)
+def portal_html() -> Any:
+    """O SELETOR DE PAISES do apex (DEC-081), e como `entrar.html` NAO vem do cache.
+
+    O apex `ultra-expansao.tech` serve ESTE shell React na raiz (o Caddy do apex reescreve
+    `/` -> `/portal.html`; ver `docs/spec_portal_selecao_pais.md`). Ele decide tudo no cliente:
+    sem sessao mostra o `LoginScreen`, com sessao chama `/api/me` e monta os cartoes dos paises
+    da pessoa (campo `paises`). Por isso e' PAIS-NEUTRO -- nenhum pais entra no caminho de servir
+    esta pagina, e o mesmo backend (qualquer processo, porque `/api/me`/`/api/login`/
+    `/api/verify-sessao` nao gateiam por pais) pode atende-la.
+
+    `no-store` pela MESMA razao de `entrar.html`: e' a porta de entrada de uma sessao e nao pode
+    ser servida de um cache depois que a sessao muda. `Vary: Host` porque o mesmo backend
+    responde a mais de um host. ANTES do `mount("/")` (o mount casa tudo o que sobra) e 404 sem
+    `dist/` (dev), como a irma `entrar.html`.
+    """
+    from fastapi.responses import FileResponse
+
+    caminho = _DIST_DIR / "portal.html"
+    if not caminho.is_file():
+        raise HTTPException(status_code=404, detail="portal.html nao existe neste build")
     return FileResponse(
         str(caminho),
         media_type="text/html",
