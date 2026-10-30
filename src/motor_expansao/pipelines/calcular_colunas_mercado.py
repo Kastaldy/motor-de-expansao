@@ -16,6 +16,9 @@ import numpy as np
 import pandas as pd
 
 from motor_expansao.pipelines.agregar_censo_hex_da_malha import (
+    COL_POP_DA_MALHA,
+    FONTE_POP_MALHA,
+    preencher_populacao_da_malha,
     sobrepor_renda_da_malha,
 )
 from motor_expansao.pipelines.classe_join_municipio import (
@@ -33,6 +36,9 @@ ROOT = Path(__file__).resolve().parents[3]
 
 MERCADO_PATH = ROOT / "data" / "staging" / "hexagonos_mercado_mapeado.parquet"
 CENSO_PATH = ROOT / "data" / "staging" / "censo2022_setores_calibrado.parquet"
+#: Agregado da malha por hexagono (fracao de area dos setores): fonte da populacao onde o
+#: traco por centroide nao alcanca -- orla e beira de rio (`preencher_populacao_da_malha`).
+MALHA_PATH = ROOT / "data" / "staging" / "censo2022_hex_da_malha.parquet"
 #: Malha de setores por municipio -- insumo da nota de join fina (BLK-JOINUF-01).
 CENSO_GEO_ROOT = ROOT / "data" / "outputs" / "setores_censitarios_2022_geo"
 PERFORMANCE_HEX_PATH = ROOT / "data" / "staging" / "unidades_ultra_performance_hex.parquet"
@@ -111,6 +117,10 @@ def anexar_colunas_censo(df: pd.DataFrame) -> pd.DataFrame:
         else:
             merged[col] = merged[core_col]
     merged = merged.drop(columns=[f"{col}_core" for col in CENSO_COLS[1:]])
+    # Populacao NULA depois das duas fontes por centroide -> a da MALHA, a mesma regra de
+    # `anexar_score` e o mesmo numero que o enriquecido ja' mostra (`admitir_orfaos_da_malha`).
+    # Sem isto o residual desses hexagonos saia da media da cidade (proxy municipal).
+    merged = preencher_populacao_da_malha(merged, malha_path=MALHA_PATH)
     # A sobreposicao da malha vem DEPOIS do preenchimento por lacuna, e nao antes, porque
     # este pipeline le o PROPRIO artefato como entrada (`MERCADO_PATH` == `OUT_PATH`): o
     # valor antigo ja esta materializado e nao-nulo, entao a regra de "so preencher lacuna"
@@ -322,9 +332,16 @@ def calcular(df: pd.DataFrame, n_redes: int | None = None) -> pd.DataFrame:
         [pop_censo, proxy_per_hex],
         default=np.nan,
     )
+    # Populacao do Censo pela MALHA (fracao de area) tem rotulo proprio: e' medida -- a
+    # recomendacao a aceita como tal (emenda da DEC-077) --, mas nao pelo centroide.
+    if COL_POP_DA_MALHA in df.columns:
+        pop_da_malha = df[COL_POP_DA_MALHA].fillna(False).astype(bool)
+        df = df.drop(columns=[COL_POP_DA_MALHA])
+    else:
+        pop_da_malha = pd.Series(False, index=df.index)
     df["fonte_pop_hex_base"] = np.select(
-        [censo_pop_ok, proxy_pop_ok],
-        ["censo_2022_setor", "m1_municipal_proxy_per_hex"],
+        [censo_pop_ok & pop_da_malha, censo_pop_ok, proxy_pop_ok],
+        [FONTE_POP_MALHA, "censo_2022_setor", "m1_municipal_proxy_per_hex"],
         default="sem_populacao_valida",
     )
 
@@ -634,6 +651,12 @@ def validar(df: pd.DataFrame) -> None:
 def main():
     print("Bloco 5 - Calculo das colunas de mercado")
     print("=" * 50)
+    if not MALHA_PATH.exists():
+        # Fail-closed: sem a malha os hexagonos de orla voltariam a media da cidade, e nada
+        # quebraria -- o residual deles so' ficaria errado de novo, em silencio.
+        raise FileNotFoundError(
+            f"{MALHA_PATH} ausente: a populacao da orla (censo2022_hex_da_malha) e' obrigatoria"
+        )
 
     print("\n1. Carregando base enriquecida...")
     df = pd.read_parquet(MERCADO_PATH)
