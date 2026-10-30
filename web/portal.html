@@ -1,0 +1,62 @@
+<!doctype html>
+<html lang="pt-BR">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Motor de Expansão — escolha o país</title>
+    <meta name="robots" content="noindex, nofollow" />
+    <meta
+      name="description"
+      content="Portal do Motor de Expansão da Ultra Academia — entre e escolha o país."
+    />
+
+    <!--
+      PÁGINA PRÓPRIA, servida na RAIZ do apex `ultra-expansao.tech` — o SELETOR DE PAÍS.
+      O apex é PAÍS-NEUTRO (DEC-047): não serve dado de país nenhum, decide um destino e
+      sai da frente. O backend serve este HTML buildado (`dist/portal.html`) numa rota
+      própria `GET /portal.html`.
+
+      Não é a SPA do piloto: ela tem entrada e assets próprios (`portal-assets/`), pelo
+      mesmo motivo da tela de entrar — servir o bundle do piloto a quem só vai escolher um
+      país (ou nem entrou) entregaria o mapa inteiro e o nome de cada rota interna da API.
+      O `fetch` desta página é de MESMA ORIGEM que o backend do apex (`/api/*`), sem CORS.
+    -->
+
+    <!--
+      Tema antes da primeira pintura, como no `entrar.html` e no `index.html` do piloto.
+
+      AQUI O COOKIE É A FONTE QUE IMPORTA. Esta página é servida do apex e o piloto de
+      `piloto.<dominio>`: origens diferentes, `localStorage` diferentes. Quem escolheu o
+      tema escolheu no piloto, e o cookie `motor.tema` sai com `Domain=<apex>`, então ele
+      chega aqui — o `localStorage` do apex está vazio e o cookie responde. O
+      `localStorage` fica primeiro só para manter UMA ordem de leitura com o resto.
+    -->
+    <script>
+      ;(function () {
+        function valido(v) {
+          return v === 'claro' || v === 'escuro' ? v : null
+        }
+        var t = null
+        try {
+          t = valido(localStorage.getItem('motor.tema'))
+        } catch (e) {}
+        if (!t) {
+          try {
+            var m = document.cookie.match(/(?:^|;\s*)motor\.tema=\s*([^;\s]+)/)
+            t = m ? valido(m[1]) : null
+          } catch (e) {}
+        }
+        if (!t) {
+          try {
+            t = valido(localStorage.getItem('motor.exec.tema'))
+          } catch (e) {}
+        }
+        document.documentElement.setAttribute('data-tema', t || 'escuro')
+      })()
+    </script>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/portal.tsx"></script>
+  </body>
+</html>
