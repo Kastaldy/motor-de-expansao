@@ -1,0 +1,88 @@
+# apex.Caddyfile.template — bloco do APEX `ultra-expansao.tech` DEPOIS da DEC-081.
+#
+# POR QUE ESTE ARQUIVO EXISTE. O `Caddyfile` real e' gitignored e vive so' em
+# `/opt/motor-expansao/app/` na VPS. Ate' a DEC-081 o apex era um portal template-Go estatico
+# (`root * /srv/portal` + `templates`) atras do `forward_auth` do Authelia, e o bloco so'
+# existia no Caddyfile real -- descrito, nao versionado, em `docs/spec_portal_selecao_pais.md`.
+# A DEC-081 troca o portal por uma TELA REACT servida pelo `web`, e com isso o bloco fica
+# simples o bastante para ser versionado e revisado em PR, como os de BR e AR. O operador
+# COPIA este bloco para o `Caddyfile` da VPS em vez de redigi-lo numa janela de manutencao.
+#
+# ELE NAO E' APLICADO POR NINGUEM AUTOMATICAMENTE. Material de copiar e colar, passo manual
+# sob o §6 do CLAUDE.md.
+#
+# ─────────────────────────────────────────────────────────────────────────────────
+# O QUE MUDOU, E POR QUE O ROLLBACK E' O BLOCO INTEIRO:
+#   ANTES (Authelia): `forward_auth` para `authelia:9091` cobrindo o host, `?rd=` para a tela
+#   de login do Authelia, `root * /srv/portal` + `templates`, e uma ESCADA de matchers por pais
+#   (`@so_<pais>`, `@escolher`, `@sem_pais`, `handle ... redir 302`) que lia os grupos
+#   `expansao_<pais>` injetados no `Remote-Groups`. Os cartoes eram renderizados server-side.
+#   AGORA (DEC-081): `reverse_proxy web:8899` (espelho do BR), `forward_auth` para o NOSSO
+#   `/api/verify-sessao` (PAIS-NEUTRO -- valida so' a sessao, sem gate de pais), e a raiz
+#   reescrita para `/portal.html` (a tela React). Os cartoes vem de `/api/me` (campo `paises`),
+#   montados no cliente. Nao ha' mais `templates`, nem `/srv/portal`, nem matcher de pais, nem
+#   nada do Authelia.
+#
+# ORDEM DE APLICACAO, FAIL-CLOSED (Estagio 2 da DEC-081; VPS, manual, §6):
+#   1. `web` recriado com o backend da DEC-081 (gate de pais + `/api/verify-sessao` + `/api/me`
+#      com `paises`) e a imagem que ja' carrega `dist/portal.html` (o build novo do `web`).
+#   2. Trocar ESTE bloco no Caddyfile E aplicar o `docker-compose.prod.yml` SEM o bind
+#      `./portal:/srv/portal` (ja' versionado) JUNTOS, recriando o `caddy` UMA vez (`up -d caddy`,
+#      NAO `reload` -- volume muda so' na recriacao). JUNTOS de proposito: o bloco NOVO nao usa
+#      `/srv/portal` (serve pelo `web`), mas o ANTIGO usa (`root * /srv/portal`) -- aplicar o
+#      compose sem o bind ANTES de trocar o bloco deixaria o bloco velho sem o mount e derrubaria
+#      o apex no intervalo. E' a MESMA instrucao do comentario do `docker-compose.prod.yml`.
+#   Invertido (bloco novo com `web` velho), o `/api/verify-sessao` responde 404 e o Caddy nega
+#   tudo que nao for 2xx -- o apex cairia. O rollback e' devolver o BLOCO INTEIRO antigo (a
+#   copia `Caddyfile.antes-do-p19`/equivalente), nao reapontar uma linha.
+# ─────────────────────────────────────────────────────────────────────────────────
+#
+# O GATE DE PAIS NAO ESTA AQUI, E E' DE PROPOSITO. O apex e' o SELETOR: tem de admitir QUALQUER
+# pessoa autenticada, inclusive quem so' tem um pais diferente do que o processo do `web` serve
+# -- senao o monopais do outro pais ficaria trancado fora do proprio seletor. Por isso o
+# `forward_auth` usa `/api/verify-sessao` (sem gate), e NAO `/api/verify` (com gate, usado por
+# BR/AR). A separacao por pais acontece na TELA (os cartoes so' listam os paises que `/api/me`
+# devolve para AQUELA pessoa) e, de novo, em cada HOST de pais (o `/api/verify` do BR/AR).
+
+ultra-expansao.tech {
+    import sec_headers
+
+    # As CINCO rotas publicas sao as MESMAS de `acesso.ROTAS_PUBLICAS_SEM_SESSAO` (igual BR/AR):
+    # login/logout/health/verify/verify-sessao. A raiz e os estaticos (a tela React) ficam
+    # publicos -- a tela de login/selecao nao pode ficar atras do login que ela existe para obter.
+    @protegido {
+        path /api/*
+        not path /api/login /api/logout /api/health /api/verify /api/verify-sessao
+    }
+
+    # PAIS-NEUTRO: `uri /api/verify-sessao`, nao `/api/verify`. `copy_headers` lista o que a rota
+    # emite (Remote-User; Groups/Email sem leitor, mantidos por simetria com BR/AR). `?rd=` nao
+    # existe: quem leva a' tela de login e' o proprio shell React (chama `/api/me`, ve 401, mostra
+    # o formulario).
+    forward_auth @protegido web:8899 {
+        uri /api/verify-sessao
+        copy_headers Remote-User Remote-Groups Remote-Email
+    }
+
+    # A RAIZ e' a tela React de selecao: `dist/portal.html`, servido pelo `web` na rota
+    # `GET /portal.html`. Sem esta reescrita, `/` cairia no `index.html` (a SPA do piloto BR).
+    # So' a raiz EXATA e' reescrita; `/portal.html`, `/portal-assets/*`, `/entrar.html`,
+    # `/api/*` e os demais estaticos passam direto para o `web`.
+    @raiz path /
+    rewrite @raiz /portal.html
+
+    # `web:8899` e' alias de SERVICO (o Caddy e o `web` BR estao no MESMO compose,
+    # `docker-compose.prod.yml`). O apex e' pais-neutro, entao servir pelo `web` BR e' indiferente
+    # -- `/api/login`, `/api/me` e `/api/verify-sessao` nao gateiam por pais (DEC-081).
+    reverse_proxy web:8899
+
+    # Access log de edge (DEC-027). Mesmo teto da trilha (20 MiB x 10; `docs/trilha_acesso_piloto.md`).
+    log {
+        output file /var/log/caddy/apex-access.log {
+            roll_size 20MiB
+            roll_keep 10
+            roll_keep_for 2160h
+        }
+        format json
+    }
+}
