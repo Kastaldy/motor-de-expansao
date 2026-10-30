@@ -14,7 +14,8 @@
    DEC-067 diz, com todas as letras, que o `submit` dela "não tem para onde apontar"
    enquanto as quatro decisões do P19 não tiverem resposta; elas têm, e isto é o destino.
 
-   ESTÁ DORMENTE, como o resto da epic: nada aqui roda enquanto o Authelia autenticar.
+   VIVO DESDE O CORTE (DEC-081): o login próprio vale em todas as origens, o Authelia foi
+   aposentado, e `api.entrar()`/`api.sair()` são o único caminho de entrada e saída.
    --------------------------------------------------------------------------- */
 
 /**
@@ -58,7 +59,7 @@ export function entradaDoPayload(payload: unknown): EntradaAceita {
  * **Não** — e esta função existe para que a resposta fique escrita e testada, em vez
  * de depender de alguém lembrar.
  *
- * O `lib/api.ts` anuncia queda de sessão em todo 401, porque atrás do Authelia isso
+ * O `lib/api.ts` anuncia queda de sessão em todo 401, porque no backend isso
  * só acontece quando a sessão vence. Mas a rota de login devolve 401 para SENHA
  * ERRADA — e o anúncio de queda é de mão única (`jaAnunciado` em `lib/sessao.ts`
  * nunca volta atrás): uma senha digitada errada abriria "Sessão encerrada", travaria
@@ -77,39 +78,24 @@ export type Saida =
 /**
  * SAIR DE VERDADE — revoga no servidor ANTES de navegar.
  *
- * Até 25/09/2026 o botão de sair só fazia `window.location.assign(<portal do Authelia>)`
- * e **nunca** chamava `api.sair()`: o grep por `api.sair` em `web/src` devolvia um único
- * resultado, e era um docstring. Enquanto o Authelia autenticava isso funcionava, porque
- * quem encerrava a sessão era o portal. Depois do corte deixaria de funcionar em silêncio
- * — a pessoa seria levada ao portal (que continua de pé por causa da AR), a sessão no
- * nosso banco **não** seria revogada e o cookie `__Host-motor_sessao` continuaria válido:
- * bastaria voltar ao piloto para estar dentro. É exatamente o defeito que o próprio
- * `/api/logout` declara inaceitável — "limpar estado no cliente NÃO é logout".
+ * Ela chama o nosso `/api/logout`, que invalida a sessão NO SERVIDOR. Só limpar estado no
+ * cliente seria pior que não ter botão: a tela pareceria deslogada e a próxima requisição
+ * continuaria chegando autenticada — é o defeito que o próprio `/api/logout` declara
+ * inaceitável ("limpar estado no cliente NÃO é logout").
  *
- * COMO ELA SABE EM QUAL MUNDO ESTÁ: não sabe, e não precisa. Ela TENTA o nosso
- * `/api/logout`; um **404** é a resposta documentada de "a entrada própria está desligada
- * neste ambiente", e aí o portal do Authelia é quem encerra de verdade. Mesmo idioma que
- * `api.entrar()` já usa.
+ * COM A DEC-081 o login próprio vale em todas as origens e o Authelia foi aposentado, então
+ * SAIU o antigo fallback "404 -> portal do Authelia": não há mais portal para onde mandar.
+ * `/api/logout` é público e idempotente (sair com a sessão já vencida não é erro), então o
+ * caminho feliz é revogar e ir para a nossa tela de entrar.
  *
- * FALHA QUE NÃO É 404 NÃO NAVEGA. Se o servidor respondeu 503 (banco fora), a sessão
+ * FALHA NÃO NAVEGA. Se o encerramento falhou (rede caiu, 503 por banco fora), a sessão
  * continua ABERTA — mandar a pessoa embora mostraria uma tela deslogada por cima de uma
  * sessão viva, que é a mentira que este caminho existe para não contar.
  */
-export async function sair(
-  chamarSair: () => Promise<void>,
-  urlDoPortal: string | null,
-  ehApiError: (e: unknown) => e is { status: number },
-): Promise<Saida> {
+export async function sair(chamarSair: () => Promise<void>): Promise<Saida> {
   try {
     await chamarSair()
-  } catch (erro) {
-    if (ehApiError(erro) && erro.status === 404) {
-      // Entrada própria desligada: quem encerra é o portal. Sem portal (dev), não há
-      // sessão nossa nem dele — nada a encerrar, e o diálogo já diz isso.
-      return urlDoPortal === null
-        ? { tipo: 'ir', destino: '/entrar.html' }
-        : { tipo: 'ir', destino: urlDoPortal }
-    }
+  } catch {
     return {
       tipo: 'falhou',
       recado:
@@ -117,6 +103,6 @@ export async function sair(
         'Tente de novo em instantes; se persistir, avise quem administra.',
     }
   }
-  // Revogada no servidor. O destino é a nossa tela de entrar, que existe nos dois mundos.
+  // Revogada no servidor. A nossa tela de entrar é servida direto pela borda (DEC-081).
   return { tipo: 'ir', destino: '/entrar.html' }
 }

@@ -22,14 +22,10 @@ import {
  * não vai responder, e ele perde a tarde. Por isso metade dos casos aqui é sobre
  * NÃO anunciar.
  *
- * O mecanismo real está documentado em `sessao.ts`: com a sessão vencida, o Authelia
- * responde 302 pelo `forward_auth` do Caddy, o `fetch` segue para outra origem, o CORS
- * derruba, e o erro chega ao JS como `TypeError` — igualzinho a servidor fora do ar.
- * Quem desempata é a sonda em `/api/health`.
+ * O mecanismo real está documentado em `sessao.ts`: com a sessão vencida, a borda responde
+ * 401 (`forward_auth` ao nosso `/api/verify`, DEC-081). Quando a falha chega mascarada como
+ * `TypeError` (blip de rede, timeout de proxy), quem desempata é a sonda em `/api/health`.
  */
-
-/** Resposta filtrada de redirect: é o que o browser devolve com `redirect: 'manual'`. */
-const REDIRECT_OPACO = { type: 'opaqueredirect', status: 0, ok: false } as unknown as Response
 
 function resposta(status: number, corpo: unknown = {}): Response {
   return {
@@ -51,12 +47,7 @@ afterEach(() => {
 })
 
 describe('diagnosticarAcesso — a sonda que separa sessão de servidor', () => {
-  it('redirect opaco (o 302 do Authelia) = sessao', async () => {
-    vi.stubGlobal('fetch', vi.fn(async () => REDIRECT_OPACO))
-    await expect(diagnosticarAcesso()).resolves.toBe('sessao')
-  })
-
-  it('401 = sessao (o outro ramo do Authelia)', async () => {
+  it('401 = sessao (a borda negou o acesso)', async () => {
     vi.stubGlobal('fetch', vi.fn(async () => resposta(401)))
     await expect(diagnosticarAcesso()).resolves.toBe('sessao')
   })
@@ -81,20 +72,19 @@ describe('diagnosticarAcesso — a sonda que separa sessão de servidor', () => 
     await expect(diagnosticarAcesso()).resolves.toBe('servidor')
   })
 
-  it('sonda pede /api/health sem seguir redirect — sem `manual` o 302 fica invisível', async () => {
+  it('a sonda pede /api/health', async () => {
     const espia = vi.fn(async () => resposta(200))
     vi.stubGlobal('fetch', espia)
     await diagnosticarAcesso()
     expect(espia).toHaveBeenCalledTimes(1)
-    const [url, init] = espia.mock.calls[0] as unknown as [string, RequestInit]
+    const [url] = espia.mock.calls[0] as unknown as [string]
     expect(url).toBe(ROTA_SONDA)
-    expect(init.redirect).toBe('manual')
   })
 })
 
 describe('relatarFalhaDeRede — quem avisa o App', () => {
   it('anuncia a queda quando a sonda diz sessao', async () => {
-    vi.stubGlobal('fetch', vi.fn(async () => REDIRECT_OPACO))
+    vi.stubGlobal('fetch', vi.fn(async () => resposta(401)))
     const avisado = vi.fn()
     assinarQuedaDeSessao(avisado)
     await relatarFalhaDeRede()
@@ -123,7 +113,7 @@ describe('relatarFalhaDeRede — quem avisa o App', () => {
   })
 
   it('seis requisições falhando juntas mandam UMA sonda e avisam UMA vez', async () => {
-    const espia = vi.fn(async () => REDIRECT_OPACO)
+    const espia = vi.fn(async () => resposta(401))
     vi.stubGlobal('fetch', espia)
     const avisado = vi.fn()
     assinarQuedaDeSessao(avisado)
@@ -139,7 +129,7 @@ describe('relatarFalhaDeRede — quem avisa o App', () => {
        anúncio caía num conjunto vazio e o `jaAnunciado` selava o silêncio: nenhum dado
        na tela e nenhum aviso. Todos os outros casos deste arquivo assinam ANTES da
        falha, que é justamente por isso que nenhum deles pegava o defeito. */
-    vi.stubGlobal('fetch', vi.fn(async () => REDIRECT_OPACO))
+    vi.stubGlobal('fetch', vi.fn(async () => resposta(401)))
     await relatarFalhaDeRede()
 
     const avisado = vi.fn()
@@ -148,7 +138,7 @@ describe('relatarFalhaDeRede — quem avisa o App', () => {
   })
 
   it('a trava não faz o assinante tardio receber DUAS vezes', async () => {
-    vi.stubGlobal('fetch', vi.fn(async () => REDIRECT_OPACO))
+    vi.stubGlobal('fetch', vi.fn(async () => resposta(401)))
     const avisado = vi.fn()
     assinarQuedaDeSessao(avisado)
     await relatarFalhaDeRede()
@@ -157,7 +147,7 @@ describe('relatarFalhaDeRede — quem avisa o App', () => {
   })
 
   it('cancelar a assinatura para de avisar', async () => {
-    vi.stubGlobal('fetch', vi.fn(async () => REDIRECT_OPACO))
+    vi.stubGlobal('fetch', vi.fn(async () => resposta(401)))
     const avisado = vi.fn()
     assinarQuedaDeSessao(avisado)()
     await relatarFalhaDeRede()
@@ -180,9 +170,9 @@ describe('api.pedir — o caminho por onde a falha real chega', () => {
       vi.fn(async () => {
         if (primeira) {
           primeira = false
-          throw new TypeError('Failed to fetch') // o 302 -> CORS chega assim
+          throw new TypeError('Failed to fetch') // erro de rede chega assim
         }
-        return REDIRECT_OPACO // a sonda
+        return resposta(401) // a sonda
       }),
     )
     const espia = globalThis.fetch as unknown as ReturnType<typeof vi.fn>
@@ -278,20 +268,13 @@ function fontesDe(dir: string): string[] {
  * motivo escrito: exceção sem motivo é guarda furada com álibi.
  */
 const FORA_DA_GUARDA: Record<string, string> = {
-  'entrar.tsx': `Na tela de login o 401 é SENHA ERRADA, não sessão caída: anunciar queda
-    mandaria a pessoa entrar de novo na tela em que ela já está. Essa razão nunca deixou de
-    ser verdadeira — o que mudou foi quem a impõe.
-
-    Ela SAIU desta lista em 25/09/2026, quando o #417 trocou o \`fetch\` à mão por
-    \`api.entrar()\`: aí a regra passou a ser CÓDIGO (\`ehQuedaDeSessao('/api/login')\`
-    devolve \`false\` em \`lib/login-motor.ts\`, e \`pedir\` consulta antes de relatar), que é
-    melhor que lista. E VOLTOU em 28/09/2026, porque a troca seca tirou produção do ar e a
-    tela precisou reaver a reserva do Authelia — e o \`/api/firstfactor\` é um \`fetch\` à
-    mão por desenho: o cliente dele é puro (\`lib/authelia.ts\`) justamente para ser testado
-    sem DOM e sem servidor, e não passa pelo \`pedir\`.
-
-    O que fica valendo para o caminho próprio: a regra por código continua lá, intacta. O
-    que esta entrada cobre é só o POST de reserva.`,
+  /* VAZIO desde a DEC-081. A única exceção era `entrar.tsx`, que fazia um `fetch` à mão
+     para o `firstfactor` do Authelia (o POST de reserva não devia anunciar sessão). O
+     Authelia foi aposentado, a reserva saiu, e a tela entra só por `api.entrar()` — que já
+     passa por `pedir`. Sem `fetch(` próprio, `entrar.tsx` sai do censo por conta, sem
+     precisar de exceção. A regra "401 do login é SENHA ERRADA, não sessão" continua, agora
+     só por CÓDIGO: `ehQuedaDeSessao('/api/login')` devolve `false` em `lib/login-motor.ts`,
+     e `pedir` consulta antes de relatar. */
 }
 
 const chamadoresProprios = fontesDe(RAIZ_SRC)

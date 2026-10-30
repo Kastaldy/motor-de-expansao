@@ -104,62 +104,27 @@ describe('401 do login não pode virar "Sessão encerrada"', () => {
 
 
 describe('sair de verdade — revoga ANTES de navegar', () => {
-  const ehApiError = (e: unknown): e is { status: number } =>
-    typeof e === 'object' && e !== null && 'status' in e
-
   it('revogou no servidor: leva para a NOSSA tela de entrar', async () => {
     const chamou = vi.fn(async () => {})
-    const s = await sair(chamou, 'https://auth.exemplo.tech/logout', ehApiError)
+    const s = await sair(chamou)
     expect(chamou).toHaveBeenCalledTimes(1)
     expect(s).toEqual({ tipo: 'ir', destino: '/entrar.html' })
   })
 
-  it('404 = entrada propria DESLIGADA: quem encerra e o portal do Authelia', async () => {
-    /* Mesmo idioma que `api.entrar()` ja usa: 404 e a resposta documentada de "a rota
-       existe mas a chave esta desligada neste ambiente". */
-    const s = await sair(
-      async () => {
-        throw { status: 404 }
-      },
-      'https://auth.exemplo.tech/logout',
-      ehApiError,
-    )
-    expect(s).toEqual({ tipo: 'ir', destino: 'https://auth.exemplo.tech/logout' })
-  })
+  it('qualquer falha NAO navega — a sessao continua aberta, e dizer o contrario seria mentir', async () => {
+    /* Depois da DEC-081 nao ha' mais o ramo "404 -> portal do Authelia": o Authelia foi
+       aposentado e `/api/logout` existe sempre. Entao TODA falha (503 por banco fora, rede
+       caida) deixa a sessao ABERTA e NAO navega — tela deslogada por cima de sessao viva e'
+       a mentira que este caminho existe para nao contar. */
+    const porStatus = await sair(async () => {
+      throw { status: 503 }
+    })
+    expect(porStatus.tipo).toBe('falhou')
+    if (porStatus.tipo === 'falhou') expect(porStatus.recado).toContain('continua aberta')
 
-  it('404 sem portal (dev): cai na nossa tela, que existe nos dois mundos', async () => {
-    const s = await sair(
-      async () => {
-        throw { status: 404 }
-      },
-      null,
-      ehApiError,
-    )
-    expect(s).toEqual({ tipo: 'ir', destino: '/entrar.html' })
-  })
-
-  it('503 NAO navega — a sessao continua aberta, e dizer o contrario seria mentir', async () => {
-    /* E o defeito inteiro que este caminho existe para evitar: tela deslogada por cima
-       de uma sessao viva. O proprio `/api/logout` declara isso inaceitavel. */
-    const s = await sair(
-      async () => {
-        throw { status: 503 }
-      },
-      'https://auth.exemplo.tech/logout',
-      ehApiError,
-    )
-    expect(s.tipo).toBe('falhou')
-    if (s.tipo === 'falhou') expect(s.recado).toContain('continua aberta')
-  })
-
-  it('erro que nem e da API (rede caiu) tambem NAO navega', async () => {
-    const s = await sair(
-      async () => {
-        throw new TypeError('Failed to fetch')
-      },
-      'https://auth.exemplo.tech/logout',
-      ehApiError,
-    )
-    expect(s.tipo).toBe('falhou')
+    const porRede = await sair(async () => {
+      throw new TypeError('Failed to fetch')
+    })
+    expect(porRede.tipo).toBe('falhou')
   })
 })
