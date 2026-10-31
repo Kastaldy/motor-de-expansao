@@ -18,7 +18,12 @@ aponta para o que o substituiu.
   anexo `fase0-b-receita-argentina.md` e a `spec_portal_selecao_pais.md` o citam por número de linha.
 - `PLANO_APP_WEB.md` — plano do piloto web (jul/2026), executado (DEC-020, DEC-022); saiu da raiz do
   repositório em 29/10/2026. O app de hoje está em `web/README.md` e `docs/arquitetura_app_atual.md`; a
-  referência visual que o plano explica, `Motor de Expansão - Referência (standalone).html`, segue na raiz.
+  referência visual que o plano explica é o HTML do item seguinte.
+- `referencia_visual_piloto_standalone.html` — protótipo visual do piloto web, num HTML só que abre no
+  navegador: a referência de alta fidelidade do `PLANO_APP_WEB.md` (§17); o mapa nele é falso (hexágonos
+  desenhados em CSS, dados inventados). Saiu da raiz em 31/10/2026. Nome antigo, ainda citado no plano,
+  num teste do guard e em comentários do `web/`:
+  `Motor de Expansão - Referência (standalone).html`.
 - `plano_visao_executiva_2.md` — plano da Visão Executiva 2.0, executado em 04/08/2026 (DEC-023). As regras
   vigentes estão na DEC-023, no `web/README.md` e comentadas em `rede_metricas.py`, `rede_diagnostico.py`
   e `rede_cadastro.py`.

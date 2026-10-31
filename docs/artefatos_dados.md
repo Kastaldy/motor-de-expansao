@@ -105,7 +105,16 @@ preparar dados para um colaborador novo, nunca repassar `data/referencias/` (est
 - Fonte publica IBGE, sem dados sensiveis. Tamanho total ~49 MB.
 - Versionados pois sao entrada necessaria ao app sem pipeline de geracao local.
 
-## 6. Cache OSM (`data/osm_cache/`) — nao versionar
+## 6. Cache OSM (`data/osm_cache/`) — versionado de propósito
 
-Arquivos JSON gerados automaticamente por consultas OSM. Regeneraveis.
-Bloqueado por `data/osm_cache/` no `.gitignore`.
+- O `POIEnricher` (`src/motor_expansao/pipelines/m1/poi_enrichment.py`, `OSM_CACHE_DIR`) guarda aqui, em
+  JSON, a resposta de cada consulta de academias ao OpenStreetMap, uma por caixa de coordenadas (bbox),
+  para a mesma consulta não voltar à rede. O fluxo oficial do M1 roda com o OSM desligado
+  (`M1_OSM_ENABLED = False`).
+- Os 191 JSON da pasta estão no git desde o primeiro commit (05/04/2026) e ficam: o guard
+  (`scripts/loop_guard.py`) os trata como insumo de produção ("cache de oferta versionado", classe
+  GOVERNANÇA), então mudar algum deles pede revisão humana.
+- A linha `data/osm_cache/` do `.gitignore` só barra cache NOVO: a consulta nova grava o arquivo, mas ele
+  fica fora dos commits. Arquivo já versionado segue no git, e alteração nele aparece no `git status`.
+- O teste `tests/contracts/test_fontes_gratuitas.py` (classe `TestPOIEnricher`) grava e apaga nesta pasta
+  os próprios `bbox_*_test.json`; dois deles estão versionados.

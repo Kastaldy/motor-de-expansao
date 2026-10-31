@@ -28,6 +28,52 @@ registrada; as outras são análises complementares, que não mexem nele.
 
 Os documentos principais abrem com um quadro "Em poucas palavras"; o texto abaixo dele segue técnico.
 
+## Onde fica cada coisa
+
+As pastas do topo do repositório e o que vai em cada uma. Antes de criar um arquivo, procure aqui a pasta
+dele; se nenhuma serve, o arquivo provavelmente não é do projeto (rascunho, saída de comando) e fica fora
+do git.
+
+| Pasta | O que tem |
+|---|---|
+| `src/motor_expansao/` | O código Python do produto: os pipelines do M1 (`pipelines/m1/`), a API e o robô do Telegram (`api/`), os relatórios em PDF (`dashboard/`, nome que sobrou do Streamlit), a Viabilidade (`dimensionamento/`), o banco (`db/`) e as camadas paralelas. |
+| `web/` | O site (piloto web): as telas em React (`web/src/`) e o servidor FastAPI (`web/server/`). |
+| `tests/` | Os testes: `unit/`, `contracts/` (regras que não podem quebrar), `integration/` e `fixtures/` (dados sintéticos). |
+| `data/` | Os dados. Quase tudo fica fora do git (`raw/`, `staging/`, `outputs/`, `ultra/`); no git ficam as malhas municipais (`ibge/`), os perfis de país (`perfis/`), o cache do OSM (`osm_cache/`, ver [artefatos_dados.md](artefatos_dados.md) §6), os estudos (`analysis/`) e os relatórios (`reports/`). |
+| `docs/` | A documentação: este índice, as decisões (`decisions/`), o plano da América Latina (`expansao-latam/`) e o arquivo (`archive/`). |
+| `tasks/` | O `backlog.md` (o que falta fazer) e o `completed.md` (o que já foi feito). |
+| `scripts/` | Os scripts avulsos: ingestão, operação, governança da esteira e medições; os da rotina do servidor ficam em `scripts/cron/`. |
+| `deploy/`, `openmaptiles-infra/`, `valhalla-infra/`, `secrets/` | A infraestrutura do servidor: o Caddy, o servidor de mapas, o de rotas e os segredos cifrados. |
+| `.github/`, `.githooks/` | A automação: os testes e as checagens de cada PR e o gancho que atualiza o grafo a cada commit. |
+| `.claude/`, `.codex/`, `prompts/` | A configuração dos agentes: comandos, skills e prompts da esteira. |
+| `context/handoff/` | O registro das passagens de bastão entre sessões de agentes. |
+| `graphify-out/` | O grafo de conhecimento do repositório, gerado por ferramenta ([grafo_conhecimento.md](grafo_conhecimento.md)). |
+| `analysis/` | Os backtests antigos dos scores, que três testes ainda importam. |
+| `fora_primeira_fase/` | O que ficou fora da primeira fase: o protótipo da API com PostGIS, o M2/M3 imobiliário, o Power BI e pesquisas. |
+
+Na raiz ficam só os pontos de entrada e a configuração das ferramentas: `CLAUDE.md`, `README.md`,
+`REVIEW.md`, `PREMISSAS_VIABILIDADE.md`, os `Dockerfile.*`, os `docker-compose.*.yml`, `pyproject.toml`,
+`constraints.txt`, `conftest.py`, os lançadores (`iniciar-*.cmd`, `run-ralph-loop.sh`) e os arquivos de
+configuração que começam com ponto.
+
+**Para não voltar a bagunçar:**
+
+- Documento novo vai para `docs/`, script novo para `scripts/` e código do produto para `src/motor_expansao/`
+  ou `web/`. A raiz não recebe arquivo novo sem motivo.
+- Estudo ou medição avulsa: o script em `data/analysis/` e o resultado que vale guardar em `data/reports/`.
+  Código que a produção roda não vai para `data/` (a cadeia de `data/reports/crescimento/`, rodada pelo
+  `src/motor_expansao/crescimento/atualizar.py`, é exceção herdada).
+- Temporário fica fora do git: na pasta temporária do sistema ou numa `tmp/` ou `tmp_*/` da raiz, que o
+  `.gitignore` ignora. Apague ao terminar.
+- Antes de mover ou renomear um arquivo, veja se o guard (`scripts/loop_guard.py`) o protege pelo caminho
+  (infraestrutura, banco, CI, prompts). Se protege, a regra do guard muda no mesmo PR; senão o arquivo fica
+  sem proteção no lugar novo.
+- Registro não se reescreve, só recebe acréscimo ou correção de caminho: `context/handoff/`, `docs/archive/`
+  e `tasks/completed.md` (neste, o acréscimo vai no fim). Documento que saiu de uso vai para `docs/archive/`,
+  com uma linha no README de lá.
+- Cada sessão de agente trabalha numa worktree em `.claude/worktrees/`, que não vai para o git; quando o PR
+  entra, a worktree sai (`git worktree remove <caminho>`).
+
 ## Índice dos documentos
 
 Mapa de navegação dos contratos e runbooks do Motor de Expansão. Legenda de status:

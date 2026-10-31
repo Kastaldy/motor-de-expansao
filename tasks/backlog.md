@@ -2049,8 +2049,9 @@ PDF/CSV). Sub-blocos independentes (podem ir em PRs separados); cada um traz seu
 > reproduz o Motor com UX/UI muito melhor, começando pelas **duas telas** do protótipo — **Mapa** e
 > **Viabilidade** — **preservando 100% das funções que essas abas têm hoje** (seleção de hex, busca,
 > entorno, cenário multi-hex, relatórios, etc.). Handoff de produto: **`docs/archive/PLANO_APP_WEB.md`** (ajustado
-> nesta mesma entrega para refletir a realidade do repo). Referência visual: **`Motor de Expansão -
-> Referência (standalone).html`** (raiz) — spec visual de alta fidelidade; **o mapa nela é FALSO** (hexágonos
+> nesta mesma entrega para refletir a realidade do repo). Referência visual:
+> **`docs/archive/referencia_visual_piloto_standalone.html`** (até 31/10/2026 na raiz, com o nome
+> `Motor de Expansão - Referência (standalone).html`) — spec visual de alta fidelidade; **o mapa nela é FALSO** (hexágonos
 > em CSS, dados mockados) → no app vira `H3HexagonLayer` deck.gl sobre dados reais.
 >
 > **Arquitetura alvo:** motor Python **INTOCADO** → **API FastAPI fina read-only** (estende a que já existe)

@@ -19,6 +19,8 @@ data/raw/
 data/staging/*
 data/snapshots/
 data/ultra/
+# `data/osm_cache/`: os 191 JSON que já estão no git ficam lá de propósito (docs/artefatos_dados.md §6);
+# esta linha só impede que cache NOVO entre.
 data/osm_cache/
 # Backups/limpezas locais de producao — dados reais da rede Ultra, NUNCA versionar
 # (BLK-SEC-05: estes diretorios estavam untracked e nao-ignorados, a um `git add` de
@@ -222,3 +224,16 @@ amostra-*confidencial*.pdf
 *.npy
 data/outputs/
 Claude outputs/
+
+# --- Pastas locais da raiz (reorganização das pastas, 31/10/2026) -------------
+# Temporários e caches de ferramenta, que não são do projeto. Só na RAIZ (barra
+# inicial): `tests/fixtures/` segue versionada. Para `patches/` e `fixtures/` da
+# raiz, a regra muda o que o bloco acima fez com o `.patch` (deixado à vista para
+# não esconder trabalho de alguém): patch que importa vai para uma branch, não
+# para a raiz; o conteúdo atual passa pela conferência da etapa 0.
+# Mapa das pastas: docs/README.md, seção "Onde fica cada coisa".
+.mypy_cache/
+/tmp/
+/tmp_*/
+/fixtures/
+/patches/
