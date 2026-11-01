@@ -103,7 +103,11 @@ def _identidade_lenta(
         chamadas.append(threading.current_thread().name)
         time.sleep(LENTO_S)
         return rbac.Identidade(
-            id_usuario=1, login=str(remote_user), perfil="t", permissoes=frozenset(permissoes)
+            id_usuario=1,
+            login=str(remote_user),
+            perfil="t",
+            permissoes=frozenset(permissoes),
+            paises=frozenset({pilot.PERFIL.pais}),  # DEC-081: campo obrigatorio
         )
 
     monkeypatch.setattr(rbac, "identidade", lenta)
@@ -675,7 +679,11 @@ def test_banco_lento_nao_esgota_as_threads_do_resto_do_app(
         with trava:
             em_voo.pop()
         return rbac.Identidade(
-            id_usuario=1, login="ana", perfil="t", permissoes=frozenset({"territorio.explorar"})
+            id_usuario=1,
+            login="ana",
+            perfil="t",
+            permissoes=frozenset({"territorio.explorar"}),
+            paises=frozenset({pilot.PERFIL.pais}),  # DEC-081: campo obrigatorio
         )
 
     monkeypatch.setattr(rbac, "identidade", lenta)
@@ -735,7 +743,16 @@ def test_portao_de_sessao_toca_a_sessao_fora_do_loop(monkeypatch: pytest.MonkeyP
 
     class Sessao:
         id_sessao = 9
-        identidade = rbac.Identidade(id_usuario=3, login="ana", perfil="t", permissoes=frozenset())
+        # DEC-081: esta sessao alimenta o portao numa rota GATEADA (`/api/uf/SP`), entao o
+        # `paises` TEM de conter o pais do processo, senao o gate de pais devolve 403 e o portao
+        # nunca chega a tocar a sessao (o que este teste mede).
+        identidade = rbac.Identidade(
+            id_usuario=3,
+            login="ana",
+            perfil="t",
+            permissoes=frozenset(),
+            paises=frozenset({pilot.PERFIL.pais}),
+        )
 
     def validar(_token: str) -> Any:
         return Sessao()
@@ -1482,7 +1499,13 @@ def test_log_de_rbac_indisponivel_e_um_por_episodio(
         raise db.BancoIndisponivel("fora")
 
     def no_ar(u: object) -> rbac.Identidade:
-        return rbac.Identidade(id_usuario=1, login=str(u), perfil="t", permissoes=frozenset())
+        return rbac.Identidade(
+            id_usuario=1,
+            login=str(u),
+            perfil="t",
+            permissoes=frozenset(),
+            paises=frozenset({pilot.PERFIL.pais}),  # DEC-081: campo obrigatorio
+        )
 
     def erros() -> int:
         return sum(1 for r in caplog.records if "RBAC indisponivel (" in r.getMessage())

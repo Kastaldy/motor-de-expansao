@@ -60,6 +60,12 @@ trava por teste: `test_db_sessoes.py` compara a lista de SELECT e os JOINs das d
 constantes e falha se uma mudar sem a outra. No dia em que o portao for LIGADO -- o codigo
 ja' existe (`_portao_de_sessao`), dormente atras da chave --, a unificacao e' o primeiro
 passo, e ai a trava sai junto.
+
+ATUALIZADO (DEC-081, gate de pais): `up.pais` entrou como 4a coluna COMPARTILHADA nas DUAS
+constantes (aqui e no `rbac.SQL_IDENTIDADE`), por `LEFT JOIN usuario_paises`. Isto NAO e' a
+unificacao prevista acima -- e' a MESMA regra ganhando uma coluna nos DOIS lugares ao mesmo
+tempo. O superconjunto e a trava do `test_db_sessoes` seguem valendo: mudaram JUNTAS, de 3
+para 4 colunas compartilhadas, que e' exatamente para isso que a trava existe.
 """
 
 from __future__ import annotations
@@ -179,13 +185,14 @@ WHERE criado_em_sessao < now() - make_interval(days => %s)
 # carga da SPA, por consulta propria (`_estado_da_minha_senha`). A COLUNA no banco continua -- e'
 # a projecao desta consulta que nao a carrega mais.
 SQL_VALIDAR = """
-SELECT u.id_usuario, p.nome_perfil, pe.chave,
+SELECT u.id_usuario, p.nome_perfil, pe.chave, up.pais,
        u.login_usuario, s.id_sessao, s.ultimo_acesso_em_sessao
 FROM sessoes s
 JOIN usuarios u ON u.id_usuario = s.id_usuario
 JOIN perfis p ON p.id_perfil = u.id_perfil
 LEFT JOIN perfil_permissoes pp ON pp.id_perfil = u.id_perfil
 LEFT JOIN permissoes pe ON pe.id_permissao = pp.id_permissao
+LEFT JOIN usuario_paises up ON up.id_usuario = u.id_usuario
 WHERE s.token_hash_sessao = %s
   AND s.revogada_em_sessao IS NULL
   AND s.expira_em_sessao > now()
@@ -316,10 +323,13 @@ def validar(token: str) -> SessaoValida | None:
     if not linhas:
         return None
 
-    id_usuario, perfil, _chave, login, id_sessao, ultimo_acesso = linhas[0]
+    id_usuario, perfil, _chave, _pais, login, id_sessao, ultimo_acesso = linhas[0]
     # `chave` vem NULL quando o perfil nao tem permissao nenhuma (LEFT JOIN): a pessoa
     # existe e nao pode nada. Distinto de nao existir, e o chamador precisa distinguir.
     chaves = frozenset(linha[2] for linha in linhas if linha[2] is not None)
+    # `up.pais` (4a coluna, LEFT JOIN usuario_paises): os paises da pessoa, para o gate da
+    # DEC-081. Vazio quando ela nao tem pais -> o gate NEGA (fail-closed).
+    paises = frozenset(linha[3] for linha in linhas if linha[3] is not None)
     return SessaoValida(
         # `login_usuario` vem do banco, e nao sintetizado do id. Custa UMA coluna no caminho
         # quente e evita um campo chamado `login` carregando `id:7` -- que e' afirmacao falsa
@@ -331,6 +341,7 @@ def validar(token: str) -> SessaoValida | None:
             login=login,
             perfil=perfil,
             permissoes=chaves,
+            paises=paises,
         ),
         id_sessao=id_sessao,
         ultimo_acesso=ultimo_acesso,

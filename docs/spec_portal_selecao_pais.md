@@ -8,6 +8,27 @@
 
 ---
 
+> **ATUALIZAÇÃO DEC-081 (2026-10-29) — o portal passou de template Go/Authelia a TELA REACT.**
+> Esta spec descreve o portal como ele nasceu: um template Go estático (`portal/index.html`) servido na
+> raiz `ultra-expansao.tech` **atrás do `forward_auth` do Authelia**, com os cartões renderizados
+> server-side a partir dos grupos `expansao_<pais>` (a escada de matchers `@so_<pais>` do `Caddyfile`).
+> A **DEC-081 aposentou o Authelia** e trocou esse modelo: o apex virou uma **tela React** — login
+> próprio reusando o bundle `entrar` + cartões montados no cliente a partir de `GET /api/me` (campo
+> `paises`) —, servida pelo `web` como `dist/portal.html`. O bloco do `Caddyfile` ficou simples o
+> bastante para ser **versionado** em `deploy/caddy/apex.Caddyfile.template` (antes só existia no
+> Caddyfile real). Com isso:
+> - **Vigente (DEC-081):** `deploy/caddy/apex.Caddyfile.template` (o bloco do apex), `web/src/portal.tsx`
+>   e a tela de seleção (o React), `GET /portal.html` em `web/server/app.py` (serve o shell),
+>   `scripts/aceite_portal_paises.sh` reescrito (valida o bloco novo na VPS) e
+>   `tests/unit/test_portal_paises.py` (asserts de CI sobre o source React). Detalhe e sequência de
+>   corte: `docs/decisions/DEC-081.md`.
+> - **Histórico (todo o texto abaixo):** o que fala de Authelia, grupos `expansao_<pais>`, matchers
+>   `@so_<pais>`, `templates`, `/srv/portal`, o 301/302 da raiz e o §7.4.2 do aceite antigo descreve o
+>   modelo **APOSENTADO**. Fica como registro do que foi implantado em 2026-09-03 (BLK-INTL-13), não
+>   como o estado atual.
+
+---
+
 ## 0. O que foi conferido, e o que não deu para conferir
 
 **Toda referência `arquivo:linha` abaixo foi lida no working tree em 2026-08-31.** Onde eu não consegui

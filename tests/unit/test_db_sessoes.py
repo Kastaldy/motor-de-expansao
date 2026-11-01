@@ -105,9 +105,11 @@ def _sql_do(con: FakeConexao, fragmento: str) -> tuple[str, Any]:
 # 1. A trava anti-divergencia (o teste mais importante deste arquivo)
 # --------------------------------------------------------------------------------------
 
-#: As tres primeiras colunas de `SQL_IDENTIDADE`, na ordem. Se o RBAC mudar isto, a sessao
-#: tem de mudar junto -- e e' o teste abaixo que obriga.
-_COLUNAS_COMPARTILHADAS = ("u.id_usuario", "p.nome_perfil", "pe.chave")
+#: As QUATRO primeiras colunas de `SQL_IDENTIDADE`, na ordem. A 4a (`up.pais`, do LEFT JOIN
+#: `usuario_paises`) entrou com a DEC-081 nas DUAS constantes AO MESMO TEMPO -- a mesma regra
+#: ganhando uma coluna nos dois lugares, que e' exatamente o que esta trava existe para impor.
+#: Se o RBAC mudar isto, a sessao tem de mudar junto -- e e' o teste abaixo que obriga.
+_COLUNAS_COMPARTILHADAS = ("u.id_usuario", "p.nome_perfil", "pe.chave", "up.pais")
 
 #: O que a sessao acrescenta, e NADA MAIS. Fixado para que uma coluna nova entre com
 #: decisao, nao de carona.
@@ -149,8 +151,14 @@ def test_a_validacao_de_sessao_nao_divergiu_do_rbac() -> None:
     )
     assert tuple(da_sessao[len(do_rbac) :]) == _EXTRAS_DA_SESSAO
 
-    # Os JOINs do RBAC continuam todos presentes na consulta de sessao.
-    for juncao in ("JOIN perfis p", "LEFT JOIN perfil_permissoes pp", "LEFT JOIN permissoes pe"):
+    # Os JOINs do RBAC continuam todos presentes na consulta de sessao -- inclusive o
+    # `LEFT JOIN usuario_paises up` da DEC-081, que entrou nos dois lugares juntos.
+    for juncao in (
+        "JOIN perfis p",
+        "LEFT JOIN perfil_permissoes pp",
+        "LEFT JOIN permissoes pe",
+        "LEFT JOIN usuario_paises up",
+    ):
         assert juncao in sessoes.SQL_VALIDAR, f"a consulta de sessao perdeu `{juncao}`"
 
 
@@ -162,13 +170,15 @@ def test_a_comparacao_acima_enxerga_sql_de_verdade() -> None:
     suite ja' aprendeu caro em `test_ip_nao_entra_em_eventos.py`: guarda que nao pode falhar
     nao guarda nada.
     """
-    assert len(_colunas_do_select(rbac.SQL_IDENTIDADE)) == 3
-    # DERIVADO de `_EXTRAS_DA_SESSAO`, e nao um numero cravado. Ate' 18/09/2026 este `6` era
-    # literal, entao acrescentar uma coluna a' consulta exigia lembrar de bumpar DOIS lugares --
-    # e o segundo falhava com "assert 7 == 6", que nao explica nada a quem chegou agora. O teste
-    # continua servindo ao que existe para fazer: um regex quebrado devolveria 0 ou 1 coluna e
-    # nenhuma das duas assercoes fecharia.
-    assert len(_colunas_do_select(sessoes.SQL_VALIDAR)) == 3 + len(_EXTRAS_DA_SESSAO)
+    assert len(_colunas_do_select(rbac.SQL_IDENTIDADE)) == len(_COLUNAS_COMPARTILHADAS)
+    # DERIVADO de `_COLUNAS_COMPARTILHADAS` + `_EXTRAS_DA_SESSAO`, e nao numeros cravados. Ate'
+    # 18/09/2026 este total era literal, entao acrescentar uma coluna a' consulta (a DEC-081
+    # acrescentou `up.pais`) exigia lembrar de bumpar DOIS lugares -- e o segundo falhava com
+    # "assert 7 == 6", que nao explica nada a quem chegou agora. O teste continua servindo ao que
+    # existe para fazer: um regex quebrado devolveria 0 ou 1 coluna e nenhuma assercao fecharia.
+    assert len(_colunas_do_select(sessoes.SQL_VALIDAR)) == len(_COLUNAS_COMPARTILHADAS) + len(
+        _EXTRAS_DA_SESSAO
+    )
 
 
 def test_os_tres_filtros_de_sessao_viva_estao_na_consulta() -> None:
@@ -209,7 +219,7 @@ def test_tokens_nao_repetem() -> None:
 
 
 def test_validar_manda_o_hash_e_a_inatividade(monkeypatch: pytest.MonkeyPatch) -> None:
-    con = _instalar(monkeypatch, [(7, "growth", "rede.ver", "vinicius", 42, None)])
+    con = _instalar(monkeypatch, [(7, "growth", "rede.ver", "BR", "vinicius", 42, None)])
     valida = sessoes.validar("token-de-teste")
 
     _sql, params = _sql_do(con, "FROM sessoes s")
@@ -224,8 +234,8 @@ def test_validar_agrega_as_permissoes_de_varias_linhas(monkeypatch: pytest.Monke
     _instalar(
         monkeypatch,
         [
-            (7, "growth", "rede.ver", "vinicius", 42, None),
-            (7, "growth", "viabilidade.simular", "vinicius", 42, None),
+            (7, "growth", "rede.ver", "BR", "vinicius", 42, None),
+            (7, "growth", "viabilidade.simular", "BR", "vinicius", 42, None),
         ],
     )
     valida = sessoes.validar("t")
@@ -238,7 +248,7 @@ def test_perfil_sem_permissao_nenhuma_existe_e_nao_pode_nada(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """`chave` nula pelo LEFT JOIN: a pessoa EXISTE e nao pode nada -- diferente de `None`."""
-    _instalar(monkeypatch, [(7, "novato", None, "alguem", 42, None)])
+    _instalar(monkeypatch, [(7, "novato", None, "BR", "alguem", 42, None)])
     valida = sessoes.validar("t")
     assert valida is not None
     assert valida.identidade.permissoes == frozenset()
@@ -251,7 +261,7 @@ def test_sem_linha_nao_ha_sessao(monkeypatch: pytest.MonkeyPatch) -> None:
 
 def test_token_vazio_nao_consulta_o_banco(monkeypatch: pytest.MonkeyPatch) -> None:
     """Curto-circuito: sem token nao ha' o que perguntar, e perguntar custaria uma ida."""
-    con = _instalar(monkeypatch, [(7, "growth", "rede.ver", "v", 42, None)])
+    con = _instalar(monkeypatch, [(7, "growth", "rede.ver", "BR", "v", 42, None)])
     assert sessoes.validar("") is None
     assert con.executados == [], "consultou o banco com token vazio"
 

@@ -298,6 +298,10 @@ ROTAS_LIVRES = frozenset(
         # Um gate de aba sobre ela transformaria "esta pessoa nao ve a aba Executiva" em "a
         # borda nao consegue autenticar ninguem", e o piloto inteiro cairia com 403.
         "/api/verify",
+        # P19/DEC-081: o `forward_auth` do APEX bate aqui. Igual a `/api/verify`, mas
+        # PAIS-NEUTRO (so' valida sessao, nunca o pais) -- o apex e' o seletor e tem de admitir
+        # qualquer autenticado, inclusive quem nao tem o pais do processo que serve o apex.
+        "/api/verify-sessao",
     }
 )
 
@@ -343,13 +347,23 @@ ROTAS_LIVRES = frozenset(
 #: Duas redacoes da mesma regra desencontram em SILENCIO (licao da DEC-044), entao
 #: `test_piloto_web_verify.py` compara as duas e falha se uma andar sem a outra.
 ROTAS_PUBLICAS_SEM_SESSAO = frozenset(
-    {"/api/login", "/api/logout", "/api/health", "/api/verify"}
+    {"/api/login", "/api/logout", "/api/health", "/api/verify", "/api/verify-sessao"}
 )
 
-#: Nome do cookie. `__Host-` nao e' enfeite: o prefixo obriga `Secure`, `Path=/` e ausencia
-#: de `Domain`, e o navegador RECUSA o cookie se qualquer um faltar -- ou seja, a regra passa
-#: a ser imposta pelo cliente, nao apenas pela nossa configuracao. Em dev (http) o prefixo
-#: nao vale, e por isso o nome alternativo existe.
+#: Nome do cookie. `__Host-` e' o prefixo MAIS restritivo: o NAVEGADOR so' aceita o cookie com
+#: `Secure`, `Path=/` e SEM `Domain`, e por isso ele fica TRANCADO a um host -- um subdominio
+#: irmao de `ultra-expansao.tech` NAO consegue planta-lo. E' o que fecha a FIXACAO de sessao, e
+#: e' o que o BR ja' roda em producao.
+#:
+#: A DEC-081 chegou a trocar por `__Secure-`+`Domain=.ultra-expansao.tech` para ter um login
+#: UNICO num cookie so' (apex+BR+AR); a revisao adversarial de 2026-10-30 mediu que isso REABRE
+#: a fixacao -- o `__Secure-` PERMITE `Domain`, entao um irmao comprometido (XSS ou DNS pendente)
+#: planta o cookie, e a checagem de `Origin` nao barra a escrita SAME-ORIGIN da propria vitima.
+#: Opcao F (2026-10-30): o cookie VOLTA a `__Host-` por host -- cada host com a sua sessao, login
+#: por host. O login unico SEGURO (por "ticket" de uso unico entre hosts, sem cookie
+#: compartilhado plantavel) fica como follow-up (Opcao B). Nao ha' `DOMINIO_COOKIE` de proposito:
+#: `Domain` e' justamente o atributo que o `__Host-` proibe. Em dev (http) o prefixo nao vale --
+#: dai o nome alternativo.
 COOKIE_SESSAO = "__Host-motor_sessao"
 COOKIE_SESSAO_DEV = "motor_sessao"
 
@@ -385,6 +399,31 @@ def rota_publica_sem_sessao(path: str) -> bool:
     if not path.startswith("/api/"):
         return True
     return path in ROTAS_PUBLICAS_SEM_SESSAO
+
+
+#: Rotas `/api/*` que, mesmo exigindo SESSAO, NAO passam pelo gate de PAIS (DEC-081). Sao as
+#: self-routes de que o APEX precisa: o apex e' servido por um processo de UM pais (ex.: BR),
+#: mas tem de funcionar para quem so' tem OUTRO pais -- senao um usuario so'-AR tomaria 403 em
+#: `/api/me` e nunca veria os cartoes dos paises dele. Elas resolvem a identidade do PROPRIO
+#: chamador (nao servem dado territorial de pais nenhum), entao sao seguras fora do gate.
+ROTAS_PAIS_NEUTRO = frozenset(
+    {"/api/me", "/api/me/senha", "/api/ciencia-confidencialidade"}
+)
+
+
+def rota_exige_pais(path: str) -> bool:
+    """`True` = esta rota passa pelo gate de PAIS da DEC-081 (nega se o pais do processo nao
+    estiver entre os paises da pessoa).
+
+    So' rotas `/api/*` que exigem sessao e NAO sao pais-neutras. Estaticos, rotas publicas e as
+    self-routes do apex ficam de fora. FAIL-CLOSED: rota `/api/*` nova nasce GATEADA -- para ser
+    pais-neutra, tem de entrar em `ROTAS_PAIS_NEUTRO` explicitamente.
+    """
+    if not path.startswith("/api/"):
+        return False
+    if rota_publica_sem_sessao(path):
+        return False
+    return path not in ROTAS_PAIS_NEUTRO
 
 # --- Aba Acessos (emenda DEC-027, 2026-08-19): controle PROPRIO, mais forte ------
 # O painel de acessos expoe atividade do TIME (dado pessoal), entao NAO entra no

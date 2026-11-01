@@ -148,6 +148,13 @@
       "documento": "020-sessao-origem.md",
       "sha256_bloco": "7f9eedff035402edfb5c030bea9978d36e14de7d8628c052e46f3fe8b67a58f1",
       "sha256_arquivo": "d31b59a0b74ffc52de5958efdb550d46c3ee473b4173548b63550ed06bba4636"
+    },
+    {
+      "versao": "021",
+      "arquivo": "021-usuario-paises.sql",
+      "documento": "021-usuario-paises.md",
+      "sha256_bloco": "280da9ec44a2f89df0c19330ea48eb616863c6a946947fbca5770edcf18b4a2e",
+      "sha256_arquivo": "072a5959b1e8b60825f619cf2b403249c501506526a52ac368cb8b150a35da4b"
     }
   ]
 }

@@ -77,9 +77,11 @@ def test_usuario_conhecido_traz_id_perfil_e_permissoes(monkeypatch: pytest.Monke
     _instalar(
         monkeypatch,
         [
-            (7, "lideres", "territorio.explorar"),
-            (7, "lideres", "rede.ver"),
-            (7, "lideres", "rede.cadastro_editar"),
+            # 4a coluna = pais (LEFT JOIN usuario_paises, DEC-081); repetido por linha porque
+            # o JOIN multiplica permissao x pais. Aqui um pais (BR) -> paises == {"BR"}.
+            (7, "lideres", "territorio.explorar", "BR"),
+            (7, "lideres", "rede.ver", "BR"),
+            (7, "lideres", "rede.cadastro_editar", "BR"),
         ],
     )
     quem = rbac.identidade("william_urso")
@@ -89,6 +91,7 @@ def test_usuario_conhecido_traz_id_perfil_e_permissoes(monkeypatch: pytest.Monke
     assert quem.perfil == "lideres"
     assert quem.pode("rede.ver")
     assert not quem.pode("acesso.painel_ver")
+    assert quem.paises == frozenset({"BR"})
 
 
 def test_usuario_desconhecido_e_negado_e_nao_e_criado(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -102,7 +105,7 @@ def test_usuario_desconhecido_e_negado_e_nao_e_criado(monkeypatch: pytest.Monkey
 def test_a_consulta_filtra_por_ativo(monkeypatch: pytest.MonkeyPatch) -> None:
     """O indice unico e' parcial (`WHERE ativo`), entao um login PODE existir numa linha
     inativa. Sem o filtro, alguem desativado voltaria a ser resolvido."""
-    con = _instalar(monkeypatch, [(1, "expansao", "ponto.analisar")])
+    con = _instalar(monkeypatch, [(1, "expansao", "ponto.analisar", "BR")])
     rbac.identidade("alguem")
     sql, params = con.executados[-1]
     assert "u.ativo" in sql
@@ -112,7 +115,7 @@ def test_a_consulta_filtra_por_ativo(monkeypatch: pytest.MonkeyPatch) -> None:
 def test_perfil_sem_permissao_existe_mas_nao_pode_nada(monkeypatch: pytest.MonkeyPatch) -> None:
     """LEFT JOIN devolve `chave` NULL. Existir-e-nao-poder e' diferente de nao existir, e o
     chamador precisa distinguir os dois para dar a mensagem certa."""
-    _instalar(monkeypatch, [(9, "novato", None)])
+    _instalar(monkeypatch, [(9, "novato", None, "BR")])
     quem = rbac.identidade("novato")
     assert quem is not None
     assert quem.permissoes == frozenset()
@@ -203,6 +206,6 @@ def test_banco_nao_configurado_levanta_o_erro_proprio(monkeypatch: pytest.Monkey
 def test_a_leitura_de_identidade_e_read_only(monkeypatch: pytest.MonkeyPatch) -> None:
     """Resolver quem e' a pessoa nao escreve nada — e a transacao READ ONLY faz o servidor
     garantir isso, nao a boa intencao de quem escreveu a consulta."""
-    con = _instalar(monkeypatch, [(1, "expansao", "ponto.analisar")])
+    con = _instalar(monkeypatch, [(1, "expansao", "ponto.analisar", "BR")])
     rbac.identidade("alguem")
     assert con.executados[0][0] == postgres.SQL_SOMENTE_LEITURA

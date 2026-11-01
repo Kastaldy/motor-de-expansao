@@ -149,53 +149,66 @@ def test_compose_ar_espelha_o_hardening_do_prod() -> None:
 
 
 # --------------------------------------------------------------------------------------
-# A AR fica no Authelia (decisao de Vinicius, 25/09/2026)
+# A AR TAMBEM corta (DEC-081): o acoplamento AR->Authelia foi DESFEITO
 # --------------------------------------------------------------------------------------
 #
-# O corte do P19 (DEC-067, D4) troca o alvo do `forward_auth` do Authelia para o nosso
-# `/api/verify` — SO' NO BR. A AR fica onde esta', e o motivo e' de DEPENDENCIA, nao de
-# preferencia: a sessao propria vive em TABELA (D1/migration 018) e o `web_ar` nao tem
-# banco. Sem banco nao ha' tabela de sessao, logo o motor nao autentica ninguem la'.
+# Ate' 2026-10-29 este par de testes TRAVAVA o estado antigo: enquanto o `web_ar` nao tivesse
+# `MOTOR_DATABASE_URL`, o bloco Caddy do AR tinha de apontar para `authelia:9091` -- os dois
+# fatos so' podiam mudar JUNTOS (a DEC-067 limitara o corte do P19 ao BR, porque a AR nao tinha
+# banco). A DEC-081 da' banco a' AR (o MESMO Postgres do BR, cadastro unico, pais por pessoa) e
+# move os DOIS fatos no mesmo PR: o template AR passa a apontar para o nosso `/api/verify`, e o
+# compose ganha `MOTOR_DATABASE_URL`/`MOTOR_AUTENTICACAO_PROPRIA` (vars AR-especificas).
 #
-# ESTE PAR DE TESTES EXISTE POR UM ERRO REAL, cometido em 25/09/2026. O unico Caddyfile
-# VERSIONADO era o do AR (o do BR e' gitignored e vive so' na VPS), entao a mudanca do D4
-# caiu nele — no host errado, porque era o unico lugar que parecia ser o lugar. Aplicada,
-# ela derrubaria a AR INTEIRA: `/api/verify` responderia 404 (chave desligada) ou 503 (sem
-# banco), e o Caddy nega tudo que nao for 2xx, inclusive para quem ja' estava dentro.
-#
-# A guarda e' de ACOPLAMENTO: enquanto o `web_ar` nao tiver `MOTOR_DATABASE_URL`, o bloco
-# dele tem de apontar para o Authelia. Os dois fatos so' podem mudar JUNTOS.
+# Os testes abaixo travam o estado NOVO -- o par continua existindo porque o acoplamento segue
+# real na EXECUCAO: a aplicacao na VPS e' fail-closed e manual (Estagio 2, CLAUDE.md §6), e
+# ligar o `forward_auth` para o `web_ar` antes de o banco existir derruba a AR. Mudou o alvo,
+# nao a disciplina.
 
 _TEMPLATE_AR = _REPO / "deploy" / "caddy" / "piloto-ar.Caddyfile.template"
 _TEMPLATE_BR = _REPO / "deploy" / "caddy" / "piloto-br.Caddyfile.template"
+_TEMPLATE_APEX = _REPO / "deploy" / "caddy" / "apex.Caddyfile.template"
 
 
-def test_o_bloco_do_AR_continua_apontando_para_o_authelia() -> None:
-    """Mover este `forward_auth` sem dar banco a' AR e' derrubar a instancia."""
+def test_o_bloco_do_AR_aponta_para_o_proprio_web_ar() -> None:
+    """DEC-081: o `forward_auth` do AR passou de `authelia:9091` para o nosso `web_ar`,
+    espelhando o BR. Se este teste voltar a vermelho apontando ao Authelia, o corte da AR
+    regrediu -- e o par (`test_o_AR_tem_banco_e_login_proprio`) regride junto."""
     texto = _TEMPLATE_AR.read_text(encoding="utf-8")
-    assert "forward_auth authelia:9091" in texto, (
-        "o bloco do AR deixou de apontar para o Authelia. A AR nao tem banco, entao ela "
-        "NAO pode ir para o `/api/verify`: a rota responderia 404 ou 503 e o Caddy negaria "
-        "a instancia inteira. Se a AR ganhou banco, mude os dois fatos no mesmo PR — este "
-        "teste e' o par do `test_o_AR_continua_sem_banco` logo abaixo."
+    assert "forward_auth authelia:9091" not in texto, (
+        "o `forward_auth` do AR voltou a apontar para o Authelia. A DEC-081 cortou a AR para o "
+        "login proprio; reverter e' reverter os DOIS fatos juntos (template + compose). (A "
+        "palavra `authelia:9091` ainda aparece no COMENTARIO historico do template -- por isso "
+        "o assert e' sobre a DIRETIVA `forward_auth authelia:9091`, nao a palavra solta.)"
     )
-    assert "web_ar:8899" not in texto.split("forward_auth")[1].split("}")[0], (
-        "o `forward_auth` do AR passou a perguntar ao proprio `web_ar` — ver acima."
+    assert "forward_auth @protegido motor_expansao_web_ar:8899" in texto, (
+        "o `forward_auth` do AR deixou de perguntar ao proprio `web_ar` com o matcher "
+        "`@protegido` (molde do BR). (`split('forward_auth')` nao serve: a palavra aparece nos "
+        "comentarios ANTES da diretiva.)"
+    )
+    # Igualdade de LINHA, nao substring: `"uri /api/verify" in texto` casaria tambem
+    # `uri /api/verify-sessao` (o endpoint PAIS-NEUTRO do apex). O AR e' host de PAIS -- gateia
+    # por pais com `/api/verify`, nunca com o neutro.
+    linhas_uri = {ln.strip() for ln in texto.splitlines() if ln.strip().startswith("uri ")}
+    assert "uri /api/verify" in linhas_uri and "uri /api/verify-sessao" not in linhas_uri, (
+        "o `forward_auth` do AR tem de usar `/api/verify` (gateado por pais), e NAO o "
+        "`/api/verify-sessao` pais-neutro do apex."
     )
 
 
-def test_o_AR_continua_sem_banco_e_por_isso_fica_no_authelia() -> None:
-    """A outra metade do acoplamento, e a razao de o teste de cima existir.
-
-    Se alguem der `MOTOR_DATABASE_URL` ao `web_ar` e este teste ficar vermelho, a leitura
-    NAO e' "apague a asercao": e' que o pre-requisito do corte da AR passou a existir, e
-    a decisao de 25/09 pode ser reaberta — com DEC, porque ela foi tomada pelo dono.
+def test_o_AR_tem_banco_e_login_proprio() -> None:
+    """A outra metade do acoplamento: o `web_ar` ganhou `MOTOR_DATABASE_URL` +
+    `MOTOR_AUTENTICACAO_PROPRIA` (vars AR-especificas, DEC-081) -- o pre-requisito que destravou
+    o corte da AR. Default VAZIO no compose: quem LIGA de verdade e' o `.env` da VPS (Estagio 2).
     """
     env = _web_ar().get("environment") or {}
-    assert "MOTOR_DATABASE_URL" not in env, (
-        "o `web_ar` ganhou banco. Isso NAO e' erro — e' o pre-requisito para a AR "
-        "acompanhar o corte do P19. Reabra a decisao de 25/09/2026 (a AR ficar no "
-        "Authelia) em vez de so' apagar este teste."
+    assert env.get("MOTOR_DATABASE_URL") == "${MOTOR_DATABASE_URL_AR:-}", (
+        "o `web_ar` tem de declarar `MOTOR_DATABASE_URL` como var AR-especifica "
+        "(`${MOTOR_DATABASE_URL_AR:-}`): reusar a do BR herdaria o alias `postgres`, que nao "
+        "cruza projects compose."
+    )
+    assert env.get("MOTOR_AUTENTICACAO_PROPRIA") == "${MOTOR_AUTENTICACAO_PROPRIA_AR:-}", (
+        "o `web_ar` tem de declarar `MOTOR_AUTENTICACAO_PROPRIA` (var AR-especifica), para "
+        "ligar/desligar o login proprio da AR sem tocar o BR."
     )
 
 
@@ -208,10 +221,51 @@ def test_o_bloco_do_BR_existe_versionado_e_aponta_para_o_nosso_verify() -> None:
     """
     texto = _TEMPLATE_BR.read_text(encoding="utf-8")
     assert "forward_auth @protegido web:8899" in texto
-    assert "uri /api/verify" in texto
+    linhas_uri = {ln.strip() for ln in texto.splitlines() if ln.strip().startswith("uri ")}
+    assert "uri /api/verify" in linhas_uri and "uri /api/verify-sessao" not in linhas_uri, (
+        "o `forward_auth` do BR tem de usar `/api/verify` (gateado por pais), nao o neutro."
+    )
     # O matcher NAO e' refinamento: sem ele a tela de entrar (`entrar.html`, estatico
     # deste mesmo host) ficaria atras da autenticacao que ela existe para obter.
     assert "@protegido" in texto and "not path /api/login" in texto, (
         "o bloco do BR perdeu o matcher: o `forward_auth` cobriria os estaticos e a tela "
         "de login ficaria inalcancavel — 401 em tela branca, sem formulario e sem saida."
     )
+
+
+def test_o_bloco_do_apex_e_pais_neutro_e_serve_o_portal_react() -> None:
+    """O apex (`ultra-expansao.tech`) ganhou bloco VERSIONADO proprio (DEC-081). Sem este teste,
+    so' o `aceite_portal_paises.sh` MANUAL (na VPS, contra o Caddyfile real) o guardaria -- e os
+    comentarios do template dao a entender a mesma rede de protecao de CI do BR/AR. As diretivas
+    criticas, lidas do TEMPLATE versionado:
+
+    - `uri /api/verify-sessao` (PAIS-NEUTRO) e NAO `/api/verify` (gateado): o apex e' o seletor,
+      tem de admitir quem so' tem OUTRO pais;
+    - `rewrite ... /portal.html`: a raiz vira a tela React (senao `/` cai no `index.html` da SPA BR);
+    - `reverse_proxy web:8899`: servido pelo backend, nao de `/srv/portal` (o template Go foi aposentado);
+    - as rotas publicas (incl. `/api/verify-sessao`) ficam FORA do `@protegido`.
+
+    E nenhum vestigio do modelo Authelia nas LINHAS DE CODIGO (os comentarios citam `authelia`/
+    `templates`/`/srv/portal` de proposito, ao explicar o que SAIU -- por isso o filtro de `#`).
+    """
+    texto = _TEMPLATE_APEX.read_text(encoding="utf-8")
+    linhas = [ln.strip() for ln in texto.splitlines() if not ln.strip().startswith("#")]
+    uri = {ln for ln in linhas if ln.startswith("uri ")}
+    assert "uri /api/verify-sessao" in uri and "uri /api/verify" not in uri, (
+        "o apex tem de usar o `/api/verify-sessao` PAIS-NEUTRO (nao o `/api/verify` gateado): e' "
+        "o seletor de paises e admite quem so' tem outro pais."
+    )
+    assert any("rewrite" in ln and "/portal.html" in ln for ln in linhas), (
+        "o apex tem de reescrever a raiz para `/portal.html` (a tela React); senao `/` cai na SPA do BR."
+    )
+    assert any(ln.startswith("reverse_proxy web:8899") for ln in linhas), (
+        "o apex tem de servir pelo `web` (reverse_proxy web:8899), nao de `/srv/portal`."
+    )
+    assert any("not path" in ln and "/api/verify-sessao" in ln for ln in linhas), (
+        "o matcher `@protegido` do apex tem de deixar as rotas publicas (incl. /api/verify-sessao) de fora."
+    )
+    corpo = "\n".join(linhas)
+    for vestigio in ("authelia", "/srv/portal", "templates", "@so_"):
+        assert vestigio not in corpo, (
+            f"vestigio do modelo Authelia nas diretivas do apex: {vestigio!r} (DEC-081 Opcao F o removeu)."
+        )

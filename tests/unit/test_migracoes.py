@@ -38,8 +38,10 @@ MANIFESTO = MIGRACOES / "manifesto.json"
 #: coluna `ultimo_acesso_em_sessao` e' escrita pela aplicacao de proposito, porque uma trigger
 #: `BEFORE UPDATE` tambem dispararia na REVOGACAO e diria que a sessao foi usada no instante em
 #: que ela morreu.
+#: A 021 (DEC-081, `usuario_paises`) somou 1 TABELA, 1 CHECK (`chk_usuario_paises_sigla`) e 1 FK
+#: (`id_usuario`), e NENHUM indice explicito (so' o da PK composta) nem trigger/funcao.
 OBJETOS_ESPERADOS = {
-    "CREATE TABLE": 12,
+    "CREATE TABLE": 13,
     "CREATE TRIGGER": 7,
 }
 INDICES_ESPERADOS = 35  # +1 na D23 (login), +3 na D24 (metadados) e +2 na D30 (sessoes)
@@ -50,7 +52,8 @@ FUNCOES_ESPERADAS = 8  # +1 na D29 (`exige_geom_coerente`, uma so' para as duas 
 #: Medido: a migration 019 acrescentou um `CHECK` e a suite inteira seguiu verde, deixando o
 #: `NUMEROS_DA_SECAO_ZERO` do `cli.py` afirmar 13 contra um banco com 14 -- divergencia que so'
 #: apareceria na mao do operador, como um `DIVERGENTE` sem causa aparente.
-CHECKS_ESPERADOS = 14
+#: A 021 (DEC-081) acrescentou `chk_usuario_paises_sigla` (sigla ISO de 2 letras), levando de 14 a 15.
+CHECKS_ESPERADOS = 15
 
 
 def _sql() -> list[Path]:
@@ -220,6 +223,7 @@ def test_a_varredura_de_CHECK_ainda_enxerga_os_nomeados() -> None:
     nomeados, anonimos = _checks_vivos()
     assert "ck_usuarios_prazo_exige_troca" in nomeados, "a varredura perdeu o CHECK da 019"
     assert "chk_sessao_expira_apos_criacao" in nomeados, "a varredura perdeu o CHECK da 018"
+    assert "chk_usuario_paises_sigla" in nomeados, "a varredura perdeu o CHECK da 021"
     assert "chk_evento_entidade_valor" in nomeados, (
         "o recriado pela 014 sumiu: DROP/ADD fora de ordem"
     )

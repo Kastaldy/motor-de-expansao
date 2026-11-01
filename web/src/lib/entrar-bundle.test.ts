@@ -72,72 +72,30 @@ describe('tela de entrar: caminhos de asset', () => {
     expect(entrada).not.toMatch(/https?:\/\//)
   })
 
-  it('o Authelia é RESERVA, e só o 404 cai nele', () => {
-    /* ESTA GUARDA JÁ EXISTIU AO CONTRÁRIO, e a inversão custou uma queda de produção.
-       Até 28/09/2026 ela exigia que `entrar.tsx` NÃO mencionasse `firstfactor`, com a
-       justificativa "depois do corte o Authelia não existe". A premissa é verdadeira e
-       estava no tempo errado: o corte NÃO foi virado, e a tela que só falava com o nosso
-       backend tirou todo mundo do ar — `/api/login` responde 404 com
-       `MOTOR_AUTENTICACAO_PROPRIA` desligada, e da borda do host de auth o pedido nem
-       chega ao nosso backend.
+  it('não há reserva do Authelia: só o nosso backend autentica', () => {
+    /* ESTA GUARDA JÁ EXISTIU AO CONTRÁRIO, e a inversão custou uma queda de produção. Até
+       28/09/2026 ela exigia que `entrar.tsx` NÃO mencionasse `firstfactor`, "porque depois
+       do corte o Authelia não existe" — e estava no tempo errado: o corte NÃO tinha sido
+       virado, e a tela que só falava com o nosso backend tirou todo mundo do ar. A DEC-081
+       virou o corte: o login próprio vale em todas as origens, o Authelia foi aposentado, e
+       agora a premissa É verdadeira — a tela fala com UM backend só.
 
-       O invariante que vale nos DOIS mundos, e é o que se mede aqui:
-         1. o NOSSO backend é tentado PRIMEIRO (depois do corte, é o único que responde);
-         2. o Authelia é alcançável, mas só como RESERVA;
-         3. a queda para a reserva é no 404 e em MAIS NADA — 401 é credencial recusada e
-            429 é trava; cair no Authelia neles gastaria uma tentativa da trava DELE com
-            uma senha que o nosso servidor já recusou;
-         4. o 404 não conta como tentativa, senão a pessoa vê "muitas tentativas" no
-            primeiro envio por causa de uma porta fechada que ela não escolheu. */
-    /* O CÓDIGO, sem os comentários. Medir a fonte crua mediria a PROSA: o docstring desta
-       tela explica a ordem das duas tentativas e cita `/api/firstfactor` por escrito, muito
-       antes da primeira linha executável. A 1a versão desta guarda caiu nisso e acusou "o
-       Authelia virou a primeira tentativa" apontando para um parágrafo. Mesma lição que
-       `tema-claro-ultra.test.ts` já registra para o CSS: comentário sai ANTES do parse. */
+       Medido na FONTE sem comentários: o docstring conta a história e cita o Authelia por
+       escrito, muito antes da primeira linha executável; medir a fonte crua mediria a
+       PROSA. Mesma lição que `tema-claro-ultra.test.ts` registra para o CSS. */
     const codigo = ler('entrar.tsx')
       .replace(/\/\*[\s\S]*?\*\//g, '')
       .replace(/^\s*\/\/.*$/gm, '')
-    const entrada = codigo
 
-    /* POSIÇÃO DE TEXTO NÃO MEDE ORDEM DE CHAMADA, e a 1a versão desta guarda errou por
-       isso: `entrarPeloAuthelia` é declarada ACIMA de `Entrada`, então o `firstfactor` do
-       corpo dela aparece antes do `api.entrar(` — e a asserção acusou inversão onde não
-       havia. O que se mede aqui é ESTRUTURA: o POST ao Authelia existe SÓ dentro da
-       função de reserva, e o nosso backend é chamado SÓ fora dela. Quem amarra as duas na
-       ordem certa é a asserção do 404, abaixo. */
-    const iDef = entrada.search(/async function entrarPeloAuthelia\b/)
-    expect(iDef, 'a função de reserva desapareceu — quem entra hoje fica fora').toBeGreaterThan(-1)
-    const fimDef = entrada.indexOf('\nfunction Entrada(', iDef)
-    expect(fimDef, 'não achei o fim da função de reserva').toBeGreaterThan(iDef)
-    const reserva = entrada.slice(iDef, fimDef)
-    const resto = entrada.slice(0, iDef) + entrada.slice(fimDef)
+    // Entra pelo nosso backend...
+    expect(codigo).toMatch(/\bapi\.entrar\(/)
+    // ...e não há mais reserva do Authelia: nem a chamada de rede, nem a função.
+    expect(codigo, 'o firstfactor do Authelia voltou').not.toMatch(/firstfactor/)
+    expect(codigo, 'a função de reserva do Authelia voltou').not.toMatch(/entrarPeloAuthelia/)
 
-    expect(reserva, 'a reserva não chama o primeiro fator').toMatch(/fetch\('\/api\/firstfactor'/)
-    expect(resto, 'o Authelia é chamado FORA da reserva — virou primeira tentativa').not.toMatch(
-      /firstfactor/,
-    )
-    expect(resto, 'a tela não chama o nosso backend').toMatch(/\bapi\.entrar\(/)
-    expect(reserva, 'o nosso backend é chamado DENTRO da reserva').not.toMatch(/\bapi\.entrar\(/)
-
-    // 3. a queda é no 404...
-    expect(entrada).toMatch(/erro\.status === 404[\s\S]{0,800}?entrarPeloAuthelia\(/)
-    // ...e em mais nada: nenhum outro status leva à reserva.
-    for (const status of [401, 403, 429, 500]) {
-      expect(
-        entrada,
-        `${status} não pode cair no Authelia`,
-      ).not.toMatch(new RegExp(`erro\\.status === ${status}[\\s\\S]{0,200}?entrarPeloAuthelia\\(`))
-    }
-
-    /* 4. o ramo do 404 vem ANTES de contar a tentativa — medido em `resto`, e não na fonte
-       inteira, porque a função de RESERVA também conta tentativa (as recusas do Authelia
-       contam, e devem contar). Medir tudo junto pegaria aquele `falhas.current += 1`, que
-       está acima no arquivo, e a guarda reprovaria um código correto. */
-    const iQuatroCentoQuatro = resto.search(/erro\.status === 404/)
-    const iConta = resto.search(/falhas\.current \+= 1/)
-    expect(iQuatroCentoQuatro, 'o 404 saiu do caminho próprio').toBeGreaterThan(-1)
-    expect(iConta, 'o caminho próprio parou de contar tentativa').toBeGreaterThan(-1)
-    expect(iQuatroCentoQuatro, 'o 404 passou a contar como tentativa').toBeLessThan(iConta)
+    /* O 404 deixou de ser sinal especial: antes desviava para a reserva, agora é erro de
+       servidor como outro qualquer (`falhaDoStatus`), sem ramo próprio nenhum. */
+    expect(codigo, 'o 404 voltou a ter tratamento próprio na tela').not.toMatch(/404/)
   })
 
   it('o aviso de autofill existe no CSS com o nome que o TS compara', () => {
@@ -197,23 +155,5 @@ describe('tela de entrar: o destino pos-login nao pode ser ela mesma', () => {
     expect(ler('entrar.tsx')).toMatch(
       /destinoSeguro\(\s*rd,\s*window\.location\.hostname,\s*window\.location\.href\s*\)/,
     )
-  })
-
-  it('o destino mandado ao Authelia e o VALIDADO, que pode ser nulo', () => {
-    /* Nunca o `?? '/'`: no host de auth, `'/'` E' esta tela. `montarPedido` OMITE o
-       `targetURL` quando o destino e' falso, e e' essa omissao que faz o Authelia usar o
-       padrao dele em vez de devolver a pessoa ao formulario. */
-    expect(ler('entrar.tsx')).toMatch(
-      /entrarPeloAuthelia\(usuario,\s*senha,\s*manter,\s*validado,/,
-    )
-  })
-
-  it('405 e 404 sao o MESMO caso: ninguem autentica neste host', () => {
-    /* 405 e' o que o NOSSO backend responde a `POST /api/firstfactor` -- a rota nao
-       existe aqui --, e foi o status medido quando o laco despejou a tela no host do
-       piloto. Sem ele, `lerResposta` traduz por `indisponivel` ("pode estar
-       reiniciando"), que manda a pessoa esperar por um servidor que esta' de pe. */
-    const reserva = ler('entrar.tsx')
-    expect(reserva).toMatch(/status === 404 \|\| status === 405[\s\S]{0,60}?'nao-ligado'/)
   })
 })

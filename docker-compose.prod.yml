@@ -449,7 +449,11 @@ services:
       - "443:443/udp"
     volumes:
       - ./Caddyfile:/etc/caddy/Caddyfile:ro
-      - ./portal:/srv/portal:ro                                 # portal de selecao de pais (spec docs/spec_portal_selecao_pais.md)
+      # DEC-081: o portal de selecao de pais do apex deixou de ser o template Go estatico de
+      # `/srv/portal` e virou uma tela React servida pelo `web` (dist/portal.html, rota
+      # `GET /portal.html`). O bloco do apex no Caddyfile passa a `reverse_proxy web:8899`
+      # (espelho do BR) e reescreve `/` -> `/portal.html` -- por isso o bind `./portal` saiu.
+      # Aplicar o Caddyfile novo e este compose JUNTOS no corte (spec docs/spec_portal_selecao_pais.md).
       - caddy_data:/data
       - caddy_config:/config
       # Access log do host piloto (DEC-027): a diretiva `log` do Caddyfile escreve

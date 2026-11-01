@@ -114,8 +114,11 @@ curl() { { printf '%s\n' "$@"; echo "--fim--"; } >> curl_argv.log; cat codigo.tx
 def test_o_nome_do_cookie_da_sonda_e_o_de_PRODUCAO() -> None:
     """Com outro nome, o `/api/verify` volta a ver "sem cookie" e a sonda volta a ser cega.
 
-    O `__Host-` não é enfeite: em produção o nome sem prefixo é IGNORADO pelo backend
-    (endurecimento de 25/09/2026), então `motor_sessao=` cairia no mesmo atalho do token vazio.
+    O `__Host-` não é enfeite: em produção o nome sem prefixo (`motor_sessao`, só dev) é IGNORADO
+    pelo backend (endurecimento de 25/09/2026), então `motor_sessao=` cairia no mesmo atalho do
+    token vazio. O prefixo de produção é `__Host-` (a DEC-081 tentou `__Secure-`+`Domain` para o
+    SSO de apex+BR+AR, mas a Opção F reverteu por um furo de fixação — o `__Host-` é host-only e
+    fecha isso). A sonda acompanha; o nome é lido de `COOKIE_SESSAO` e comparado acima.
     """
     nome, valor = _cookie_da_sonda()
     achado = re.search(r'^COOKIE_SESSAO = "([^"]+)"$', ACESSO.read_text(encoding="utf-8"), re.M)
