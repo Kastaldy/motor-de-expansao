@@ -163,7 +163,7 @@ Contagens: linhas com IBGE / setor_2022 / cod_municipio / `\buf\b`.
 
 **Fora de `pipelines/`:**
 - **`scripts/ingerir_*`:** Growth API, planos de agregador, comodidades, movimentação, faturamento financeiro. Mais `sync_concorrentes_dashboard.py`. Todos são **BR por fonte**.
-- **Crescimento:** `src/motor_expansao/crescimento/atualizar.py` orquestra `data/reports/crescimento/01..10_*.py` (`:51-61`). Os insumos são Novo CAGED via FTP PDET (`crescimento/caged.py:40-41`), RAIS e satélite. A saída é consumida por `app.py:243`, `:247`, `:1072`, `relatorio_praca.py:446-447` (também por `cod6`) e `api/service.py:1249`.
+- **Crescimento:** `src/motor_expansao/crescimento/atualizar.py` orquestra `scripts/crescimento/01..10_*.py` (`:51-61`). Os insumos são Novo CAGED via FTP PDET (`crescimento/caged.py:40-41`), RAIS e satélite. A saída é consumida por `app.py:243`, `:247`, `:1072`, `relatorio_praca.py:446-447` (também por `cod6`) e `api/service.py:1249`.
 
 **Normalização no serving (`dashboard/constants.py`, `_REGUAS = resolver_perfil().reguas` em `:10`)**
 

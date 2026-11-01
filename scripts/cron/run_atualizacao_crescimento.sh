@@ -46,7 +46,7 @@
 #   ${HOST_INSUMOS}/poc_satelite/data/uf=XX/...            (mosaicos, 12 UFs)
 #   ${HOST_INSUMOS}/eixo/_eixo_trajetoria.parquet          (projeto poc_satelite)
 #
-# Os scripts da cadeia vem do CHECKOUT (${APP_DIR}/data/reports/crescimento),
+# Os scripts da cadeia vem do CHECKOUT (${APP_DIR}/scripts/crescimento),
 # montado :ro — o orquestrador os COPIA para um tmp interno, entao a arvore git
 # do checkout nunca fica suja (licao do wrapper dos agregadores).
 #
@@ -121,7 +121,7 @@ if [ "$DRY_RUN" != "1" ] && { [ -z "$API_TELEGRAM_TOKEN" ] || [ -z "$MONITOR_TEL
 fi
 
 # Pre-checagens que abortam CEDO, com mensagem acionavel.
-[ -d "${APP_DIR}/data/reports/crescimento" ] || { echo "!! cadeia ausente no checkout: ${APP_DIR}/data/reports/crescimento"; exit 1; }
+[ -d "${APP_DIR}/scripts/crescimento" ] || { echo "!! cadeia ausente no checkout: ${APP_DIR}/scripts/crescimento"; exit 1; }
 for d in socioeconomico crescimento_tec poc_satelite eixo; do
   [ -d "${HOST_INSUMOS}/${d}" ] || { echo "!! insumo ausente: ${HOST_INSUMOS}/${d} (repasse inicial nao feito? ver docs/infra_producao.md)"; exit 1; }
 done
@@ -158,7 +158,7 @@ set +e
 docker run --rm --user 0:0 \
   -v "$MOUNT_STAGING" \
   -v "${HOST_OUTPUTS}:/app/data/outputs:ro" \
-  -v "${APP_DIR}/data/reports/crescimento:/insumos/scripts:ro" \
+  -v "${APP_DIR}/scripts/crescimento:/insumos/scripts:ro" \
   -v "$MOUNT_SOCIO" \
   -v "${HOST_INSUMOS}/crescimento_tec:/insumos/crescimento_tec:ro" \
   -v "${HOST_INSUMOS}/poc_satelite:/insumos/poc_satelite:ro" \

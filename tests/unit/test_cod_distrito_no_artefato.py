@@ -7,7 +7,7 @@ agregar por distrito casando NOME + municipio + UF, e deixava o ETL das bases de
 
 Estes testes olham o CONTRATO do pipeline, nao dados: rodar a materializacao exige a malha de
 1,2 GB e nao cabe em teste unitario. O que garante o VALOR e' o
-`scripts/comparar_artefato_geo.py`, que o operador roda entre o artefato antigo e o novo.
+`scripts/medicoes/comparar_artefato_geo.py`, que o operador roda entre o artefato antigo e o novo.
 """
 
 from __future__ import annotations

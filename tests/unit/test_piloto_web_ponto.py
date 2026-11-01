@@ -229,7 +229,7 @@ def _tem_crescimento() -> bool:
 
 # Gate PROPRIO, e nao o `requer_enriquecido`, para os tres testes do bloco de crescimento
 # do estado: eles leem `crescimento_municipal.parquet`, artefato SEPARADO do enriquecido
-# e com cadencia propria (`data/reports/crescimento/README.md`).
+# e com cadencia propria (`scripts/crescimento/README.md`).
 #
 # Ate 2026-09-02 os tres pegavam carona no `requer_enriquecido`, e funcionava por
 # ACIDENTE: `STAGING_DIR` derivava de um `_DEFAULT_DATA` cravado no Downloads de UMA

@@ -5,7 +5,7 @@ IC95 por bootstrap; NO-GO e resultado valido. DEC-009: alvo = alunos REAIS.
 READ-ONLY sobre o M1. Sem rede, sem escrita em artefato M1.
 
 Uso:
-    python scripts/validar_formato_viabilidade.py
+    python scripts/medicoes/validar_formato_viabilidade.py
 Saida:
     data/analysis/relatorio_formato_densidade.md (gitignored)
     + veredito GO/NO-GO no stdout (exit 0 sempre; o veredito e conteudo, nao status).
@@ -24,7 +24,7 @@ from motor_expansao.dimensionamento.viabilidade_ponto import (
     faixa_alunos_por_densidade,
 )
 
-ROOT = Path(__file__).resolve().parents[1]
+ROOT = Path(__file__).resolve().parents[2]
 BASE_PARQUET = ROOT / "data" / "staging" / "base_calibracao_multirede.parquet"
 RELATORIO = ROOT / "data" / "analysis" / "relatorio_formato_densidade.md"
 
