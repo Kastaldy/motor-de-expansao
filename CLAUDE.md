@@ -7,7 +7,7 @@
 ## 1. Norte
 - Duas trilhas complementares: `M1 oficial territorial` (decide onde expandir, nível executivo) e `mercado por hexagono` (camada paralela: demanda, oferta mapeada, residual fitness e restrição da rede Ultra).
 - Perguntas centrais: onde expandir, quem já atua ali, qual mercado residual existe e como ocupar regiões com sequência controlada.
-- Posicionamento: a Ultra é marca **low-cost / massa** (NÃO é premium); público prioritário 18-45 anos; concorrente direto e comparável de mesmo segmento: Smart Fit.
+- Posicionamento: a Ultra é marca **low-cost / massa** (NÃO é premium) e atende todas as idades; concorrente direto e comparável de mesmo segmento: Smart Fit.
 - Papéis das camadas: M1 é a camada EXECUTIVA (municípios e ranking oficial de carteira; `score_priorizacao` é o score oficial, não o operacional do dia a dia); o censitário (`score_setor_2022_calibrado`) é a camada PRIMÁRIA no uso operacional, e o híbrido refina a leitura intraurbana; mercado/residual e Expansão de Domínio apoiam a estratégia operacional e não substituem o M1.
 - Nenhuma trilha paralela altera o M1 sem aprovação explícita.
 

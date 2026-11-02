@@ -121,7 +121,7 @@ Fluxo oficial:
 Regra canonica de score:
 
 ```python
-# populacao_proxy = pop_total (trava de faixa etária 18-45 removida em 2026-05-15)
+# populacao_proxy = pop_total (população de todas as idades)
 renda_pct_nacional = percentil_nacional(renda_per_capita)
 pop_pct_nacional = percentil_nacional(populacao_proxy)
 

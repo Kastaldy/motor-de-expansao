@@ -27,7 +27,7 @@ No MVP nacional atual:
   `https://servicodados.ibge.gov.br/api/v3/malhas/estados/{uf}?intrarregiao=municipio&formato=application/vnd.geo+json&qualidade=maxima`
 - SIDRA renda municipal:
   tabela `10295`, variável `13431`
-- SIDRA população municipal total (alterado 2026-05-15; trava 18-45 removida):
+- SIDRA população municipal total (todas as idades):
   tabela `4709`, variável `93`, período `last`/`2022`
 
 ### Fallback oficial atual

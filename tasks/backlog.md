@@ -4552,7 +4552,7 @@ Felipe; nenhuma etapa de modelo roda antes da exploratória revisada):
 - **Idade do público:** o "18–45" do CLAUDE.md nunca foi medido. **05/10:** o Felipe corrigiu que a Ultra atende
   todas as idades; o "18–45" de `CLAUDE.md:12` e `PRD.md:52` não é real. A sonda da Growth confirma: mediana de 37
   anos, e um terço dos alunos tem 45 anos ou mais.
-  - Corrigidos em 05/10 só numa cópia local, **nunca commitados**: `CLAUDE.md:12`, `PRD.md:52` e `docs/expansao_dominio.md:127` seguem com o "18-45" na `main` (conferido em 2026-10-23). Em 29/10/2026, na limpeza da documentação, o `PRD.md` saiu do repositório e o `docs/expansao_dominio.md` foi corrigido; segue o `CLAUDE.md:12`.
+  - Corrigidos em 05/10 só numa cópia local, **nunca commitados**: `CLAUDE.md:12`, `PRD.md:52` e `docs/expansao_dominio.md:127` seguem com o "18-45" na `main` (conferido em 2026-10-23). Em 29/10/2026, na limpeza da documentação, o `PRD.md` saiu do repositório e o `docs/expansao_dominio.md` foi corrigido; e em 02/11/2026 o `CLAUDE.md` também, no PR #504 (decisão do Vinicius, responsável pela documentação: a Ultra visa todas as idades).
   - Sobra um comentário de código em `src/motor_expansao/dashboard/constants.py:461` ("classe média urbana-alvo Ultra
     (18-45)"), que vai no próximo PR.
 - **Idade da população por setor: a base EXISTE no IBGE.** `Agregados_por_setores_demografia_BR.zip` (22 MB, de
