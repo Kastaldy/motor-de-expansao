@@ -7,7 +7,7 @@ das pontas pinta a camada 4 inteira de cinza sem erro, sem log e sem teste verme
 
 As tres pontas:
 
-  1. PRODUTOR  `data/reports/crescimento/08_populacao_e_hex.py` (`CORTES`) grava o
+  1. PRODUTOR  `scripts/crescimento/08_populacao_e_hex.py` (`CORTES`) grava o
      identificador ASCII no parquet;
   2. BACKEND   `web/server/app.py` (`_ROTULO_CLASSE`) traduz o identificador no rotulo
      acentuado que a API envia;
@@ -34,7 +34,7 @@ import pytest
 
 _REPO = Path(__file__).resolve().parents[2]
 _COLORS_TS = _REPO / "web" / "src" / "lib" / "colors.ts"
-_GERADOR = _REPO / "data" / "reports" / "crescimento" / "08_populacao_e_hex.py"
+_GERADOR = _REPO / "scripts" / "crescimento" / "08_populacao_e_hex.py"
 _SERVER = _REPO / "web" / "server"
 
 if str(_SERVER) not in sys.path:

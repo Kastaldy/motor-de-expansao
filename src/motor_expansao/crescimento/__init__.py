@@ -6,7 +6,7 @@ atualizacao que ate' a DEC-052 era 100% manual e sem cadencia:
     caged.py      baixa os meses NOVOS do Novo CAGED (FTP do PDET) e atualiza o CSV
                   consolidado que a cadeia 01..10 consome — sem meses hardcoded e
                   sem caminho fixo de maquina (armadilhas ja' pagas uma vez).
-    atualizar.py  orquestra a cadeia 01..10 de `data/reports/crescimento/` na ordem
+    atualizar.py  orquestra a cadeia 01..10 de `scripts/crescimento/` na ordem
                   OBRIGATORIA, em MOTOR_DATA_DIR de rascunho (nunca sobre o staging
                   vivo), valida o resultado e publica por rename atomico.
     validar.py    o portao do artefato: rejeita a assinatura da execucao parcial

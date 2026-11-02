@@ -62,7 +62,7 @@ chmod +x /opt/motor-expansao-infra/run_atualizacao_crescimento.sh
 
 (O checkout `/opt/motor-expansao/app` está parado — commit 302487e, de 2026-08-19 — e o compose de produção foi trocado à
 mão em 17/10: `git pull` ali não é rotina. Envie o script por `scp`, conferido em LF. Atenção: o job também monta
-`data/reports/crescimento` DO CHECKOUT, então a cadeia precisa chegar à VPS do mesmo jeito.)
+`scripts/crescimento` DO CHECKOUT (até 01/11/2026, `data/reports/crescimento`), então a cadeia precisa chegar à VPS do mesmo jeito.)
 
 ## Passo 2 — modo seco (OBRIGATÓRIO antes de agendar)
 

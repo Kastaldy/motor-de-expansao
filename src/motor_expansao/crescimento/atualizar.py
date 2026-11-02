@@ -89,7 +89,7 @@ def _raizes_do_ambiente() -> dict[str, Path]:
     if faltando:
         raise SystemExit(
             "variaveis de ambiente ausentes: " + ", ".join(faltando)
-            + "\n  (as 4 raizes de `data/reports/crescimento/_raizes.py`; ver o README de la')"
+            + "\n  (as 4 raizes de `scripts/crescimento/_raizes.py`; ver o README de la')"
         )
     return {
         "MOTOR": Path(os.environ["MOTOR_DATA_DIR"]),
@@ -197,7 +197,7 @@ def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument(
         "--scripts-dir", type=Path, required=True,
-        help="pasta com a cadeia 01..10 + _raizes.py (ex.: data/reports/crescimento do checkout)",
+        help="pasta com a cadeia 01..10 + _raizes.py (ex.: scripts/crescimento do checkout)",
     )
     ap.add_argument(
         "--eixo", type=Path, default=None,

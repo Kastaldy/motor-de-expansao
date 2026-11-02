@@ -6,7 +6,7 @@ comparando dtype string vs category. Gera relatório em
 data/analysis/benchmark_hexid_category.md.
 
 Uso:
-    python scripts/benchmark_hexid_category.py
+    python scripts/medicoes/benchmark_hexid_category.py
 
 Saída:
     data/analysis/benchmark_hexid_category.md
@@ -30,7 +30,7 @@ N_REPETICOES = 5
 N_ISIN = 1_000
 GANHO_MINIMO_PCT = 15.0
 
-ROOT = Path(__file__).parent.parent
+ROOT = Path(__file__).parent.parent.parent
 STAGING = ROOT / "data" / "staging"
 ANALYSIS = ROOT / "data" / "analysis"
 

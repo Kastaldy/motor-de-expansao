@@ -1,5 +1,5 @@
 """
-scripts/smoke_test_fontes.py — Smoke test das fontes de dados gratuitas
+scripts/medicoes/smoke_test_fontes.py — Smoke test das fontes de dados gratuitas
 
 Valida conectividade e retorno real de:
   1. IBGE SIDRA (renda município SP)
@@ -22,7 +22,7 @@ import requests
 from geopy.geocoders import Nominatim
 
 # ── Carrega .env se existir ─────────────────────────────────────────────────
-env_path = os.path.join(os.path.dirname(__file__), "..", ".env")
+env_path = os.path.join(os.path.dirname(__file__), "..", "..", ".env")
 if os.path.exists(env_path):
     with open(env_path) as f:
         for line in f:

@@ -1,4 +1,4 @@
-"""Testes unitários para scripts/movimentacao_concorrencial.py.
+"""Testes unitários para scripts/medicoes/movimentacao_concorrencial.py.
 
 Todos os testes usam fixtures sintéticas em memória —
 nenhum parquet real de staging é lido.
@@ -11,7 +11,7 @@ from pathlib import Path
 import pandas as pd
 import pytest
 
-from scripts.movimentacao_concorrencial import (
+from scripts.medicoes.movimentacao_concorrencial import (
     gerar_relatorio,
     impacto_residual,
     join_uf_cidade,

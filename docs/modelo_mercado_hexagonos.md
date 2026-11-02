@@ -281,7 +281,7 @@ aceita `hex_ids_validos` e `anexar_pressao_1km_area` sempre passa o universo rea
 hexagonos, fechando a conservacao de massa (medido: 3.178 de 3.163 esperados nacionalmente,
 contra ~99,1% antes do fix).
 
-Efeito nacional medido (`scripts/comparar_pressao_1km.py`, pos-fix, sem `--uf`): consumo
+Efeito nacional medido (`scripts/medicoes/comparar_pressao_1km.py`, pos-fix, sem `--uf`): consumo
 atribuido a concorrentes sobe de 6.159.181 para 7.945.000 alunos (+29,0% — residual mais
 conservador), 3.361 hexagonos perdem residual e 80 ganham (concentrados no Sul, celula
 H3 menor). Comparativo completo em `data/reports/scratch/comparativo_1km_pos_dec050.csv`.
@@ -325,7 +325,7 @@ travados por teste - os parquets sao gitignored, entao o CI nao regride se mudar
   `repartir_concorrentes` recebe `hex_ids_validos` e renormaliza o share sobre os hexagonos da
   base; so' um concorrente cujo disco cai 100% fora dela contribui zero.
 
-Comparativo executavel: `python scripts/comparar_pressao_1km.py` (usa os parquets reais
+Comparativo executavel: `python scripts/medicoes/comparar_pressao_1km.py` (usa os parquets reais
 se existirem; senao roda um cenario sintetico rotulado como DEMO).
 
 ### 5.4 Mercado atendivel (SAM)
