@@ -42,7 +42,7 @@ do git.
 | `data/` | Os dados. Quase tudo fica fora do git (`raw/`, `staging/`, `outputs/`, `ultra/`); no git ficam as malhas municipais (`ibge/`), os perfis de país (`perfis/`), o cache do OSM (`osm_cache/`, ver [artefatos_dados.md](artefatos_dados.md) §6), os estudos (`analysis/`) e os relatórios (`reports/`). |
 | `docs/` | A documentação: este índice, as decisões (`decisions/`), o plano da América Latina (`expansao-latam/`) e o arquivo (`archive/`). |
 | `tasks/` | O `backlog.md` (o que falta fazer) e o `completed.md` (o que já foi feito). |
-| `scripts/` | Os scripts avulsos: ingestão, operação, governança da esteira e medições; os da rotina do servidor ficam em `scripts/cron/`. |
+| `scripts/` | Os scripts avulsos de ingestão, operação e governança da esteira. Subpastas: `scripts/cron/` (as rotinas do servidor), `scripts/crescimento/` (a cadeia que gera a camada de crescimento) e `scripts/medicoes/` (medições, comparações e backtests que se rodam à mão). |
 | `deploy/`, `openmaptiles-infra/`, `valhalla-infra/`, `secrets/` | A infraestrutura do servidor: o Caddy, o servidor de mapas, o de rotas e os segredos cifrados. |
 | `.github/`, `.githooks/` | A automação: os testes e as checagens de cada PR e o gancho que atualiza o grafo a cada commit. |
 | `.claude/`, `.codex/`, `prompts/` | A configuração dos agentes: comandos, skills e prompts da esteira. |
@@ -60,9 +60,9 @@ configuração que começam com ponto.
 
 - Documento novo vai para `docs/`, script novo para `scripts/` e código do produto para `src/motor_expansao/`
   ou `web/`. A raiz não recebe arquivo novo sem motivo.
-- Estudo ou medição avulsa: o script em `data/analysis/` e o resultado que vale guardar em `data/reports/`.
-  Código que a produção roda não vai para `data/` (a cadeia de `data/reports/crescimento/`, rodada pelo
-  `src/motor_expansao/crescimento/atualizar.py`, é exceção herdada).
+- Estudo, isto é, uma pasta com o script e o resultado: `data/analysis/<tema>/`; o resultado que vale guardar
+  vai para `data/reports/`. Medição, comparação ou backtest de um arquivo só, que se roda à mão:
+  `scripts/medicoes/`. Código que a produção roda não vai para `data/`.
 - Temporário fica fora do git: na pasta temporária do sistema ou numa `tmp/` ou `tmp_*/` da raiz, que o
   `.gitignore` ignora. Apague ao terminar.
 - Antes de mover ou renomear um arquivo, veja se o guard (`scripts/loop_guard.py`) o protege pelo caminho

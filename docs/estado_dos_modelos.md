@@ -51,7 +51,7 @@ carteira, plano ou artefatos oficiais.
 - **`membros` é a fatia do benefício corporativo (~1/3 dos alunos reais).** Nas 54 unidades Ultra, o agregador
   (Gympass+TotalPass) é só **35,6%** do total. O eixo `disputa = 1 − share_huff` foi calibrado no próprio
   `membros`, então o R²_oof +0,57 é **parcialmente circular**. Contra um alvo independente (alunos totais),
-  o poder cai para ~+0,08 (limpo) / ~+0,16 (com Huff). Fonte versionada: o achado (2026-07-07) virou regra nas "Decisões PRÉ-FIXADAS" do BLK-VIAB-02 em `tasks/completed.md` (alvo = alunos totais reais, nunca `membros`/agregador); a medição dos +0,08/+0,16 é a do `scripts/_scratch_atr_alvo_alunos_totais.py` (relatório em `data/analysis/atr_alvo_alunos_totais.md`).
+  o poder cai para ~+0,08 (limpo) / ~+0,16 (com Huff). Fonte versionada: o achado (2026-07-07) virou regra nas "Decisões PRÉ-FIXADAS" do BLK-VIAB-02 em `tasks/completed.md` (alvo = alunos totais reais, nunca `membros`/agregador); a medição dos +0,08/+0,16 é a do `scripts/medicoes/_scratch_atr_alvo_alunos_totais.py` (relatório em `data/analysis/atr_alvo_alunos_totais.md`).
 - **A curva de viabilidade generaliza entre redes** (MAPE Eng Corpo 30,3% ≈ Ultra 35,3% no pool de 112), **mas
   misturar portes diferentes na curva PIORA a rede menor** (Ultra: 26,8% base-54 → 35,3% base-112) e **extrapolar
   fora do envelope (> 2.800 m²) é ruim (MAPE 85%)**. Este achado e os dois seguintes vêm do backtest BLK-VIAB-04-FU, resumido no "Contexto" dos BLK-VIAB-06 e BLK-VIAB-07 em `tasks/completed.md`.
