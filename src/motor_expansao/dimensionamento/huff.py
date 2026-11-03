@@ -2,7 +2,7 @@
 
 READ-ONLY sobre o M1 (DEC-001/DEC-008): nao recalcula `score_priorizacao`/pesos nem
 toca artefatos oficiais. Camada PARALELA de Dimensionamento (Camada 2 do spec
-`modelo_dimensionamento_expansao.md` §4: share gravitacional + saturacao por capacidade
+`docs/archive/modelo_dimensionamento_expansao.md` §4: share gravitacional + saturacao por capacidade
 propria + canibalizacao por unidades proprias no catchment).
 
 Anti-PII: o modulo so le `lat`/`lng` (+ `rede` para dedup opcional) dos concorrentes; o
