@@ -19,9 +19,12 @@ from __future__ import annotations
 
 import sys
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
+from fastapi import FastAPI, Request
+from fastapi.testclient import TestClient
 
 _REPO = Path(__file__).resolve().parents[2]
 _SERVER = _REPO / "web" / "server"
@@ -100,6 +103,9 @@ class _RequisicaoDeLogin:
             cabecalhos["user-agent"] = agente
         self.headers = cabecalhos
         self.client = type("Peer", (), {"host": peer})() if peer else None
+        # O handler de login carimba `request.state.login_na_trilha` no sucesso (BLK-BANCO-12);
+        # o `.state` precisa existir e aceitar atribuicao, como no `Request` real.
+        self.state = SimpleNamespace()
 
 
 def _req(**kw: Any) -> Any:
@@ -709,3 +715,107 @@ def test_origem_ausente_nao_derruba_o_login(ligado: None, monkeypatch: pytest.Mo
     assert resposta.status_code == 200
     assert vistos[0]["ip"] is None
     assert vistos[0]["user_agent"] is None
+
+
+# ---------------------------------------------------------------------------
+# BLK-BANCO-12: o /api/login bem-sucedido nao consta como "desconhecido" na trilha (DEC-027)
+# ---------------------------------------------------------------------------
+
+
+class _Headers:
+    """So' o `.get` que o middleware usa."""
+
+    def __init__(self, d: dict[str, str]) -> None:
+        self._d = d
+
+    def get(self, chave: str, default: Any = None) -> Any:
+        return self._d.get(chave, default)
+
+
+def _req_trilha(caminho: str, *, state: Any, headers: dict[str, str] | None = None) -> Any:
+    return SimpleNamespace(
+        url=SimpleNamespace(path=caminho, query=""),
+        headers=_Headers(headers or {}),
+        client=SimpleNamespace(host="203.0.113.7"),
+        state=state,
+        method="POST",
+    )
+
+
+def test_trilha_do_login_bem_sucedido_registra_o_login_nao_desconhecido(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """O handler de login carimba `request.state.login_na_trilha` no sucesso; o middleware a usa.
+
+    Sem isto, o POST /api/login (pre-autenticacao, sem Remote-User) caia no `or "desconhecido"`
+    do montar_evento, e a trilha da DEC-027 nunca dizia QUEM entrou.
+    """
+    capturados: list[dict[str, Any]] = []
+    monkeypatch.setattr(pilot.acesso_log, "registrar", lambda ev: capturados.append(ev))
+    st = SimpleNamespace(login_na_trilha="ana.ribeiro")
+    pilot._registrar_acesso(_req_trilha("/api/login", state=st), status=200, inicio=0.0, tamanho=None)
+    assert len(capturados) == 1
+    assert capturados[0]["usuario"] == "ana.ribeiro"
+
+
+def test_trilha_do_login_atravessa_o_middleware_de_ponta_a_ponta(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Ponte REAL: o `request.state` carimbado no handler chega ao `_registrar_acesso` DEPOIS
+    do `call_next`. Os testes vizinhos exercitam as pontas ISOLADAS; este trava a ARQUITETURA:
+    se o middleware deixar de compartilhar o `scope["state"]` com o endpoint (trocar o tipo de
+    middleware, reconstruir o Request), a trilha voltaria a dizer "desconhecido" no login em
+    producao, em silencio -- a familia de defeito da DEC-038/045/054.
+
+    Dois cuidados MEDIDOS: (1) `login_da_requisicao` vira header cru, para o fallback de uma
+    ponte quebrada ser "desconhecido" (nao a identidade de dev, que mascararia a regressao);
+    (2) `FastAPI`/`Request` SAO importados no topo do modulo de proposito -- com
+    `from __future__ import annotations` (PEP 563) a anotacao `request: Request` e' uma string
+    que o FastAPI resolve no namespace do MODULO; um import local faria `request` virar query
+    param, o endpoint devolveria 422 sem rodar, e o teste "passaria" sobre uma requisicao
+    rejeitada sem nunca exercer a ponte.
+    """
+    capturados: list[dict[str, Any]] = []
+    monkeypatch.setattr(pilot.acesso_log, "registrar", lambda ev: capturados.append(ev))
+    monkeypatch.setattr(pilot.acesso, "login_da_requisicao", lambda h: h)
+
+    mini = FastAPI()
+    mini.middleware("http")(pilot._trilha_acesso)  # o middleware REAL da DEC-027
+
+    @mini.post("/api/login")
+    def _login_falso(request: Request) -> dict[str, bool]:
+        request.state.login_na_trilha = "ana.ribeiro"  # como o handler real, so' no sucesso
+        return {"ok": True}
+
+    TestClient(mini).post("/api/login")
+
+    assert len(capturados) == 1
+    assert capturados[0]["usuario"] == "ana.ribeiro"
+
+
+def test_trilha_login_recusado_segue_desconhecido(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Recusa/inexistente NAO carimba `login_na_trilha` (o raise vem antes) e sem Remote-User
+    a trilha grava "desconhecido" -- o certo: o visitante nao e' uma identidade confirmada."""
+    capturados: list[dict[str, Any]] = []
+    monkeypatch.setattr(pilot.acesso_log, "registrar", lambda ev: capturados.append(ev))
+    monkeypatch.setattr(pilot.acesso, "login_da_requisicao", lambda _u: None)
+    pilot._registrar_acesso(
+        _req_trilha("/api/login", state=SimpleNamespace()), status=401, inicio=0.0, tamanho=None
+    )
+    assert len(capturados) == 1
+    assert capturados[0]["usuario"] == "desconhecido"
+
+
+def test_trilha_requisicao_normal_usa_o_remote_user(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Requisicao gateada (com Remote-User) e' INTOCADA: sem `login_na_trilha`, usa o header."""
+    capturados: list[dict[str, Any]] = []
+    monkeypatch.setattr(pilot.acesso_log, "registrar", lambda ev: capturados.append(ev))
+    monkeypatch.setattr(pilot.acesso, "login_da_requisicao", lambda u: u)
+    pilot._registrar_acesso(
+        _req_trilha("/api/acessos/usuarios", state=SimpleNamespace(), headers={"remote-user": "vinicius"}),
+        status=200,
+        inicio=0.0,
+        tamanho=None,
+    )
+    assert len(capturados) == 1
+    assert capturados[0]["usuario"] == "vinicius"
