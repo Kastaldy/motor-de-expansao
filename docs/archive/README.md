@@ -54,6 +54,10 @@ aponta para o que o substituiu.
 - `repasse_logout_2h.md` — troca manual da inatividade do Authelia de 30 min para 2 h na VPS (emenda D2 da
   DEC-067, de 14/10/2026), executada em 17/10/2026. Desde o corte do P19, no Brasil o logout por
   inatividade vem da sessão própria do Motor (`INATIVIDADE_MIN = 120` em `src/motor_expansao/db/sessoes.py`).
+- `infra_producao_historico.md` — trechos de história tirados do `docs/infra_producao.md` em 03/11/2026,
+  palavra por palavra: carimbos de data, a época do Streamlit, o "como era antes", incidentes já consertados,
+  passos de instalação já feitos e o login do Brasil antes do corte do P19. O que vale hoje está no documento
+  principal.
 
 Removidos em 29/10/2026, por já estarem cobertos por outro documento (o git guarda o texto; para ler,
 `git log --all --full-history -- <caminho>`): `PRD.md`, `STATUS_ORQUESTRACAO.md`,
