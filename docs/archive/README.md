@@ -40,6 +40,9 @@ aponta para o que o substituiu.
 - `premissas_viabilidade_historico.md` — trechos de história tirados do `PREMISSAS_VIABILIDADE.md` em
   03/11/2026, palavra por palavra: regras antigas, rodadas de cálculo superadas e emendas. O que vale hoje
   está no documento principal.
+- `relatorio_pontual_historico.md` — trechos de história tirados do `docs/relatorio_pontual_censitario.md` em
+  03/11/2026, palavra por palavra: a cronologia das páginas do PDF, as validações de maio e junho, a época do
+  Streamlit e os defeitos já consertados. O que vale hoje está no documento principal.
 
 Removidos em 29/10/2026, por já estarem cobertos por outro documento (o git guarda o texto; para ler,
 `git log --all --full-history -- <caminho>`): `PRD.md`, `STATUS_ORQUESTRACAO.md`,

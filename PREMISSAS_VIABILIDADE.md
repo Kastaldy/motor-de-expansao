@@ -357,7 +357,7 @@ demanda.
 Servido em `cheque_total` e `mes_cheque_total`. **Vocabulário:** "cheque total" é **este** número;
 os R$ 760 mil passam a se chamar **"aporte inicial (obra + franquia)"**. Não usar "equity aportado".
 
-### 6.4 Margem mínima de viabilidade: 10% → 30% (decisão de Felipe, 2026-07-25)
+### 6.4 Margem mínima de viabilidade: 30% (decisão de Felipe, 2026-07-25)
 
 `SIM_MARGEM_VIAVEL_MIN` é **0,30**. Uma régua de 10% de margem EBITDA aprovaria cenário que ninguém
 levaria a comitê: 12% de margem numa operação com custo fixo alto e PMT de R$ 38 mil/mês não é
@@ -429,7 +429,7 @@ motor**. Ficam documentadas aqui exatamente para que ninguém as "conserte" liga
   de ticket alto. O caminho canônico é `SIM_TICKET_AGREGADOR_FATOR = 0,60`.
 - **Decisão:** manter congelada. Nenhum código novo deve importá-la.
 
-### `SIM_STUDIOS_DEFAULT = 0` (e `SIM_CUSTO_STUDIO`, que **deixou de ser órfã**)
+### `SIM_STUDIOS_DEFAULT = 0` e `SIM_CUSTO_STUDIO`
 
 - **Studio com TICKET PRÓPRIO (DEC-068).** O studio não eleva o ticket de
   musculação (rotulado **"Ticket de musculação"**, que não
@@ -448,8 +448,8 @@ motor**. Ficam documentadas aqui exatamente para que ninguém as "conserte" liga
 
 ## 9. Conflitos abertos
 
-Três divergências **conhecidas** entre o código e a fonte documental. A da folha (a) foi decidida em
-30/09/2026; as outras duas seguem sem decisão nomeada. Nenhuma bloqueia o ciclo.
+Três divergências **conhecidas** entre o código e a fonte documental, mais uma dúvida de modelagem (d). A
+da folha (a) foi decidida em 30/09/2026; as outras seguem sem decisão nomeada. Nenhuma bloqueia o ciclo.
 
 ### (a) FOLHA — a nota tem DUAS dimensões: a ESTRUTURA e o NÍVEL, as duas decididas
 
@@ -487,9 +487,18 @@ Desde a 3ª rodada é obrigatório separar as duas, porque foram resolvidas em m
 | **Sensibilidade (re-medida na 4ª rodada, 2026-07-25)** | A R$ 137 o caso golden faz faturamento **R$ 269.412,97**, folha **R$ 45.800,20** (a régua de 17% acompanha o faturamento maduro menor), EBITDA **R$ 101.306,71 (37,60%)** — a margem **passa** o mínimo de 30% —, break-even **1.199,2**, cheque total **R$ 1.162.843,40** (mês 6) e payback **37 meses**: **estoura o critério de 36** e `flag_viavel` cai para **falso**. E o mais duro: **na régua nova o VPL fica NEGATIVO nas duas óticas** — **do negócio** TIR **24,79%** / VPL **−R$ 9.517,56**, **do sócio** TIR **25,66%** / VPL **−R$ 32.166,21**. A R$ 137 o ativo rende **abaixo** da taxa mínima do negócio (24,79% < 25,00%), e a alavancagem deixa de compensar. |
 | **Status** | **Aberto só quanto a 137 × 147** (a escada por studio está sem objeto desde 2026-10-05). Não corrigido: mexer no ticket muda a conclusão de todos os cenários já apresentados, e a régua comercial vigente (R$ 147 como entrada) é decisão de produto, não de engenharia. Precisa de Felipe. |
 
+### (d) CUSTO DO STUDIO × FOLHA — possível dupla contagem (aberto desde 03/11/2026)
+
+Cada studio soma **R$ 6.000/mês** de custo fixo (`SIM_CUSTO_STUDIO`, descrito como folha de pagamento adicional
+por studio) e, desde a DEC-068, a receita do studio também entra na base dos **17%** da folha (§4.1). Se os 17% já
+cobrem a equipe do studio, ela é cobrada duas vezes, e a Viabilidade fica pessimista para unidade com studio (até
+R$ 6.000/mês por studio). Se cobrem só a equipe da academia, a conta está certa. A DEC-068 confirmou que as duas
+cobranças valem juntas, mas não respondeu à pergunta. Quem decide: o Felipe, com a controladoria. Pendência
+registrada por Vinicius em 03/11/2026.
+
 ---
 
-## 10. A taxa SAIU desta seção — foi decidida (2026-07-25)
+## 10. Taxa de desconto do VPL (decidida em 2026-07-25)
 
 *A taxa de 12% a.a. que esta seção registrava, a troca e o efeito no VPL: ver `docs/archive/premissas_viabilidade_historico.md`, §10.*
 
