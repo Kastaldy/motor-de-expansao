@@ -19,7 +19,7 @@ import numpy as np
 import pandas as pd
 from scipy import stats
 
-ROOT = Path(__file__).resolve().parents[1]
+ROOT = Path(__file__).resolve().parents[2]
 KPI = ROOT / "data/validacao/KPIs_Smart_2025_02 (1).xlsx"
 COORDS = ROOT / "concorrentes/Unidades/unidades_smart_fit.csv"
 SCORES = ROOT / "data/staging/hexagonos_mercado_mapeado.parquet"

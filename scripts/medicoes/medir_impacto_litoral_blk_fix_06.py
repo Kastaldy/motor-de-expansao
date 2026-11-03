@@ -14,7 +14,7 @@ Estrategia de eficiencia (plano v2):
     estrutural+priorizacao em SCRATCH apenas para 0.20 e 0.30.
 
 Uso:
-    python scripts/medir_impacto_litoral_blk_fix_06.py
+    python scripts/medicoes/medir_impacto_litoral_blk_fix_06.py
 """
 
 from __future__ import annotations

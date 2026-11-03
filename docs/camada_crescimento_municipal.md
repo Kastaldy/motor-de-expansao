@@ -32,7 +32,7 @@ bind mount `/opt/motor-expansao/data/staging:/app/data/staging:ro`, já declarad
 | `crescimento_municipal.parquet` | 5.571 (todos os municípios) | 33 | `cod6` (IBGE 6 dígitos, sem DV) |
 | `crescimento_hex.parquet` | 41.135 | 3 | `hex_id` (H3 res-7) |
 
-**Não são reproduzíveis só com este repo.** Rodar `data/reports/crescimento/03_artefato.py`
+**Não são reproduzíveis só com este repo.** Rodar `scripts/crescimento/03_artefato.py`
 isolado recria o municipal com **15 das 33 colunas** — HTTP 200, sem erro e sem log, mas o
 passo 4 perde veredito e gráfico. Se precisar regerar, rode a cadeia completa (`01`..`10`).
 Guarde uma cópia fora do repo.

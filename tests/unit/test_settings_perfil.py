@@ -5,7 +5,7 @@ permite converter os **4 sitios** que constroem `Settings` no `web/server/app.py
 (`:4522`, `:5224`, `:7739`, `:8008`) **um por commit**, cada um verde sozinho. Sem o
 default, `pydantic-settings` levantaria nos quatro ao mesmo tempo.
 
-Spec: `docs/spec_bloco_a_perfil.md` §3.4.
+Spec: `docs/archive/spec_bloco_a_perfil.md` §3.4.
 """
 
 from __future__ import annotations

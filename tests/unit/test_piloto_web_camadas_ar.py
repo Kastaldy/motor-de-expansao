@@ -5,7 +5,7 @@ viajavam nas particoes `uf=*` e que o backend nao lia: obra autorizada (INDEC), 
 novas (IGJ), emprego e empresas (OEDE) e fluxo de transporte (SUBE). Este modulo trava as
 quatro formas de essa travessia dar errado SEM erro nenhum:
 
-- **virar cartao no Brasil.** O binario e um so (`docs/plano_multipais.md` — "um binario,
+- **virar cartao no Brasil.** O binario e um so (`docs/archive/plano_multipais.md` — "um binario,
   N containers, um pais por processo"), entao o MESMO codigo roda na instancia brasileira,
   onde nenhuma dessas colunas existe. Se a secao aparecer la, aparece vazia;
 - **NaN virando zero.** Vazio aqui e partido sem pesquisa do INDEC, celula suprimida por

@@ -1,6 +1,5 @@
-> Handoff de repositorio criado em maio/2026 para o deploy inicial (Streamlit).
-> **Revisado em 2026-08-03 (DEC-022):** o Streamlit foi aposentado; o app de producao
-> e o piloto web (`web/`). As secoes abaixo descrevem o estado atual; runbooks vigentes
+> O app de producao
+> e o piloto web (`web/`, DEC-022). As secoes abaixo descrevem o estado atual; runbooks vigentes
 > em `docs/deploy_piloto_web.md` e `docs/infra_producao.md`.
 
 # Handoff do repositorio
@@ -14,7 +13,7 @@ Contrato curto para compartilhar o repo com a equipe e operar o deploy do piloto
   `src/motor_expansao/dashboard/`.
 - Deploy via imagens do GHCR (`motor-expansao-web` e `motor-expansao-api`, buildadas de
   `Dockerfile.web`/`Dockerfile.api` pelo CI) pinadas por digest no `docker-compose.prod.yml`.
-- Sem PostGIS obrigatorio, Prefect ou recalculo nacional no deploy.
+- Sem Prefect nem recálculo nacional no deploy. O PostGIS (`postgres`) é obrigatório no piloto BR, porque é ele que autentica o login (DEC-067).
 - `score_priorizacao` e o score oficial do M1; `hex_score_estrutural` e artefatos oficiais nao devem mudar sem aprovacao explicita.
 - Quartis sao apoio de ranking relativo; para reporte executivo e carteira, priorizar regua absoluta, churn esperado, receita esperada perdida e capacidade operacional.
 
@@ -163,4 +162,4 @@ Recomendacao: manter pelo menos uma versao anterior dos Parquets minimos em `/ba
 - `.env` real e credenciais fora do git; usar `.env.example` como referencia.
 - Suite rapida executada antes do envio: `tests/unit/test_piloto_web_api.py`, `tests/unit/test_piloto_web_endpoints.py` e `tests/integration/test_carteira_plano_nacional.py`.
 - Smoke do piloto executado localmente (`iniciar-piloto-web.cmd`) ou na VPS.
-- Prefect e o recalculo nacional do M1 comunicados como fora do deploy (o `postgres`/PostGIS ja esta no `docker-compose.prod.yml`, opcional por `MOTOR_DATABASE_URL`; a coleta de concorrentes e o regen do mercado rodam por cron na VPS - DEC-013/DEC-059).
+- Prefect e o recalculo nacional do M1 comunicados como fora do deploy (o `postgres`/PostGIS ja esta no `docker-compose.prod.yml` e, no BR, é obrigatório desde o corte do P19; a coleta de concorrentes e o regen do mercado rodam por cron na VPS - DEC-013/DEC-059).

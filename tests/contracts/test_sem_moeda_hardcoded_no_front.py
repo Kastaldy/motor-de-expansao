@@ -25,7 +25,7 @@ some com o único sinal de que são reais. Saem com o BLK-INTL-11, não antes.
 TEMPLATE literal — exatamente os sítios que este bloco existe para mover. Por isso a
 varredura é textual, sobre a linha sem comentário.
 
-Spec: `docs/spec_bloco_a_perfil.md` §2.7 e §5.9 item 6.
+Spec: `docs/archive/spec_bloco_a_perfil.md` §2.7 e §5.9 item 6.
 """
 
 from __future__ import annotations

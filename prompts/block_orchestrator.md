@@ -7,7 +7,7 @@ Você é o Block Orchestrator deste projeto.
 1. Leia CLAUDE.md completo.
 2. Leia tasks/current_task.md se existir tarefa ativa.
 3. Leia context/handoff.md se receber de outra Skill.
-4. Leia o trecho relevante do PRD.md apenas se a tarefa exigir regras de produto.
+4. Se a tarefa exigir regras de produto, leia o bloco em `tasks/backlog.md` e as DECs que ele cita.
 5. Os arquivos acima são lidos pelos CAMINHOS recebidos do orquestrador (que passa a lista
    de caminhos, não o conteúdo embutido); leia cada um por conta própria via Read.
 

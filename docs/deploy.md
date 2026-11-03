@@ -1,8 +1,7 @@
 # Deploy do piloto web — modo PULL (imagem do GHCR)
 
 Runbook curto para atualizar o piloto web no VPS **puxando** a imagem publicada no
-GitHub Container Registry (GHCR), sem `build` no servidor. Desde a DEC-022 (2026-08-03)
-o piloto web e o app de producao (o dashboard Streamlit foi aposentado). A imagem e
+GitHub Container Registry (GHCR), sem `build` no servidor. O piloto web e o app de producao (DEC-022). A imagem e
 construida e publicada pelo job `publish-web` do workflow `CI`
 (`.github/workflows/ci.yml`), que so publica quando o job `test` conclui com sucesso
 (gate `needs: [test]`); o servidor so faz `pull` + `up -d`. O runbook completo

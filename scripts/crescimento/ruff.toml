@@ -1,0 +1,8 @@
+# A cadeia veio de data/reports/crescimento/ em 01/11/2026. Lá ela ficava fora do lint (o pyproject
+# exclui data/), e corrigir os 94 avisos mexeria em código de produção (zip sem strict=, variável de
+# laço dentro de função). Esta configuração herda a do projeto e só desliga, nesta pasta, as regras
+# que a cadeia viola hoje. A limpeza fica para um bloco próprio, com teste da cadeia inteira.
+extend = "../../pyproject.toml"
+
+[lint]
+ignore = ["E501", "E401", "E402", "E701", "E702", "E731", "I001", "UP009", "F401", "F541", "B007", "B023", "B905"]

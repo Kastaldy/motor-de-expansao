@@ -13,8 +13,8 @@ diferenca seja a esperada.
 
 Uso
 ---
-    python scripts/comparar_artefato_geo.py --antigo <dir> --novo <dir>
-    python scripts/comparar_artefato_geo.py --antigo <dir> --novo <dir> --uf SP
+    python scripts/medicoes/comparar_artefato_geo.py --antigo <dir> --novo <dir>
+    python scripts/medicoes/comparar_artefato_geo.py --antigo <dir> --novo <dir> --uf SP
 
 Codigo 1 na primeira divergencia inesperada.
 """

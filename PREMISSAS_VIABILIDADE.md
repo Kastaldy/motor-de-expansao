@@ -1,17 +1,17 @@
 # Premissas do Simulador de Viabilidade
 
+> **Em poucas palavras**
+> - **Do que trata:** As premissas da simulação financeira de uma unidade nova: cada valor padrão (mensalidade, custos, impostos, investimento), de onde veio, quem pode mudá-lo e como ler o retorno.
+> - **Quando ler:** Antes de mudar um valor padrão da simulação, ou para entender por que um caso deu viável ou inviável.
+> - **Atenção:** O retorno tem duas leituras que nunca se misturam: a do negócio (a academia se paga?) e a do sócio (quanto rende o dinheiro dele). Diga sempre qual está usando.
+
 > **Fonte única.** Todo coeficiente financeiro do Motor de Viabilidade vive em
 > `src/motor_expansao/dimensionamento/config.py` e é consumido por
 > `src/motor_expansao/dimensionamento/simulador.py`. Backend, frontend e PDF apenas
 > **leem** o resultado — nenhuma fórmula financeira pode ser reescrita fora do simulador.
 >
 > Ciclo: **FIN-VIAB-01** (reconciliação do simulador) · Atualizado em **2026-07-25**, com acréscimos de **2026-10-05** (studios com ticket próprio, DEC-068), **2026-10-21/22** (demanda do modelo de praça e curva de rampa, DEC-078) e **2026-10-28** (padrão do investimento por campo, DEC-079)
-> (**4ª rodada** — a régua de retorno foi refeita: a taxa de desconto de 12% a.a. **saiu** e deu
-> lugar à **taxa mínima do negócio de 25% a.a.**, a **taxa mínima do sócio passou a ser derivada**
-> (não é mais parâmetro), TIR e VPL passaram a existir em **duas óticas separadas**, entrou o
-> **cheque total** e a margem mínima de viabilidade subiu de 10% para **30%**. Ver §6.2, §6.3,
-> §6.4 e §10. A 3ª rodada — **folha fixa desde o mês 1** e **taxa de franquia parcelada em 4×** —
-> segue valendo: §4.1 e §6.1.)
+>
 > Guardrail permanente: camada **paralela**, READ-ONLY sobre o M1 (DEC-001/DEC-008/DEC-078; a DEC-009 foi revogada pela DEC-078).
 
 ---
@@ -41,7 +41,7 @@
 
 | parâmetro | default | unidade | fonte | quem pode alterar | onde vive |
 |---|---|---|---|---|---|
-| `ticket_cheio` | — (input obrigatório) | R$/aluno/mês | planilha `Simulador!J9` (ver conflito **C** na §9) | Operador | `Premissas.ticket_cheio`; sidebar da Viabilidade, rotulado **"Ticket de musculação"** desde 2026-10-05 (era "Ticket cheio do plano"). **Não depende mais do número de studios** — cada studio tem ticket próprio (§4, `SIM_TICKETS_STUDIO_PADRAO`) |
+| `ticket_cheio` | — (input obrigatório) | R$/aluno/mês | planilha `Simulador!J9` (ver conflito **C** na §9) | Operador | `Premissas.ticket_cheio`; sidebar da Viabilidade, rotulado **"Ticket de musculação"**. **Não depende do número de studios** — cada studio tem ticket próprio (§4, `SIM_TICKETS_STUDIO_PADRAO`) |
 | `SIM_MENSALIDADE_BALCAO` | `137` | R$/aluno/mês | `Simulador!J9`, cenário 0 studios | Felipe | `config.py`; **fallback do backend** quando o operador não informa ticket (`payload_viabilidade.py`, que monta o corpo da rota de `web/server/app.py`; `viabilidade_ponto.py`; `backtest_dim.py`). A tela envia `147` — ver conflito **C** na §9 |
 | `SIM_TICKET_AGREGADOR_FATOR` | `0.60` | % do ticket cheio | comentário original de `viabilidade_ponto.py` ("~60% do ticket"), formalizado no FIN-VIAB-01 | Felipe | `config.py` → `Premissas.ticket_agregador_fator` → `Premissas.ticket_agregador` |
 | `SIM_TICKET_AGREGADOR` | `82` | R$/aluno/mês | aba `Simulador`, linha 11 | **congelado (legado)** | `config.py`; só alimenta `viabilidade()` legado e `ticket_agregador_absoluto` |
@@ -88,7 +88,7 @@ periodicidade. As cinco escolhas abaixo são de produto, e cada uma tem um porqu
 | **Só o balcão paga** (`apenas_balcao = True`) | O aluno de agregador (Gympass/TotalPass) não tem contrato com a academia: o agregador remunera **por acesso**. Cobrar anuidade dele seria inventar receita de um contrato que não existe. |
 | **Elegibilidade derivada do churn**, não fixada à mão | Pedido literal de Felipe: "nem todos os alunos chegam a 12 meses". `(1 − churn)^12` = `0,94^12` = **47,59%**. Como é derivada, mexer no churn ajusta a elegibilidade sozinho — não há um número mágico paralelo para alguém esquecer de atualizar. `SIM_ANUIDADE_ELEGIVEL_PCT` continua existindo como escotilha: se for preenchido com um número, ele **vence** a derivação. |
 | **Reconhecimento pro-rata mensal** (`99 ÷ 12` a partir do mês 12), não um lançamento único | Os aniversários dos alunos se espalham pelo ano inteiro. Um lançamento único no mês 12 criaria um **degrau falso** no caixa e no gráfico de FCF acumulado, deslocando o mês de virada do payback sem nenhum ganho de precisão econômica. Mesma lógica da simplificação do adicional de IRPJ (§11). |
-| **O mês de referência do steady-state passa de 8 para 12** | Consequência estrutural, não escolha estética: só a partir do mês 12 o regime é pleno (alunos **maduros** *e* anuidade **em cobrança**). Se a DRE de steady continuasse no mês 8, ela ficaria sem a anuidade enquanto o break-even já a considera — duas réguas diferentes para o mesmo cenário, que é exatamente a classe de defeito que este ciclo existe para matar. |
+| **O mês de referência do steady-state é o primeiro com alunos maduros e anuidade em cobrança (o 12 no padrão), não o fim da rampa** | Consequência estrutural, não escolha estética: só a partir do mês 12 o regime é pleno (alunos **maduros** *e* anuidade **em cobrança**). Se a DRE de steady ficasse no mês 8, ela ficaria sem a anuidade enquanto o break-even já a considera — duas réguas diferentes para o mesmo cenário, que é exatamente a classe de defeito que este ciclo existe para matar. |
 
 **O mês é servido, não recalculado.** O motor devolve `mes_referencia_steady`
 (= `max(maturacao_meses, anuidade_mes_inicio)` = **12**) e a API o expõe em
@@ -143,10 +143,10 @@ Nas duas o split balcão/agregador/studios é o mesmo (`Premissas.split_alunos`)
 | *(derivado)* `custo_fixo_total_mes(demanda)` | **R$ 87.153,79** no caso de referência | R$/mês (sem aluguel) | `outros_fixos_mes + custo_studios_mes + folha_fixa_mes(demanda)` (o termo de studios é zero sem studio) | — | `Premissas.custo_fixo_total_mes()`; **substituiu** a propriedade `custo_fixo_base_mes` |
 | `SIM_PESSOAL_MES` | `50 128,16` | R$/mês | Fopag com encargos (DRE linha 55) | **congelado (legado)** | `config.py`; **não alimenta mais a folha** — só default de `viabilidade()`/`gerar_serie_mensal()` |
 | `pessoal_mes_override` | `None` | R$/mês | escotilha de compatibilidade | Engenharia (compat) | `Premissas`; quando preenchido, este valor absoluto **substitui** o dimensionamento por percentual (`folha_pct` é ignorado). A folha já é fixa nos dois modos |
-| `SIM_OUTROS_FIXOS_MES` | `38 150,00` | R$/mês | Excel, DRE linhas 52-59 e 69 — **seis** componentes que fecham exatamente nos 38.150: IPTU 2.000 + água/luz 17.000 + telefone 500 + limpeza 14.000 + tecnologia 2.150 + assessorias 2.500. (O "outros 2.000" que aparecia nesta lista era **espúrio**: as sete componentes somavam 40.150, R$ 2.000 acima da própria constante. Corrigido no comentário do `config.py` em 2026-07-24; o valor **não** mudou.) | Controladoria | `config.py` → `Premissas.outros_fixos_mes` |
-| `aluguel_mes` | — (input) | R$/mês | **input manual do operador** — escopo fechado, não é estimado pelo motor | Operador | `Premissas.aluguel_mes` |
+| `SIM_OUTROS_FIXOS_MES` | `38 150,00` | R$/mês | Excel, DRE linhas 52-59 e 69 — **seis** componentes que fecham exatamente nos 38.150: IPTU 2.000 + água/luz 17.000 + telefone 500 + limpeza 14.000 + tecnologia 2.150 + assessorias 2.500. | Controladoria | `config.py` → `Premissas.outros_fixos_mes` |
+| `aluguel_mes` | — (input) | R$/mês | **input do operador**; com o campo vazio, a tela envia metragem × R$/m² mediano dos anúncios do município e do tipo de imóvel (DEC-080) — o simulador não estima aluguel | Operador | `Premissas.aluguel_mes` |
 | `SIM_CUSTO_PRE_OPERACIONAL_MES` | `0.0` | R$/mês | **explicitação de ausência** — hoje o modelo assume zero custo de contratação/treinamento/pré-venda | Felipe | `config.py` → `Premissas.custo_pre_operacional_mes`; linhas M-4..M-1 |
-| `SIM_CUSTO_STUDIO` | `6 000,00` | R$/mês por studio | fopag adicional por studio extra | Felipe | `config.py` → `Premissas.custo_studio_mes` → `custo_studios_mes` (n × valor); entra na linha `outros_fixos` da série (reajusta como os demais fixos) e também em coluna própria `custo_studios`; payload `dre.custo_studios`. **Desde 2026-10-05 não é mais somado em `outros_fixos_mes` pelo payload** |
+| `SIM_CUSTO_STUDIO` | `6 000,00` | R$/mês por studio | fopag adicional por studio extra | Felipe | `config.py` → `Premissas.custo_studio_mes` → `custo_studios_mes` (n × valor); entra na linha `outros_fixos` da série (reajusta como os demais fixos) e também em coluna própria `custo_studios`; payload `dre.custo_studios`. **Não é somado em `outros_fixos_mes` pelo payload** |
 | `SIM_STUDIOS_DEFAULT` | `0` | un. (0..3) | configuração padrão de unidade | Felipe | `config.py`; **declarada e não consumida** — ver §8 |
 | `SIM_STUDIO_SHARE_DEMANDA` | `0.08` | fração da demanda **TOTAL** por studio | **pedido do usuário, 2026-10-05** — sem célula na planilha oficial | Felipe | `config.py` → `Premissas.share_demanda_por_studio`; `Premissas.split_alunos()`: cada studio leva 8% da demanda assumida e o split balcão/agregador (`SIM_SHARE_BALCAO`) vale **só sobre o restante**. Ex.: 1.000 alunos com 2 studios → 80 + 80 nos studios e 579,6 balcão / 260,4 agregador sobre 840. Payload `premissas.share_por_studio`, `share_studios_total`, `share_musculacao`; `split.studios` |
 | `SIM_STUDIOS_MAX` | `3` | un. | limite de studios por unidade (era o `le=3` do schema) | Felipe | `config.py`; `Premissas.__post_init__` recusa mais de 3 tickets (`ValueError`); a API devolve 422 (`tickets_studios` com `max_length=3`) |
@@ -177,28 +177,26 @@ maduro e pagar integralmente desde o mês 1 é o que o caixa real faz.
 
 **Quatro consequências estruturais** (todas já no núcleo; nenhuma é escolha de engenharia):
 
-1. **A folha deixou de ser percentual e virou CUSTO FIXO.** O percentual sobrevive apenas como
+1. **A folha é CUSTO FIXO, não percentual.** O percentual sobrevive apenas como
    *régua de dimensionamento*, aplicada uma única vez.
-2. **Ela saiu do fator `k`.** `fator_receita_para_ebitda` não subtrai mais `folha_pct`:
-   `k = (1 − deduções) × (1 − impostos − custo variável)` = `0,995 × 0,803` = **0,798985**
-   (era **0,628985**). Quem lê `k` como "quanto de cada R$ 1 de faturamento sobra antes do custo
-   fixo" continua certo — o que mudou é que a folha agora está do outro lado da conta.
+2. **Ela fica fora do fator `k`.** `fator_receita_para_ebitda` não subtrai `folha_pct`:
+   `k = (1 − deduções) × (1 − impostos − custo variável)` = `0,995 × 0,803` = **0,798985**. Quem lê `k` como "quanto de cada R$ 1 de faturamento sobra antes do custo
+   fixo" está certo — a folha está do outro lado da conta.
 3. **O custo fixo cresceu.** Sem aluguel: de **R$ 38.150,00** (só `outros_fixos`) para
    **R$ 87.153,79** (`outros_fixos` + folha). Com o aluguel de R$ 30.000 do caso de referência, o
    bloco fixo que o break-even divide por `k` vai de **R$ 68.150,00 para R$ 117.153,79**. A
    **alavancagem operacional aumentou**: mais custo fixo e mais contribuição marginal por aluno —
    cada aluno vale mais no topo, e a queda dói mais embaixo.
-4. **Duas assinaturas mudaram**, porque é a demanda assumida que dimensiona a folha:
+4. **Duas assinaturas recebem a demanda**, porque é a demanda assumida que dimensiona a folha:
    `break_even_alunos(p, demanda_total, *, incluir_pmt=0)` e
-   `alunos_para_margem(p, margem_alvo, demanda_total)`. A pergunta que o break-even responde passou
-   a ser a correta: *"montei a casa para 2.304 alunos; com quantos eu empato?"* — e não *"com
+   `alunos_para_margem(p, margem_alvo, demanda_total)`. A pergunta que o break-even responde é a correta: *"montei a casa para 2.304 alunos; com quantos eu empato?"* — e não *"com
    quantos eu empato se eu também encolher a equipe proporcionalmente?"*.
 
 **Efeito no caso de referência:** o mês de *steady* **não muda** (lá o faturamento já é o maduro,
 então a folha percentual e a folha fixa coincidem: R$ 49.003,79 nos dois modelos). O que muda são
 os meses de rampa e tudo que deriva deles — EBITDA do mês 1 de **−R$ 10.139,56 para −R$ 43.464,47**,
 break-even de **840,6 para 1.152,0** alunos totais, payback de **28 para 31 meses**. Números
-completos em §15 e no antes × depois de `docs/nota_impacto_fin_viab_01.md`.
+completos em §15.
 
 ---
 
@@ -262,10 +260,8 @@ denominador de capex cheio), e o modelo se beneficiava do financiamento duas vez
 
 ### 6.1 Taxa de franquia parcelada em 4× sem juros (decisão de Felipe, 2026-07-24)
 
-Antes a taxa saía **inteira do caixa no M-4**, junto da primeira parcela da obra: o desembolso do
-M-4 era de R$ 310.000 (obra 150.000 + franquia 160.000) contra R$ 150.000 nos três meses seguintes.
-Agora ela é parcelada em **4× sem juros**, nos meses de **contrato 1..N** — os mesmos M-4..M-1 da
-obra —, o que deixa a pré-abertura plana em **R$ 190.000 por mês** (obra 150.000 + franquia 40.000).
+A taxa é parcelada em **4× sem juros** — em vez de sair **inteira do caixa no M-4**, junto da primeira parcela da obra —, nos meses de **contrato 1..N** (os mesmos M-4..M-1 da
+obra), o que deixa a pré-abertura plana em **R$ 190.000 por mês** no caso de referência (obra 150.000 + franquia 40.000).
 
 **Isto é só timing de caixa, e o efeito é pequeno de propósito:** as quatro parcelas cabem
 inteiras dentro da janela de pré-abertura, então **no mês 1 o desembolso acumulado já é o mesmo**.
@@ -386,9 +382,9 @@ os R$ 760 mil passam a se chamar **"aporte inicial (obra + franquia)"**. Não us
 
 ### 6.4 Margem mínima de viabilidade: 10% → 30% (decisão de Felipe, 2026-07-25)
 
-`SIM_MARGEM_VIAVEL_MIN` era **0,10**. Uma régua de 10% de margem EBITDA aprova cenário que ninguém
+`SIM_MARGEM_VIAVEL_MIN` é **0,30**. Uma régua de 10% de margem EBITDA aprovaria cenário que ninguém
 levaria a comitê: 12% de margem numa operação com custo fixo alto e PMT de R$ 38 mil/mês não é
-"viável com folga apertada", é ruído em torno do zero. A régua passou a **0,30**.
+"viável com folga apertada", é ruído em torno do zero.
 
 - **O caso de referência segue viável:** margem **39,26%** contra mínimo de **30%** (e payback 31
   contra máximo de 36) → `flag_viavel = True`.
@@ -461,14 +457,13 @@ motor**. Ficam documentadas aqui exatamente para que ninguém as "conserte" liga
 
 ### `SIM_STUDIOS_DEFAULT = 0` (e `SIM_CUSTO_STUDIO`, que **deixou de ser órfã**)
 
-- **ATUALIZAÇÃO 2026-10-05 — studio com TICKET PRÓPRIO.** O studio deixou de elevar o ticket de
-  musculação (o antigo "ticket cheio do plano", agora rotulado **"Ticket de musculação"**, que não
-  depende mais do número de studios). Cada studio tem o seu ticket (`tickets_studios`, default
+- **Studio com TICKET PRÓPRIO (DEC-068).** O studio não eleva o ticket de
+  musculação (rotulado **"Ticket de musculação"**, que não
+  depende do número de studios). Cada studio tem o seu ticket (`tickets_studios`, default
   `SIM_TICKETS_STUDIO_PADRAO = (157, 167, 177)`), atende `SIM_STUDIO_SHARE_DEMANDA = 8%` da demanda
   total e o split balcão/agregador vale só sobre o restante. O aluno de studio é tratado como o de
   balcão (churn, inadimplência, reajuste anual, anuidade) e a receita dele entra na base da folha.
-  O custo `SIM_CUSTO_STUDIO` saiu de `outros_fixos_mes` e passou a morar em
-  `Premissas.custo_studio_mes` (mesma soma na linha `outros_fixos` da série, agora também com coluna
+  O custo `SIM_CUSTO_STUDIO` mora em `Premissas.custo_studio_mes`, fora de `outros_fixos_mes` (mesma soma na linha `outros_fixos` da série, com coluna
   própria `custo_studios`). Sem studio o motor é idêntico ao anterior (travado em
   `tests/unit/dimensionamento/test_studios_ticket_proprio.py`). O histórico abaixo fica como registro.
 - **`SIM_CUSTO_STUDIO = 6 000,00` foi LIGADA neste ciclo.** `web/server/app.py::_premissas_do_body`
@@ -488,17 +483,21 @@ motor**. Ficam documentadas aqui exatamente para que ninguém as "conserte" liga
 
 ## 9. Conflitos abertos
 
-Três divergências **conhecidas, não resolvidas**, entre o código e a fonte documental. Nenhuma
-bloqueia o ciclo; todas precisam de decisão nomeada.
+Três divergências **conhecidas** entre o código e a fonte documental. A da folha (a) foi decidida em
+30/09/2026; as outras duas seguem sem decisão nomeada. Nenhuma bloqueia o ciclo.
 
-### (a) FOLHA — a nota tem DUAS dimensões: a ESTRUTURA (decidida) e o NÍVEL (pendente)
+### (a) FOLHA — a nota tem DUAS dimensões: a ESTRUTURA e o NÍVEL, as duas decididas
 
-Desde a 3ª rodada é obrigatório separar as duas, porque só uma foi resolvida:
+> **Decidido em 30/09/2026 (Felipe):** a folha de 25–26% das DREs estava inflada; `SIM_FOLHA_PCT` = 0,17
+> permanece, e o BLK-VIAB-11 foi cancelado (`tasks/backlog.md`). As tabelas abaixo registram o conflito como foi
+> levantado e como ele fechou.
+
+Desde a 3ª rodada é obrigatório separar as duas, porque foram resolvidas em momentos diferentes:
 
 | dimensão | pergunta | estado |
 |---|---|---|
 | **ESTRUTURA** | a folha é **custo fixo** ou **percentual da receita do mês**? | **DECIDIDA — custo fixo desde o mês 1** (Felipe, 2026-07-24). Regra e consequências em §4.1. Não rediscutir. |
-| **NÍVEL** | o percentual que **dimensiona** esse custo fixo é 17% ou 25-26%? | **PENDENTE de gate da controladoria** (BLK-VIAB-11 aberto, criticidade Média). |
+| **NÍVEL** | o percentual que **dimensiona** esse custo fixo é 17% ou 25-26%? | **DECIDIDO — 17% permanece** (Felipe, 2026-09-30: a folha de 25-26% das DREs estava inflada; o BLK-VIAB-11 foi cancelado). |
 
 **Sobre o nível:**
 
@@ -510,30 +509,29 @@ Desde a 3ª rodada é obrigatório separar as duas, porque só uma foi resolvida
 | **Impacto do nível (re-medido na 4ª rodada, 2026-07-25 — nas duas óticas e na régua de 30%)** | A **17%**: folha **R$ 49.003,79**, EBITDA **R$ 113.159,69 (39,26%)**, break-even **1.152,0**, payback **31**, **do negócio** TIR **31,74%** / VPL **R$ 312.177,18**, **do sócio** TIR **38,98%** / VPL **R$ 276.103,24**, cheque total **R$ 1.142.112,62** (mês 5), M60 **R$ 1.645.454,56**, `flag_viavel` **True**. **A 26%: folha R$ 74.946,97, EBITDA R$ 87.216,50 (30,26%), break-even 1.416,1, EBITDA do mês 1 de −R$ 69.407,65, cheque total R$ 1.297.571,83 (mês 7) e o payback NÃO OCORRE dentro dos 60 meses** (`inf`) — **do negócio** TIR **11,20%** / VPL **−R$ 623.616,27**, **do sócio** TIR **−1,05%** / VPL **−R$ 623.473,26**, acumulado de M60 **−R$ 40.745,08**, `flag_viavel` **False**. |
 | **O que a régua nova de 30% revela aqui** | A 26% a margem fica em **30,26%** — passa o mínimo de 30% **por 26 pontos-base**. Quem reprova o cenário é o **payback infinito**, não a margem. Ou seja: no nível de folha que 6 DREs reais apuraram, o critério de margem fica **na casa dos centavos** do limite. Isso é informação de decisão, não curiosidade: a folga de margem que o caso de referência parece ter (39,26% contra 30%) é **quase toda** dependente do nível de folha estar em 17%. |
 | **Atenção ao comparar com material anterior** | Duas revisões atrás esta linha dizia "payback 28 → 54 meses" e "VPL −R$ 174.670,13" (folha **percentual**, que diluía o custo na rampa). A revisão de 2026-07-24 já corrigiu para "não se paga no horizonte", mas citava **VPL −R$ 384.910,19 @ 12% a.a.** — taxa que **não existe mais**. Na régua de hoje o VPL a 26% é **−R$ 623 mil nas duas óticas**: quanto mais alta a taxa, mais pesado o desconto de um fluxo que só melhora no fim. |
-| **Status** | **PENDENTE de gate da controladoria.** É a decisão pendente de maior impacto do ciclo: sozinha, ela inverte a conclusão de go/no-go do Boulevard. |
+| **Status** | **DECIDIDO em 2026-09-30 (Felipe): 17% permanece.** Enquanto esteve pendente, era a decisão de maior impacto do ciclo: sozinha, ela invertia a conclusão de go/no-go do Boulevard. |
 
 ### (b) TAXA DE FRANQUIA — R$ 160.000 (código) × R$ 140.000 (planilha e spec)
 
 | | |
 |---|---|
 | **Código** | `SIM_TAXA_FRANQUIA = 160 000,00`. |
-| **Fonte documental** | `data/staging/simulador_estrutura.json`, célula **`Simulador!R10`** → `valor_default: 140000`, natureza "contrato". E `docs/modelo_dimensionamento_expansao.md:276` → "Taxa de franquia · R10 · R$140k · contrato". |
+| **Fonte documental** | `data/staging/simulador_estrutura.json`, célula **`Simulador!R10`** → `valor_default: 140000`, natureza "contrato". E `docs/archive/modelo_dimensionamento_expansao.md` §8.2 → "Taxa de franquia · R10 · R$140k · contrato". |
 | **Decisão** | **Mantido R$ 160.000** por decisão de Felipe (2026-07-24): é o valor em produção e o que o comitê já viu. Passa a ser **editável pelo operador** (exposto no schema da API) e **parcelado em 4× sem juros** (§6.1), o que resolve o caso prático sem forçar a escolha do default. |
 | **Sensibilidade (re-medida na 4ª rodada, 2026-07-25)** | Com R$ 140.000: payback **30 meses** (contra 31), acumulado de M60 **R$ 1.665.454,56** (+R$ 20.000 exatos), **cheque total R$ 1.122.112,62** (contra R$ 1.142.112,62 — cai exatamente os R$ 20 mil, e o pior mês segue sendo o 5). **Do negócio:** TIR **32,21%** (era 31,74%) e VPL **R$ 331.631,23** (+R$ 19.454,05 — menos que os R$ 20 mil nominais, porque o desembolso é descontado). **Do sócio:** TIR **40,01%** (era 38,98%) e VPL **R$ 293.930,92**; o retorno do negócio vai a **46,99%** (era 46,55%) e o do sócio a **73,70%** (era 71,76%). A **taxa mínima do sócio sobe** para **27,13%**, porque um aporte menor eleva a alavancagem (D/E 1,8421 → 1,8919) — efeito que a régua de 12% a.a. era incapaz de mostrar. EBITDA, margem e break-even não mudam. |
 | **Status** | Divergência **aceita e documentada**, não resolvida. Reconciliar planilha × contrato real é tarefa de quem mantém a planilha. |
 
 ### (c) TICKET DE MUSCULAÇÃO — R$ 137 (backend/planilha) × R$ 147 (tela)
 
-> **Atualização 2026-10-05:** a parte "por studio" deste conflito ficou **sem objeto**. A tabela
-> `TICKET_POR_STUDIO` (studio elevando o ticket cheio) deixou de existir: o ticket de musculação não
-> depende mais do número de studios, e cada studio tem ticket próprio (§4, `SIM_TICKETS_STUDIO_PADRAO`).
+> A parte "por studio" deste conflito ficou **sem objeto**: o ticket de musculação não
+> depende do número de studios, e cada studio tem ticket próprio (§4, `SIM_TICKETS_STUDIO_PADRAO`).
 > **Permanece só** a divergência do ticket de musculação: fallback do backend `SIM_MENSALIDADE_BALCAO
 > = 137` × **147** que a tela envia por padrão. As linhas abaixo são o registro histórico da medição.
 
 | | |
 |---|---|
 | **Frontend (histórico, até 2026-10-05)** | `web/src/screens/ViabilityScreen.tsx:34` → `TICKET_POR_STUDIO = [147, 157, 167, 177]` (0 → 147, 1 → 157, 2 → 167, 3 → 177). |
-| **Planilha** | `Simulador!J9` → `=IF(N12=0,137,IF(N12=1,147,IF(N12=2,157,IF(N12=3,167,0))))` → **[137, 147, 157, 167]**. Confirmado em `simulador_estrutura.json` e em `docs/modelo_dimensionamento_expansao.md:271` ("Mensalidade · J9 · R$137 por cenário"). |
+| **Planilha** | `Simulador!J9` → `=IF(N12=0,137,IF(N12=1,147,IF(N12=2,157,IF(N12=3,167,0))))` → **[137, 147, 157, 167]**. Confirmado em `simulador_estrutura.json` e em `docs/archive/modelo_dimensionamento_expansao.md` §8.2 ("Mensalidade · J9 · R$137 por cenário"). |
 | **Efeito** | A tela cobra **um degrau a mais** em todos os cenários de studio. O caso de referência (0 studios) roda a R$ 147 na tela e a R$ 137 na planilha. |
 | **Sensibilidade (re-medida na 4ª rodada, 2026-07-25)** | A R$ 137 o caso golden faz faturamento **R$ 269.412,97**, folha **R$ 45.800,20** (a régua de 17% acompanha o faturamento maduro menor), EBITDA **R$ 101.306,71 (37,60%)** — a margem **passa** o mínimo de 30% —, break-even **1.199,2**, cheque total **R$ 1.162.843,40** (mês 6) e payback **37 meses**: **estoura o critério de 36** e `flag_viavel` cai para **falso**. E o mais duro: **na régua nova o VPL fica NEGATIVO nas duas óticas** — **do negócio** TIR **24,79%** / VPL **−R$ 9.517,56**, **do sócio** TIR **25,66%** / VPL **−R$ 32.166,21**. A R$ 137 o ativo rende **abaixo** da taxa mínima do negócio (24,79% < 25,00%), e a alavancagem deixa de compensar. Com a taxa antiga de 12% a.a. o mesmo cenário exibia **VPL +R$ 416.749,97** e parecia um projeto folgado. |
 | **Status** | **Aberto só quanto a 137 × 147** (a escada por studio está sem objeto desde 2026-10-05). Não corrigido: mexer no ticket muda a conclusão de todos os cenários já apresentados, e a régua comercial vigente (R$ 147 como entrada) é decisão de produto, não de engenharia. Precisa de Felipe. |
@@ -560,7 +558,7 @@ justamente para o rótulo não precisar ser escrito à mão em nenhum consumidor
 negócio** — é o mesmo fluxo de caixa medido contra a régua certa. A TIR não se moveu um centavo (é
 raiz do fluxo, independe da taxa): o que se moveu foi a **exigência**.
 
-**O que continua pendente** não é taxa: são os itens de **§9** (nível da folha, taxa de franquia,
+**O que continua pendente** não é taxa: são os itens de **§9** (taxa de franquia,
 ticket de musculação 137 × 147) e de **§12** (matrícula e múltiplo de valuation), e a régua de **valor residual**,
 hoje em decisão com o Marcos.
 
@@ -627,7 +625,7 @@ Vivem em `src/motor_expansao/dimensionamento/viabilidade_ponto.py` e aparecem no
 | `ALUNOS_RANGE_DEFAULT` | `(200 … 1200)` | alunos | eixo da grade de sensibilidade | Felipe | `viabilidade_ponto.py`; payload `grade` |
 | `ALUGUEL_RANGE_FATOR` | `(0,6 … 1,5)` | × aluguel pedido | eixo da grade de sensibilidade | Felipe | `viabilidade_ponto.py`; payload `grade` |
 | `SHARE_BALCAO_DEFAULT` | `0.69` | % | **duplicata** de `SIM_SHARE_BALCAO` — o canônico é o do `config.py` | Engenharia (remover) | `viabilidade_ponto.py` |
-| `DEMANDA_FONTE_PREMISSA` | `"premissa_explicita"` | string | default do modo densidade (era a regra da DEC-009, revogada pela DEC-078); no modo `v2` o payload traz `"modelo_v2"` ou `"premissa_editada"` (`viabilidade_v2.py`) | Comitê + DEC | `viabilidade_ponto.py`; payload `demanda_fonte` |
+| `DEMANDA_FONTE_PREMISSA` | `"premissa_explicita"` | string | default do modo densidade; no modo `v2` o payload traz `"modelo_v2"` ou `"premissa_editada"` (`viabilidade_v2.py`) | Comitê + DEC | `viabilidade_ponto.py`; payload `demanda_fonte` |
 
 **Escopo fechado, fora deste documento:** fórmulas de renda per capita e domiciliar, Residual
 Fitness (não vira regra de viabilidade), contagem de concorrentes, metodologia de p10/p90 e o botão

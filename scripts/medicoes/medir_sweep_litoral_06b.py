@@ -8,7 +8,7 @@ A interseccao poligono x poligono (fracao de terra) e calculada UMA vez por hex 
 mar que sobrepoe terra; o leque e re-filtragem barata do vetor. NAO toca oficiais.
 
 Uso:
-    python scripts/medir_sweep_litoral_06b.py
+    python scripts/medicoes/medir_sweep_litoral_06b.py
 """
 
 from __future__ import annotations

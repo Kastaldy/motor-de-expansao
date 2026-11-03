@@ -17,8 +17,8 @@ dos dois modelos. O cabecalho do relatorio diz sempre em qual modo rodou — um 
 modo DEMO nao vale como evidencia para virar a chave do residual.
 
 Uso:
-    python scripts/comparar_pressao_1km.py
-    python scripts/comparar_pressao_1km.py --uf SP --csv data/reports/comparativo_1km.csv
+    python scripts/medicoes/comparar_pressao_1km.py
+    python scripts/medicoes/comparar_pressao_1km.py --uf SP --csv data/reports/comparativo_1km.csv
 """
 
 from __future__ import annotations
@@ -32,7 +32,7 @@ import numpy as np
 import pandas as pd
 import pyarrow.parquet as pq
 
-ROOT = Path(__file__).resolve().parents[1]
+ROOT = Path(__file__).resolve().parents[2]
 if str(ROOT / "src") not in sys.path:
     sys.path.insert(0, str(ROOT / "src"))
 

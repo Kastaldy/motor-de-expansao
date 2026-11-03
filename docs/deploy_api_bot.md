@@ -44,15 +44,13 @@ telegram-bot ──HTTP interno──► api ──► volumes :ro (outputs + ib
 | `data/ultra/` | assets de branding do PDF | Não (fallback de cor sólida) |
 | `data/perfil.json` | perfil do país (DEC-047), bind de ARQUIVO em `api` e `telegram-bot` | **Sim** — tem de existir ANTES do `up`: ausente, o Docker cria um diretório vazio e o container falha com `"is a directory"`; sem `MOTOR_DATA_DIR` + bind o bot entra em crash loop (DEC-049) |
 
-> **⚠ Falha SILENCIOSA (custou um deploy em 2026-07-17).** Até a E0 da correção de renda, os artefatos de
-> renda domiciliar acima não quebravam nada quando faltavam: o código caía em fallback (uplift 1,632,
-> moradores 2,79 e fator temporal 1,0) e o PDF saía **com renda domiciliar errada, sem erro nenhum**.
-> Desde a E0, com `MOTOR_DATA_DIR` setado, a checagem de subida de `motor_expansao.renda`
+> **⚠ Parquets de
+> renda domiciliar.** Com `MOTOR_DATA_DIR` setado, a checagem de subida de `motor_expansao.renda`
 > (`validar_na_subida`) exige os dois parquets (e o carimbo `k` legível) e **recusa subir** sem eles; o
-> fator temporal saiu do staging e vai na imagem. **Conferir a presença dos dois antes do deploy** —
-> agora a falta derruba a subida em vez de mentir no PDF.
+> fator temporal vai na imagem. **Conferir a presença dos dois antes do deploy** —
+> a falta derruba a subida.
 > Regeneráveis por `pipelines/derivar_uplift_renda_domiciliar.py` e `pipelines/derivar_uplift_composicao_setor.py`.
-> O `pipelines/derivar_fator_temporal_renda.py` foi aposentado: fator novo é versão nova no pacote
+> Fator temporal novo é versão nova no pacote
 > (`python -m motor_expansao.renda.atualizar_fatores`, runbook em `docs/runbook_atualizacao_renda.md`).
 
 > **⚠ Falha SILENCIOSA que MUDOU DE SINAL (DEC-046).** Os dois parquets de M&A acima não

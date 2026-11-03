@@ -43,7 +43,7 @@ A API lê duas bases locais (nunca escreve):
 - **Malha municipal IBGE:** `municipios_*.geojson` (resolve coordenada → município). Via `API_IBGE_DIR`.
 
 Opcionais (enriquecem o PDF; ausência = fallback gracioso): `API_ULTRA_DIR` (branding) e
-`API_COMPETITORS_LOGOS_DIR` (logos dos pins). `API_STAGING_DIR` deixou de ser opcional em produção
+`API_COMPETITORS_LOGOS_DIR` (logos dos pins). `API_STAGING_DIR` **não** é opcional em produção
 (`MOTOR_DATA_DIR` setado): a subida recusa sem os insumos da renda (`uplift_renda_domiciliar_municipio.parquet`,
 `uplift_composicao_setor.parquet` — E0/DEC-075) e sem o carimbo k da malha (`censo2022_hex_da_malha.parquet` —
 DEC-077); SAM/concorrentes/Ultra e as rotas municipais também leem dali.

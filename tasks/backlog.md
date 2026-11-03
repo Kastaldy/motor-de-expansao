@@ -23,7 +23,6 @@ buscar o sinal que falta). Recomendação: A agora + B como aposta. Ver BLK-DIM-
 
 > Blocos BLK-OPS-02/03/04, BLK-ARCH-01 e BLK-SCORE-01/02/03 originados do "Programa de
 > Melhorias — Referência do Master Orchestrator" (PRD.md), migrados em 2026-05-29.
-> Mapa de dependências e ordem recomendada do programa: ver §3 do PRD.md original.
 > Ordem deste backlog: arquitetura (BLK-ARCH-01) à frente da trilha de score (BLK-SCORE-*).
 
 ---
@@ -243,73 +242,8 @@ tolerância a tile faltando, e inserção/ausência da página nos dois tamanhos
 
 ---
 
-### BLK-RELPON-14 — Unificação do gerador de PDF + remoção do slide "Imagem do Entorno" + borda no hex central + cadastro de 68 redes
+- BLK-RELPON-14 (concluído 2026-10-29) — ver tasks/completed.md
 
-| Campo | Valor |
-|---|---|
-| **Criticidade** | Alta |
-| **Status** | **Mergeado** (PR #158, 2026-07-28; o housekeeping anunciado em 2026-07-29 não chegou ao `completed.md`). Emenda de 2026-07-28 à [DEC-011](../docs/decisions/DEC-011.md) **PENDENTE DE APROVAÇÃO por Vinicius** — merge exige a label `aprovado-humano`. |
-| **ClickUp** | — |
-
-> **Criticidade Alta porque emenda a DEC-011** (Alta): a representação do raio de 5 km nos painéis
-> de Socioeconomia/Residual muda, e a emenda de 2026-07-22 daquela DEC dizia explicitamente "dois
-> raios distintos, cada um **ROTULADO** no próprio mapa". Nada de M1: é camada de visualização/
-> relatório (§5 guardrail permanente) — `setor_censitario_intersecao_area_1km`, raio de 1,0 km
-> (DEC-021), `score_priorizacao`, carteira, plano e artefatos oficiais ficam INTOCADOS.
-
-**Escopo (4 partes, decididas por Felipe):**
-
-1. **Unificação do gerador de PDF — a estética CLÁSSICA vence.** Ela já era o default de produção
-   no dashboard, na API e no bot; `gerar_pdf_relatorio_pontual_classico` passa a ser **A**
-   implementação única. `gerar_pdf_relatorio_pontual_censitario` vira **wrapper fino** que só
-   repassa os kwargs para a clássica, com `DeprecationWarning` — não quebra a branch piloto-web,
-   que ainda a chama pelo nome. As funções de página duplicadas do template "recente"
-   (`_cover_page`, `_socioeconomia_residual_page`, `_mapas_calor_page`, `_competitors_page`,
-   `_perfil_bairro_page`, `_credit_page`, `_entorno_page`) são **DELETADAS**; as compartilhadas
-   (`_big_numbers_page`, `_viabilidade_page`, `_fotos_imovel_page`, `_info_imovel_page`) **FICAM**.
-2. **Slide "Imagem do Entorno" REMOVIDO por completo** — página do PDF, camada PNG `entorno`,
-   constantes órfãs (`RAIO_ENTORNO_DISPLAY_KM`, `_ENTORNO_VALOR_LINHA`, o parâmetro `rotulo_escala`
-   e o override local de `zoom_bump`) e a chave `entorno` em `CAMADAS_CENSITARIAS`/`MAP_LAYER_TITLES`.
-   O PDF base cai de **8 → 7 páginas** (`/Count 7`, `PDF_SECTION_HEADERS` com 7 strings) e o teto com
-   as opcionais de **12 → 11**. Os ordinais de `_tema_bicolor` são absolutos: liberar o `-1` que só
-   servia a essa página **não desloca cor nenhuma**. Reverte o BLK-RELPON-11 (2026-07-22).
-3. **Raio dos painéis Socioeconomia e Residual Fitness: o VALOR não muda, a REPRESENTAÇÃO sai.**
-   `RAIO_RESIDUAL_DISPLAY_KM = 5.0` **PERMANECE** — continua definindo o ENQUADRAMENTO dos dois
-   painéis; encolhê-lo reintroduziria o mosaico chapado de 3 a 5 hexágonos medido no gate de
-   2026-07-21 (o motivo de existir do raio de exibição, DEC-011). O que sai é o desenho: **círculo
-   azul removido** e **rótulo "Raio X km" removido** do rodapé e do título. No lugar, o **hexágono
-   H3 res-7 que CONTÉM o ponto ganha uma borda fina de destaque** (`destaque_3857`,
-   `_HEX_CENTRAL_EDGE_COLOR` = o mesmo azul do antigo círculo, `_HEX_CENTRAL_LINEWIDTH = 3`) — só a
-   borda; o preenchimento continua vindo do `color_fn`, e sem hex central desenhável simplesmente
-   não há borda. As camadas de 1,0 km seguem com círculo + rótulo, byte-a-byte idênticas.
-4. **Cadastro de 68 redes** do coletor semanal (VinhoAbencoado/GymScraping, [DEC-013](../docs/decisions/DEC-013.md))
-   em `dashboard/competitors.py`: as redes já tinham CSV em `concorrentes/Unidades/unidades_<slug>.csv`,
-   mas caíam em `independente` porque `load_competitor_points` só itera `COMPETITOR_SPECS`. Entram nos
-   três registros — `COMPETITOR_SPECS`, estilos de marca (`label`/`short` de 3 chars único/cores,
-   reusando a paleta existente) e o registro de logos `logo_<slug>.png`. **10 redes ainda não têm PNG**
-   no GymScraping: `preload_logos` ignora o arquivo ausente e o pin cai no fallback de sigla, que é o
-   comportamento projetado. A normalização de nomes invertidos/slugs divergentes (`companhiafit`,
-   `malibu`, `marrafit`, `matchfit`, `moinhosfit`) acontece na **cópia dos PNGs para a VPS**, não no
-   registro.
-
-**Gate humano:** aprovação da emenda de 2026-07-28 à DEC-011 por Vinicius (o único ponto que sai do
-já decidido). As partes 1, 2 e 4 são estrutura de relatório/cadastro e não emendam DEC alguma.
-
-**Testes:** contagem de páginas e headers para `/Count 7` (e `/Count 11` no teto com as opcionais,
-em `test_relatorio_pontual_viabilidade.py`/`test_relatorio_pontual_orquestracao.py`); as 7 chaves de
-`CAMADAS_CENSITARIAS`; a bateria da camada/página `entorno` **removida**; ausência de círculo e de
-rótulo de raio nos dois painéis de 5 km; borda do hex central mudando pixels sem alterar a cor do
-choropleth; equivalência do wrapper depreciado com a clássica (mesmo PDF + `DeprecationWarning`);
-regressão de byte-identidade das camadas de 1,0 km.
-
-**Impacto cruzado:** `BLK-WEB-*` (piloto web) importa `gerar_pdf_relatorio_pontual_censitario` pelo
-nome — por isso o wrapper, e não a remoção do símbolo. Deploy: mudança em `dashboard/` **não**
-dispara o rebuild da imagem da API — republicar manualmente e conferir o smoke de
-`CAMADAS_CENSITARIAS` (7 chaves) em `docs/deploy_api_bot.md`.
-
-**Docs atualizadas:** `docs/relatorio_pontual_censitario.md` (§3/§6/§7), `docs/decisions/DEC-011.md`
-(emenda 2026-07-28, pendente), `docs/deploy_api_bot.md`, `docs/api_geoespacial_contrato.md`,
-`docs/api_geoespacial_uso.md`, `docs/api_geoespacial_openapi.yaml`, `docs/arquitetura_app_atual.md`.
 
 ---
 
@@ -584,7 +518,7 @@ Permanece como roadmap até nova decisão de Felipe.
 
 **Supersessão (2026-06-12, decisão de Felipe).** O SCORE-05 era um diagnóstico read-only de
 "existe proxy exógeno de demanda + maturação para tentar modelar?". Essa pergunta é exatamente a
-**Camada 1 (aderência/penetração calibrada)** do novo `docs/modelo_dimensionamento_expansao.md` (CEO),
+**Camada 1 (aderência/penetração calibrada)** do novo `docs/archive/modelo_dimensionamento_expansao.md` (CEO),
 que a subsume e melhora: em vez de só diagnosticar, calibra com validação honesta (LOO-CV vs
 baseline) e entrega um motor inverso de 4 camadas (Potencial → Captura → Dimensionamento m² →
 Viabilidade financeira). A **disciplina de GO/NO-GO honesto** e os bloqueios estruturais
@@ -596,7 +530,7 @@ permanece intacta. Detalhe e decomposição abaixo (epic BLK-DIM).
 
 ## Epic BLK-DIM — Motor de Dimensionamento e Viabilidade de Unidades (camada paralela)
 
-> **Origem:** `docs/modelo_dimensionamento_expansao.md` (raiz do repo; spec/handoff do CEO, 2026-06-10),
+> **Origem:** `docs/archive/modelo_dimensionamento_expansao.md` (spec/handoff do CEO, 2026-06-10),
 > derivado dos testes do projeto externo `Análise Preditiva` (base de 54 academias). Substitui o
 > BLK-SCORE-05.
 >
@@ -845,7 +779,7 @@ Criticidade: estratégica
 Prioridade: média
 Tipo: refatoração
 Skill recomendada: /run-cycle (fluxo estratégico)
-Resumo: Migrado do PRD.md. Próxima etapa de planejamento estrutural do repositório.
+Resumo: Próxima etapa de planejamento estrutural do repositório.
 Dependências: nenhuma bloqueadora
 Observações: requer planejamento detalhado antes de execução. Não iniciar sem aprovação.
 
@@ -1030,7 +964,7 @@ a base de calibração DENTRO do formato Ultra, e revalidar a curva (reabre BLK-
 > rampa, subestimava a queima de caixa do mês 1 em ~R$33,3 mil e deixava o break-even otimista (840,6 em vez de
 > 1.152,0 alunos totais no caso de referência). **O que continua PENDENTE deste bloco é só o NÍVEL do percentual**
 > (0,17 vigente x 0,25–0,26 apurados nas 6 DREs), com a controladoria; ver `PREMISSAS_VIABILIDADE.md` §4.1 e
-> `docs/nota_impacto_fin_viab_01.md`.
+> `docs/archive/nota_impacto_fin_viab_01.md`.
 
 **Contexto.** O simulador (`dimensionamento/simulador.py::viabilidade`) modela a folha como um **custo fixo absoluto**
 `SIM_PESSOAL_MES = R$50.128,16` (`dimensionamento/config.py:103`), aplicado **igual a toda unidade**, independente de
@@ -1092,7 +1026,7 @@ Boulevard Londrina): a 17% a folha é **R$49.003,79** e o EBITDA fecha em **R$11
 ou seja, a unidade deixaria de atender o critério de payback de 36 meses. (Os números que esta nota trazia antes —
 R$47.942,66 / R$109.233,60 / 38,73% / 859,6 / 29 → 58 — eram da rodada com a **anuidade desligada**, estado que
 deixou de valer em 2026-07-24.) Premissas e conflito documentados em
-`PREMISSAS_VIABILIDADE.md` (§4 e §9-a); impacto no comitê em `docs/nota_impacto_fin_viab_01.md`. **Status e
+`PREMISSAS_VIABILIDADE.md` (§4 e §9-a); impacto no comitê em `docs/archive/nota_impacto_fin_viab_01.md`. **Status e
 criticidade deste bloco permanecem inalterados.**
 
 ---
@@ -1222,7 +1156,7 @@ por persona** (executivo, operador, leigo). Relatório de problemas priorizados 
 | **Autonomia** | **manual (NÃO loop-safe)** — design/UX; exige julgamento humano. NÃO marcar loop-safe. |
 
 **Contexto.** Reduzir a complexidade para leigos sem perder poder para power users.
-Insumo de benchmark externo: `docs/system_design_referencia.md` (§3 layout, §4 navegação, §7 progressive
+Insumo de benchmark externo: `docs/archive/system_design_referencia.md` (§3 layout, §4 navegação, §7 progressive
 disclosure, §8 fluxo triagem→viabilidade com H3, §10 matriz persona).
 **Objetivo.** Redesenhar a **arquitetura de informação** em torno dos fluxos core (triagem→viabilidade, per
 `docs/estado_dos_modelos.md`); **progressive disclosure** (modo simples p/ leigo vs avançado); wireframes de baixa
@@ -1244,7 +1178,7 @@ fidelidade por persona. Usar o guia `frontend-design`.
 
 **Contexto.** Consolidar a linguagem visual (a direção **turquesa Ultra + magenta concorrente** do BLK-UI-10;
 tipografia; componentes) e o sistema de dataviz dos mapas/gráficos.
-Insumo de benchmark externo: `docs/system_design_referencia.md` (§5 componentização — design system de 5-6
+Insumo de benchmark externo: `docs/archive/system_design_referencia.md` (§5 componentização — design system de 5-6
 componentes canônicos; §6.2 paletas acessíveis e dataviz para leigos).
 **Objetivo.** Proposta de **design system** (tokens, componentes, paletas acessíveis light/dark) reusando os guias
 `frontend-design` e `dataviz`.
@@ -1264,7 +1198,7 @@ componentes canônicos; §6.2 paletas acessíveis e dataviz para leigos).
 | **Autonomia** | **manual (NÃO loop-safe)** — decisão estratégica; gate humano obrigatório + DEC. NÃO marcar loop-safe. |
 
 **Contexto.** Consolidar tudo numa recomendação acionável.
-Insumo de referência: `docs/system_design_referencia.md` (§2 diagnóstico técnico do gargalo rerun/pydeck e
+Insumo de referência: `docs/archive/system_design_referencia.md` (§2 diagnóstico técnico do gargalo rerun/pydeck e
 §11 recomendações priorizadas alimentam o critério de performance e o de custo de dev da matriz de decisão).
 **Objetivo.** Relatório executivo que junta **perf** (REV-01..06), **arquitetura** (REV-07/08) e **UX** (REV-09..11)
 numa **recomendação de rumo** (rebuild vs refactor incremental), **stack alvo**, direção de UX e **roadmap faseado**
@@ -2114,9 +2048,10 @@ PDF/CSV). Sub-blocos independentes (podem ir em PRs separados); cada um traz seu
 > **Origem (2026-07-19, pedido de Felipe):** construir o **piloto completo** de um web app dedicado que
 > reproduz o Motor com UX/UI muito melhor, começando pelas **duas telas** do protótipo — **Mapa** e
 > **Viabilidade** — **preservando 100% das funções que essas abas têm hoje** (seleção de hex, busca,
-> entorno, cenário multi-hex, relatórios, etc.). Handoff de produto: **`PLANO_APP_WEB.md`** (raiz, ajustado
-> nesta mesma entrega para refletir a realidade do repo). Referência visual: **`Motor de Expansão -
-> Referência (standalone).html`** (raiz) — spec visual de alta fidelidade; **o mapa nela é FALSO** (hexágonos
+> entorno, cenário multi-hex, relatórios, etc.). Handoff de produto: **`docs/archive/PLANO_APP_WEB.md`** (ajustado
+> nesta mesma entrega para refletir a realidade do repo). Referência visual:
+> **`docs/archive/referencia_visual_piloto_standalone.html`** (até 31/10/2026 na raiz, com o nome
+> `Motor de Expansão - Referência (standalone).html`) — spec visual de alta fidelidade; **o mapa nela é FALSO** (hexágonos
 > em CSS, dados mockados) → no app vira `H3HexagonLayer` deck.gl sobre dados reais.
 >
 > **Arquitetura alvo:** motor Python **INTOCADO** → **API FastAPI fina read-only** (estende a que já existe)
@@ -2349,7 +2284,7 @@ acumulado**, **DRE em cascata** — V8), **Excel** (V9) e **Relatório completo 
 | **Depende de** | **BLK-WEB-08** + **BLK-WEB-09**. |
 | **Autonomia** | **manual (NÃO loop-safe)** — os critérios de aceite incluem UX ("<60s sem treino") e paridade visual que exigem olho humano; a parte de teste de contrato é automatizável, o veredito de aceite é humano. |
 
-**Contexto.** Critérios da **§1/§15 do `PLANO_APP_WEB.md`**: paridade numérica byte-a-byte, performance por UF ≤
+**Contexto.** Critérios da **§1/§15 do `docs/archive/PLANO_APP_WEB.md`**: paridade numérica byte-a-byte, performance por UF ≤
 baseline (`data/reports/perf_baseline_dashboard.md`), zero recálculo de score, analista jr. → recomendação de UF < 60s.
 
 **Objetivo.** **Testes de contrato** comparando o JSON de cada endpoint com a saída do Streamlit (mesmas funções puras,
@@ -2702,10 +2637,12 @@ barata e sem tocar `web/**`: cron que roda a validação HTTP da §5 do
 
 ## Epic BLK-INTL — Internacionalização do Motor de Expansão (instância por país; AR primeiro; READ-ONLY sobre o M1)
 
-> Aberta em **2026-08-31** a partir de `docs/plano_multipais.md` e de [DEC-047](../docs/decisions/DEC-047.md).
-> Leituras obrigatórias antes de pegar qualquer bloco: **§0** do plano (as 19 decisões do dono, que
-> **não se rediscutem** durante a subida da Argentina), **§1.1** (fronteira de repositório) e **§5.0**
-> (o caminho crítico). O **Bloco A** tem spec executável própria — `docs/spec_bloco_a_perfil.md`
+> Aberta em **2026-08-31** a partir do plano multipaís (hoje em `docs/archive/plano_multipais.md`) e de
+> [DEC-047](../docs/decisions/DEC-047.md). Leituras obrigatórias antes de pegar qualquer bloco: a DEC-047 (a
+> decisão de arquitetura, a fronteira de repositório e, na seção «Decisões de subida do dono», as decisões
+> 0.1–0.19 e D4–D7b) e o `docs/expansao-latam/00-baseline-argentina.md` (§4.3, o que ficou de fora ou
+> provisório na Argentina, e §5.3, o baseline de esforço por país). O **Bloco A** teve spec executável
+> própria — `docs/archive/spec_bloco_a_perfil.md`
 > (schema de 23 campos, **37 sítios** de substituição numerados, **10 commits** cada um verde sozinho,
 > 10 critérios de aceite por comando, e os 7 testes que quebram contra os 7 que não quebram).
 
@@ -2727,6 +2664,20 @@ processo sairia como fator de renda de um país no PDF do outro.
   se confundem com a numeração `BLK-INTL-00..12` do **§5** do plano (os blocos de plataforma que
   ficaram **fora** do caminho crítico e que serão abertos quando entrarem na fila). Nenhum sufixo é
   prefixo de outro — grep e label ficam inequívocos.
+
+**Blocos do §5 do plano sem bloco aberto aqui** (especificação em `docs/archive/plano_multipais.md` §5;
+abrir quando entrarem na fila; o 02, o 03, o 05 e o 08 saíram como A1 a E1):
+- `BLK-INTL-00` (padrões CRITICO do `loop_guard` por conceito, para artefato de país com nome novo não sair
+  LIMPO) · `BLK-INTL-01` (expectativa da AR por escrito ao time de Expansão Internacional; sem rastro de
+  entrega) · `BLK-INTL-04` (`_UF_RE` alfanumérico com teste de traversal; fim das siglas fabricadas).
+- `BLK-INTL-06` (cache orçado em bytes nos quatro caches pesados) · `BLK-INTL-07` (`docs/contrato_pacote_pais.md`
+  + `scripts/validar_pacote_pais.py`; o exportador já veio no B1) · `BLK-INTL-09` (operação em matriz:
+  healthcheck derivado e `EDGE_URL` por país).
+- `BLK-INTL-10` (superfície `ponto`/municipal para país novo; na AR ela saiu pelo exportador) · `BLK-INTL-11`
+  (premissas financeiras por país; aposenta o tributo provisório da AR) · `BLK-INTL-12` (extração dos textos de
+  PDF, por último; traduzir só por ordem do Felipe).
+- Sobra do `BLK-INTL-02`: baseline de desempenho versionada e uma rota de diagnóstico com RSS, bytes de cache,
+  taxa de acerto de `carregar_uf` e data da última coleta.
 
 **Fronteira de repositório (§1.1 do plano; DEC-047).** UM repositório de **PLATAFORMA** (este) — o
 único com código que serve tráfego. N repositórios de **PIPELINE** (do Juan, um por país) — o método
@@ -2822,7 +2773,7 @@ do plano, ele não entra sem DEC nova.**
 | **Depende de** | — (primeiro bloco da onda). Consome a decisão de âncoras do Felipe, que **já tem default declarado** em `data/perfis/AR/perfil.json` e **não trava o início**. |
 | **Esforço** | **7-11 dias · 1 dev** (era 6-8 antes de A1, A2 e A3 entrarem). |
 | **Autonomia** | **manual (NÃO loop-safe)** — CRITICO + `^web/`. NÃO marcar loop-safe. |
-| **DEC / Spec** | [DEC-047](../docs/decisions/DEC-047.md) ✅ registrada · **`docs/spec_bloco_a_perfil.md`** ✅ (37 sítios, 10 commits, 10 aceites por comando) — **quem for codar lê os números de lá**, não do plano: as citações de `web/server/app.py` acima da linha ~3200 no plano estão **14 linhas defasadas**, e a tabela de conversão está no §0 da spec. |
+| **DEC / Spec** | [DEC-047](../docs/decisions/DEC-047.md) ✅ registrada · **`docs/archive/spec_bloco_a_perfil.md`** ✅ (37 sítios, 10 commits, 10 aceites por comando) — **quem for codar lê os números de lá**, não do plano: as citações de `web/server/app.py` acima da linha ~3200 no plano estão **14 linhas defasadas**, e a tabela de conversão está no §0 da spec. |
 
 **Os quatro defeitos que este bloco conserta — nenhum é cosmético.**
 
@@ -3685,7 +3636,7 @@ Decidir qual, aplicar no compose por PR, e a aplicação na VPS é passo manual 
 | **Criticidade** | **Média** — o passo é fail-soft por desenho e os apps seguem com os arquivos anteriores; o dano é obsolescência silenciosa, não corrupção. |
 | **Prioridade** | **Média** — está quebrado há 3 semanas e ninguém soube. |
 | **Esteira** | `[aplicação na VPS: passo MANUAL, comando a comando — §6]` + PR neste repositório (o lote de domingo é versionado em `scripts/cron/run_weekly_90.sh` desde 2026-09-17, PR #377; a cópia em `/opt/gymscraping-infra/` é instalação) |
-| **Status** | Pendente |
+| **Status** | **Em andamento** — conserto do repositório pronto na branch `fix/achados-conferencia` (`b02e805a`, 29/10/2026, ainda sem PR); aplicação na VPS pendente |
 | **Depende de** | — |
 | **Autonomia** | **manual (NÃO loop-safe)** — VPS + repositório irmão. NUNCA marcar loop-safe. |
 
@@ -3714,6 +3665,8 @@ DEC-059 existe para impedir (lá, nove domingos sem propagar moveram 60,46% dos 
 além das logos. O passo 4.5 do mesmo script (pins M&A) lê os **feeds CRUS montados**, não este
 diretório (decisão de 2026-09-02, comentada na linha 257) — mas eu não tracei todos os consumidores.
 Primeiro entregável do bloco: traçar isso.
+
+**Conferido em produção em 29/10/2026** (achado a-02 da conferência da higiene dos docs; leitura só de contagens, com simulacro antes): o domingo de **25/10 falhou de novo**, com 1 linha `AVISO: sync falhou` e 2 de `PerfilInvalidoError` no `weekly_20261025-060001.log`. O diretório segue em **06/09 10:15** (204 arquivos, 97 logos; 53 dias), e o script instalado em `/opt/gymscraping-infra/run_weekly_90.sh` não tem `MOTOR_DATA_DIR` (0 linhas). Os consertos (a) e (b) estão no repositório, na branch `fix/achados-conferencia` (commit `b02e805a`, ainda sem PR), com dois testes de contrato; a aplicação na VPS segue manual. O traçado dos consumidores dos `unidades_*.csv` continua por fazer.
 
 ---
 
@@ -4599,7 +4552,7 @@ Felipe; nenhuma etapa de modelo roda antes da exploratória revisada):
 - **Idade do público:** o "18–45" do CLAUDE.md nunca foi medido. **05/10:** o Felipe corrigiu que a Ultra atende
   todas as idades; o "18–45" de `CLAUDE.md:12` e `PRD.md:52` não é real. A sonda da Growth confirma: mediana de 37
   anos, e um terço dos alunos tem 45 anos ou mais.
-  - Corrigidos em 05/10 só numa cópia local, **nunca commitados**: `CLAUDE.md:12`, `PRD.md:52` e `docs/expansao_dominio.md:127` seguem com o "18-45" na `main` (conferido em 2026-10-23).
+  - Corrigidos em 05/10 só numa cópia local, **nunca commitados**: `CLAUDE.md:12`, `PRD.md:52` e `docs/expansao_dominio.md:127` seguem com o "18-45" na `main` (conferido em 2026-10-23). Em 29/10/2026, na limpeza da documentação, o `PRD.md` saiu do repositório e o `docs/expansao_dominio.md` foi corrigido; e em 02/11/2026 o `CLAUDE.md` também, no PR #504 (decisão do Vinicius, responsável pela documentação: a Ultra visa todas as idades).
   - Sobra um comentário de código em `src/motor_expansao/dashboard/constants.py:461` ("classe média urbana-alvo Ultra
     (18-45)"), que vai no próximo PR.
 - **Idade da população por setor: a base EXISTE no IBGE.** `Agregados_por_setores_demografia_BR.zip` (22 MB, de

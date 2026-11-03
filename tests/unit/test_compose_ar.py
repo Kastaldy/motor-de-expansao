@@ -3,7 +3,7 @@
 O teste analogo do BR (`test_piloto_web_rede.py::
 test_compose_monta_somente_cadastro_e_trilha_como_volumes_de_escrita`) le o
 `docker-compose.prod.yml` por caminho LITERAL, entao o compose AR nao era conferido
-por NADA — exatamente a "segunda armadilha" do plano_multipais.md (BLK-INTL-08):
+por NADA — exatamente a "segunda armadilha" do docs/archive/plano_multipais.md (BLK-INTL-08):
 sem `MOTOR_CADASTRO_DIR` e sem override, `abas_do_usuario`
 (`web/server/acesso.py:363-388`) devolve ABAS_VALIDAS inteira para todo autenticado.
 

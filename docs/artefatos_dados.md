@@ -1,5 +1,10 @@
 # Manifesto de Artefatos de Dados
 
+> **Em poucas palavras**
+> - **Do que trata:** Os arquivos de dados de que o Motor depende: tamanho aproximado, quem produz e quem usa cada um. Quase todos ficam guardados à parte do código.
+> - **Quando ler:** Quando uma tela aparece vazia ou com erro por falta de dado, ou para descobrir de onde vem e quem usa um arquivo.
+> - **Atenção:** Confira quem usa cada arquivo: alguns são legados ou já não aparecem em tela. Os dados das unidades Ultra e dos concorrentes são restritos: peça acesso ao responsável.
+
 > Politica: dados brutos, staging e outputs pesados ficam fora do git.
 > Entram via volume Docker, S3/GCS ou copia manual documentada aqui.
 > Validar presenca com: `python scripts/check_artifacts.py`
@@ -19,7 +24,7 @@ camadas paralelas por direito proprio).
 | `oportunidades_expansao_hibrido.parquet` | 109 MB | `src/motor_expansao/pipelines/modelo_hibrido_expansao.py` | insumo do merge do enriquecido (hibrido/censitario/residual) |
 | `carteira_expansao_acionavel.parquet` | 600 KB | `src/motor_expansao/pipelines/gerar_carteira_acionavel.py` | sem superficie de exibicao desde a DEC-022 (artefato oficial da camada de mercado; pipeline e testes seguem) |
 | `plano_expansao_curto_prazo.parquet` | 80 KB | `src/motor_expansao/pipelines/gerar_plano_expansao_curto_prazo.py` | idem — perdeu superficie, continua produzido e valido |
-| `staging/crescimento_municipal.parquet` | 2 MB | `data/reports/crescimento/` (10 scripts, ordem no README) | piloto web, passo 4 do funil — OPCIONAL, ausente degrada so o passo |
+| `staging/crescimento_municipal.parquet` | 2 MB | `scripts/crescimento/` (10 scripts, ordem no README) | piloto web, passo 4 do funil — OPCIONAL, ausente degrada so o passo |
 | `staging/crescimento_hex.parquet` | 370 KB | idem | piloto web, passo 4 — cor do mapa por taxa de crescimento do hexagono |
 
 Os dois de crescimento **nao sao reproduziveis a partir deste repo sozinho**: os 10
@@ -56,7 +61,7 @@ Politica: nao versionar no git (bloqueado por `*.parquet` e `*.csv` no `.gitigno
 | `hexagonos_mercado_mapeado.parquet` | 204 MB | `calcular_colunas_mercado.py` | `modelo_hibrido_expansao.py`; piloto web (residual do ponto no Relatorio Pontual) |
 | `concorrentes_mapeados.parquet` | 250 KB | `normalizar_concorrentes.py` | piloto web (pins), API/PDFs, `modelo_hibrido_expansao.py` |
 | `unidades_ultra_performance_hex.parquet` | 53 KB | `calcular_penetracao_ultra_hex.py` | piloto web (pins Ultra; fallback da faixa de alunos) |
-| `growth_api_historico.parquet` | 3.4 MB | `scripts/ingerir_growth_api.py` (ingestao semanal, DEC-013) | piloto web (Visao Executiva — a tela responde 404 sem ele) |
+| `growth_api_historico.parquet` | 3.4 MB | `scripts/ingerir_growth_api.py` (ingestão diária na VPS, `scripts/cron/run_growth_daily.sh`; DEC-053) | piloto web (Visao Executiva — a tela responde 404 sem ele) |
 | `base_calibracao_maduras.parquet` | 21 KB | `scripts/consolidar_base_calibracao.py` | piloto web (semente p50 da demanda na Viabilidade) |
 | `uplift_renda_domiciliar_municipio.parquet`, `uplift_composicao_setor.parquet` | — | pipeline de renda domiciliar | piloto web + API/PDFs (renda media domiciliar; em producao — `MOTOR_DATA_DIR` setado — a subida do piloto e da API RECUSA sem eles, E0. O `fator_temporal_renda.json` saiu: os fatores sao versionados na imagem, `src/motor_expansao/renda/fatores/<PAIS>/`, DEC-075) |
 
@@ -73,6 +78,10 @@ Nao versionar. Baixar em: <https://www.ibge.gov.br/estatisticas/downloads-estati
 |---------|-----------|---------|
 | `data/ultra/Ultra.csv` | Localizacoes das unidades Ultra (legado) | latin-1, sep=";", 1 linha de metadado antes do header |
 | `data/ultra/dados_academias.xlsx` | Dados operacionais das unidades | Excel |
+| `data/ultra/logo_ultra.png` | Logo da Ultra nos PDFs e no pin da Ultra (`censo_report.py`, `relatorio_municipal.py`, `competitors.py`) | PNG |
+| `data/ultra/icone_ultra.png` | Ícone da Ultra nos PDFs (`censo_report.py`, `relatorio_municipal.py`); é o único arquivo de `data/ultra/` que está no git | PNG |
+| `data/ultra/relatorio_capa_bg.png` | Arte da capa dos PDFs (Pontual, Municipal e Comparação) | PNG |
+| `data/ultra/relatorio_conteudo_bg.png` | Fundo das páginas de conteúdo dos mesmos PDFs | PNG |
 | `concorrentes/unidades_smart_fit.csv` | Unidades Smart Fit geocodificadas | UTF-8 |
 | `concorrentes/unidades_bluefit.csv` | Unidades Bluefit geocodificadas | UTF-8 |
 | `concorrentes/unidades_panobianco.csv` | Unidades Panobianco geocodificadas | UTF-8 |
@@ -83,7 +92,11 @@ Os CSVs sao a FONTE do pipeline de concorrentes: `normalizar_concorrentes.py` os
 consolida em `data/staging/concorrentes_mapeados.parquet`, que e o que o piloto
 web e os PDFs consomem. Medir as duas pontas ao auditar cobertura.
 
-Politica: nao versionar. Solicitar acesso ao responsavel do projeto.
+Sem os PNGs de marca, o PDF sai válido, só sem a arte (`tests/unit/test_relatorio_pontual_censitario_export.py`).
+
+Politica: nao versionar (a exceção é o `icone_ultra.png`). Solicitar acesso ao responsavel do projeto. Ao
+preparar dados para um colaborador novo, nunca repassar `data/referencias/` (estudos reais com PII, inclui
+`Teste Modelo.pptx`) nem `.env`, `Caddyfile`, `authelia/` e `secrets/`.
 
 ## 5. Dados geograficos IBGE (`data/ibge/`) — versionados no git
 
@@ -92,7 +105,16 @@ Politica: nao versionar. Solicitar acesso ao responsavel do projeto.
 - Fonte publica IBGE, sem dados sensiveis. Tamanho total ~49 MB.
 - Versionados pois sao entrada necessaria ao app sem pipeline de geracao local.
 
-## 6. Cache OSM (`data/osm_cache/`) — nao versionar
+## 6. Cache OSM (`data/osm_cache/`) — versionado de propósito
 
-Arquivos JSON gerados automaticamente por consultas OSM. Regeneraveis.
-Bloqueado por `data/osm_cache/` no `.gitignore`.
+- O `POIEnricher` (`src/motor_expansao/pipelines/m1/poi_enrichment.py`, `OSM_CACHE_DIR`) guarda aqui, em
+  JSON, a resposta de cada consulta de academias ao OpenStreetMap, uma por caixa de coordenadas (bbox),
+  para a mesma consulta não voltar à rede. O fluxo oficial do M1 roda com o OSM desligado
+  (`M1_OSM_ENABLED = False`).
+- Os 191 JSON da pasta estão no git desde o primeiro commit (05/04/2026) e ficam: o guard
+  (`scripts/loop_guard.py`) os trata como insumo de produção ("cache de oferta versionado", classe
+  GOVERNANÇA), então mudar algum deles pede revisão humana.
+- A linha `data/osm_cache/` do `.gitignore` só barra cache NOVO: a consulta nova grava o arquivo, mas ele
+  fica fora dos commits. Arquivo já versionado segue no git, e alteração nele aparece no `git status`.
+- O teste `tests/contracts/test_fontes_gratuitas.py` (classe `TestPOIEnricher`) grava e apaga nesta pasta
+  os próprios `bbox_*_test.json`; dois deles estão versionados.

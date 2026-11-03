@@ -84,7 +84,7 @@ Pessoa B
 | Entregáveis | (a) `docs/contrato_pacote_pais.md` v1 + `scripts/validar_pacote_pais.py` nos 3 níveis + `manifesto.json` (DEC-073/D1). (b) Exportador **genérico** com `depara.json` por país; a AR é **reempacotada** por ele (teste de aceite). (c) R3–R11 (réguas completas, campos mortos, fail-closed, chave integral, partição alfanumérica, `mascara.ts` por locale, camadas de leitura e textos de fonte declarados). (d) Testes em matriz de perfis em subprocesso, fixtures sintéticos por país e testes negativos com os 7 defeitos reais da AR. (e) Baseline de desempenho do piloto web versionada |
 | Aceite | AR reempacotada pelo exportador genérico passa o validador e produz o **mesmo** serving que hoje (salvo as correções da F0); o validador **recusa** cada um dos 7 fixtures negativos; BR idêntico ao bit; fio de alarme verde e ampliado; `_UF_RE` novo com teste de traversal verde |
 | Testes | Ver `03-arquitetura.md` §7, itens 1–6 |
-| Estimativa | **3–4 semanas** de calendário: ~1 semana de spec executável (molde da `spec_bloco_a_perfil.md`), 1–2 de execução com IA, ~1 de revisão e gates Críticos (R3, R5, R7) |
+| Estimativa | **3–4 semanas** de calendário: ~1 semana de spec executável (molde da `docs/archive/spec_bloco_a_perfil.md`), 1–2 de execução com IA, ~1 de revisão e gates Críticos (R3, R5, R7) |
 | Dependências | F0; DEC-073/D1, DEC-073/D3, DEC-073/D4 aprovadas |
 | Riscos | R7 mexe num sink de segurança, então tem revisão adversarial obrigatória. O exportador genérico pode não cobrir a AR inteira (14 colunas extras da cópia do Juan); a mitigação é tratá-las como `camadas_leitura` declaradas |
 
@@ -195,7 +195,7 @@ Pessoa B
 | Superfícies | `mapa` (camadas 1–3, ficha do hex, funil municipal) + Relatório Pontual onde houver unidade censitária com geometria (MX AGEB, CO manzana; PE e PY depois) | + `oportunidades` (Modo 3) com réguas da camada 5 do país; + `viabilidade` com premissas locais assinadas; + camada 4; + M&A (só MX) |
 | Dados mínimos | identidade + camada 1 (pop medida/reescalada + renda modelada) + camada 2 (taxa e capacidade **declaradas com faixa e fonte**, carimbo "não calibrado") + camada 3 (redes + OSM/Overture/DENUE) | + momentum, coleta recorrente na VPS, aluguel/imobiliário com parceria |
 | Gate | DEC-073/D9 (5 gates) | + golden fiscal do país assinado |
-| O que o MVP **não** promete | previsão de desempenho (o funil é política declarada, DEC-041; a DEC-043 foi revogada pela DEC-078); viabilidade; ranking entre países | — |
+| O que o MVP **não** promete | previsão de desempenho (o funil é política declarada, DEC-041); viabilidade; ranking entre países | — |
 
 ---
 
