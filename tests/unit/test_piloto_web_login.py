@@ -23,8 +23,6 @@ from types import SimpleNamespace
 from typing import Any
 
 import pytest
-from fastapi import FastAPI, Request
-from fastapi.testclient import TestClient
 
 _REPO = Path(__file__).resolve().parents[2]
 _SERVER = _REPO / "web" / "server"
@@ -758,36 +756,35 @@ def test_trilha_do_login_bem_sucedido_registra_o_login_nao_desconhecido(
     assert capturados[0]["usuario"] == "ana.ribeiro"
 
 
-def test_trilha_do_login_atravessa_o_middleware_de_ponta_a_ponta(
+def test_trilha_do_login_le_o_carimbo_do_state_apos_o_call_next(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Ponte REAL: o `request.state` carimbado no handler chega ao `_registrar_acesso` DEPOIS
-    do `call_next`. Os testes vizinhos exercitam as pontas ISOLADAS; este trava a ARQUITETURA:
-    se o middleware deixar de compartilhar o `scope["state"]` com o endpoint (trocar o tipo de
-    middleware, reconstruir o Request), a trilha voltaria a dizer "desconhecido" no login em
-    producao, em silencio -- a familia de defeito da DEC-038/045/054.
+    """Ponte no middleware REAL `_trilha_acesso`: o que o endpoint carimba em `request.state`
+    DURANTE o `call_next` tem de ser lido DEPOIS dele. Os testes vizinhos chamam
+    `_registrar_acesso` com o state ja' pronto; este exercita o middleware INTEIRO e trava a
+    ORDEM -- se alguem ler o state ANTES do `call_next`, ou passar outro request a
+    `_registrar_acesso`, a trilha volta a "desconhecido" no login em silencio (familia
+    DEC-038/045/054). `login_da_requisicao` vira header cru de proposito: ponte quebrada cai
+    em "desconhecido", nao na identidade de dev, que mascararia a regressao.
 
-    Dois cuidados MEDIDOS: (1) `login_da_requisicao` vira header cru, para o fallback de uma
-    ponte quebrada ser "desconhecido" (nao a identidade de dev, que mascararia a regressao);
-    (2) `FastAPI`/`Request` SAO importados no topo do modulo de proposito -- com
-    `from __future__ import annotations` (PEP 563) a anotacao `request: Request` e' uma string
-    que o FastAPI resolve no namespace do MODULO; um import local faria `request` virar query
-    param, o endpoint devolveria 422 sem rodar, e o teste "passaria" sobre uma requisicao
-    rejeitada sem nunca exercer a ponte.
+    Sem `TestClient`/`httpx`/`FastAPI`: o `starlette.testclient` exige `httpx2`, ausente no CI,
+    e importa-lo no topo quebrava a COLETA do arquivo inteiro. Chamar o middleware como coroutine
+    exercita o mesmo caminho (`call_next` -> `_registrar_acesso`) sem subir um servidor ASGI.
     """
+    import asyncio
+
     capturados: list[dict[str, Any]] = []
     monkeypatch.setattr(pilot.acesso_log, "registrar", lambda ev: capturados.append(ev))
     monkeypatch.setattr(pilot.acesso, "login_da_requisicao", lambda h: h)
 
-    mini = FastAPI()
-    mini.middleware("http")(pilot._trilha_acesso)  # o middleware REAL da DEC-027
+    req = _req_trilha("/api/login", state=SimpleNamespace())
 
-    @mini.post("/api/login")
-    def _login_falso(request: Request) -> dict[str, bool]:
-        request.state.login_na_trilha = "ana.ribeiro"  # como o handler real, so' no sucesso
-        return {"ok": True}
+    async def _endpoint_que_carimba(_r: Any) -> Any:
+        # o endpoint de login real faz exatamente isto, so' no sucesso, no MESMO request:
+        req.state.login_na_trilha = "ana.ribeiro"
+        return SimpleNamespace(status_code=200, headers=_Headers({}))
 
-    TestClient(mini).post("/api/login")
+    asyncio.run(pilot._trilha_acesso(req, _endpoint_que_carimba))
 
     assert len(capturados) == 1
     assert capturados[0]["usuario"] == "ana.ribeiro"
