@@ -18,8 +18,9 @@
 #
 # O GATE DE PAIS (DEC-081) substitui a separacao que o grupo `expansao_ar` do Authelia fazia: o
 # `/api/verify` do processo AR (PERFIL.pais = AR) so' libera quem tem o pais AR entre os seus.
-# Ninguem so'-BR entra aqui, mesmo com sessao viva -- o cookie e' de DOMINIO (SSO de apex+BR+AR),
-# mas o gate barra na borda, e a 2a camada (`_portao_de_sessao`) barra de novo no processo.
+# Ninguem so'-BR entra aqui: o cookie e' `__Host-` POR HOST (Opcao F, DEC-081 -- sem SSO de
+# dominio; login por host), entao o so'-BR nem tem sessao neste host; e, mesmo que tivesse, o
+# gate barra na borda e a 2a camada (`_portao_de_sessao`) barra de novo no processo.
 # ============================================================================
 #
 # UMA diferenca deliberada em relacao ao BR: o BR usa `reverse_proxy web:8899` (alias de
