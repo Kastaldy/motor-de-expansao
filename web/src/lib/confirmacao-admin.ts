@@ -104,6 +104,7 @@ export type AcaoAdmin =
   | { tipo: 'definir-ativo'; nome: string; login: string; perfil: string; ativo: boolean }
   | { tipo: 'redefinir-senha'; nome: string; login: string; senhaPropria: boolean }
   | { tipo: 'exigir-troca'; nome: string; login: string }
+  | { tipo: 'editar-paises'; nome: string; login: string; de: string[]; para: string[] }
 
 export interface Confirmacao {
   /** Tarja curta acima do título. Caixa alta no componente. */
@@ -268,6 +269,21 @@ export function montarConfirmacao(
           'registrado com o seu nome e a data.',
       ],
       rotuloConfirmar: `Exigir troca de ${acao.nome}`,
+      gravidade: 'media',
+      loginParaDigitar: null,
+    }
+  }
+
+  if (acao.tipo === 'editar-paises') {
+    return {
+      eyebrow: 'Mudar os países de acesso',
+      titulo: `Países de ${acao.nome}`,
+      apoio: [
+        `Login ${acao.login}.`,
+        `De ${acao.de.join(', ') || '(nenhum)'} para ${acao.para.join(', ')}.`,
+        'Concede ou retira o acesso aos sites de cada país. Fica registrado com o seu nome e a data.',
+      ],
+      rotuloConfirmar: `Salvar países de ${acao.nome}`,
       gravidade: 'media',
       loginParaDigitar: null,
     }

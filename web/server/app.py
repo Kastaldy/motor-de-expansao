@@ -5554,11 +5554,26 @@ def _paises_disponiveis() -> list[dict[str, str]]:
     return [{"sigla": sigla, "nome": nome} for sigla, nome in PAISES_PLATAFORMA]
 
 
+def _recusar_pais_fora_do_catalogo(paises: list[str]) -> None:
+    """422 amigavel (em vez do 500 cru do CHECK do banco) para sigla fora do catalogo.
+
+    Redacao UNICA, usada no criar e no alterar: o pertencimento ao catalogo e' decisao da
+    APLICACAO (que conhece BR/AR), nao da camada de dados. Nao e' `if pais == "XX"` -- e'
+    membership num conjunto-tabela (DEC-047).
+    """
+    desconhecidos = [p for p in paises if p.strip().upper() not in _SIGLAS_PLATAFORMA]
+    if desconhecidos:
+        raise HTTPException(422, f"País(es) fora do catálogo: {', '.join(desconhecidos)}.")
+
+
 class UsuarioAdminIn(BaseModel):
-    """Mudanca de acesso. Os dois campos sao opcionais e independentes."""
+    """Mudanca de acesso. Os campos sao opcionais e independentes."""
 
     perfil: str | None = None
     ativo: bool | None = None
+    #: Conjunto DESEJADO de paises (replace-all). None = nao mexe nos paises; lista vazia e'
+    #: recusada (vazio = o bug do P4). A rota valida contra o catalogo antes de aplicar.
+    paises: list[str] | None = None
 
 
 class UsuarioNovoIn(BaseModel):
@@ -5816,7 +5831,7 @@ def acessos_usuarios_alterar(
     body: UsuarioAdminIn,
     remote_user: str | None = Header(default=None, alias="Remote-User"),
 ) -> dict[str, Any]:
-    """Troca o perfil e/ou o status numa transacao SO', com um evento por mudanca.
+    """Troca o perfil, o status e/ou os paises numa transacao SO', com um evento por mudanca.
 
     Os dois campos sao independentes e podem vir juntos. Quando vem, sao DOIS eventos, porque
     sao duas decisoes distintas -- "virou Growth" e "foi desativado" respondem a perguntas
@@ -5828,13 +5843,19 @@ def acessos_usuarios_alterar(
     _exigir_admin_acessos(remote_user)
     from motor_expansao.db import usuarios as db_usuarios
 
-    if body.perfil is None and body.ativo is None:
-        raise HTTPException(422, "Informe `perfil`, `ativo`, ou os dois.")
+    if body.perfil is None and body.ativo is None and body.paises is None:
+        raise HTTPException(422, "Informe `perfil`, `ativo`, `paises`, ou uma combinação.")
+    if body.paises is not None:
+        _recusar_pais_fora_do_catalogo(body.paises)
 
     eu = _identidade_do_admin(remote_user)
     try:
         return db_usuarios.alterar_acesso(
-            id_usuario, perfil=body.perfil, ativo=body.ativo, autor=eu.id_usuario
+            id_usuario,
+            perfil=body.perfil,
+            ativo=body.ativo,
+            paises=body.paises,
+            autor=eu.id_usuario,
         )
     except Exception as erro:  # noqa: BLE001 - traduzido logo abaixo
         raise _erro_de_usuarios(erro) from erro
@@ -5865,9 +5886,7 @@ def acessos_usuarios_criar(
     # DESTE processo (PERFIL.pais). Se a tela mandar paises, eles valem -- validados contra o
     # catalogo da plataforma, com mensagem amigavel em vez do 500 cru do CHECK do banco.
     paises = body.paises or [PERFIL.pais]
-    desconhecidos = [p for p in paises if p.strip().upper() not in _SIGLAS_PLATAFORMA]
-    if desconhecidos:
-        raise HTTPException(422, f"País(es) fora do catálogo: {', '.join(desconhecidos)}.")
+    _recusar_pais_fora_do_catalogo(paises)
     try:
         criado = db_usuarios.criar(
             login=body.login,
