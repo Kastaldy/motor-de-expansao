@@ -1,7 +1,7 @@
 """Camada 1 (BLK-DIM): aderencia calibrada por catchment -- alvo log(pagantes).
 
 Estima a demanda absoluta das unidades maduras via regressao log-log Ridge com
-LOO-CV honesto (spec modelo_dimensionamento_expansao.md §4 Camada 1, §6 Fase 1,
+LOO-CV honesto (spec docs/archive/modelo_dimensionamento_expansao.md §4 Camada 1, §6 Fase 1,
 §7 metodologia). BLK-DIM-01R corrige os 2 vicios do spike BLK-DIM-01:
 (a) fixture circular (R2 alto por construcao) e (b) endogeneidade mecanica do alvo
 `penetracao = pagantes/pop` (o `log(pop)` no denominador correlaciona-se quase
