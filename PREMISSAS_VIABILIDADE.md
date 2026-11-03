@@ -487,14 +487,17 @@ Desde a 3ª rodada é obrigatório separar as duas, porque foram resolvidas em m
 | **Sensibilidade (re-medida na 4ª rodada, 2026-07-25)** | A R$ 137 o caso golden faz faturamento **R$ 269.412,97**, folha **R$ 45.800,20** (a régua de 17% acompanha o faturamento maduro menor), EBITDA **R$ 101.306,71 (37,60%)** — a margem **passa** o mínimo de 30% —, break-even **1.199,2**, cheque total **R$ 1.162.843,40** (mês 6) e payback **37 meses**: **estoura o critério de 36** e `flag_viavel` cai para **falso**. E o mais duro: **na régua nova o VPL fica NEGATIVO nas duas óticas** — **do negócio** TIR **24,79%** / VPL **−R$ 9.517,56**, **do sócio** TIR **25,66%** / VPL **−R$ 32.166,21**. A R$ 137 o ativo rende **abaixo** da taxa mínima do negócio (24,79% < 25,00%), e a alavancagem deixa de compensar. |
 | **Status** | **Aberto só quanto a 137 × 147** (a escada por studio está sem objeto desde 2026-10-05). Não corrigido: mexer no ticket muda a conclusão de todos os cenários já apresentados, e a régua comercial vigente (R$ 147 como entrada) é decisão de produto, não de engenharia. Precisa de Felipe. |
 
-### (d) CUSTO DO STUDIO × FOLHA — possível dupla contagem (aberto desde 03/11/2026)
+### (d) CUSTO DO STUDIO × FOLHA — dupla contagem (resposta do Felipe em 03/11/2026; correção pendente)
 
 Cada studio soma **R$ 6.000/mês** de custo fixo (`SIM_CUSTO_STUDIO`, descrito como folha de pagamento adicional
-por studio) e, desde a DEC-068, a receita do studio também entra na base dos **17%** da folha (§4.1). Se os 17% já
-cobrem a equipe do studio, ela é cobrada duas vezes, e a Viabilidade fica pessimista para unidade com studio (até
-R$ 6.000/mês por studio). Se cobrem só a equipe da academia, a conta está certa. A DEC-068 confirmou que as duas
-cobranças valem juntas, mas não respondeu à pergunta. Quem decide: o Felipe, com a controladoria. Pendência
-registrada por Vinicius em 03/11/2026.
+por studio) e, desde a DEC-068, a receita do studio também entra na base dos **17%** da folha (§4.1). Em 03/11/2026, o Felipe
+confirmou, por Vinicius, que os R$ 6.000 já incluem o gasto com funcionário do studio. Logo, a parte dos 17% que
+incide sobre a receita do studio cobra a mesma equipe uma segunda vez, e a Viabilidade fica pessimista para unidade
+com studio. Medido no simulador com ticket de balcão de R$ 147 e os tickets padrão dos studios (R$ 157, 167 e 177),
+a cobrança a mais é de R$ 1.967/mês com 1 studio e R$ 6.277/mês com 3, numa unidade de 1.000 alunos; com 2.000
+alunos, R$ 3.934 e R$ 12.553. A DEC-068 tinha decidido que as duas cobranças valem juntas. A correção, que tira a
+receita do studio da base dos 17%, muda os números da Viabilidade e entra por emenda da DEC-068, com aprovação do
+Felipe.
 
 ---
 
