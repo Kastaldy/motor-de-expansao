@@ -1587,7 +1587,7 @@ não volta (a volta do dado é restore de dump, §10).
 **Depois do corte do P19 (`MOTOR_AUTENTICACAO_PROPRIA` ligada), banco fora = piloto BR fora:** a
 sessão vive em tabela, o `/api/verify` responde 503 e o Caddy nega tudo; quem estava dentro sai
 junto, e o login também não funciona. O interruptor do §8 deixa de existir (sem banco ninguém
-entra): primeiro desfaz-se o P19 — `docs/repasse_corte_p19.md`, "Se precisar voltar atrás" (o bloco
+entra): primeiro desfaz-se o P19 — `docs/archive/repasse_corte_p19.md`, "Se precisar voltar atrás" (o bloco
 do Caddy de `Caddyfile.antes-do-p19`, depois a chave vazia), o que só devolve a entrada enquanto os
 logins BR ainda estiverem no Authelia —, e só então, se o banco seguir fora, o §8. Conferir o
 estado: `grep '^MOTOR_AUTENTICACAO_PROPRIA=' /opt/motor-expansao/app/.env`.

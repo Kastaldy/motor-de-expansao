@@ -662,13 +662,13 @@ da inicial. Na produção, a `MOTOR_SENHA_INICIAL` foi sorteada na instalação 
 do Authelia), e a marca de troca (`deve_trocar_senha_usuario`) foi desligada nos 20 em 17/10/2026. Para
 o corte, a decisão é trocá-la pela compartilhada e rodar o `db alinhar-senhas`, que remarca a troca
 de quem nunca definiu a própria: o convite do primeiro acesso, que tem "Agora não" — a troca é
-recomendada, não obrigatória (decisão de 25/09/2026; roteiro do corte em `docs/repasse_corte_p19.md`).
+recomendada, não obrigatória (decisão de 25/09/2026; roteiro do corte em `docs/archive/repasse_corte_p19.md`).
 
 **Na produção, o cadeado escondido e o 404 só valem depois do deploy da imagem que os traz.** A que estava no ar em 24/10/2026
 (digest `d1cc438e…`, `main` em `84429f3e`) é anterior: ainda mostra o cadeado aos 20 — que recusa todos,
 porque pede a inicial sorteada — e ainda oferece Redefinir senha e Exigir troca, que gravam só no banco.
 Até esse deploy, rodar o `alinhar-senhas` antes da janela abre o convite de troca para os 20 (aviso no
-0.c do `docs/repasse_corte_p19.md`).
+0.c do `docs/archive/repasse_corte_p19.md`).
 
 ### O SQL do primeiro cadastro
 
@@ -850,7 +850,7 @@ de incidente, e ele existe justamente para que "o banco está estranho" nunca vi
 2. também aqui, `unset MOTOR_DATABASE_URL` antes do `up` (§9.0): uma variável não vazia esquecida no
    terminal vence a linha esvaziada do `.env`, e o `web` volta a subir com o banco;
 3. **depois do corte do P19 o interruptor deixa de existir:** sem banco ninguém entra (o `/api/verify`
-   responde 503). A volta passa a ser desfazer primeiro o P19 (roteiro em `docs/repasse_corte_p19.md`) e
+   responde 503). A volta passa a ser desfazer primeiro o P19 (roteiro em `docs/archive/repasse_corte_p19.md`) e
    só então, se for o caso, o banco.
 
 O kit da estação do Vinicius tem este rollback em script simulado (`passo8c-desfazer.sh`): esvazia só a

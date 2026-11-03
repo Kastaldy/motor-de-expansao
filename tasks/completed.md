@@ -15912,7 +15912,7 @@ ganha o subcomando `banco` com a branch `feat/banco-completo`, é o **BLK-BANCO-
 ## Marco — Banco de produção instalado (17/10/2026) e ligado no site (23/10/2026); código do P19 no ar, com a chave desligada
 
 > Registro curto. Passo a passo e estado vivo em `docs/banco_deploy.md`; o corte do P19 em
-> `docs/repasse_corte_p19.md`; o que falta na epic BLK-BANCO do `tasks/backlog.md`.
+> `docs/archive/repasse_corte_p19.md`; o que falta na epic BLK-BANCO do `tasks/backlog.md`.
 
 - **Código, na `main`:** o sistema do banco entrou pelo PR #376 (17/09/2026); o código do P19, pelos
   #400 (22/09), #417 e #416 (28/09). Antes de instalar entraram o #447 (o `conferir` e o

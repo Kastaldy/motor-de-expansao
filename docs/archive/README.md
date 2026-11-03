@@ -43,6 +43,17 @@ aponta para o que o substituiu.
 - `relatorio_pontual_historico.md` — trechos de história tirados do `docs/relatorio_pontual_censitario.md` em
   03/11/2026, palavra por palavra: a cronologia das páginas do PDF, as validações de maio e junho, a época do
   Streamlit e os defeitos já consertados. O que vale hoje está no documento principal.
+- `repasse_corte_p19.md` — roteiro do corte do P19, que levou o login próprio do Motor ao piloto do Brasil
+  (DEC-067); executado na produção em 27/10/2026. O texto descreve o estado de 24/10/2026, antes do corte.
+  O que vale hoje está no `docs/autenticacao_propria_p19.md`, no `docs/banco_deploy.md` e na DEC-067; a
+  seção «Se precisar voltar atrás» continua citada pelo `infra_producao.md` e pelo `banco_deploy.md` como o
+  caminho de volta.
+- `repasse_migracoes_p19.md` — pacote para aplicar as migrations 018, 019 e 020 do P19 num banco que já
+  existia. Na produção ele não se aplicou: o banco nasceu do zero em 17/10/2026, já com as 21 migrations,
+  pelo `docs/banco_deploy.md`.
+- `repasse_logout_2h.md` — troca manual da inatividade do Authelia de 30 min para 2 h na VPS (emenda D2 da
+  DEC-067, de 14/10/2026), executada em 17/10/2026. Desde o corte do P19, no Brasil o logout por
+  inatividade vem da sessão própria do Motor (`INATIVIDADE_MIN = 120` em `src/motor_expansao/db/sessoes.py`).
 
 Removidos em 29/10/2026, por já estarem cobertos por outro documento (o git guarda o texto; para ler,
 `git log --all --full-history -- <caminho>`): `PRD.md`, `STATUS_ORQUESTRACAO.md`,

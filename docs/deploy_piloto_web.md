@@ -350,7 +350,7 @@ o artefato entrou no inventário de artefatos — hoje em `/api/acessos/saude-ar
 > Vazia ou ausente → o corte NÃO aconteceu, e esta seção vale. Com valor → **o corte aconteceu**,
 > e o bloco correto é o de `deploy/caddy/piloto-br.Caddyfile.template`.
 >
-> Para **fazer** o corte, não use esta seção: siga `docs/repasse_corte_p19.md`, que tem a ordem
+> Para **fazer** o corte, não use esta seção: siga `docs/archive/repasse_corte_p19.md`, que tem a ordem
 > (chave primeiro, Caddy depois — o inverso derruba o piloto inteiro) e os pré-requisitos.
 >
 > **A instância AR não acompanha o corte** e continua atrás do Authelia — o bloco dela é
@@ -392,7 +392,7 @@ docker compose -f docker-compose.prod.yml exec caddy caddy reload --config /etc/
 > autoriza o host brasileiro é o portão de sessão do motor, e a regra de `access_control` abaixo
 > deixa de ser consultada para ele. O serviço `authelia` **continua de pé** — a instância
 > argentina depende dele —, então a regra do `piloto-ar.` permanece necessária. Ver
-> `docs/repasse_corte_p19.md`.
+> `docs/archive/repasse_corte_p19.md`.
 
 Config **não versionada** (backup cifrado `secrets/authelia.configuration.enc.yaml`); vive em
 `/opt/motor-expansao/app/authelia/configuration.yml`. Adicionar a regra:
@@ -491,7 +491,7 @@ aplicada não volta com a imagem (§8 do `docs/banco_deploy.md`).
 - [ ] `https://piloto.ultra-expansao.tech` exige login e abre o SPA depois. **Qual login depende
       do estado do corte:** antes dele, a tela do Authelia; depois, a nossa tela de entrar
       (`/entrar.html`). Confira com `grep '^MOTOR_AUTENTICACAO_PROPRIA=' .env` qual esperar — ver
-      `docs/repasse_corte_p19.md`.
+      `docs/archive/repasse_corte_p19.md`.
 - [ ] Mapa Territorial carrega uma UF (a 1ª leitura carrega a partição inteira, demora).
 - [ ] Viabilidade calcula um ponto e mostra o **banner "preliminar"**.
 - [ ] Relatório Pontual (PDF) gera sem erro (basemap/contextily presentes).
