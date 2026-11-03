@@ -962,8 +962,8 @@ a base de calibração DENTRO do formato Ultra, e revalidar a curva (reabre BLK-
 > "a folha deve acompanhar o faturamento de cada mês, inclusive menor na rampa" (Escopo) e "folha escala com a
 > receita" (Aceite item 3) descrevem a regra **ANTIGA/DESCARTADA** — a folha percentual do mês diluía o custo na
 > rampa, subestimava a queima de caixa do mês 1 em ~R$33,3 mil e deixava o break-even otimista (840,6 em vez de
-> 1.152,0 alunos totais no caso de referência). **O que continua PENDENTE deste bloco é só o NÍVEL do percentual**
-> (0,17 vigente x 0,25–0,26 apurados nas 6 DREs), com a controladoria; ver `PREMISSAS_VIABILIDADE.md` §4.1 e
+> 1.152,0 alunos totais no caso de referência). **O NÍVEL do percentual foi decidido em 30/09/2026 (Felipe): 0,17 permanece**
+> (contra 0,25–0,26 apurados nas 6 DREs; o BLK-VIAB-11 foi cancelado); ver `PREMISSAS_VIABILIDADE.md` §4.1 e §9(a) e
 > `docs/archive/nota_impacto_fin_viab_01.md`.
 
 **Contexto.** O simulador (`dimensionamento/simulador.py::viabilidade`) modela a folha como um **custo fixo absoluto**

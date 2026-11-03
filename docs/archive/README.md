@@ -37,6 +37,9 @@ aponta para o que o substituiu.
 - `spec_bloco_a_perfil.md` — spec executável do Bloco A do perfil de país, executada em 02/09/2026. O
   schema vigente é o do loader `src/motor_expansao/perfil.py` com a tabela do `data/perfis/LEIA-ME.md`
   §3.2; a operação do `perfil.json` está em `docs/deploy_piloto_web.md`.
+- `premissas_viabilidade_historico.md` — trechos de história tirados do `PREMISSAS_VIABILIDADE.md` em
+  03/11/2026, palavra por palavra: regras antigas, rodadas de cálculo superadas e emendas. O que vale hoje
+  está no documento principal.
 
 Removidos em 29/10/2026, por já estarem cobertos por outro documento (o git guarda o texto; para ler,
 `git log --all --full-history -- <caminho>`): `PRD.md`, `STATUS_ORQUESTRACAO.md`,
