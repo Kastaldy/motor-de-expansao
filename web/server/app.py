@@ -164,7 +164,7 @@ from motor_expansao.perfil import resolver_perfil  # noqa: E402
 # quebrava porque producao sempre passa MOTOR_DATA_DIR. O default agora e o `data/` do
 # repositorio, resolvido pelo loader, e em producao a ausencia do perfil DERRUBA o
 # processo com o campo nomeado, em vez de servir numero brasileiro em instancia
-# argentina. Ver docs/spec_bloco_a_perfil.md §3.2 e §6.1.
+# argentina. Ver docs/archive/spec_bloco_a_perfil.md §3.2 e §6.1.
 PERFIL = resolver_perfil()
 DATA_DIR = PERFIL.raiz
 logging.getLogger("piloto.perfil").info(

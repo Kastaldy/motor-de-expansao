@@ -67,7 +67,7 @@ ABAS_SENSIVEIS = frozenset({"executiva", "imobiliaria", "viabilidade"})
 # tela de Viabilidade), entao hoje so' a tela de Viabilidade chama esta rota. A regra
 # ficou INALTERADA de proposito: estreitar para {viabilidade} e' mudanca de permissao, e
 # pede decisao propria (e o ajuste de tests/unit/test_piloto_web_acesso.py e de
-# docs/plano_multipais.md). `/api/relatorio/pontual` aceita mapa OU viabilidade porque quem
+# docs/archive/plano_multipais.md). `/api/relatorio/pontual` aceita mapa OU viabilidade porque quem
 # a chama e' a tela de Viabilidade E o botao "Estudo" da ficha de ponto (aba "mapa"), este
 # no modo so'-estudo, sem dado financeiro.
 #
