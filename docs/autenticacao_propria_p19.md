@@ -19,7 +19,7 @@
 > corte: (1) a senha do dia é a **compartilhada** do Authelia, que passa a ser a
 > `MOTOR_SENHA_INICIAL` (ver o §4); (2) o cadeado "Trocar a minha senha", "Redefinir senha" e "Exigir
 > troca" só aparecem, e só funcionam, com a chave ligada — código de 24/10/2026, que vale a partir da
-> imagem que o traz. O roteiro do corte é o `docs/repasse_corte_p19.md`.
+> imagem que o traz. O roteiro do corte é o `docs/archive/repasse_corte_p19.md`.
 
 ## 1. O que já existe (e é mais do que parece)
 
@@ -109,7 +109,7 @@ Medido, e as duas já estão disponíveis:
 
    No lugar dela entra `db alinhar-senhas`, que é mais barato e resolve o problema real —
    garantir que o hash guardado corresponde à senha compartilhada que a equipe digita. Ver
-   `docs/repasse_corte_p19.md`, passo 0.
+   `docs/archive/repasse_corte_p19.md`, passo 0.
 
    **A exceção do dono fica resolvida pela decisão de 24/10/2026** (Vinicius): a senha do dia do
    corte é a compartilhada, que passa a ser a `MOTOR_SENHA_INICIAL`, e o `alinhar-senhas` grava o
@@ -194,7 +194,7 @@ Todas as cinco foram tomadas até 25/09/2026 (a DEC-067 as dá por fechadas); ca
    5 min ficam, e o pior caso da trava vira sair aos 120 min em vez de ~125. O texto acima fica como
    registro do que foi decidido em 17/09. Enquanto o Authelia autentica, a mudança que o usuário
    sente é **manual na VPS** (`inactivity: 2h`, nunca `0`, + restart do `authelia`), com runbook em
-   `docs/repasse_logout_2h.md` — feita na VPS em 17/10/2026.
+   `docs/archive/repasse_logout_2h.md` — feita na VPS em 17/10/2026.
    **Duas consequências para o front, que esta decisão já resolve:** (i) "lembrar de mim" é
    **caixinha nova** no formulário de login — medido, não existe nada hoje (`lembrar`/`remember`:
    zero ocorrências em `web/src`); (ii) a **sonda de `lib/sessao.ts` deixa de ser necessária para o
@@ -258,7 +258,7 @@ Todas as cinco foram tomadas até 25/09/2026 (a DEC-067 as dá por fechadas); ca
    do corte deixa de estar travada por decisão** — o que resta é execução manual na VPS, e
    um pré-requisito medido, já resolvido: `MOTOR_AUTENTICACAO_PROPRIA` não chegava ao container até o #416 (merge `f5b5e9b`, 28/09/2026)
    (`banco-de-reservas/decisoes-pendentes.md:39`). Continua sendo decisão de infraestrutura, com
-   execução na VPS sob o §6. O roteiro é o `docs/repasse_corte_p19.md`.
+   execução na VPS sob o §6. O roteiro é o `docs/archive/repasse_corte_p19.md`.
    **Sobre os headers `Remote-*` que o RBAC lê hoje, a resposta já está no código e não depende da
    borda:** com o portão ligado, o motor **apaga** `remote-user`/`remote-email` de toda requisição e
    reinjeta `remote-user` a partir do COOKIE (`_sem_headers_de_identidade` e `_portao_de_sessao`, em `web/server/app.py`), e

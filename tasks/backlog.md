@@ -5032,7 +5032,7 @@ Vinicius (avaliação na DEC); (3) deploy das imagens `web`/`api` e `restart web
 | **Depende de** | **BLK-BANCO-03** (o monitor tem de vigiar o banco antes de ele virar o ponto único do login), **BLK-SEC-03-FU2** (conciliação Authelia × banco) e o merge da branch `feat/banco-completo` (a imagem nova do Passo 2 do runbook, que esconde o cadeado e o convite de troca enquanto a chave estiver desligada) |
 | **Autonomia** | **manual (NÃO loop-safe)** — VPS, Caddy e credenciais. NUNCA marcar loop-safe. |
 
-Referência: `docs/repasse_corte_p19.md`, adaptado em 24/10/2026 ao estado de 23/10: conta `deploy`,
+Referência: `docs/archive/repasse_corte_p19.md`, adaptado em 24/10/2026 ao estado de 23/10: conta `deploy`,
 template do Caddy por `scp` e nenhum `git pull`, porque o checkout de `/opt/motor-expansao/app` é do
 root, num commit antigo, com o compose trocado à mão. O kit de scripts simulados do item 2 ficou
 pronto em 25/10/2026, na estação do Vinicius (`p19b` conferir, `p19c` senha, `p19d` ligar, `p19e`
@@ -5065,7 +5065,7 @@ real (`docs/banco_deploy.md` §10), feito em 25/10/2026.
    decidir quando tirar os logins BR do `users_database.yml`. O serviço `authelia` não sai, porque
    a AR depende dele. Depois, re-cifrar o Caddyfile e o `.env` (BLK-BANCO-04).
 
-**Evidência:** `docs/repasse_corte_p19.md`; `docs/decisions/DEC-067.md`;
+**Evidência:** `docs/archive/repasse_corte_p19.md`; `docs/decisions/DEC-067.md`;
 `deploy/caddy/piloto-br.Caddyfile.template`; `alinhar-senhas` em `src/motor_expansao/db/cli.py`;
 fumaça do dia: `tests/integration/test_login_ponta_a_ponta.py`. Recomendada antes da janela, sem
 travá-la: a cópia off-box (BLK-BANCO-02).
@@ -5286,8 +5286,8 @@ são lugares onde um diagnóstico de rotina a imprime por acidente.
 
 1. **`docker compose run --rm` sem `--no-deps`** recria o `postgres` quando a config dele mudou (uma
    `POSTGRES_OWNER_PASSWORD` trocada basta), o mesmo risco que o `--no-deps` tirou dos `up` em
-   25/10/2026. Medido no Compose 2.33 e no 5.6. Aparece no Passo 3 do `docs/repasse_corte_p19.md`, no
-   `docs/banco_deploy.md` (§5, §7, §8, §9.0, §9.0.1 e §10) e no `docs/repasse_migracoes_p19.md`. Os
+   25/10/2026. Medido no Compose 2.33 e no 5.6. Aparece no Passo 3 do `docs/archive/repasse_corte_p19.md`, no
+   `docs/banco_deploy.md` (§5, §7, §8, §9.0, §9.0.1 e §10) e no `docs/archive/repasse_migracoes_p19.md`. Os
    kits usam `run --rm --no-deps -T`.
 2. **Credencial do dono por `export` + `-e MOTOR_DATABASE_URL_ADMIN`.** Assim a URL do dono fica no
    ambiente do `docker compose` e na `Config.Env` do container descartável, onde um `docker inspect`
@@ -5297,7 +5297,7 @@ são lugares onde um diagnóstico de rotina a imprime por acidente.
    que é o roteiro que a skill de deploy manda seguir quando a imagem traz migration; depois §5, §8 e
    §9.0.1 e o `repasse_migracoes_p19.md`. O `-e PGPASSWORD` do `scripts/cron/run_expurgo_sessoes.sh`
    fica: sem humano e sem impressão, dura segundos por dia, e o público é o mesmo.
-3. **O Passo 3 do `docs/repasse_migracoes_p19.md` IMPRIME a senha do dono**
+3. **O Passo 3 do `docs/archive/repasse_migracoes_p19.md` IMPRIME a senha do dono**
    (`grep -E '^POSTGRES_(DB|OWNER_USER|OWNER_PASSWORD)=' .env`). O documento não se aplica à produção
    atual (o banco nasceu com as 21 migrations), mas o comando está lá: trocar pela conferência só de
    contagens do 0.c do roteiro do corte, ou marcar o passo como obsoleto.
