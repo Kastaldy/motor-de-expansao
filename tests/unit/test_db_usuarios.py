@@ -36,6 +36,7 @@ LINHA_LISTA = (
     None,
     True,
     False,
+    ["BR", "AR"],
 )
 
 
@@ -205,11 +206,14 @@ def test_listar_traz_inativos(monkeypatch: pytest.MonkeyPatch) -> None:
         None,
         False,
         True,
+        ["BR"],
     )
     con = _instalar(monkeypatch, {"FROM usuarios u": [LINHA_LISTA, inativo]})
     lista = mod.listar()
     assert [u.ativo for u in lista] == [True, False]
     assert lista[1].login == "quem_saiu"
+    # DEC-081: a listagem agrega os paises de cada pessoa (array_agg -> tupla).
+    assert [u.paises for u in lista] == [("BR", "AR"), ("BR",)]
     # Leitura entra pelo `conexao()`, que abre a transação READ ONLY.
     assert con.sql_que_contem("READ ONLY")
 
@@ -232,6 +236,7 @@ def test_listar_traz_o_estado_da_senha_de_cada_um(monkeypatch: pytest.MonkeyPatc
         None,
         False,
         True,
+        ["BR"],
     )
     _instalar(monkeypatch, {"FROM usuarios u": [LINHA_LISTA, inativo]})
     lista = mod.listar()
@@ -1253,3 +1258,76 @@ def test_criar_devolve_os_paises_normalizados(
         autor=7,
     )
     assert saida["paises"] == ["BR", "AR"]
+
+
+# ---------------------------------------------------------------------------
+# DEC-081 / Fase 2 (BLK-BANCO-11): editar/remover paises de um usuario
+# ---------------------------------------------------------------------------
+
+
+def _con_editar_paises(monkeypatch: pytest.MonkeyPatch, *, atuais: list[str]) -> FakeConexao:
+    return _instalar(
+        monkeypatch,
+        {
+            "FOR UPDATE OF u": [(9, "alvo", "expansao", True)],
+            "FROM usuario_paises": [(p,) for p in atuais],
+        },
+    )
+
+
+def test_alterar_acesso_adiciona_pais(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Replace-all: pedir [BR, AR] para quem tem [BR] INSERE so' o AR, com evento proprio."""
+    con = _con_editar_paises(monkeypatch, atuais=["BR"])
+    r = mod.alterar_acesso(9, paises=["BR", "AR"], autor=7)
+    inserts = con.sql_que_contem("INSERT INTO usuario_paises")
+    assert [p for _s, p in inserts] == [(9, "AR")]
+    assert con.sql_que_contem("DELETE FROM usuario_paises") == []
+    assert [p[1] for p in con.eventos] == [mod.EVENTO_PAIS_ATRIBUIDO]
+    assert r["paises"]["mudou"] is True
+
+
+def test_alterar_acesso_remove_pais(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Replace-all: pedir [BR] para quem tem [AR, BR] faz um DELETE do AR, com evento proprio."""
+    con = _con_editar_paises(monkeypatch, atuais=["AR", "BR"])
+    r = mod.alterar_acesso(9, paises=["BR"], autor=7)
+    deletes = con.sql_que_contem("DELETE FROM usuario_paises")
+    assert [p for _s, p in deletes] == [(9, "AR")]
+    assert con.sql_que_contem("INSERT INTO usuario_paises") == []
+    assert [p[1] for p in con.eventos] == [mod.EVENTO_PAIS_REMOVIDO]
+    assert r["paises"]["mudou"] is True
+
+
+def test_alterar_acesso_paises_sem_mudanca_nao_gera_evento(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Mesma regra de `_aplicar_perfil`: conjunto igual ao atual = sucesso sem escrita nem evento."""
+    con = _con_editar_paises(monkeypatch, atuais=["BR"])
+    r = mod.alterar_acesso(9, paises=["BR"], autor=7)
+    assert con.sql_que_contem("INSERT INTO usuario_paises") == []
+    assert con.sql_que_contem("DELETE FROM usuario_paises") == []
+    assert con.eventos == []
+    assert r["paises"]["mudou"] is False
+
+
+def test_alterar_acesso_recusa_paises_vazio_antes_da_transacao(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Conjunto vazio e' o bug do P4 (pessoa trancada): recusado ANTES de abrir transacao."""
+    con = _con_editar_paises(monkeypatch, atuais=["BR"])
+    with pytest.raises(ValueError):
+        mod.alterar_acesso(9, paises=[], autor=7)
+    assert con.executados == []
+
+
+def test_alterar_acesso_paises_recusa_o_proprio_autor(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Ninguem edita os proprios paises por aqui -- mesma trava de perfil/status (`_recusar_auto_alvo`)."""
+    con = _con_editar_paises(monkeypatch, atuais=["BR"])
+    with pytest.raises(mod.AlvoEhOAutor):
+        mod.alterar_acesso(7, paises=["BR", "AR"], autor=7)
+    assert con.executados == []
+
+
+def test_alterar_acesso_normaliza_as_siglas_dos_paises(monkeypatch: pytest.MonkeyPatch) -> None:
+    """`br`/` ar ` viram BR/AR antes do diff -- quem ja' tem BR so' ganha o AR."""
+    con = _con_editar_paises(monkeypatch, atuais=["BR"])
+    mod.alterar_acesso(9, paises=["br", " ar "], autor=7)
+    inserts = con.sql_que_contem("INSERT INTO usuario_paises")
+    assert [p for _s, p in inserts] == [(9, "AR")]

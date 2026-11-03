@@ -23,7 +23,7 @@ describe('o painel de usuários com a chave do login próprio', () => {
   })
 
   it('a coluna é a "Senha (banco)" e o selo leva a dica da senha do banco', () => {
-    expect(painel).toContain("['Pessoa', 'Login', 'Perfil', 'Situação', COLUNA_SENHA, '']")
+    expect(painel).toContain("['Pessoa', 'Login', 'Perfil', 'Situação', 'Países', COLUNA_SENHA, '']")
     expect(painel).toContain('title={tituloDoSeloDaSenha(u.senha_propria, loginProprio)}')
   })
 
