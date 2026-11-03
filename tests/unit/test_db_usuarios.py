@@ -633,7 +633,14 @@ def test_criar_grava_usuario_e_evento_na_mesma_transacao(
 ) -> None:
     """Uma unidade de trabalho: a linha e o evento, ou nenhum dos dois."""
     con = _con_criacao(monkeypatch)
-    mod.criar(login="ana", nome="Ana Ribeiro", email="ana@ultra.com", perfil="expansao", autor=7)
+    mod.criar(
+        login="ana",
+        nome="Ana Ribeiro",
+        email="ana@ultra.com",
+        perfil="expansao",
+        paises=["BR"],
+        autor=7,
+    )
 
     # O autor é o PRIMEIRO comando da transação — sem ele as triggers do D19 gravam autoria nula.
     assert con.executados[0][0] == postgres.SQL_DEFINIR_AUTOR
@@ -652,7 +659,9 @@ def test_as_duas_pessoas_da_criacao_nao_se_invertem(
     produziria um evento apontando para o admin como se ELE tivesse sido criado.
     """
     con = _con_criacao(monkeypatch, id_novo=42)
-    mod.criar(login="ana", nome="Ana", email="ana@ultra.com", perfil="expansao", autor=7)
+    mod.criar(
+        login="ana", nome="Ana", email="ana@ultra.com", perfil="expansao", paises=["BR"], autor=7
+    )
 
     autor, tipo, entidade, entidade_id, _metadados = con.eventos[0]
     assert autor == 7, "o autor virou o alvo"
@@ -666,7 +675,9 @@ def test_criar_devolve_o_id_novo_e_avisa_do_authelia(
 ) -> None:
     """A tela precisa do id, e precisa do recado: a pessoa ainda não entra."""
     _con_criacao(monkeypatch, id_novo=42)
-    saida = mod.criar(login="ana", nome="Ana", email="ana@ultra.com", perfil="growth", autor=7)
+    saida = mod.criar(
+        login="ana", nome="Ana", email="ana@ultra.com", perfil="growth", paises=["BR"], autor=7
+    )
     assert saida["id_usuario"] == 42
     assert saida["falta_cadastrar_no_authelia"] is True
 
@@ -676,7 +687,14 @@ def test_metadados_da_criacao_nao_carregam_pii(
 ) -> None:
     """Só o perfil. Nunca login, nome ou e-mail — convenções §5 e contrato §4."""
     con = _con_criacao(monkeypatch)
-    mod.criar(login="ana", nome="Ana Ribeiro", email="ana@ultra.com", perfil="expansao", autor=7)
+    mod.criar(
+        login="ana",
+        nome="Ana Ribeiro",
+        email="ana@ultra.com",
+        perfil="expansao",
+        paises=["BR"],
+        autor=7,
+    )
     metadados = con.eventos[0][4].obj
     assert metadados == {"perfil": "expansao"}
 
@@ -700,7 +718,9 @@ def test_criar_grava_exatamente_o_que_o_modulo_de_senha_produziu(
     monkeypatch.setenv("MOTOR_SENHA_INICIAL", "senha-inicial-do-piloto")
 
     con = _con_criacao(monkeypatch)
-    mod.criar(login="ana", nome="Ana", email="ana@ultra.com", perfil="expansao", autor=7)
+    mod.criar(
+        login="ana", nome="Ana", email="ana@ultra.com", perfil="expansao", paises=["BR"], autor=7
+    )
 
     _sql, params = con.sql_que_contem("INSERT INTO usuarios")[0]
     gravado = params[3]
@@ -721,7 +741,14 @@ def test_criar_recusa_quando_a_senha_inicial_nao_esta_configurada(
     monkeypatch.delenv(senhas.ENV_SENHA_INICIAL, raising=False)
     con = _con_criacao(monkeypatch)
     with pytest.raises(senhas.SenhaInicialNaoConfigurada):
-        mod.criar(login="ana", nome="Ana", email="ana@ultra.com", perfil="expansao", autor=7)
+        mod.criar(
+            login="ana",
+            nome="Ana",
+            email="ana@ultra.com",
+            perfil="expansao",
+            paises=["BR"],
+            autor=7,
+        )
     assert con.executados == []
 
 
@@ -731,7 +758,14 @@ def test_criar_com_perfil_inexistente_nao_escreve(
     """A recusa vem do lookup por NOME, antes de qualquer INSERT — como no `alterar_perfil`."""
     con = _instalar(monkeypatch, {"INSERT INTO usuarios": [(42,)]})  # perfis não responde
     with pytest.raises(mod.PerfilDesconhecido):
-        mod.criar(login="ana", nome="Ana", email="ana@ultra.com", perfil="inexistente", autor=7)
+        mod.criar(
+            login="ana",
+            nome="Ana",
+            email="ana@ultra.com",
+            perfil="inexistente",
+            paises=["BR"],
+            autor=7,
+        )
     assert con.sql_que_contem("INSERT INTO usuarios") == []
     assert con.eventos == []
 
@@ -751,7 +785,7 @@ def test_criar_recusa_campo_vazio_ou_email_invalido(
     """Recusa ANTES de abrir transação: campo vazio é erro de quem digitou."""
     con = _con_criacao(monkeypatch)
     with pytest.raises(ValueError):
-        mod.criar(login=login, nome=nome, email=email, perfil="expansao", autor=7)
+        mod.criar(login=login, nome=nome, email=email, perfil="expansao", paises=["BR"], autor=7)
     assert con.executados == []
 
 
@@ -762,7 +796,9 @@ def test_criar_nao_trava_o_auto_alvo(monkeypatch: pytest.MonkeyPatch, _sem_argon
     sem motivo — e também não há `FOR UPDATE`, porque não há linha anterior para travar.
     """
     con = _con_criacao(monkeypatch)
-    mod.criar(login="ana", nome="Ana", email="ana@ultra.com", perfil="expansao", autor=7)
+    mod.criar(
+        login="ana", nome="Ana", email="ana@ultra.com", perfil="expansao", paises=["BR"], autor=7
+    )
     assert con.sql_que_contem("FOR UPDATE OF u") == []
 
 
@@ -1121,3 +1157,99 @@ def test_ninguem_exige_troca_de_si_mesmo(monkeypatch: pytest.MonkeyPatch) -> Non
     with pytest.raises(mod.AlvoEhOAutor):
         mod.exigir_troca(7, autor=7)
     assert con.executados == []
+
+
+# ---------------------------------------------------------------------------
+# DEC-081 / P4 (BLK-BANCO-10): a criacao atribui pais
+# ---------------------------------------------------------------------------
+
+
+def test_criar_grava_o_pais_na_mesma_transacao(
+    monkeypatch: pytest.MonkeyPatch, _sem_argon2: None
+) -> None:
+    """A pessoa nasce COM pais: uma linha em usuario_paises, na transacao da criacao."""
+    con = _con_criacao(monkeypatch, id_novo=42)
+    mod.criar(
+        login="ana",
+        nome="Ana",
+        email="ana@ultra.com",
+        perfil="expansao",
+        paises=["BR"],
+        autor=7,
+    )
+    linhas = con.sql_que_contem("INSERT INTO usuario_paises")
+    assert len(linhas) == 1
+    assert linhas[0][1] == (42, "BR")
+
+
+def test_criar_multipais_grava_uma_linha_por_pais(
+    monkeypatch: pytest.MonkeyPatch, _sem_argon2: None
+) -> None:
+    """Multipais (DEC-081): o admin marca mais de um, e cada um vira uma linha, na ordem."""
+    con = _con_criacao(monkeypatch, id_novo=42)
+    mod.criar(
+        login="ana",
+        nome="Ana",
+        email="ana@ultra.com",
+        perfil="growth",
+        paises=["BR", "AR"],
+        autor=7,
+    )
+    linhas = con.sql_que_contem("INSERT INTO usuario_paises")
+    assert [p for _s, p in linhas] == [(42, "BR"), (42, "AR")]
+
+
+def test_criar_recusa_lista_de_pais_vazia_e_nao_escreve(
+    monkeypatch: pytest.MonkeyPatch, _sem_argon2: None
+) -> None:
+    """Pais vazio e' o proprio bug do P4: recusado ANTES de abrir transacao."""
+    con = _con_criacao(monkeypatch)
+    with pytest.raises(ValueError):
+        mod.criar(
+            login="ana",
+            nome="Ana",
+            email="ana@ultra.com",
+            perfil="expansao",
+            paises=[],
+            autor=7,
+        )
+    assert con.executados == []
+
+
+@pytest.mark.parametrize(
+    ("entrada", "esperado"),
+    [
+        (["br"], ["BR"]),
+        ([" ar "], ["AR"]),
+        (["BR", "BR"], ["BR"]),
+        (["BR", "AR", "br"], ["BR", "AR"]),
+    ],
+)
+def test_normalizar_paises_arruma_caixa_e_remove_repetidos(
+    entrada: list[str], esperado: list[str]
+) -> None:
+    """MAIUSCULAS + dedup preservando a ordem. A sigla e' FORMATO, nao uma sigla fixa (DEC-047)."""
+    assert mod._normalizar_paises(entrada) == esperado
+
+
+@pytest.mark.parametrize("ruim", [["BRA"], ["b1"], [""], ["B"], ["B R"]])
+def test_normalizar_paises_recusa_formato_invalido(ruim: list[str]) -> None:
+    """Fora de `^[A-Z]{2}$` e' recusado com ValueError (mensagem de dominio)."""
+    with pytest.raises(ValueError):
+        mod._normalizar_paises(ruim)
+
+
+def test_criar_devolve_os_paises_normalizados(
+    monkeypatch: pytest.MonkeyPatch, _sem_argon2: None
+) -> None:
+    """A tela confirma com o que foi gravado, ja' normalizado."""
+    _con_criacao(monkeypatch, id_novo=42)
+    saida = mod.criar(
+        login="ana",
+        nome="Ana",
+        email="ana@ultra.com",
+        perfil="growth",
+        paises=["br", "AR"],
+        autor=7,
+    )
+    assert saida["paises"] == ["BR", "AR"]

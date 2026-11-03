@@ -130,6 +130,18 @@ describe('o atrito extra so aparece onde foi decidido', () => {
     expect(c.gravidade).toBe('alta')
   })
 
+  it('CRIAR lista os paises com acesso no apoio (DEC-081)', () => {
+    const c = montarConfirmacao({
+      tipo: 'criar',
+      nome: 'Ana Ribeiro',
+      login: 'ana.ribeiro',
+      email: 'ana@ultraacademia.com.br',
+      perfil: 'expansao',
+      paises: ['Brasil', 'Argentina'],
+    })
+    expect(c.apoio.join(' ')).toContain('Com acesso a: Brasil, Argentina.')
+  })
+
   it('REBAIXAR de Growth NAO exige digitar', () => {
     /* O modo de falha e o oposto: tirar acesso e reversivel na mesma tela, e o
        atrito ali so' atrapalharia quem esta consertando um engano. */

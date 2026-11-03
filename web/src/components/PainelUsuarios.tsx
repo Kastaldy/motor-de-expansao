@@ -23,6 +23,7 @@ import {
   recadoDaRedefinicao,
 } from '../lib/senha-temporaria'
 import type {
+  AdminPais,
   AdminPerfil,
   AdminUsuario,
   AdminUsuarioNovo,
@@ -104,7 +105,7 @@ function comArquivo(texto: string) {
 
 /** Campos vazios do formulário de criação. Fica fora do componente para o
  *  `Cancelar` e o `criar` bem-sucedido zerarem pelo MESMO objeto. */
-const NOVO_VAZIO: AdminUsuarioNovo = { login: '', nome: '', email: '', perfil: '' }
+const NOVO_VAZIO: AdminUsuarioNovo = { login: '', nome: '', email: '', perfil: '', paises: [] }
 
 const ESTILO_CAMPO: CSSProperties = {
   padding: '6px 9px',
@@ -293,6 +294,7 @@ export default function PainelUsuarios() {
         nome: novo.nome.trim(),
         email: novo.email.trim(),
         perfil: novo.perfil,
+        paises: novo.paises,
       })
       await carregar()
       setNovo(null)
@@ -369,6 +371,10 @@ export default function PainelUsuarios() {
      conservador: esconde gestos que o servidor recusaria e mostra o recado de quem ainda
      depende do Authelia. */
   const loginProprio = loginProprioDoPayload(dados)
+  /* Catálogo de países para o seletor (DEC-081), e qual vem marcado por padrão (o país deste
+     processo). Ausentes num deploy antigo: o seletor some e a criação herda o padrão do backend. */
+  const paisesDisponiveis = dados.paises_disponiveis ?? []
+  const paisPadrao = dados.pais_padrao ?? ''
   const recadoCriado = criado ? recadoDaCriacao(criado.login, criado.loginProprio) : null
 
   /* A ação em texto, montada AGORA a partir de `dados` — nunca congelada quando o
@@ -388,6 +394,9 @@ export default function PainelUsuarios() {
       perfil: novo.perfil,
       capacidades: capacidadesDe(novo.perfil),
       loginProprio,
+      paises: novo.paises.map(
+        (s) => paisesDisponiveis.find((p) => p.sigla === s)?.nome ?? s,
+      ),
     }
   } else if (pendente && pendente.tipo !== 'criar') {
     const alvo = usuarios.find((u) => u.id_usuario === pendente.id_usuario)
@@ -586,7 +595,7 @@ export default function PainelUsuarios() {
 
       {novo === null ? (
         <div>
-          <Botao variante="ghost" onClick={() => setNovo({ ...NOVO_VAZIO })}>
+          <Botao variante="ghost" onClick={() => setNovo({ ...NOVO_VAZIO, paises: paisPadrao ? [paisPadrao] : [] })}>
             + Novo usuário
           </Botao>
         </div>
@@ -669,6 +678,43 @@ export default function PainelUsuarios() {
             </div>
           </div>
 
+          {paisesDisponiveis.length > 0 && (
+            <div>
+              <span style={ESTILO_ROTULO}>Países com acesso</span>
+              <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', marginTop: 4 }}>
+                {paisesDisponiveis.map((p: AdminPais) => {
+                  const marcado = novo.paises.includes(p.sigla)
+                  return (
+                    <label
+                      key={p.sigla}
+                      style={{
+                        display: 'flex',
+                        gap: 6,
+                        alignItems: 'center',
+                        cursor: 'pointer',
+                        font: '400 12.5px/1.4 var(--f-ui)',
+                      }}
+                    >
+                      <input
+                        type="checkbox"
+                        checked={marcado}
+                        onChange={() =>
+                          setNovo({
+                            ...novo,
+                            paises: marcado
+                              ? novo.paises.filter((s) => s !== p.sigla)
+                              : [...novo.paises, p.sigla],
+                          })
+                        }
+                      />
+                      {p.nome}
+                    </label>
+                  )
+                })}
+              </div>
+            </div>
+          )}
+
           <div
             style={{
               display: 'flex',
@@ -684,7 +730,8 @@ export default function PainelUsuarios() {
                 !novo.nome.trim() ||
                 !novo.login.trim() ||
                 !novo.email.trim() ||
-                !novo.perfil
+                !novo.perfil ||
+                novo.paises.length === 0
               }
               title={tituloDoBotaoCriar(loginProprio)}
             >

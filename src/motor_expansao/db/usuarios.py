@@ -45,6 +45,7 @@ id de alvo, para nao haver como chamar isso para outra pessoa por engano.
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any
@@ -156,6 +157,18 @@ INSERT INTO usuarios (login_usuario, nome_usuario, email, senha_hash, id_perfil)
 VALUES (%s, %s, %s, %s, %s)
 RETURNING id_usuario
 """
+
+# Companheiro de SQL_CRIAR: o pais da pessoa (DEC-081, P4) entra na MESMA transacao da criacao,
+# uma linha por pais. A PK composta (021) recusa pais repetido; o CHECK chk_usuario_paises_sigla
+# recusa sigla fora de `^[A-Z]{2}$`. A validacao em Python so' adianta o erro com mensagem clara.
+SQL_CRIAR_PAIS = """
+INSERT INTO usuario_paises (id_usuario, pais) VALUES (%s, %s)
+"""
+
+#: Mesma regra do CHECK `chk_usuario_paises_sigla` (021:19) e do `perfil._RE_PAIS`: 2 letras
+#: MAIUSCULAS. Replicado aqui (e nao importado de `perfil`, outra camada) para a camada de dados
+#: nao depender da de aplicacao. NAO e' `if pais == "XX"`: valida FORMATO, nao uma sigla (DEC-047).
+_RE_SIGLA_PAIS = re.compile(r"^[A-Z]{2}$")
 
 # Le o hash para conferir a senha atual, e trava a linha ate' o fim da transacao: sem `FOR UPDATE`,
 # duas trocas simultaneas gravariam dois hashes e a segunda venceria sem registro da primeira.
@@ -493,7 +506,29 @@ def _traduzir_conflito(erro: Exception) -> Exception:
     return erro
 
 
-def criar(*, login: str, nome: str, email: str, perfil: str, autor: int) -> dict[str, Any]:
+def _normalizar_paises(paises: list[str]) -> list[str]:
+    """Normaliza e valida os paises de uma pessoa (DEC-081, P4).
+
+    strip + MAIUSCULAS, remove repetidos preservando a ordem, e RECUSA lista vazia -- vazio e' o
+    proprio bug do P4 (pessoa sem pais cai no gate fail-closed e nao entra em lugar nenhum). Valida
+    o FORMATO de cada sigla (2 letras maiusculas), nunca uma sigla especifica (DEC-047); o
+    pertencimento ao catalogo da plataforma (BR/AR) e' checado na rota, que conhece o catalogo.
+    """
+    vistos: list[str] = []
+    for bruto in paises:
+        sigla = bruto.strip().upper()
+        if not _RE_SIGLA_PAIS.match(sigla):
+            raise ValueError(f"País inválido: {bruto!r}. Use a sigla de 2 letras (ex.: BR, AR).")
+        if sigla not in vistos:
+            vistos.append(sigla)
+    if not vistos:
+        raise ValueError("Selecione pelo menos um país para o novo usuário.")
+    return vistos
+
+
+def criar(
+    *, login: str, nome: str, email: str, perfil: str, paises: list[str], autor: int
+) -> dict[str, Any]:
     """Cria a pessoa com a senha INICIAL e registra `usuario.criado`. Devolve o id novo.
 
     E' o unico caso desta camada em que o alvo NAO existe antes da chamada -- logo, nao ha
@@ -521,6 +556,7 @@ def criar(*, login: str, nome: str, email: str, perfil: str, autor: int) -> dict
         raise ValueError("Login, nome e e-mail são obrigatórios.")
     if "@" not in email:
         raise ValueError("E-mail inválido.")
+    paises_norm = _normalizar_paises(paises)
 
     # Fora da transacao de proposito: hashear custa ~64 MB e ~100 ms, e segurar uma transacao
     # aberta durante isso prenderia a linha de `perfis` sem motivo.
@@ -545,6 +581,12 @@ def criar(*, login: str, nome: str, email: str, perfil: str, autor: int) -> dict
             raise RuntimeError("INSERT em usuarios nao devolveu id")
         id_novo = int(linha[0])
 
+        # Os paises da pessoa, na MESMA transacao da criacao (DEC-081, P4): criacao+pais sao
+        # atomicos. Sem isto a pessoa nasce com conjunto vazio e o gate fail-closed a barra em
+        # todo host -- o bug que esta fase estanca.
+        for sigla in paises_norm:
+            con.execute(SQL_CRIAR_PAIS, (id_novo, sigla))
+
         # `metadados` leva SO' o perfil. Nunca login, nome ou e-mail: e' PII, e a §4 do contrato
         # vale aqui como em todo lugar -- o `entidade_id` basta para quem le resolver em `usuarios`.
         _registrar(
@@ -559,6 +601,7 @@ def criar(*, login: str, nome: str, email: str, perfil: str, autor: int) -> dict
         "id_usuario": id_novo,
         "login": login,
         "perfil": perfil,
+        "paises": paises_norm,
         # O passo que continua manual, nos DOIS estados da chave (ver o docstring): desligada,
         # sem ele a pessoa nao entra; ligada, sem ele um rollback do corte a deixaria de fora.
         "falta_cadastrar_no_authelia": True,
