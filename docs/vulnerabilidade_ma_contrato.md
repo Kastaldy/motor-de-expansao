@@ -7,26 +7,12 @@
 
 > **[canônico]** contrato dos sinais de vulnerabilidade de academias independentes (funil de M&A).
 > Responsável: Felipe Silva | Estratégia e Growth | Ultra Academia
-> Versão: 2026-07-23 (BLK-MA-01 — design/contrato; **ZERO código de produção**;
-> emenda pós-gate 2 do mesmo dia: distinção coletor-vs-ingestão, chave de snapshot `slug`, e BLK-MA-08)
-> **Emenda BLK-MA-02 (gate de engenharia de 2026-07-29, Vinicius):** seção 6 — payload de 10 colunas (hoje 12, ver emenda DEC-026),
-> chave própria do snapshot, origem da `semana` e **cadência real** (os dois relógios); seção 12 —
-> plug do materializador no runner semanal e o cron dos agregadores como caminho crítico. Marcadas com
-> `[emenda 2026-07-29]`.
-> **Emenda BLK-MA-03 (2026-07-29):** seção 8.1 — granularidade de v1 (hex, não academia), domínio efetivo e tratamento no §8.2/§8.4. Marcada com [emenda BLK-MA-03].
-> **Emenda BLK-MA-04 (2026-07-30, gate humano — G-D1/G-D2/G-D3 ratificados):** §8.1 (v3 do estado `novo`), §8.2 (normalização de v4 — razão absoluta), §8.4 (universo do score, bordas de ausência e flags), §8.5 (grão da linha = academia e contrato de coluna). Marcadas com [emenda BLK-MA-04].
-> **Emenda BLK-MA-04-FU1 (2026-08-12):** §8.5 — alcance da coluna `score_vulnerabilidade_ordenavel`: ela não cobre regime de 1 sinal quando esse sinal é o S3, e o BLK-MA-05 deve segmentar por `n_sinais_disponiveis` antes de ordenar. Marcada com [emenda BLK-MA-04-FU1].
-> **Emenda BLK-MA-19 (2026-08-24):** §3 — `redes_ma_nomeadas_v1` -> **`v2`** e correção do split de
-> precedência de pin (`1.171/1.673` era pré-FU4; hoje é **851/1.993**); §13 — registro dos blocos
-> BLK-MA-12..19 que a decomposição original não conhecia, tabela das **versões de contrato vigentes**
-> e o **critério escrito de "epic concluído"**, que não existia. Marcadas com `[2026-08-24]`.
+> Histórico das emendas e dos trechos que deixaram de valer: `docs/archive/vulnerabilidade_ma_contrato_historico.md`.
 > Regra de manutenção: manter curto; a implementação é dos blocos sucessores BLK-MA-02..08 (ver seção 13).
 
 Este documento fixa o contrato dos sinais de vulnerabilidade de concorrentes independentes, a
 metodologia do **score de vulnerabilidade** (heurística transparente, **não** modelo preditivo) e o
-registro das decisões de produto D1–D8 confirmadas no gate humano de 2026-07-23 (Vinicius). É a
-especificação que os blocos sucessores (BLK-MA-02..08, seção 13) vão implementar; nenhum extrator, score, join, entregável
-ou cron é escrito neste bloco.
+registro das decisões de produto D1–D8 confirmadas no gate humano de 2026-07-23 (Vinicius).
 
 ---
 
@@ -44,7 +30,7 @@ ou cron é escrito neste bloco.
   snapshots dos 90 coletores já automatizados na VPS; o recompute do score entra como **passo** do
   runner semanal já pré-aprovado (`run_weekly_90.sh`), não como cron novo. Detalhe na seção 12.
 - **Sem API externa ao vivo (§2).** O Plano B usa **apenas** fontes internas já coletadas + o diff dos
-  snapshots semanais. **Não há dependência de API externa** e, portanto, **este bloco NÃO cria DEC**. O
+  snapshots semanais. **Não há dependência de API externa**. O
   dashboard segue offline sobre Parquets locais. Qualquer rota de reputação pública externa (Google
   Places) fica no sucessor opcional **BLK-MA-07**, com gate e DEC próprios — único ponto onde o desvio
   do §2 pode reaparecer.
@@ -65,15 +51,10 @@ provou que a nota não existe no produto. Os
 coletores de cadeia em `concorrentes/` (`unidades_*.csv`) emitem `nome_unidade`, `latitude`,
 `longitude`, `data_coleta` — também sem nota. Consequências canônicas que orientam as decisões abaixo:
 
-- **Rating (sinal 2) NÃO é coletado por coletor nenhum hoje** → habilitá-lo é **ajuste de COLETOR
-  (scraper), não de ingestão**: exige raspar a nota no app TP/WH. Planejado no **BLK-MA-08** (seção 13).
 - **`nome`/`slug`/endereço JÁ são coletados** → a lista NOMEADA (Opção B do D1) é **só ingestão**
   (`_ler_csv_tp_wh` parar de dropar), **sem** ajuste de coletor.
 - **`slug` (ID nativo do provedor) + `data_coleta` JÁ são coletados** → churn/staleness (sinais 3/4) são
   coletáveis **hoje**, zero mudança de coletor (seção 6).
-- **WellHub = mesmo schema do TotalPass (confirmado por Vinicius, 2026-07-23):** logo o WellHub **também
-  não traz nota** → o BLK-MA-08 ajusta os **dois** coletores (TP e WH); não há atalho "só-WellHub" mais
-  barato. (Só há amostra de TotalPass versionada no repo, mas o padrão de colunas é o mesmo.)
 
 ---
 
@@ -124,8 +105,7 @@ tem demanda e interesse de presença). É um funil comercial, não uma decisão 
   o §3 descrevia o universo como se o único corte fosse rede-vs-independente — não é, e o corte de
   cima é o que mais mexe no N.
 - **`[emenda BLK-MA-17 metade 1 / DEC-035, 2026-08-18]` Há DOIS universos, e só um deles é o do
-  score.** Até aqui o §3 falava de um universo só — "TotalPass/WellHub × independente" —, e a camada
-  de exibição herdava esse recorte por não ter outro. Agora eles são explícitos e **disjuntos**:
+  score.** Agora eles são explícitos e **disjuntos**:
   - **universo do SCORE** (`_filtrar_universo_sinal_1`, intacto): agregadores × `independente`. É
     quem entra no `score_vulnerabilidade`, na lista de alvos de M&A e nas colunas
     `n_academias_independentes_*`. **Nada nesta emenda o toca**, e afrouxá-lo faria aquelas colunas
@@ -151,14 +131,7 @@ tem demanda e interesse de presença). É um funil comercial, não uma decisão 
   construção, as sem ponto equivalente em `concorrentes_mapeados`, logo as únicas sem pin no funil;
   as colapsadas já têm o pin de lá, e desenhar outro faria a contagem do tooltip parar de fechar.
 
-  > **[correção 2026-08-24 / BLK-MA-19] O split desta linha era `1.171 / 1.673` e envelheceu.** Os
-  > números da DEC-034 foram medidos **antes** do BLK-MA-17-FU4, que introduziu o casamento por nome
-  > (`identidade.py`) e colapsou **mais 320** duplicatas. No artefato materializado hoje
-  > (`redes_ma_nomeadas_v2`) o split é **851 com pin próprio / 1.993 já cobertas** — conferível em
-  > `tem_pin_proprio`, das 2.844 linhas. É esse `851` que o backend desenha (`carregar_redes` filtra
-  > por `tem_pin_proprio`), e é ele que a auditoria do pin tem de usar como expectativa.
-  >
-  > **[DEC-062, 2026-09-15] O split muda de novo.** Com a trava de município e o raio ampliado
+  > **[DEC-062, 2026-09-15] O split muda.** Com a trava de município e o raio ampliado
   > ligados no entregável, ele passa a **714 com pin próprio / 2.130 já cobertas**
   > (`redes_ma_nomeadas_v4`). A expectativa da auditoria do pin acompanha o artefato regenerado.
 
@@ -167,14 +140,14 @@ tem demanda e interesse de presença). É um funil comercial, não uma decisão 
 ## 4. Contrato dos 6 sinais
 
 Sinais 1–4 são obrigatórios; 5 e 6 são opcionais (fora do MVP). Ressalva: o sinal 2, embora do núcleo,
-entra CONDICIONAL/inativo no Plano B até o BLK-MA-08 (seção 7). Direção `↑vuln` = quanto maior o valor
+entra CONDICIONAL/inativo no Plano B (seção 7). Direção `↑vuln` = quanto maior o valor
 bruto do sinal, maior a vulnerabilidade. Todo componente normalizado `vi ∈ [0,1]` tem `1 = máxima
 vulnerabilidade` (seção 8).
 
 | # | Sinal | Direção ↑vuln | Fonte real | Coluna / artefato | Maturidade | Tratamento n/d / imaturo | Condicional? |
 |---|---|---|---|---|---|---|---|
 | 1 | Presença/ausência em agregadores WellHub/TotalPass | menos agregadores → mais vuln (canal do público low-cost) | ingestão TP/WH (reuso via `fonte`) | derivada da `fonte` do universo raspado | madura (cadência SEMANAL do agregador, sábado — emenda 3 à DEC-039) | ausência **é** o sinal (0 agregadores) `[ver emenda BLK-MA-03 no §8.1: inalcançável no grão hex]`; staleness do ativo semanal marcada | **INATIVO desde a DEC-066** — `SINAIS_INATIVOS = ("s1", "s2")`, propaga como fato sem peso; religar exige levar o sinal ao grão por academia |
-| 2 | Rating in-app WellHub/TotalPass | nota mais baixa → mais vuln | **COLETADO no WellHub** (`nota_wellhub`, `qtd_avaliacoes_wellhub`, BLK-MA-08); **inexistente no TotalPass** (BLK-MA-10) `[emenda DEC-026]` | **nenhum** — não vira componente; propaga como **coluna-fato** | **INATIVO por decisão**, não por falta de dado | não entra em `Σ(wi·vi)`; nada a renormalizar | **Sim** — `SINAIS_INATIVOS = ("s1", "s2")` desde a DEC-066 (era `("s2",)`); ligar o peso exige gate próprio (ver §7, emenda DEC-026) |
+| 2 | Rating in-app WellHub/TotalPass | nota mais baixa → mais vuln | **COLETADO no WellHub** (`nota_wellhub`, `qtd_avaliacoes_wellhub`, BLK-MA-08); **inexistente no TotalPass** (BLK-MA-10) `[emenda DEC-026]` | **nenhum** — não vira componente; propaga como **coluna-fato** | **INATIVO por decisão**, não por falta de dado | não entra em `Σ(wi·vi)`; nada a renormalizar | **Sim** — `SINAIS_INATIVOS = ("s1", "s2")` desde a DEC-066; ligar o peso exige gate próprio (ver §7, emenda DEC-026) |
 | 3 | Churn/permanência (diff de snapshots) | sumiu recente / "piscando" → mais vuln | histórico de snapshots (seção 6) | derivada do `slug`/`concorrente_id` entre semanas | imatura até `MIN_SEMANAS=8` | série imatura → `flag_serie_imatura`, renormaliza (não penaliza) | Não (obrigatório, gated por maturidade) |
 | 4 | Staleness (diff de snapshots) | mais semanas sem mudança → mais vuln | histórico de snapshots (`hash_campos_raspados`) | `semanas_sem_mudanca` | só interpretável após série `>= STALE_SEMANAS=12` | série imatura → renormaliza (não penaliza) | Não (obrigatório, gated por maturidade) |
 | 5 | Tendência de popularidade no agregador | inclinação negativa de membros → mais vuln | série do agregador / Demanda Revelada | `membros` / `alunos_parceiras` | precisa de série; fora do MVP | fora do MVP → renormaliza | **Sim** (opcional) |
@@ -194,7 +167,7 @@ sinais do Plano B assim:
 | Presença em agregadores | **(1)** presença/ausência em agregadores |
 | Última atualização do cadastro | **(4)** staleness |
 
-Consequência: com o **D3 = Não** (seção 7), o sinal 2 fica `n/d` no Plano B (até o BLK-MA-08 ajustar o coletor), e o "Δ de
+Consequência: com o **D3 = Não** (seção 7), o sinal 2 fica `n/d` no Plano B, e o "Δ de
 reviews" é aproximado pelos sinais internos (3) e (5), sem depender de nota externa.
 
 ---
@@ -224,7 +197,7 @@ reviews" é aproximado pelos sinais internos (3) e (5), sem depender de nota ext
 - **Origem da partição `semana` `[emenda 2026-07-29]`.** A `semana=AAAA-SS` é a semana ISO
   (`isocalendar().iso_year`, jamais `date.year`) da **data de referência da EXECUÇÃO**, NUNCA do
   `data_coleta` da linha. Motivo: coletor que falha **mantém o CSV anterior**
-  (`docs/infra_producao.md:181-182`); derivar a partição da linha faria uma execução de hoje
+  (`docs/infra_producao.md`, «Operação manual / troubleshooting»); derivar a partição da linha faria uma execução de hoje
   reescrever uma semana passada e, com `existing_data_behavior="delete_matching"`, **apagá-la**.
   Com a partição vindo da execução, o `snapshot_date` por linha passa a servir de **medidor de
   frescor** (é o único detector de "o CSV é o da semana passada").
@@ -294,7 +267,7 @@ reviews" é aproximado pelos sinais internos (3) e (5), sem depender de nota ext
     toda a camada, isso colapsaria todas as fontes numa só, em silêncio. A leitura de produção
     (`ler_snapshots`) declara as duas chaves, e um teste de AST proíbe qualquer `ds.dataset` **e
     `ds.write_dataset`** do pacote sem as DUAS chaves declaradas — exigir só que o kwarg
-    `partitioning` *exista* deixava passar verde o próprio bug (*emenda de 2026-08-25*), e o modo de
+    `partitioning` *exista* deixava passar verde o próprio bug, e o modo de
     falha destrutivo vem do **escritor**. Séries **mistas** (partição legada de 1 chave ao lado de
     folhas novas) são lidas corretamente; o que não pode coexistir é arquivo legado **e** folha nova
     da mesma fonte na mesma semana — por isso a escrita recusa semana com layout legado, e a
@@ -307,8 +280,7 @@ reviews" é aproximado pelos sinais internos (3) e (5), sem depender de nota ext
     `SINAIS_INATIVOS`). `--fontes wellhub` reproduz o universo anterior; `--todas-as-fontes` segue abrindo a série inteira.
   - **Por que 26, e por que nunca abaixo de 13 `[emenda de 2026-08-26]`.** A poda é keep-newest-N
     sobre diretórios `semana=`. Com as **três** fontes semanais, N partições = **N observações de
-    cada fonte** no caminho feliz — o divisor `4,345` do feed mensal (que sustentava o `78`) morreu
-    junto com a premissa. O piso é **13**, MEDIDO: `_semanas_sem_mudanca` conta observações
+    cada fonte** no caminho feliz. O piso é **13**, MEDIDO: `_semanas_sem_mudanca` conta observações
     **estritamente após** a última mudança, logo vale `k-1` com hash constante, contra o denominador
     `STALE_SEMANAS = 12` do `v4` — com 12 observações o `v4` fica preso em `0,9167` para sempre.
     `26 = 2× o piso` é o menor N que ainda satura o `v4` com uma fonte perdendo **metade** das
@@ -355,23 +327,17 @@ reviews" é aproximado pelos sinais internos (3) e (5), sem depender de nota ext
 - **Ramp-up / maturidade.** `flag_serie_imatura = True` até `MIN_SEMANAS = 8` snapshots; enquanto
   imatura, os sinais 3/4 **NÃO penalizam** (são renormalizados para fora do score — seção 8). Staleness
   só é interpretável após a série atingir `STALE_SEMANAS = 12`. Mitiga falso churn no início da série.
-- **Cadência real e os DOIS relógios `[emenda 2026-07-29]` — corrige afirmação factualmente falsa.**
-  A versão anterior desta seção afirmava que "o cron acumula snapshots desde ~26/06/2026". **Isso é
-  falso e foi removido:** nenhum passo do `run_weekly_90.sh` arquiva o feed por estabelecimento
-  (`docs/infra_producao.md:136-143`; o único histórico existente é `historico_contagem.csv`, **por
-  rede**), e os CSVs crus são **sobrescritos** a cada coleta. Em 2026-07-29 havia **ZERO** semanas
-  de série por estabelecimento, e o produtor do insumo nasceu no **BLK-MA-02**. Os dois relógios:
-  - o cron **semanal** atualiza só `Unidades/unidades_<rede>.csv` (**cadeias**, `infra_producao.md:149`);
+- **Cadência real e os DOIS relógios `[emenda 2026-07-29]`.** Os dois relógios:
+  - o cron **semanal** atualiza só `Unidades/unidades_<rede>.csv` (**cadeias**, `infra_producao.md`, «Integração ao motor»);
   - o cron dos agregadores WellHub/TotalPass — onde vivem os **independentes**, o universo-alvo
-    desta epic — é **SEMANAL** (sábado 03:00 UTC, `run_wellhub_semanal.sh`, emenda 3 à DEC-039; o D1 original dizia terça 02:00 UTC), criado pelo **BLK-MA-21** e documentado em
-    `infra_producao.md`, seção "Coleta semanal dos agregadores". *(Até 2026-08-26 este contrato
-    dizia MENSAL e pendente — as duas coisas deixaram de valer.)*
+    desta epic — é **SEMANAL** (sábado 03:00 UTC, `run_wellhub_semanal.sh`, emenda 3 à DEC-039), criado pelo **BLK-MA-21** e documentado em
+    `infra_producao.md`, seção "Coleta semanal dos agregadores".
 
   **Consequência de cronograma, load-bearing para o BLK-MA-04/05:** `MIN_SEMANAS` e `STALE_SEMANAS`
   contam **semanas OBSERVADAS**, não semanas de calendário. Na cadência real do feed dos
   independentes — **SEMANAL** desde o BLK-MA-21 —, **8 snapshots = ~8 SEMANAS** e **12 snapshots =
   ~12 SEMANAS** no caminho feliz: o `score_vulnerabilidade` sai com `flag_score_provisorio` por
-  cerca de **3 meses** após o cron entrar no ar, não por cerca de um ano. Fora do caminho feliz o
+  cerca de **3 meses** após o cron entrar no ar. Fora do caminho feliz o
   prazo estica, porque a semana em que a curadoria recusa um feed velho ocupa slot de calendário
   sem render observação àquela fonte. Os valores `MIN_SEMANAS = 8` / `STALE_SEMANAS = 12` **não**
   foram alterados (decisão do gate de 2026-07-23; revisão feita no BLK-MA-06: mantidos).
@@ -388,9 +354,7 @@ reviews" é aproximado pelos sinais internos (3) e (5), sem depender de nota ext
 > logo a partição do universo é **PERMANENTE**.
 >
 > **Decisão (DEC-026, D-B = opção 0):** a nota e a contagem são propagadas como **COLUNA-FATO, sem
-> peso, fora de `Σ(wi · vi)`**, no molde do G-D2 (o mesmo que já se aplica ao `status_churn`).
-> `SINAIS_INATIVOS` continua `("s2",)` e os pesos efetivos do Plano B seguem
-> `S1≈0,20 / S3≈0,467 / S4≈0,333`. **O sinal 2 permanece INATIVO** — o que muda é que o dado passa
+> peso, fora de `Σ(wi · vi)`**, no molde do G-D2 (o mesmo que já se aplica ao `status_churn`). **O sinal 2 permanece INATIVO** — o que muda é que o dado passa
 > a existir e a chegar ao consumidor.
 >
 > **Por quê, em uma linha:** com peso, o `v2` inverteria o ranking. Vale a identidade
@@ -532,8 +496,7 @@ DEC-008, com LOO/k-fold vs baseline, sem R² in-sample).
 > **As independentes pesam `0,5`** contra `1,0` de uma unidade de rede (decisão de produto de
 > Vinicius). O peso age no numerador da oferta; kernel, raio e saturação não mudam.
 >
-> **`cadeias_e_independentes` é o universo VIGENTE do pipeline** (opção A da DEC-033, aprovada em
-> 2026-08-14). A régua histórica continua alcançável por `--oferta-so-cadeias`, e precisa continuar:
+> **`cadeias_e_independentes` é o universo VIGENTE do pipeline** (opção A da DEC-033). A régua histórica continua alcançável por `--oferta-so-cadeias`, e precisa continuar:
 > ela é a única comparável com o `pressao_concorrencial_score_2km` da camada de mercado.
 >
 > **O carimbo `universo_oferta` (`cadeias` | `cadeias_e_independentes`) passa a ser obrigatório** no
@@ -667,10 +630,7 @@ DEC-008, com LOO/k-fold vs baseline, sem R² in-sample).
 popularidade, pressão); flags graduados para os categóricos (S1/S3). Tudo em `[0,1]`, com `↑ = ↑vuln`.
 
 > **[emenda DEC-026, 2026-08-10] O `rating` sai desta frase.** Ele não é mais um "sinal contínuo a
-> normalizar", porque não é sinal: entra como **coluna-fato sem peso** (§7, emenda DEC-026). Esta é
-> a reabertura do §8.2 que o BLK-MA-09 devia fazer — e o gatilho era **este parágrafo**, que
-> nomeava o `rating`, não o item 4 da emenda G-D3 (aquele fala de quem **reativar** a percentil, e o
-> MA-09 não a reativou). Com o `v4` já convertido em razão absoluta pela emenda BLK-MA-04 e o
+> normalizar", porque não é sinal: entra como **coluna-fato sem peso** (§7, emenda DEC-026). Com o `v4` já convertido em razão absoluta pela emenda BLK-MA-04 e o
 > `rating` fora, **nenhum componente do score usa percentil por universo hoje** — a percentil segue
 > RESERVADA, como o G-D3 deixou.
 
@@ -915,8 +875,7 @@ componentes `vi` por sinal (para auditoria) e das flags de qualidade.
 > `pressao_concorrencial_score_2km` de mercado dão **Pearson 1,0000** contra o mesmo insumo (a
 > divergência de 0,9356 é só defasagem — 104 redes contra 28).
 >
-> **Portanto o §10 volta a valer como escrito: sem overlay.** Junto saíram o terceiro artefato
-> (`alvos_ma_hex.parquet`) e o colapso de regimes, que só existiam para servi-lo.
+> **Portanto o §10 volta a valer como escrito: sem overlay.**
 >
 > **O que a reversão NÃO desfez, e continua vigente:** a emenda do G-D1 (decisão 4 da DEC-028, ver
 > §8.5), porque ela é sobre o score, não sobre a tela.
@@ -974,7 +933,7 @@ componentes `vi` por sinal (para auditoria) e das flags de qualidade.
 
 - **Dois relógios.** Churn/staleness (S3/S4) saem do snapshot de domingo dos 90 coletores →
   `run_weekly_90.sh` (DEC-013). Presença/rating de agregador (S1/S2) dependem do cron **semanal**
-  dos agregadores, no **sábado** 03:00 UTC (`run_wellhub_semanal.sh`, emenda 3 à DEC-039; na VPS o coletor do TotalPass está arquivado) — que deixou de ser pendente no BLK-MA-21
+  dos agregadores, no **sábado** 03:00 UTC (`run_wellhub_semanal.sh`, emenda 3 à DEC-039; na VPS o coletor do TotalPass está arquivado)
   (`infra_producao.md`, seção "Coleta semanal dos agregadores").
 - **O materializador de snapshots é plugado JÁ no runner semanal `[emenda 2026-07-29]`.** Decisão de
   produto antecipada no gate: o **BLK-MA-06** anexa
@@ -985,8 +944,7 @@ componentes `vi` por sinal (para auditoria) e das flags de qualidade.
   registrada:** isso produz série de **CADEIAS**, que **não** é o universo-alvo do funil de M&A
   (independentes) — o valor é de engenharia e de mercado/residual, não do epic.
 - **O cron SEMANAL dos agregadores é CAMINHO CRÍTICO do BLK-MA-04/05 `[emenda 2026-07-29;
-  cadência corrigida em 2026-08-26]`.** Quando esta emenda foi escrita ele aparecia em
-  `infra_producao.md` apenas como "pendente futuro" e **não** como dependência de bloco. Sem ele,
+  cadência corrigida em 2026-08-26]`.** Sem ele,
   S1/S3/S4 sobre os **independentes** não existem e o epic não entrega o que promete. O
   **BLK-MA-21** criou o cron, na terça 02:00 UTC; na VPS ele roda no **sábado 03:00 UTC** (`run_wellhub_semanal.sh`), cadência ratificada pela emenda 3 à DEC-039 — com a terça, a guarda de frescor de 3 dias recusaria o feed toda semana.
 - **Passo semanal.** Anexar o recompute do `score_vulnerabilidade` como **passo** do runner semanal
@@ -1047,30 +1005,15 @@ emenda 3 à DEC-039), **BLK-MA-05** (lista comercial, que depende da série madu
 > circulam como prazo de maturação valem para o feed `unidades`; os independentes vivem só nos
 > agregadores, e o cronômetro deles só começa quando o **BLK-MA-21** for aplicado na VPS.
 >
-> **A cadência dos agregadores é SEMANAL** (sábado 03:00 UTC desde a emenda 3 à DEC-039; era terça 02:00 UTC), não mensal — a premissa mensal era
+> **A cadência dos agregadores é SEMANAL** (sábado 03:00 UTC desde a emenda 3 à DEC-039), não mensal — a premissa mensal era
 > falsa e foi corrigida pelo dono em 2026-08-26. Com ela, `MIN_SEMANAS = 8` deixa de ser ~8 MESES e
 > passa a ser **~8 SEMANAS**, e os dois feeds passam a ter o mesmo prazo. Quem citar prazo de
 > maturação continua tendo de dizer de qual feed está falando — mas a resposta deixou de divergir
 > por um fator de 4.
 
-> **[2026-08-25] O arquivamento do TotalPass foi da NOTA, não da fonte — e a distinção abre o
-> BLK-MA-20.** Como a DEC-026 tornou o rating **coluna-fato sem peso**, a ausência permanente de nota
-> no TotalPass é irrelevante para o score, e a assimetria que o §7/D3 e o spike do BLK-MA-10 tratam
-> como "fragmentação permanente do universo" afeta uma coluna de fato, **não o ranking**. Nada neste
-> contrato nem em DEC alguma proíbe o TotalPass como FONTE: o §3/D1 e `FONTES_AGREGADORES` já o
-> declaram agregador de primeira classe, e `fontes_presentes_no_hex` é definido como *subconjunto de
-> `FONTES_AGREGADORES`* — o desenho espera os dois.
->
-> A consequência que o BLK-MA-20 tem de resolver antes de qualquer inclusão: hoje o `v1` tem
-> **variância zero** (6.753 de 6.753 hexes com um agregador), e soltá-lo no regime `{s1,s6}` — onde
-> o S1 pesa **0,600** — produz um **degrau**, não um discriminador. Detalhe, números e as três vias
-> no bloco.
+### O que é "epic BLK-MA concluído" — critério escrito
 
-### O que é "epic BLK-MA concluído" — critério escrito, que faltava
-
-Até 2026-08-24 não havia nenhum. A ausência tem consequência prática: sem critério, "o bloco
-mergeou" foi lido como "a coisa está entregue", e foi assim que a camada passou cinco dias
-publicada e morta. São **três** condições, e elas são **independentes** — cumprir uma não implica
+São **três** condições, e elas são **independentes** — cumprir uma não implica
 as outras:
 
 1. **A camada existe para o operador.** Os dois parquets nomeados presentes em produção **e lidos**
@@ -1081,7 +1024,7 @@ as outras:
    `semana=AAAA-SS` acumulando. → BLK-MA-06. **Não** é pré-requisito de (1): os artefatos são
    materializáveis com zero semanas de série.
 3. **O número significa o que o rótulo diz.** Enquanto S3/S4 estiverem imaturos,
-   `sinais_disponiveis` é `s6` em 100% das linhas e o score reduz a `100·v6` (era `s1,s6` e `30 + 40·v6` até a DEC-066 tirar o S1 da conta) — o que um
+   `sinais_disponiveis` é `s6` em 100% das linhas e o score reduz a `100·v6` — o que um
    ranking ordena é **pressão competitiva**, não vulnerabilidade (DEC-028, decisões 1 e 2). Só com
    a série ≥ `MIN_SEMANAS = 8` o rótulo "vulnerabilidade" passa a ser honesto, e só aí o **BLK-MA-05**
    tem o que ordenar.
@@ -1125,8 +1068,6 @@ se um parquet em produção é da safra corrente.
 - **DEC-013 — coleta recorrente na VPS:** BLK-MA é **extensão** desse lote, não pipeline novo.
 - **§2 — sem API ao vivo:** Plano B sem dependência de API externa; dashboard offline sobre Parquets;
   acentuação correta em texto de usuário, nunca em identificadores; CSV `sep=";"` / `utf-8-sig`.
-- **Sem DEC neste bloco:** a rota Google Places/§2 foi descartada no Plano B → BLK-MA-01 **não** cria
-  DEC (reputação externa e seu eventual DEC ficam no BLK-MA-07).
 
 **Referências.**
 
@@ -1137,7 +1078,7 @@ se um parquet em produção é da safra corrente.
 - `src/motor_expansao/pipelines/enriquecer_outputs_residual_mercado.py:68-82` (molde defensivo de join
   READ-ONLY).
 - `src/motor_expansao/demanda_revelada/concorrentes_densos.py:127` (`_ler_csv_tp_wh` — a ingestão lê
-  `nome`/coords e dropa tudo; a nota **nem existe na fonte** → ajuste de coletor, não de ingestão).
+  `nome`/coords e dropa tudo).
 - `docs/infra_producao.md` (runbook do cron semanal GymScraping — D2/D8).
 - `CLAUDE.md` §1/§2/§4/§5/§6/§8.
 
