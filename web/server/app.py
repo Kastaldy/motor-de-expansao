@@ -5541,6 +5541,19 @@ def acessos_usuario(
 # ---------------------------------------------------------------------------
 
 
+#: Catalogo de paises que a PLATAFORMA conhece (DEC-081). E' TABELA (dado), nao `if pais == "XX"`
+#: (DEC-047: tabela indexada por pais e' a forma CERTA de variar por pais): acrescentar um pais e'
+#: uma linha aqui. Alimenta o seletor do painel de Acessos; a bandeira e o host de cada um moram no
+#: front (`SelecaoPais.tsx`), que casa por esta sigla.
+PAISES_PLATAFORMA = (("BR", "Brasil"), ("AR", "Argentina"))
+_SIGLAS_PLATAFORMA = frozenset(sigla for sigla, _ in PAISES_PLATAFORMA)
+
+
+def _paises_disponiveis() -> list[dict[str, str]]:
+    """O catalogo em forma de payload para a tela (sigla + rotulo)."""
+    return [{"sigla": sigla, "nome": nome} for sigla, nome in PAISES_PLATAFORMA]
+
+
 class UsuarioAdminIn(BaseModel):
     """Mudanca de acesso. Os dois campos sao opcionais e independentes."""
 
@@ -5562,6 +5575,9 @@ class UsuarioNovoIn(BaseModel):
     nome: str
     email: str
     perfil: str
+    #: Paises que a pessoa podera' acessar (DEC-081). Vazio/ausente -> a rota assume o pais do
+    #: processo (PERFIL.pais). A rota valida contra o catalogo da plataforma antes de criar.
+    paises: list[str] = []
 
 
 class MinhaSenhaIn(BaseModel):
@@ -5787,6 +5803,10 @@ def acessos_usuarios_listar(
         # escolhe por ele os recados de criacao e o rodape, que mentiam com a chave desligada
         # (decisao do dono, 24/10/2026).
         "login_proprio": _login_proprio_ligado(),
+        # Catalogo de paises para o seletor do cadastro (DEC-081) e qual vem marcado por padrao
+        # (o pais DESTE processo). Data-driven: o front nao hardcoda sigla (DEC-047).
+        "paises_disponiveis": _paises_disponiveis(),
+        "pais_padrao": PERFIL.pais,
     }
 
 
@@ -5841,12 +5861,20 @@ def acessos_usuarios_criar(
     from motor_expansao.db import usuarios as db_usuarios
 
     eu = _identidade_do_admin(remote_user)
+    # Default seguro contra o P4 (decisao do Vinicius, 03/11): sem selecao, a pessoa herda o pais
+    # DESTE processo (PERFIL.pais). Se a tela mandar paises, eles valem -- validados contra o
+    # catalogo da plataforma, com mensagem amigavel em vez do 500 cru do CHECK do banco.
+    paises = body.paises or [PERFIL.pais]
+    desconhecidos = [p for p in paises if p.strip().upper() not in _SIGLAS_PLATAFORMA]
+    if desconhecidos:
+        raise HTTPException(422, f"País(es) fora do catálogo: {', '.join(desconhecidos)}.")
     try:
         criado = db_usuarios.criar(
             login=body.login,
             nome=body.nome,
             email=body.email,
             perfil=body.perfil,
+            paises=paises,
             autor=eu.id_usuario,
         )
     except Exception as erro:  # noqa: BLE001 - traduzido logo abaixo

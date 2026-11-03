@@ -5318,3 +5318,57 @@ Menores, no código do banco:
   DEBUG, que o CLI não configura;
 - a dica do CLI diz que `@ : / # ou %` quebram a URL. Medido: quebram `@`, `/`, `%` inválido e
   espaço; `:`, `#` e `?` não.
+
+---
+
+### BLK-BANCO-10 — Cadastro de usuário passa a atribuir país (Fase 1 do P4 da DEC-081)
+
+| Campo | Valor |
+|---|---|
+| **Criticidade** | **Alta** — mexe no cadastro que alimenta o gate de país (autenticação); READ-ONLY sobre o M1. Toca `src/motor_expansao/db/usuarios.py`: no mesmo PR sobe para **Crítica** pelo guard. |
+| **Prioridade** | **Topo** — estanca um lockout silencioso ATIVO (abaixo). |
+| **Esteira** | código (`src/motor_expansao/db/usuarios.py` + `web/server/app.py` + `web/src/`) → testes → PR próprio (conferência do Vinicius antes de abrir) |
+| **Quem** | qualquer um; decisões de produto já cravadas pelo Vinicius (03/11/2026) |
+| **Status** | Em andamento (iniciado em 03/11/2026) |
+| **Depende de** | — (o `GRANT INSERT` do `app` em `usuario_paises` já está aplicado na VPS desde 03/11/2026) |
+| **Autonomia** | **manual (NÃO loop-safe)** — autenticação/gate de país e banco. |
+
+**O bug (ATIVO desde 27/10/2026).** Com o login próprio do BR no ar, todo usuário criado pelo painel de Acessos nasce com ZERO países: `usuarios.criar` (`src/motor_expansao/db/usuarios.py:496-565`) grava só na tabela `usuarios`, nunca em `usuario_paises` — o único INSERT nessa tabela em todo o motor é o backfill da migration (`src/motor_expansao/db/migracoes/021-usuario-paises.sql:30`). O gate é fail-closed (`web/server/app.py:802` e `:6307`; conjunto vazio em `rbac.py:135`/`sessoes.py:332`), então a pessoa loga e é barrada em tudo (403) no host do país e vê "sem acesso" no apex — enquanto a tela de criação responde "sucesso" e só avisa do passo do Authelia. Onboarding de gente nova quebra sem erro visível. Estudo em 03/11/2026 (workflow de 5 agentes sobre `origin/main`): escala MÉDIA, backend-centrada.
+
+**Decisões de produto cravadas por Vinicius (03/11/2026):** (1) o admin ESCOLHE os países no cadastro, com o país do processo (`PERFIL.pais`) LIGADO por padrão; (2) multipaís pela tela (pode marcar mais de um); (4) o seletor COBRE o `AR` (data-driven), aposentando o seed AR manual. A decisão (3) — editar/remover país — é a Fase 2 (BLK-BANCO-11), porque exige `DELETE`.
+
+**Escopo (Fase 1 — só CRIAR com país):**
+- **Backend / modelo:** campo `paises: list[str]` em `UsuarioNovoIn` (`web/server/app.py:5551-5564`).
+- **Backend / função:** parâmetro `paises` em `usuarios.criar` (`:496`) e, DENTRO do `with transacao` já existente (`:529`, após o `RETURNING id_usuario` em `:546`), um INSERT em `usuario_paises` por país — criação+país atômicos, mesma disciplina do evento (`:550-556`).
+- **Backend / rota:** `acessos_usuarios_criar` (`web/server/app.py:5823`) repassa os países; default = `[PERFIL.pais]` (disponível em `app.py:168/172`) quando o corpo não trouxer.
+- **Backend / validação fail-closed:** RECUSAR lista de países vazia (vazio = o próprio bug) e validar cada sigla contra `perfil._RE_PAIS` (`perfil.py:76`) / o CHECK `chk_usuario_paises_sigla` (`021:19`); traduzir no `_erro_de_usuarios` (`app.py:5708`).
+- **Backend / fonte data-driven:** expor a lista de siglas/rótulos válidos ao painel (como `perfis` já vem no `AdminUsuariosPayload`), sem hardcode por sigla (fio de alarme DEC-047).
+- **Frontend:** seletor multi-país no formulário de criar (`web/src/components/PainelUsuarios.tsx`), campo `paises: string[]` em `AdminUsuarioNovo` (`types.ts:2644`) ligado ao `POST`; país do processo pré-marcado; botão "Criar" exige ≥1 país.
+- **Testes:** criar pelo painel grava linha em `usuario_paises`; recusa lista vazia; regressão do gate (usuário criado NÃO nasce com zero países); contrato DEC-047 (seletor data-driven, sem `if pais ==`).
+
+Guardrails: READ-ONLY sobre o M1; conferência do Vinicius antes de abrir o PR; PR crítico exige `critica-aprovada` + `aprovado-humano` de não-autor.
+
+---
+
+### BLK-BANCO-11 — Editar/remover países de usuário + GRANT DELETE no §3 (Fase 2 do P4 da DEC-081)
+
+| Campo | Valor |
+|---|---|
+| **Criticidade** | **Alta** — edição do gate de país + privilégio de banco (`DELETE`); cruza o repo `banco-de-reservas`. Toca `src/motor_expansao/db/`: no mesmo PR sobe para **Crítica** pelo guard. |
+| **Prioridade** | Média — depois da Fase 1. |
+| **Esteira** | PR no `banco-de-reservas` (§3 ganha `DELETE`) → `GRANT DELETE` na VPS (manual, Vinicius) → código de edição → testes → PR próprio |
+| **Quem** | qualquer um; o `GRANT` na VPS é manual do Vinicius |
+| **Status** | Pendente |
+| **Depende de** | BLK-BANCO-10 (Fase 1) + merge do §3 no `banco-de-reservas` |
+| **Autonomia** | **manual (NÃO loop-safe)** — autenticação, privilégio de banco, cross-repo. |
+
+**Pré-requisito de banco (a diferença da Fase 1).** Remover um país usa `DELETE`, que o `sql/papeis-e-privilegios.md` §3 do `banco-de-reservas` HOJE NEGA ao `app` (linha 134: `usuario_paises | SELECT, INSERT, UPDATE | ... Sem DELETE`). A Fase 2 começa por um PR lá acrescentando `DELETE` ao §3 (GRANT da linha 145 e tabela de conferência da linha 612), depois `GRANT DELETE ON usuario_paises TO app` aplicado na VPS (manual, molde do realinhamento de 03/11/2026).
+
+**Escopo (editar/remover país de usuário existente):**
+- **Backend / função:** `definir_paises`/`adicionar_pais`/`remover_pais` em `usuarios.py`, com INSERT/DELETE em `usuario_paises` dentro de transação e evento na MESMA transação (molde de `_aplicar_perfil`/`_aplicar_ativo`, `usuarios.py:358-401`).
+- **Backend / trava anti-auto-lockout:** `_recusar_auto_alvo` análogo (`usuarios.py:325`) — ninguém remove o próprio último país e se tranca para fora.
+- **Backend / endpoint:** `PATCH /api/acessos/usuarios/{id}/paises` (ou estender `UsuarioAdminIn`, `app.py:5544`), sob o gate duplo do painel (allowlist `_exigir_admin_acessos` `app.py:5450` + capacidade `acesso.usuario_gerir`).
+- **Backend / listagem:** agregar os países de cada pessoa em `SQL_LISTAR` (`usuarios.py:104`) e `UsuarioAdmin.como_json` (`usuarios.py:276`), para a tela mostrar o estado atual.
+- **Backend / eventos:** `usuario.pais_atribuido`/`usuario.pais_removido` nas constantes `EVENTO_*` e no `docs/eventos_contrato.md`.
+- **Frontend:** editar países por linha no `PainelUsuarios.tsx`, coluna/chips com os países atuais, confirmação (`confirmacao-admin.ts`) do de-para, validação de ≥1 país.
+- **Testes:** editar (adicionar/remover) grava certo; NÃO permite remover o próprio último país; evento registrado.

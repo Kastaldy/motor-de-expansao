@@ -2614,6 +2614,13 @@ export interface AdminPerfil {
   capacidades: number
 }
 
+/** Uma opção do seletor de países do cadastro (DEC-081). Sigla e rótulo vêm do backend
+ *  (data-driven, DEC-047): o front nunca decide por sigla; a bandeira mora em SelecaoPais. */
+export interface AdminPais {
+  sigla: string
+  nome: string
+}
+
 export interface AdminUsuariosPayload {
   usuarios: AdminUsuario[]
   perfis: AdminPerfil[]
@@ -2626,6 +2633,10 @@ export interface AdminUsuariosPayload {
    *  Opcional por defesa: ausente conta como desligado, o lado conservador
    *  (`loginProprioDoPayload`, em `lib/painel-usuarios.ts`). */
   login_proprio?: boolean
+  /** Catálogo de países para o seletor do cadastro (DEC-081) e qual vem marcado por padrão
+   *  (o país DESTE processo). Opcional por defesa: deploy antigo sem o campo cai no padrão só. */
+  paises_disponiveis?: AdminPais[]
+  pais_padrao?: string
 }
 
 /** Resposta do PATCH. Cada bloco só vem se o campo correspondente foi enviado, e
@@ -2646,6 +2657,9 @@ export interface AdminUsuarioNovo {
   nome: string
   email: string
   perfil: string
+  /** Países que a pessoa poderá acessar (DEC-081). Pelo menos um; o seletor marca o país do
+   *  processo por padrão. Vazio é recusado no backend (é o próprio bug do P4). */
+  paises: string[]
 }
 
 /** Resposta do POST. `falta_cadastrar_no_authelia` vem `true` nos DOIS estados do login
