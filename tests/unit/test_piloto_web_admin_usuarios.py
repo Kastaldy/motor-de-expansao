@@ -176,7 +176,7 @@ def test_perfil_e_status_juntos_vao_numa_unidade_de_trabalho_so(
     chamadas: list[dict[str, Any]] = []
 
     def _alterar_acesso(
-        i: int, *, autor: int, perfil: Any = None, ativo: Any = None
+        i: int, *, autor: int, perfil: Any = None, ativo: Any = None, paises: Any = None
     ) -> dict[str, Any]:
         chamadas.append({"alvo": i, "autor": autor, "perfil": perfil, "ativo": ativo})
         return {"id_usuario": i, "perfil": {"mudou": True}, "status": {"mudou": True}}
@@ -208,7 +208,7 @@ def test_um_campo_so_tambem_passa_pela_mesma_unidade_de_trabalho(
     monkeypatch.setattr(
         db_usuarios,
         "alterar_acesso",
-        lambda i, *, autor, perfil=None, ativo=None: (
+        lambda i, *, autor, perfil=None, ativo=None, paises=None: (
             vistos.append((perfil, ativo)) or {"id_usuario": i}
         ),
     )
@@ -1141,3 +1141,41 @@ def test_a_listagem_oferece_o_catalogo_de_paises_e_o_padrao(
     assert {"BR", "AR"} <= siglas
     assert all("nome" in p for p in saida["paises_disponiveis"])
     assert saida["pais_padrao"] == pilot_app.PERFIL.pais
+
+
+# --------------------------------------------------------------------------------------
+# DEC-081 / Fase 2 (BLK-BANCO-11): a rota PATCH aceita paises
+# --------------------------------------------------------------------------------------
+
+
+def test_alterar_repassa_os_paises_ao_banco(monkeypatch: pytest.MonkeyPatch) -> None:
+    """O conjunto desejado chega a `alterar_acesso` como `paises` (replace-all)."""
+    _identidade(monkeypatch, _Eu())
+    visto: dict[str, Any] = {}
+
+    def _alterar(i: int, *, autor: int, perfil: Any = None, ativo: Any = None, paises: Any = None):
+        visto.update({"paises": paises})
+        return {"id_usuario": i, "paises": {"de": ["BR"], "para": ["AR", "BR"], "mudou": True}}
+
+    monkeypatch.setattr(db_usuarios, "alterar_acesso", _alterar)
+    pilot_app.acessos_usuarios_alterar(
+        9, pilot_app.UsuarioAdminIn(paises=["BR", "AR"]), remote_user=ADMIN
+    )
+    assert visto["paises"] == ["BR", "AR"]
+
+
+def test_alterar_recusa_pais_fora_do_catalogo_sem_tocar_o_banco(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Sigla fora do catalogo (ex.: ZZ) e' 422 ANTES de alterar_acesso (molde do criar)."""
+    _identidade(monkeypatch, _Eu())
+
+    def _explode(*_a: Any, **_k: Any) -> None:
+        raise AssertionError("tocou o banco com pais fora do catalogo")
+
+    monkeypatch.setattr(db_usuarios, "alterar_acesso", _explode)
+    with pytest.raises(HTTPException) as caiu:
+        pilot_app.acessos_usuarios_alterar(
+            9, pilot_app.UsuarioAdminIn(paises=["ZZ"]), remote_user=ADMIN
+        )
+    assert caiu.value.status_code == 422

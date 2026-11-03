@@ -361,3 +361,18 @@ describe('exigir nova senha (15/09)', () => {
     expect(c.loginParaDigitar).toBeNull()
   })
 })
+
+describe('editar paises (DEC-081, Fase 2)', () => {
+  it('mostra o de-para dos paises no apoio', () => {
+    const c = montarConfirmacao({
+      tipo: 'editar-paises',
+      nome: 'Ana Ribeiro',
+      login: 'ana.ribeiro',
+      de: ['Brasil'],
+      para: ['Brasil', 'Argentina'],
+    })
+    expect(c.apoio.join(' ')).toContain('De Brasil para Brasil, Argentina.')
+    expect(c.loginParaDigitar).toBeNull()
+    expect(c.gravidade).toBe('media')
+  })
+})

@@ -216,6 +216,8 @@ O usuário digita premissas e recebe break-even — é decisão de análise, nã
 | `usuario.senha_definida` | `usuario` | id de quem trocou | `primeira_vez` | **sim** (desde a D26) |
 | `usuario.senha_redefinida` | `usuario` | id de quem **teve a senha redefinida** | `tinha_senha_propria`, `validade_horas` | **sim** (desde 15/09) |
 | `usuario.troca_exigida` | `usuario` | id de quem **vai ter de trocar** | — | **sim** (desde 15/09) |
+| `usuario.pais_atribuido` | `usuario` | id do alvo | `pais` | **sim** (Fase 2 do P4) |
+| `usuario.pais_removido` | `usuario` | id do alvo | `pais` | **sim** (Fase 2 do P4) |
 
 **Aqui são duas pessoas por linha, e elas não podem se confundir.** `id_usuario` é **quem fez** —
 chega por `app.id_usuario`, como em todo evento. `entidade_id` é **quem sofreu**. Foi para isso que a
@@ -360,13 +362,15 @@ recomendação que este contrato pressupõe.
 
 **Grava (desde a D26):** `usuario.criado`, pela mesma tela, e `usuario.senha_definida`, pela troca da própria senha (`PATCH /api/me/senha`), com a mesma
 regra de unidade de trabalho. **Desde 15/09**, também `usuario.senha_redefinida` e
-`usuario.troca_exigida`. Com eles, os **sete** tipos da §2.7 têm produtor.
+`usuario.troca_exigida`. **Desde a Fase 2 do P4**, `usuario.pais_atribuido` e
+`usuario.pais_removido`, pela edição de países na mesma tela (replace-all: um evento por país
+mudado, na mesma transação). Com eles, os **nove** tipos da §2.7 têm produtor.
 
-**Cuidado com a frase acima:** ela diz que os sete tipos *declarados* têm produtor, não que tudo o
+**Cuidado com a frase acima:** ela diz que os nove tipos *declarados* têm produtor, não que tudo o
 que acontece com `usuarios` vira evento. Um `UPDATE` feito à mão, fora da tela, continua sem deixar
 rastro — ver *"O que continua descoberto"* no fim da §2.7.
 
-**Três dos sete dependem da chave do P19 desde 24/10/2026** (no código; na produção, a partir do
+**Três dos nove dependem da chave do P19 desde 24/10/2026** (no código; na produção, a partir do
 deploy da imagem que o traz). `usuario.senha_definida`,
 `usuario.senha_redefinida` e `usuario.troca_exigida` saem de `PATCH /api/me/senha` e das rotas
 `redefinir-senha` e `exigir-troca` do painel, que respondem **404** enquanto

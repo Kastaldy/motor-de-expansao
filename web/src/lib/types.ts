@@ -2604,6 +2604,9 @@ export interface AdminUsuario {
   /** Se a próxima entrada dela deve pedir troca (016). Não é o inverso do de cima: um
    *  admin pode forçar troca de quem já definiu, e aí os dois são verdadeiros. */
   deve_trocar_senha: boolean
+  /** Países (siglas) que a pessoa pode acessar (DEC-081). A tabela mostra como chips e o
+   *  editor por linha manda o conjunto desejado no PATCH. Vem agregado do backend. */
+  paises: string[]
 }
 
 /** Opção do seletor de perfil. A ordem vem do backend e é a hierarquia da D22
@@ -2645,6 +2648,7 @@ export interface AdminAlteracao {
   id_usuario: number
   perfil?: { id_usuario: number; de: string; para: string; mudou: boolean }
   status?: { id_usuario: number; ativo: boolean; mudou: boolean }
+  paises?: { id_usuario: number; de: string[]; para: string[]; mudou: boolean }
 }
 
 /** Corpo do POST de criação (D26). Sem campo de senha DE PROPÓSITO: quem nasce pela
