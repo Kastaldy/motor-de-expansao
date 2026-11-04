@@ -251,7 +251,7 @@ SIM_TICKETS_STUDIO_PADRAO = (157.0, 167.0, 177.0)
 # CAPEX/OPEX: Obra (equity, parcelas sem juros) x Equipamentos (financiado). Taxa de
 # franquia PARCELADA sem juros junto da obra (ver SIM_PARCELAS_FRANQUIA_DEFAULT).
 # DIVERGENCIA DE FONTE: a planilha (simulador_estrutura.json, celula R10) e
-# docs/modelo_dimensionamento_expansao.md:276 dizem 140.000. O 160.000 abaixo e o
+# docs/archive/modelo_dimensionamento_expansao.md:276 dizem 140.000. O 160.000 abaixo e o
 # valor em producao e o que o comite ja viu; mantido por decisao de Felipe
 # (2026-07-24) e agora EXPOSTO no schema da API para o operador poder sobrescrever.
 SIM_TAXA_FRANQUIA = 160_000.0
@@ -371,7 +371,7 @@ SIM_PAYBACK_VIAVEL_MAX = 36
 #   (a) a anuidade e EXPOSTA no `viabilidade_payload_v1` (premissas.anuidade_* e
 #       dre.receita_anuidade) — o operador ve a linha, nao um faturamento maior sem causa;
 #   (b) os numeros do caso golden foram re-medidos em tests/contracts/;
-#   (c) PREMISSAS_VIABILIDADE.md, STATUS_ORQUESTRACAO.md e a nota de impacto atualizados;
+#   (c) PREMISSAS_VIABILIDADE.md e a nota de impacto (docs/archive/nota_impacto_fin_viab_01.md) atualizados;
 #   (d) o mes de referencia do steady-state passa a ser max(maturacao, inicio da
 #       anuidade) = 12, e o PDF le esse mes do bloco `dre` do payload (nao o recalcula),
 #       que era a causa do waterfall divergir do card ao lado no mesmo slide.

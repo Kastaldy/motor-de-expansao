@@ -171,7 +171,7 @@ services:
       # `/app/data/perfil.json` nao teria origem nenhuma. **Pre-condicao de deploy:** o
       # arquivo tem de EXISTIR no host antes do `up`, senao o Docker cria um DIRETORIO
       # vazio no lugar e o container falha com "is a directory", mensagem que nao menciona
-      # perfil nenhum. Ver docs/deploy_piloto_web.md e docs/spec_bloco_a_perfil.md §6.1.
+      # perfil nenhum. Ver docs/deploy_piloto_web.md e docs/archive/spec_bloco_a_perfil.md §6.1.
       - /opt/motor-expansao/data/perfil.json:/app/data/perfil.json:ro
       - /opt/motor-expansao/data/outputs:/app/data/outputs:ro   # censo geo (obrigatorio)
       - /opt/motor-expansao/data/ibge:/app/data/ibge:ro          # malha municipal (obrigatorio)
@@ -181,7 +181,7 @@ services:
       # em silencio: `carregar_crescimento*()` devolve None quando o arquivo nao existe.
       # Eles nao vem na imagem (`.dockerignore` corta `data/`) nem no git
       # (`.gitignore`: `data/staging/*`); so chegam por este mount. Como sao gerados:
-      # `data/reports/crescimento/README.md`. Conferir no ar: `GET /api/health`.
+      # `scripts/crescimento/README.md`. Conferir no ar: `GET /api/health`.
       - /opt/motor-expansao/data/staging:/app/data/staging:ro    # mercado/SAM + concorrentes/Ultra + crescimento (passo 4)
       - /opt/motor-expansao/data/ultra:/app/data/ultra:ro        # branding do PDF (opcional)
       - /opt/motor-expansao/concorrentes:/app/concorrentes:ro    # logos de pins (logo_<rede>.png)

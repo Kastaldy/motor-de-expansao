@@ -1536,7 +1536,7 @@ def cmd_alinhar_senhas(args: argparse.Namespace) -> int:
 
     NAO GRAVA EVENTO, e a razao e' a mesma do `cmd_expurgar`: roda pelo DONO do schema, fora do
     RBAC de usuario, e nao ha' usuario logado para carimbar como autor (`eventos.id_usuario` tem
-    FK). O registro deste ato e' o runbook (`docs/repasse_corte_p19.md`) e a saida deste comando
+    FK). O registro deste ato e' o runbook (`docs/archive/repasse_corte_p19.md`) e a saida deste comando
     -- que por isso NOMEIA cada pessoa tocada, em vez de so' contar.
     """
     from . import senhas, usuarios
