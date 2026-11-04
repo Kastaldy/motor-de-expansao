@@ -6057,6 +6057,17 @@ def db_sessoes_duracao_s() -> int:
     return db_sessoes.DURACAO_SESSAO_H * 3600
 
 
+#: BLK-BANCO-07: teto de verificacoes Argon2id CONCORRENTES no /api/login. Medido: cada
+#: verificacao custa 64 MiB + ~60 ms, e o login INEXISTENTE paga o mesmo `ph.hash` (defesa
+#: de cronometro) sem trancar a conta (a trava de 5/15min e' por conta). Pos-corte o
+#: /api/login e' publico e sem limite por IP, entao uma rajada de ~32 logins concorrentes
+#: estoura o `mem_limit` de 2 GiB do web (OOM) e satura o threadpool compartilhado. O
+#: semaforo e' NAO-BLOQUEANTE: cheio => 503 imediato (nao segura a thread do pool), por
+#: CARGA e independente de a conta existir (nao abre oraculo). Default 6 = pico ~384 MiB.
+LOGIN_MAX_CONCORRENTES = max(1, int(os.environ.get("MOTOR_LOGIN_MAX_CONCORRENTES", "6")))
+_SEM_LOGIN = threading.Semaphore(LOGIN_MAX_CONCORRENTES)
+
+
 @app.post("/api/login", include_in_schema=False)
 def login(body: LoginIn, request: Request) -> Response:
     """Entra na plataforma: confere a senha, abre sessao e devolve o cookie.
@@ -6090,6 +6101,7 @@ def login(body: LoginIn, request: Request) -> Response:
 
     negado = HTTPException(401, "Login ou senha incorretos.")
     vencida = False
+    ocupado = False
     try:
         from motor_expansao.db import eventos as db_eventos
 
@@ -6118,11 +6130,21 @@ def login(body: LoginIn, request: Request) -> Response:
         # exatamente para o cronometro nao denunciar quem tem cadastro. A defesa ja' estava
         # escrita la', com a razao no docstring -- duplica-la aqui com um hash-sentinela seria
         # uma segunda redacao da mesma garantia, que e' como elas passam a divergir.
-        confere = (
-            False
-            if trancado
-            else db_senhas.verificar(body.senha, credencial.senha_hash if credencial else None)
-        )
+        # BLK-BANCO-07: o Argon2id (64 MiB) roda sob um semaforo NAO-BLOQUEANTE. Cheio =>
+        # nao verifica, marca `ocupado`, e o 503 sai FORA do try (como a recusa abaixo),
+        # senao o tradutor `_erro_de_usuarios` o converteria. `trancado` dispensa o Argon2.
+        if trancado:
+            confere = False
+        elif _SEM_LOGIN.acquire(blocking=False):
+            try:
+                confere = db_senhas.verificar(
+                    body.senha, credencial.senha_hash if credencial else None
+                )
+            finally:
+                _SEM_LOGIN.release()
+        else:
+            ocupado = True
+            confere = False
 
         # SENHA TEMPORARIA VENCIDA (D31) conta como senha errada, e a checagem vem DEPOIS do
         # Argon2 de proposito -- o oposto da trava acima. La' negar cedo poupa CPU numa rajada;
@@ -6140,6 +6162,11 @@ def login(body: LoginIn, request: Request) -> Response:
     # FORA do `try` de proposito: aqui dentro ha' um `except Exception` que TRADUZ erros de
     # dominio, e levantar a recusa la' dentro a faria passar pelo tradutor -- funcionaria por
     # acidente, nao por desenho.
+    if ocupado:
+        # Protecao de CARGA (BLK-BANCO-07), nao recusa de credencial: nao registra evento
+        # (nao e' tentativa avaliada) e nao distingue conta existente. 503 para tentar de novo.
+        _LOG_D17.warning("login recusado por carga: semaforo do Argon2 cheio (BLK-BANCO-07)")
+        raise HTTPException(503, "Serviço de login ocupado no momento. Tente novamente em instantes.")
     if trancado:
         # NAO registra evento: se a tentativa barrada contasse, um atacante manteria a conta
         # da vitima trancada para sempre com uma requisicao a cada janela, e o contador nunca

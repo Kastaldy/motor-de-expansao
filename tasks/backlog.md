@@ -5206,9 +5206,9 @@ registra que o corte é gatilho por si e que isso é "bloco próprio". **Evidên
 |---|---|
 | **Criticidade** | **Alta** — a superfície pública de login depois do corte; READ-ONLY sobre o M1. |
 | **Prioridade** | Baixa — piloto de 20 pessoas; decidir antes do corte ou logo depois. |
-| **Esteira** | `[DECISÃO DO VINICIUS]` → se limitar: código (`web/server/`) ou borda (Caddy) |
-| **Quem** | Vinicius |
-| **Status** | Pendente — aguardando decisão |
+| **Esteira** | código (`web/server/app.py` + teste em `tests/unit/test_piloto_web_login.py`) → PR próprio (conferência do Vinicius) |
+| **Quem** | qualquer um |
+| **Status** | Em andamento (decidido por Vinicius 04/11: semáforo no Argon2; iniciado 04/11) |
 | **Depende de** | — |
 | **Autonomia** | **manual (NÃO loop-safe)** |
 
@@ -5220,6 +5220,8 @@ uma verificação Argon2id de 64 MiB (`MEMORIA_KIB`, em `src/motor_expansao/db/s
 limite por IP nem de concorrência no processo (a DEC-067 declara a falta da camada por IP). Que uma
 rajada de logins inexistentes esgote a memória é inferência, não medida. **Opções:** aceitar, pôr
 um semáforo no Argon2 ou um rate-limit na borda.
+
+**DECIDIDO (Vinicius, 04/11): semáforo no Argon2.** Medição (benchmark local, params reais de `senhas.py`): cada verificação custa **64 MiB + ~60 ms**, e o login INEXISTENTE paga o mesmo `ph.hash`. Pico linear medido: **32 concorrentes = 2077 MiB > `mem_limit` 2 GiB** do web (OOM); antes disso ~40 saturam o threadpool compartilhado (DoS geral). Um burst de ~32 (ou ~540 req/s) basta; sem limite por IP, a trava de 5/15 min não pega inexistente. **Fix:** `_SEM_LOGIN` (`threading.Semaphore`, env `MOTOR_LOGIN_MAX_CONCORRENTES`, default 6), NÃO-BLOQUEANTE no handler `login` — cheio → **503 imediato** (não segura a thread, não roda o Argon2); libera o slot no `finally` (sucesso e recusa). Pico cai para ~384 MiB, ~100 login/s (folga enorme para o piloto). O 503 é por CARGA, independe de a conta existir (não abre oráculo). Rate-limit por IP na borda fica como defesa adicional futura (não feito aqui). READ-ONLY sobre o M1.
 
 ---
 
