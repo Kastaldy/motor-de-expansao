@@ -200,6 +200,21 @@ WHERE s.token_hash_sessao = %s
   AND u.ativo
 """
 
+# BLK-BANCO-14: o RÓTULO da trilha (DEC-027), nao a autorizacao. `SQL_VALIDAR` MENOS as duas
+# travas de TEMPO (`expira_em_sessao > now()` e a de inatividade): uma sessao vencida por
+# TIMEOUT ainda nomeia QUEM acessou a pagina publica, em vez de "desconhecido". Mantem as
+# travas que NAO sao de tempo -- `revogada_em_sessao IS NULL` (logout explicito, expulsao,
+# troca de senha) e `u.ativo` --, entao quem encerrou de proposito NAO reaparece nomeado.
+# Projecao minima (so' o login): isto nunca concede acesso, so' rotula a trilha.
+SQL_DONO_PARA_TRILHA = """
+SELECT u.login_usuario
+FROM sessoes s
+JOIN usuarios u ON u.id_usuario = s.id_usuario
+WHERE s.token_hash_sessao = %s
+  AND s.revogada_em_sessao IS NULL
+  AND u.ativo
+"""
+
 # A TRAVA VIVE NO `WHERE`, e isso nao e' estilo: assim o UPDATE e' idempotente e sem corrida
 # -- duas requisicoes simultaneas da mesma sessao nao se atropelam, porque a segunda nao
 # encontra linha para atualizar. Decidir no Python custaria um `if` que duas threads podem
@@ -346,6 +361,25 @@ def validar(token: str) -> SessaoValida | None:
         id_sessao=id_sessao,
         ultimo_acesso=ultimo_acesso,
     )
+
+
+def dono_para_trilha(token: str) -> str | None:
+    """Login do dono do cookie para o RÓTULO da trilha (DEC-027) -- NAO concede acesso.
+
+    Diferente de `validar`: casa o token SEM as travas de TEMPO (teto de 8h e inatividade),
+    entao uma sessao vencida por TIMEOUT ainda nomeia QUEM acessou a pagina publica, em vez
+    de "desconhecido" (BLK-BANCO-14, continuacao da opcao B do BLK-BANCO-13). Mantem o que
+    NAO e' tempo: sessao REVOGADA (logout, expulsao, troca de senha) ou usuario inativo dao
+    `None` -- quem encerrou de proposito nao reaparece. Registro ja' expurgado -> sem linha
+    -> `None`. BEST-EFFORT e so' rotulo: o acesso de verdade segue barrado por `validar`.
+    """
+    if not token:
+        return None
+    with conexao() as con:
+        linhas = con.execute(SQL_DONO_PARA_TRILHA, (hash_do_token(token),)).fetchall()
+    if not linhas:
+        return None
+    return linhas[0][0]
 
 
 def tocar(*, id_sessao: int, id_usuario: int) -> bool:

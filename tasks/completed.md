@@ -16178,3 +16178,23 @@ READ-ONLY sobre o M1. Não toca o gate de país, o apex, nem o contrato de event
 **O fix.** No ramo de rota pública do portão, **só nas rotas que a trilha audita** (`acesso_log.relevante` — assets/estáticos não entram, não pagam a consulta), se houver cookie e sessão válida, carimba o `Remote-User` da sessão. **Best-effort:** rota pública NUNCA barra nem vira 500/503 por isto (banco fora, fila cheia e cookie inválido/expirado seguem como visitante "desconhecido", que é o correto). Decisão do Vinicius (04/11): **opção B** (mostrar o nome) sobre a opção A (tirar o boot da trilha).
 
 READ-ONLY sobre o M1. Não toca o gate de país, o apex, nem o contrato de eventos.
+
+---
+
+### BLK-BANCO-14 — A trilha nomeia quem acessou a página mesmo após LOGOUT POR TIMEOUT (DEC-027)
+
+| Campo | Valor |
+|---|---|
+| **Criticidade** | **Crítica** — toca `src/motor_expansao/db/sessoes.py` (código do banco, crítico no guard desde o #487) além de `web/server/app.py`. READ-ONLY sobre o M1; não muda autenticação nem concede acesso. |
+| **Prioridade** | Média — auditoria; o funil/produto não dependem. |
+| **Esteira** | código (`sessoes.py` + `app.py` + testes em `test_db_sessoes.py` e `test_piloto_web_portao_sessao.py`) → PR próprio (conferência do Vinicius) |
+| **Quem** | qualquer um |
+| **Status** | **Feito** (código) — PR #523 (este); mergeia o fix + o próprio bookkeeping. Deploy do web (BR+AR) pendente, vai junto do próximo deploy de site. |
+| **Depende de** | BLK-BANCO-13 (mesmo ramo do portao; já em produção) |
+| **Autonomia** | **manual (NÃO loop-safe)** — autenticação/trilha de acesso + código do banco. |
+
+**O defeito.** Follow-up do BLK-BANCO-13. A validação de sessão (`db_sessoes.validar`) só devolve a identidade se a sessão estiver **viva**: não revogada **e** dentro das 8h (teto) **e** com menos de 120 min de inatividade. No **logout por timeout**, uma dessas travas de tempo falha → `validar` volta `None` → o ramo de rota pública do portao (BANCO-13) não carimba o `Remote-User` → a trilha grava **"desconhecido"**, mesmo para quem tinha acabado de deslogar por inatividade. O registro da sessão ainda existe no banco (até o expurgo); só não passa mais nos predicados de tempo.
+
+**O fix.** Nova consulta `SQL_DONO_PARA_TRILHA` / função `dono_para_trilha(token)` em `sessoes.py`: é a `SQL_VALIDAR` **menos as duas travas de TEMPO**, mantendo `revogada_em_sessao IS NULL` + `u.ativo`, projetando só o login. O ramo de rota pública do portao passa a resolver o nome por ela (no lugar de `validar`). Efeito: sessão vencida por **timeout** → mostra o nome; **logout explícito / expulsão / troca de senha** (sessão revogada), usuário inativo ou registro já expurgado → segue **"desconhecido"**. É **só rótulo de trilha**: nunca concede acesso — as rotas gateadas seguem exigindo `validar` (sessão viva), então uma sessão vencida continua tomando 401. Best-effort: a rota pública nunca barra nem vira 500/503. Decisão do Vinicius (04/11): estender a opção B do BANCO-13 à sessão vencida por tempo.
+
+READ-ONLY sobre o M1. Não toca o gate de país, o apex, nem o contrato de eventos.

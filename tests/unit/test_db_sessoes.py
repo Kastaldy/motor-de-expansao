@@ -533,3 +533,51 @@ def test_a_contagem_usa_O_MESMO_recorte_do_expurgo() -> None:
         return re.sub(r"\s+", " ", sql[sql.upper().index("WHERE") :]).strip()
 
     assert _recorte(sessoes.SQL_EXPURGAR_ORIGEM) == _recorte(sessoes.SQL_CONTAR_ORIGEM_VENCIDA)
+
+
+# --------------------------------------------------------------------------------------
+# BLK-BANCO-14: `dono_para_trilha` -- o ROTULO da trilha, que casa a sessao vencida por TIMEOUT
+# --------------------------------------------------------------------------------------
+# E' `SQL_VALIDAR` MENOS as duas travas de TEMPO, para nomear quem acessou a pagina publica
+# mesmo apos o timeout (em vez de "desconhecido"). Nunca concede acesso: so' rotula.
+
+
+def test_dono_para_trilha_NAO_tem_as_travas_de_tempo_mas_mantem_as_outras() -> None:
+    """O coracao do BANCO-14, fixado na constante: a consulta do rotulo DROPA `expira_em > now()`
+    e a de inatividade (senao a sessao vencida por timeout nao casaria e seguiria "desconhecido"),
+    mas MANTEM `revogada_em_sessao IS NULL` e `u.ativo` -- quem deslogou de proposito ou foi
+    desativado nao reaparece nomeado."""
+    sql = sessoes.SQL_DONO_PARA_TRILHA
+    assert "revogada_em_sessao IS NULL" in sql
+    assert "u.ativo" in sql
+    assert "expira_em_sessao" not in sql, "a trava do teto de 8h nao pode estar na consulta do rotulo"
+    assert "ultimo_acesso_em_sessao" not in sql, "a trava de inatividade nao pode estar aqui"
+    assert "make_interval" not in sql, "sem intervalo de tempo: o rotulo ignora timeout de proposito"
+
+
+def test_dono_para_trilha_manda_o_HASH_nunca_o_token(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Mesma garantia anti-PII do `validar`: o que viaja ao banco e' o hash, nunca o token."""
+    con = _instalar(monkeypatch, [("vinicius",)])
+    sessoes.dono_para_trilha("token-de-teste")
+    _sql, params = _sql_do(con, "SELECT u.login_usuario")
+    assert params == (sessoes.hash_do_token("token-de-teste"),)
+    assert "token-de-teste" not in str(params)
+
+
+def test_dono_para_trilha_devolve_o_login(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Uma linha (sessao conhecida, mesmo vencida por timeout) -> o login para a trilha."""
+    _instalar(monkeypatch, [("vinicius",)])
+    assert sessoes.dono_para_trilha("t") == "vinicius"
+
+
+def test_dono_para_trilha_sem_linha_e_None(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Sem linha (revogada, expurgada, usuario inativo ou cookie forjado) -> None, sem nome."""
+    _instalar(monkeypatch, [])
+    assert sessoes.dono_para_trilha("t") is None
+
+
+def test_dono_para_trilha_token_vazio_nao_consulta_o_banco(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Sem cookie o portao nem deveria chamar, mas a funcao tambem se defende: nao vai ao banco."""
+    con = _instalar(monkeypatch, [("vinicius",)])
+    assert sessoes.dono_para_trilha("") is None
+    assert con.executados == [], "token vazio nao pode consultar o banco"
