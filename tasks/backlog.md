@@ -5372,3 +5372,24 @@ Guardrails: READ-ONLY sobre o M1; conferência do Vinicius antes de abrir o PR; 
 - **Backend / eventos:** `usuario.pais_atribuido`/`usuario.pais_removido` nas constantes `EVENTO_*` e no `docs/eventos_contrato.md`.
 - **Frontend:** editar países por linha no `PainelUsuarios.tsx`, coluna/chips com os países atuais, confirmação (`confirmacao-admin.ts`) do de-para, validação de ≥1 país.
 - **Testes:** editar (adicionar/remover) grava certo; NÃO permite remover o próprio último país; evento registrado.
+
+
+---
+
+### BLK-BANCO-12 — O `/api/login` bem-sucedido deixa de constar como "desconhecido" na trilha (DEC-027)
+
+| Campo | Valor |
+|---|---|
+| **Criticidade** | **Alta** — mexe no middleware da trilha de acesso (roda em TODA requisição) e no handler de login; READ-ONLY sobre o M1. Toca só `web/server/app.py` (não `src/motor_expansao/db/`), então é **governança** no guard (`aprovado-humano`), não Crítica. |
+| **Prioridade** | Média — melhoria de auditoria; o corte da DEC-081 não depende dela. |
+| **Esteira** | código (`web/server/app.py` + teste em `tests/unit/test_piloto_web_login.py`) → PR próprio (conferência do Vinicius) |
+| **Quem** | qualquer um |
+| **Status** | Em andamento (iniciado em 03/11/2026) |
+| **Depende de** | — |
+| **Autonomia** | **manual (NÃO loop-safe)** — autenticação/trilha de acesso. |
+
+**O defeito.** A trilha da DEC-027 (`_registrar_acesso`/`_trilha_acesso`) grava cada requisição relevante com `usuario = acesso.login_da_requisicao(Remote-User/Remote-Email)`. O `POST /api/login` é **pré-autenticação** — fica fora do `@protegido`, sem `Remote-User` — e NÃO está em `_ROTAS_IGNORADAS` (`acesso_log.py`, que só exclui `/api/health` e `/api/verify`). Então todo login, inclusive o bem-sucedido, era gravado como **"desconhecido"** (`montar_evento` cai no `or "desconhecido"`), mesmo o sistema sabendo quem logou. Os EVENTOS do banco já estavam certos (`usuario.login` com `autor=id`); a lacuna era só a TRILHA.
+
+**O fix (2 linhas).** O handler de `login`, **só no sucesso** (depois do `raise negado` das recusas), carimba `request.state.login_na_trilha = acesso.login_da_requisicao(body.login)`. O `_registrar_acesso` passa a priorizar `getattr(request.state, "login_na_trilha", None)` sobre o header. Login recusado/inexistente não carimba e segue "desconhecido" (correto); requisição normal (gateada, com `Remote-User`) fica intocada.
+
+READ-ONLY sobre o M1. Não toca o gate de país, o apex, nem o contrato de eventos.
