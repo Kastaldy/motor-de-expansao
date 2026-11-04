@@ -78,6 +78,83 @@ paths:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
 
+  /aluguel-referencia:
+    get:
+      operationId: aluguelReferencia
+      tags: [analise]
+      summary: Aluguel de referencia por ponto e tipo de imovel (mercado anunciado)
+      description: >
+        Regua de aluguel da DEC-080 (Emenda 1): mediana do R$/m2 dos anuncios da base
+        imobiliaria (1.200 a 3.000 m2) para o tipo de imovel, no municipio do ponto. O
+        municipio sai da malha municipal; com menos de 5 anuncios na cidade, a mediana vem
+        da UF e, depois, do Brasil (`nivel` diz qual). E o mesmo numero que a aba
+        Viabilidade do site mostra. Nao mexe no POST /analisar, que segue honrando o
+        aluguel informado. Preco anunciado, nao o de contrato.
+      parameters:
+        - name: tipo
+          in: query
+          required: true
+          schema:
+            type: string
+            enum: [galpao, comercial, loja]
+          description: >
+            Valor bruto: galpao; comercial (laje corporativa - predio, conjunto, laje);
+            loja (comercial - salao, ponto de rua).
+          example: galpao
+        - name: lat
+          in: query
+          required: true
+          schema:
+            type: number
+            format: double
+          example: -22.9056
+        - name: lng
+          in: query
+          required: true
+          schema:
+            type: number
+            format: double
+          example: -47.0608
+      responses:
+        "200":
+          description: Regua encontrada.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AluguelReferenciaResponse"
+        "400":
+          description: Coordenada fora do pais ou da malha municipal (codigo coordenada_invalida).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Token ausente ou invalido.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: Nenhum recorte com 5 anuncios para o tipo, nem no Brasil (codigo sem_referencia).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "422":
+          description: tipo fora de galpao, comercial e loja, ou lat/lng ausente.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "503":
+          description: >
+            Instancia sem a base de anuncios (codigo aluguel_referencia_indisponivel). O resto
+            da API responde normalmente.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
   /analisar:
     post:
       summary: Analisa um ponto (Relatorio Pontual Censitario 1.0 km)
@@ -386,6 +463,39 @@ components:
             Arquivo que alimentou a curva. Viaja junto com os numeros porque o fallback
             muda o SIGNIFICADO da faixa sem mudar a escala.
           example: "base_calibracao_maduras.parquet (oficial)"
+
+    AluguelReferenciaResponse:
+      type: object
+      description: >
+        Regua de aluguel da DEC-080. Os mesmos campos da rota do site. Sem selo de confianca:
+        `nivel` e `n_anuncios` dizem de onde a mediana saiu, como fato.
+      required: [tipo, rs_m2, n_anuncios, nivel, uf, municipio]
+      properties:
+        tipo:
+          type: string
+          enum: [galpao, comercial, loja]
+          example: galpao
+        rs_m2:
+          type: number
+          format: double
+          description: Mediana do R$/m2 dos anuncios do recorte.
+          example: 25.0
+        n_anuncios:
+          type: integer
+          example: 185
+        nivel:
+          type: string
+          enum: [municipio, uf, brasil]
+          description: Recorte usado, o primeiro com pelo menos 5 anuncios.
+          example: municipio
+        uf:
+          type: [string, "null"]
+          description: UF do recorte (null no nivel brasil).
+          example: SP
+        municipio:
+          type: [string, "null"]
+          description: Municipio do recorte (so no nivel municipio).
+          example: Campinas
 
     AnalisarResponseJSON:
       type: object

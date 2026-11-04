@@ -161,6 +161,10 @@ services:
       # comentario la'). Opcional, `:-`: vazia, o alcance de carro responde 503 em portugues
       # e o raio de 1 km e o de 2 km seguem iguais. Nunca cai em silencio para o raio de 1 km.
       MOTOR_ROTAS_URL: ${MOTOR_ROTAS_URL:-}
+      # Regua de aluguel da DEC-080 (Emenda 1): `GET /api/v1/aluguel-referencia` le o MESMO
+      # parquet de anuncios que o `web` usa na Viabilidade (mount :ro abaixo). Sem o arquivo
+      # no host, so' essa rota responde 503; o resto da API sobe e responde igual.
+      API_OPORTUNIDADES_PATH: "/app/data/oportunidades/viaveis.parquet"
     volumes:
       # O perfil do pais. Bind de ARQUIVO, e nao de diretorio, porque `/app/data` vem da
       # IMAGEM e so os subdiretorios abaixo sao montados — a RAIZ nao e mount, entao
@@ -181,6 +185,8 @@ services:
       - /opt/motor-expansao/data/staging:/app/data/staging:ro    # mercado/SAM + concorrentes/Ultra + crescimento (passo 4)
       - /opt/motor-expansao/data/ultra:/app/data/ultra:ro        # branding do PDF (opcional)
       - /opt/motor-expansao/concorrentes:/app/concorrentes:ro    # logos de pins (logo_<rede>.png)
+      # Base de anuncios do coletor, a mesma do `web` (DEC-080, Emenda 1). So' leitura.
+      - /opt/motor-expansao/data/oportunidades:/app/data/oportunidades:ro
     networks:
       - app_net
     security_opt:
