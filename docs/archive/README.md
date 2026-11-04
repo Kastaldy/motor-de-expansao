@@ -58,6 +58,9 @@ aponta para o que o substituiu.
   palavra por palavra: carimbos de data, a época do Streamlit, o "como era antes", incidentes já consertados,
   passos de instalação já feitos e o login do Brasil antes do corte do P19. O que vale hoje está no documento
   principal.
+- `vulnerabilidade_ma_contrato_historico.md` — trechos de história tirados do `docs/vulnerabilidade_ma_contrato.md`
+  em 03/11/2026, palavra por palavra: a versão e o diário das emendas de julho e agosto, premissas de julho que
+  caíram, frases de "como era antes" e correções que envelheceram. O que vale hoje está no documento principal.
 
 Removidos em 29/10/2026, por já estarem cobertos por outro documento (o git guarda o texto; para ler,
 `git log --all --full-history -- <caminho>`): `PRD.md`, `STATUS_ORQUESTRACAO.md`,
