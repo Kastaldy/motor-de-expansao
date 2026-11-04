@@ -16059,3 +16059,122 @@ anotava isso. O histórico canônico da página de Conclusão é o §7 de
 - Os trechos do `docs/relatorio_pontual_censitario.md` que ainda negavam isso foram corrigidos na
   higiene de 2026-10-29 (cartão t-392 e contradições c-04 e c-05).
 - Achado na conferência da higiene dos docs de 2026-10-29 (achado a-07).
+
+---
+
+### BLK-BANCO-07 — `/api/login` público sem limite de volume: aceitar ou limitar
+
+| Campo | Valor |
+|---|---|
+| **Criticidade** | **Alta** — a superfície pública de login depois do corte; READ-ONLY sobre o M1. |
+| **Prioridade** | Baixa — piloto de 20 pessoas; decidir antes do corte ou logo depois. |
+| **Esteira** | código (`web/server/app.py` + teste em `tests/unit/test_piloto_web_login.py`) → PR próprio (conferência do Vinicius) |
+| **Quem** | qualquer um |
+| **Status** | **Feito** — PR #516 (`952de02`), mergeado 04/11/2026 e **em produção** (web/web_ar `952de023`, 04/11 tarde). Decisão do Vinicius: semáforo no Argon2id, default 6. |
+| **Depende de** | — |
+| **Autonomia** | **manual (NÃO loop-safe)** |
+
+Depois do corte, o `/api/login` fica fora do `@protegido` do Caddy
+(`deploy/caddy/piloto-br.Caddyfile.template`) e o `regulation` do Authelia sai do caminho do BR. A
+trava de 5 recusas em 15 min (`MAX_TENTATIVAS`/`JANELA_TENTATIVAS_MIN`, em
+`src/motor_expansao/db/sessoes.py`) conta por CONTA: login inexistente não tranca nada e ainda paga
+uma verificação Argon2id de 64 MiB (`MEMORIA_KIB`, em `src/motor_expansao/db/senhas.py`), e não há
+limite por IP nem de concorrência no processo (a DEC-067 declara a falta da camada por IP). Que uma
+rajada de logins inexistentes esgote a memória é inferência, não medida. **Opções:** aceitar, pôr
+um semáforo no Argon2 ou um rate-limit na borda.
+
+**DECIDIDO (Vinicius, 04/11): semáforo no Argon2.** Medição (benchmark local, params reais de `senhas.py`): cada verificação custa **64 MiB + ~60 ms**, e o login INEXISTENTE paga o mesmo `ph.hash`. Pico linear medido: **32 concorrentes = 2077 MiB > `mem_limit` 2 GiB** do web (OOM); antes disso ~40 saturam o threadpool compartilhado (DoS geral). Um burst de ~32 (ou ~540 req/s) basta; sem limite por IP, a trava de 5/15 min não pega inexistente. **Fix:** `_SEM_LOGIN` (`threading.Semaphore`, env `MOTOR_LOGIN_MAX_CONCORRENTES`, default 6), NÃO-BLOQUEANTE no handler `login` — cheio → **503 imediato** (não segura a thread, não roda o Argon2); libera o slot no `finally` (sucesso e recusa). Pico cai para ~384 MiB, ~100 login/s (folga enorme para o piloto). O 503 é por CARGA, independe de a conta existir (não abre oráculo). Rate-limit por IP na borda fica como defesa adicional futura (não feito aqui). READ-ONLY sobre o M1.
+
+---
+
+### BLK-BANCO-10 — Cadastro de usuário passa a atribuir país (Fase 1 do P4 da DEC-081)
+
+| Campo | Valor |
+|---|---|
+| **Criticidade** | **Alta** — mexe no cadastro que alimenta o gate de país (autenticação); READ-ONLY sobre o M1. Toca `src/motor_expansao/db/usuarios.py`: no mesmo PR sobe para **Crítica** pelo guard. |
+| **Prioridade** | **Topo** — estanca um lockout silencioso ATIVO (abaixo). |
+| **Esteira** | código (`src/motor_expansao/db/usuarios.py` + `web/server/app.py` + `web/src/`) → testes → PR próprio (conferência do Vinicius antes de abrir) |
+| **Quem** | qualquer um; decisões de produto já cravadas pelo Vinicius (03/11/2026) |
+| **Status** | **Feito** — PR #507 (`bef0c780`), Fase 1 do P4; mergeado 03/11/2026 e **em produção** (web `952de023`, 04/11). |
+| **Depende de** | — (o `GRANT INSERT` do `app` em `usuario_paises` já está aplicado na VPS desde 03/11/2026) |
+| **Autonomia** | **manual (NÃO loop-safe)** — autenticação/gate de país e banco. |
+
+**O bug (ATIVO desde 27/10/2026).** Com o login próprio do BR no ar, todo usuário criado pelo painel de Acessos nasce com ZERO países: `usuarios.criar` (`src/motor_expansao/db/usuarios.py:496-565`) grava só na tabela `usuarios`, nunca em `usuario_paises` — o único INSERT nessa tabela em todo o motor é o backfill da migration (`src/motor_expansao/db/migracoes/021-usuario-paises.sql:30`). O gate é fail-closed (`web/server/app.py:802` e `:6307`; conjunto vazio em `rbac.py:135`/`sessoes.py:332`), então a pessoa loga e é barrada em tudo (403) no host do país e vê "sem acesso" no apex — enquanto a tela de criação responde "sucesso" e só avisa do passo do Authelia. Onboarding de gente nova quebra sem erro visível. Estudo em 03/11/2026 (workflow de 5 agentes sobre `origin/main`): escala MÉDIA, backend-centrada.
+
+**Decisões de produto cravadas por Vinicius (03/11/2026):** (1) o admin ESCOLHE os países no cadastro, com o país do processo (`PERFIL.pais`) LIGADO por padrão; (2) multipaís pela tela (pode marcar mais de um); (4) o seletor COBRE o `AR` (data-driven), aposentando o seed AR manual. A decisão (3) — editar/remover país — é a Fase 2 (BLK-BANCO-11), porque exige `DELETE`.
+
+**Escopo (Fase 1 — só CRIAR com país):**
+- **Backend / modelo:** campo `paises: list[str]` em `UsuarioNovoIn` (`web/server/app.py:5551-5564`).
+- **Backend / função:** parâmetro `paises` em `usuarios.criar` (`:496`) e, DENTRO do `with transacao` já existente (`:529`, após o `RETURNING id_usuario` em `:546`), um INSERT em `usuario_paises` por país — criação+país atômicos, mesma disciplina do evento (`:550-556`).
+- **Backend / rota:** `acessos_usuarios_criar` (`web/server/app.py:5823`) repassa os países; default = `[PERFIL.pais]` (disponível em `app.py:168/172`) quando o corpo não trouxer.
+- **Backend / validação fail-closed:** RECUSAR lista de países vazia (vazio = o próprio bug) e validar cada sigla contra `perfil._RE_PAIS` (`perfil.py:76`) / o CHECK `chk_usuario_paises_sigla` (`021:19`); traduzir no `_erro_de_usuarios` (`app.py:5708`).
+- **Backend / fonte data-driven:** expor a lista de siglas/rótulos válidos ao painel (como `perfis` já vem no `AdminUsuariosPayload`), sem hardcode por sigla (fio de alarme DEC-047).
+- **Frontend:** seletor multi-país no formulário de criar (`web/src/components/PainelUsuarios.tsx`), campo `paises: string[]` em `AdminUsuarioNovo` (`types.ts:2644`) ligado ao `POST`; país do processo pré-marcado; botão "Criar" exige ≥1 país.
+- **Testes:** criar pelo painel grava linha em `usuario_paises`; recusa lista vazia; regressão do gate (usuário criado NÃO nasce com zero países); contrato DEC-047 (seletor data-driven, sem `if pais ==`).
+
+Guardrails: READ-ONLY sobre o M1; conferência do Vinicius antes de abrir o PR; PR crítico exige `critica-aprovada` + `aprovado-humano` de não-autor.
+
+---
+
+### BLK-BANCO-11 — Editar/remover países de usuário + GRANT DELETE no §3 (Fase 2 do P4 da DEC-081)
+
+| Campo | Valor |
+|---|---|
+| **Criticidade** | **Alta** — edição do gate de país + privilégio de banco (`DELETE`); cruza o repo `banco-de-reservas`. Toca `src/motor_expansao/db/`: no mesmo PR sobe para **Crítica** pelo guard. |
+| **Prioridade** | Média — depois da Fase 1. |
+| **Esteira** | PR no `banco-de-reservas` (§3 ganha `DELETE`) → `GRANT DELETE` na VPS (manual, Vinicius) → código de edição → testes → PR próprio |
+| **Quem** | qualquer um; o `GRANT` na VPS é manual do Vinicius |
+| **Status** | **Feito** — PR #509 (`07dd4c34`), Fase 2 do P4; GRANT DELETE aplicado em prod 03/11; mergeado e **em produção** (web `952de023`, 04/11). |
+| **Depende de** | BLK-BANCO-10 (Fase 1) + merge do §3 no `banco-de-reservas` |
+| **Autonomia** | **manual (NÃO loop-safe)** — autenticação, privilégio de banco, cross-repo. |
+
+**Pré-requisito de banco (a diferença da Fase 1).** Remover um país usa `DELETE`, que o `sql/papeis-e-privilegios.md` §3 do `banco-de-reservas` HOJE NEGA ao `app` (linha 134: `usuario_paises | SELECT, INSERT, UPDATE | ... Sem DELETE`). A Fase 2 começa por um PR lá acrescentando `DELETE` ao §3 (GRANT da linha 145 e tabela de conferência da linha 612), depois `GRANT DELETE ON usuario_paises TO app` aplicado na VPS (manual, molde do realinhamento de 03/11/2026).
+
+**Escopo (editar/remover país de usuário existente):**
+- **Backend / função:** `definir_paises`/`adicionar_pais`/`remover_pais` em `usuarios.py`, com INSERT/DELETE em `usuario_paises` dentro de transação e evento na MESMA transação (molde de `_aplicar_perfil`/`_aplicar_ativo`, `usuarios.py:358-401`).
+- **Backend / trava anti-auto-lockout:** `_recusar_auto_alvo` análogo (`usuarios.py:325`) — ninguém remove o próprio último país e se tranca para fora.
+- **Backend / endpoint:** `PATCH /api/acessos/usuarios/{id}/paises` (ou estender `UsuarioAdminIn`, `app.py:5544`), sob o gate duplo do painel (allowlist `_exigir_admin_acessos` `app.py:5450` + capacidade `acesso.usuario_gerir`).
+- **Backend / listagem:** agregar os países de cada pessoa em `SQL_LISTAR` (`usuarios.py:104`) e `UsuarioAdmin.como_json` (`usuarios.py:276`), para a tela mostrar o estado atual.
+- **Backend / eventos:** `usuario.pais_atribuido`/`usuario.pais_removido` nas constantes `EVENTO_*` e no `docs/eventos_contrato.md`.
+- **Frontend:** editar países por linha no `PainelUsuarios.tsx`, coluna/chips com os países atuais, confirmação (`confirmacao-admin.ts`) do de-para, validação de ≥1 país.
+- **Testes:** editar (adicionar/remover) grava certo; NÃO permite remover o próprio último país; evento registrado.
+
+---
+
+### BLK-BANCO-12 — O `/api/login` bem-sucedido deixa de constar como "desconhecido" na trilha (DEC-027)
+
+| Campo | Valor |
+|---|---|
+| **Criticidade** | **Alta** — mexe no middleware da trilha de acesso (roda em TODA requisição) e no handler de login; READ-ONLY sobre o M1. Toca só `web/server/app.py` (não `src/motor_expansao/db/`), então é **governança** no guard (`aprovado-humano`), não Crítica. |
+| **Prioridade** | Média — melhoria de auditoria; o corte da DEC-081 não depende dela. |
+| **Esteira** | código (`web/server/app.py` + teste em `tests/unit/test_piloto_web_login.py`) → PR próprio (conferência do Vinicius) |
+| **Quem** | qualquer um |
+| **Status** | **Feito** — PR #512 (`21a7b65f`), mergeado e **em produção** (web `952de023`, 04/11). |
+| **Depende de** | — |
+| **Autonomia** | **manual (NÃO loop-safe)** — autenticação/trilha de acesso. |
+
+**O defeito.** A trilha da DEC-027 (`_registrar_acesso`/`_trilha_acesso`) grava cada requisição relevante com `usuario = acesso.login_da_requisicao(Remote-User/Remote-Email)`. O `POST /api/login` é **pré-autenticação** — fica fora do `@protegido`, sem `Remote-User` — e NÃO está em `_ROTAS_IGNORADAS` (`acesso_log.py`, que só exclui `/api/health` e `/api/verify`). Então todo login, inclusive o bem-sucedido, era gravado como **"desconhecido"** (`montar_evento` cai no `or "desconhecido"`), mesmo o sistema sabendo quem logou. Os EVENTOS do banco já estavam certos (`usuario.login` com `autor=id`); a lacuna era só a TRILHA.
+
+**O fix (2 linhas).** O handler de `login`, **só no sucesso** (depois do `raise negado` das recusas), carimba `request.state.login_na_trilha = acesso.login_da_requisicao(body.login)`. O `_registrar_acesso` passa a priorizar `getattr(request.state, "login_na_trilha", None)` sobre o header. Login recusado/inexistente não carimba e segue "desconhecido" (correto); requisição normal (gateada, com `Remote-User`) fica intocada.
+
+READ-ONLY sobre o M1. Não toca o gate de país, o apex, nem o contrato de eventos.
+
+---
+
+### BLK-BANCO-13 — A trilha (DEC-027) mostra QUEM acessou a página pública, em vez de "desconhecido"
+
+| Campo | Valor |
+|---|---|
+| **Criticidade** | **Alta** — mexe no `_portao_de_sessao` (middleware que roda em TODA requisição) e lê a sessão; READ-ONLY sobre o M1. Toca só `web/server/app.py` → **governança** no guard (`aprovado-humano`), não Crítica. |
+| **Prioridade** | Média — auditoria; o funil/produto não dependem. |
+| **Esteira** | código (`web/server/app.py` + teste em `tests/unit/test_piloto_web_portao_sessao.py`) → PR próprio (conferência do Vinicius) |
+| **Quem** | qualquer um |
+| **Status** | **Feito** — PR #514 (`be702ac7`), mergeado e **em produção** (web `952de023`, 04/11). |
+| **Depende de** | BLK-BANCO-12 (mesmo tema de trilha; já em produção) |
+| **Autonomia** | **manual (NÃO loop-safe)** — autenticação/trilha de acesso. |
+
+**O defeito.** Follow-up do BLK-BANCO-12. A *página* do piloto (`GET /`, `/entrar.html`) é **pública** — não exige sessão, senão o navegador não baixaria o formulário de login. O `_portao_de_sessao` só carimba o `Remote-User` (identidade da sessão) nas rotas **gateadas** (`/api/*` não-públicas); nas públicas retornava antes de carimbar. Então a trilha registrava o acesso à página como **"desconhecido"** — até para quem já estava logado. As ações `/api/*` já saíam com o nome certo; a lacuna era o carregamento da página.
+
+**O fix.** No ramo de rota pública do portão, **só nas rotas que a trilha audita** (`acesso_log.relevante` — assets/estáticos não entram, não pagam a consulta), se houver cookie e sessão válida, carimba o `Remote-User` da sessão. **Best-effort:** rota pública NUNCA barra nem vira 500/503 por isto (banco fora, fila cheia e cookie inválido/expirado seguem como visitante "desconhecido", que é o correto). Decisão do Vinicius (04/11): **opção B** (mostrar o nome) sobre a opção A (tirar o boot da trilha).
+
+READ-ONLY sobre o M1. Não toca o gate de país, o apex, nem o contrato de eventos.
