@@ -816,3 +816,59 @@ def test_trilha_requisicao_normal_usa_o_remote_user(monkeypatch: pytest.MonkeyPa
     )
     assert len(capturados) == 1
     assert capturados[0]["usuario"] == "vinicius"
+
+
+# --------------------------------------------------------------------------------------
+# BLK-BANCO-07: semaforo do Argon2id -- uma rajada de logins nao esgota memoria/threadpool
+# --------------------------------------------------------------------------------------
+# Medido: cada verificacao custa 64 MiB; ~32 concorrentes estouram o `mem_limit` de 2 GiB do
+# web (OOM) e saturam o threadpool. O semaforo NAO-BLOQUEANTE recusa o excedente com 503 SEM
+# pagar o Argon2, e libera o slot nos dois caminhos (sucesso e recusa).
+
+
+def _todos_os_slots_do_login_livres() -> bool:
+    """True se os LOGIN_MAX_CONCORRENTES slots do semaforo estao livres (nada vazou)."""
+    pegos = [pilot._SEM_LOGIN.acquire(blocking=False) for _ in range(pilot.LOGIN_MAX_CONCORRENTES)]
+    for p in pegos:
+        if p:
+            pilot._SEM_LOGIN.release()
+    return all(pegos)
+
+
+def test_login_sob_carga_recusa_503_sem_rodar_o_argon2(
+    ligado: None, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Semaforo CHEIO: o login recusa com 503 de IMEDIATO, sem pagar a verificacao de 64 MiB --
+    e' o que impede a rajada de esgotar memoria e threadpool. A senha esta' CERTA de proposito:
+    sem o semaforo este login ENTRARIA, entao o 503 so' pode vir da protecao de carga."""
+    verificacoes: list[Any] = []
+    _preparar(monkeypatch, credencial=_credencial(), confere=True, verificacoes=verificacoes)
+    pegos = [pilot._SEM_LOGIN.acquire(blocking=False) for _ in range(pilot.LOGIN_MAX_CONCORRENTES)]
+    try:
+        assert all(pegos), "nao esgotou o semaforo no setup do teste"
+        with pytest.raises(pilot.HTTPException) as caiu:
+            pilot.login(pilot.LoginIn(login="vinicius", senha="a-senha-certa"), _req())
+        assert caiu.value.status_code == 503
+        assert verificacoes == [], "o Argon2 rodou mesmo com o semaforo cheio"
+    finally:
+        for p in pegos:
+            if p:
+                pilot._SEM_LOGIN.release()
+
+
+def test_login_bem_sucedido_libera_o_slot(ligado: None, monkeypatch: pytest.MonkeyPatch) -> None:
+    """O slot volta apos o login (sucesso): nao vaza capacidade a cada entrada."""
+    _preparar(monkeypatch, credencial=_credencial(), confere=True)
+    resposta = pilot.login(pilot.LoginIn(login="vinicius", senha="a-senha-certa"), _req())
+    assert resposta.status_code == 200
+    assert _todos_os_slots_do_login_livres(), "o semaforo nao foi liberado apos o sucesso"
+
+
+def test_login_recusado_tambem_libera_o_slot(ligado: None, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Senha errada tambem solta o slot (o `finally` cobre os dois caminhos) -- senao uma rajada
+    de senhas erradas drenaria o semaforo e travaria os logins legitimos seguintes."""
+    _preparar(monkeypatch, credencial=_credencial(), confere=False)
+    with pytest.raises(pilot.HTTPException) as caiu:
+        pilot.login(pilot.LoginIn(login="vinicius", senha="errada"), _req())
+    assert caiu.value.status_code == 401
+    assert _todos_os_slots_do_login_livres(), "o semaforo nao foi liberado apos a recusa"
