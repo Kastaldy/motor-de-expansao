@@ -5322,3 +5322,6 @@ Menores, no código do banco:
 
 - BLK-BANCO-13 (concluído 2026-11-04) — ver tasks/completed.md
 
+
+- BLK-BANCO-14 (concluído 2026-11-04) — ver tasks/completed.md
+
