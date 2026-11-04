@@ -8727,7 +8727,7 @@ def _payload_ponto(
 
     hex_id = h3.latlng_to_cell(lat, lng, 7)  # 7 = H3_RESOLUTION do M1, LIDO
 
-    # Vizinhança para o mini-mapa. k=2 (19 células) e não o k=5 do PDF: aqui é
+    # Vizinhança para o mini-mapa. k=2 (19 células) e não o k=5/7 do PDF: aqui é
     # enquadramento de tela, não choropleth de relatório.
     vizinhos: list[dict[str, Any]] = []
     hexes_df = _hexes_vizinhos_do_ponto(lat, lng, cfg, k=2)
@@ -13794,7 +13794,8 @@ def _gerar_relatorio_pontual_pdf(
     )
 
     ultra_dir = ULTRA_DIR if ULTRA_DIR.is_dir() else None
-    # Disco de hexes p/ o choropleth Residual Fitness do slide-hero (grid_disk k=5).
+    # Disco de hexes p/ o choropleth Residual Fitness do slide-hero (grid_disk k=7, que o
+    # mapa recorta para k=5 ou 7 conforme o enquadramento).
     # None -> a camada residual cai no fallback textual (nao derruba o PDF).
     hexes_residual = _residual_hexes_do_ponto(lat, lng, STAGING_DIR)
 

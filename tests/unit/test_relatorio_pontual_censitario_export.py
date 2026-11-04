@@ -1162,6 +1162,24 @@ def test_pdf_nao_contem_a_sigla_nd_em_lugar_nenhum(tmp_path):
     assert TEXTO_SEM_DADO.encode("latin-1") in pdf
 
 
+def test_cards_de_renda_sem_dado_nao_imprimem_o_cifrao(tmp_path):
+    """Sem renda, o card mostra so "Não disponível", sem o "R$ " na frente.
+
+    Os dois cards de renda dos Big Numbers montavam o texto com `"R$ " + _format_number(...)`,
+    e o formatador devolve `TEXTO_SEM_DADO` quando falta o dado: o PDF saia com
+    "R$ Não disponível". Mesmo `result` minimo do teste acima, que cai no caminho "sem dado".
+    """
+    result = {"lat": -23.55, "lng": -46.63, "nome_municipio": "SAO PAULO", "uf": "SP", "raio_km": 1.5}
+    pdf = gerar_pdf_relatorio_pontual_classico(result, None, ultra_dir=tmp_path)
+
+    # O card quebra o texto em duas linhas ("R$ Não" / "disponível"), então a busca é pelo
+    # começo e não pela frase inteira: foi assim que a primeira versão deste teste passou vazia.
+    assert re.search(rb"R\$ N\xe3o", pdf) is None, (
+        "um card de renda imprimiu o cifrão na frente do texto de dado ausente"
+    )
+    assert TEXTO_SEM_DADO.encode("latin-1") in pdf
+
+
 # ---------------------------------------------------------------------------
 # AVISO DE ORIGEM CENTROIDE na capa/Realizacao do PDF
 #
