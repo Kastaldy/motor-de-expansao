@@ -30,6 +30,8 @@ export function passoPico(atual: number, delta: -1 | 1): number {
   return Math.min(PICO_RAMPA_MAX, Math.max(PICO_RAMPA_MIN, atual + delta))
 }
 
+import type { PicoPadrao } from './types'
+
 /** Campos do payload que esta lib lê (subconjunto de `PremissasViabilidade`). */
 export interface PremissasRampa {
   maturacao_meses: number
@@ -38,6 +40,8 @@ export interface PremissasRampa {
   mes_pico_rampa?: number | null
   /** Mês de operação do regime pleno (a DRE de steady-state); servido pelo motor. */
   mes_referencia_steady?: number | null
+  /** De onde veio o padrão do pico (emenda de 2026-10-29 da DEC-078). */
+  pico_padrao?: PicoPadrao | null
 }
 
 /** Forma servida pelo payload; ausente (backend anterior à DEC-078) = a rampa linear. */
@@ -85,7 +89,46 @@ export function ajudaDaRampa(p: PremissasRampa | null | undefined): string {
   if (p && formaDoPayload(p) !== 'curva_uni03') {
     return `O servidor usou a rampa linear de ${p.maturacao_meses} meses. ${RECALCULE}`
   }
-  return `Meses desde a inauguração até a demanda madura. ${RECALCULE}`
+  const origem = origemDoPadrao(p?.pico_padrao)
+  return `${origem ?? 'Meses desde a inauguração até a demanda madura.'} ${RECALCULE}`
+}
+
+/**
+ * De onde veio o padrão do pico, numa frase curta (a ajuda continua sendo UMA linha). `null`
+ * sem medição publicada: vale o texto de antes. Emenda de 2026-10-29 da DEC-078.
+ */
+export function origemDoPadrao(pp: PicoPadrao | null | undefined): string | null {
+  if (!pp || pp.origem === 'padrao') return null
+  if (pp.origem === 'estado' && pp.uf) {
+    const n = pp.unidades_maduras
+    return n
+      ? `Padrão de ${pp.uf}: ${rotuloPico(pp.meses)}, de ${n} unidades maduras.`
+      : `Padrão de ${pp.uf}: ${rotuloPico(pp.meses)}.`
+  }
+  return pp.uf
+    ? `Padrão da rede: ${rotuloPico(pp.meses)} (${pp.uf} tem menos de 5 maduras).`
+    : `Padrão da rede: ${rotuloPico(pp.meses)}.`
+}
+
+const MESES_CURTOS = ['jan', 'fev', 'mar', 'abr', 'mai', 'jun', 'jul', 'ago', 'set', 'out', 'nov', 'dez']
+
+/** "2026-09" -> "set/2026"; `null` em qualquer outro formato. */
+export function mesCurto(competencia: string | null | undefined): string | null {
+  const m = /^(\d{4})-(\d{2})$/.exec(competencia ?? '')
+  if (!m) return null
+  const i = Number(m[2]) - 1
+  return i >= 0 && i < 12 ? `${MESES_CURTOS[i]}/${m[1]}` : null
+}
+
+/** A regra do padrão por estado, para a nota metodológica. Vazia sem medição publicada. */
+export function regraDoPadrao(pp: PicoPadrao | null | undefined): string {
+  if (!pp || pp.origem === 'padrao') return ''
+  const quando = mesCurto(pp.competencia_corte)
+  return (
+    ' O pico padrão é o do estado do ponto quando ele tem 5 ou mais unidades maduras: os ' +
+    '10 meses da rede mais a diferença medida no estado, com peso pelo número de unidades, ' +
+    `revistos todo mês e no máximo 1 mês por vez${quando ? ` (medição até ${quando})` : ''}.`
+  )
 }
 
 /**
@@ -231,7 +274,7 @@ export function notaDaRampa(
       'medida em unidades que abriram com agregador: sem agregador, tende a ser otimista. ' +
       'O faturamento segue alunos × ticket: o ticket menor dos ' +
       'primeiros meses (promoções) não é modelado, e por isso o caixa do 1º ano tende a ' +
-      `sair otimista. ${efeitoDaRampaNoSteady(p)}`
+      `sair otimista. ${efeitoDaRampaNoSteady(p)}${regraDoPadrao(p.pico_padrao)}`
     )
   }
   return (
