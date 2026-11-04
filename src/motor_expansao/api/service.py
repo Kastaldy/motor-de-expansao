@@ -1366,8 +1366,10 @@ def gerar_pdf_ponto(
         )
 
         cenario = ViabilidadeIn(lat=lat, lng=lng, **viabilidade_inputs.model_dump(exclude_none=True))
+        # `uf` e' o do `_resolver_e_carregar` acima: o padrao do pico por estado (emenda de
+        # 2026-10-29 da DEC-078) sai igual ao do piloto para o mesmo ponto.
         viabilidade_pdf = montar_payload_para_pdf(
-            cenario, staging_dir=settings.staging_dir, setores_df=setores_df
+            cenario, staging_dir=settings.staging_dir, setores_df=setores_df, uf=uf
         )
 
     # DEC-074: com recorte, o gerador recebe `recorte` (rotulos do recorte e o fator que

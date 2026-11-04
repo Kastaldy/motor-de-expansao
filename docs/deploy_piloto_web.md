@@ -12,9 +12,7 @@ há app paralelo.
 
 > **Guardrails.** Execução no VPS é **sempre passo humano, comando a comando** (CLAUDE.md §6).
 > Deploy é **por digest imutável**, nunca `:latest` cego. O piloto é **READ-ONLY sobre o M1**
-> (só lê os parquets montados `:ro`). **Rótulo "preliminar":** os números da aba Viabilidade
-> ainda estão em calibração vs a planilha oficial (folha via Fopag, balcão/agregadores
-> separados e alavancagem pendentes — 2º passo) e a UI já avisa isso.
+> (só lê os parquets montados `:ro`).
 
 Arquitetura: **um container** serve tudo. O `web/server/app.py` monta o `dist/` (build do
 Vite) na raiz via `StaticFiles` e expõe a API em `/api/*` na mesma porta `8899`. O Caddy só
@@ -493,7 +491,7 @@ aplicada não volta com a imagem (§8 do `docs/banco_deploy.md`).
       (`/entrar.html`). Confira com `grep '^MOTOR_AUTENTICACAO_PROPRIA=' .env` qual esperar — ver
       `docs/archive/repasse_corte_p19.md`.
 - [ ] Mapa Territorial carrega uma UF (a 1ª leitura carrega a partição inteira, demora).
-- [ ] Viabilidade calcula um ponto e mostra o **banner "preliminar"**.
+- [ ] Viabilidade calcula um ponto e mostra o payback e o VPL.
 - [ ] Relatório Pontual (PDF) gera sem erro (basemap/contextily presentes).
 - [ ] Tooltip de renda domiciliar mostra valor **municipal** (não o fallback nacional) —
       desde a E0 da renda não há mais queda silenciosa no nacional: sem os 2 parquets de uplift (§2) o container
