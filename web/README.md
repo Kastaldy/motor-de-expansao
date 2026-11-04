@@ -213,8 +213,8 @@ Três consequências que aparecem na tela:
   o faturamento já é o maduro. O que muda é a rampa e tudo que deriva dela —
   break-even, payback, TIR, VPL.
 
-O **nível** (17%) segue pendente de gate da controladoria (o BLK-VIAB-11 apurou 25-26%
-em 6 DREs reais); a **estrutura** (fixa) está decidida. Detalhe em
+O **nível** (17%) foi decidido pelo Felipe em 30/09/2026 e fica em 17% (o BLK-VIAB-11 tinha apurado 25-26%
+em 6 DREs reais); a **estrutura** (fixa) também está decidida. Detalhe em
 `PREMISSAS_VIABILIDADE.md` §4.1.
 
 ### Anuidade

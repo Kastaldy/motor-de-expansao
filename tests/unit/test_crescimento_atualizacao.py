@@ -27,7 +27,7 @@ from motor_expansao.crescimento import aviso, caged, constantes, validar
 from motor_expansao.crescimento.atualizar import ORDEM_SCRIPTS
 
 RAIZ_REPO = Path(__file__).resolve().parents[2]
-DIR_CADEIA = RAIZ_REPO / "data" / "reports" / "crescimento"
+DIR_CADEIA = RAIZ_REPO / "scripts" / "crescimento"
 
 
 # ---------------------------------------------------------------- validador --

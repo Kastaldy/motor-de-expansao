@@ -228,9 +228,10 @@ def test_healthcheck_expoe_subcomando_agregadores() -> None:
 def test_healthcheck_agregadores_tem_limiar_configuravel() -> None:
     """O limiar é de PRODUTO (cadência do cron), não de código: tem de sair por env."""
     texto = HEALTHCHECK.read_text(encoding="utf-8")
-    assert 'AGREGADOR_MAX_DIAS="${MONITOR_AGREGADOR_MAX_DIAS:-9}"' in texto
+    assert 'AGREGADOR_MAX_DIAS="${MONITOR_AGREGADOR_MAX_DIAS:-16}"' in texto
     assert 'SNAPSHOTS_DIR="${MONITOR_SNAPSHOTS_DIR:-' in texto
-    assert "AGREGADORES=(wellhub totalpass)" in texto
+    # O TotalPass, arquivado na VPS (emenda 3 da DEC-039), acusaria FAIL sempre; volta com a coleta.
+    assert "AGREGADORES=(wellhub)" in texto
     # Uma chave de estado POR FONTE: a falha de um agregador não pode silenciar o alerta do outro.
     assert 'report "agregador_$f" FAIL' in texto
     assert 'report "agregador_$f" OK ""' in texto
@@ -365,34 +366,43 @@ def test_wrapper_e_runbook_citam_a_mesma_retencao() -> None:
 
 
 def test_healthcheck_limiar_separa_rodada_da_semana_de_uma_rodada_perdida() -> None:
-    """O limiar tem de separar 3 dias (rodada da terça) de 10 (rodada perdida).
+    """O limiar tem de separar 10 dias (foto de domingo em dia) de 17 (foto perdida).
 
     A régua real do `healthcheck_vps.sh` deriva a idade da SEGUNDA da semana ISO da partição
-    (`epoch_da_semana_iso`) e compara `idade_dias > AGREGADOR_MAX_DIAS`. Com o check na quinta
-    12:00 UTC: partição da própria semana -> 3 dias; uma rodada perdida -> 10. A faixa que separa
-    é [3, 9] inteira, e 9 é o TETO — o mais tolerante a uma rodada que escorregue dentro da semana.
-    O `45` herdado deixava passar até 6 rodadas perdidas antes do primeiro FAIL.
+    (`epoch_da_semana_iso`) e compara `idade_dias > AGREGADOR_MAX_DIAS`. A foto sai no lote de
+    domingo (emenda 3 da DEC-039), e o domingo é o ÚLTIMO dia da semana ISO. Com o check na quinta
+    12:00 UTC: foto do domingo anterior -> 10 dias (10 d 12 h, truncado); uma foto perdida -> 17.
+    A faixa que separa é [10, 16] inteira, e 16 é o TETO — o mais tolerante a uma rodada que
+    escorregue. O `9` da emenda 2 era o teto da grade da terça ([3, 9]) e, com a foto no domingo,
+    acusava FAIL toda semana [emenda 5 da DEC-039]. As idades saem do calendário, não de números
+    fixos: foram os números fixos da terça que deixaram o defeito passar.
     """
     import re
+    from datetime import UTC, datetime, timedelta
 
     texto = HEALTHCHECK.read_text(encoding="utf-8")
     achado = re.search(r'AGREGADOR_MAX_DIAS="\$\{MONITOR_AGREGADOR_MAX_DIAS:-(\d+)\}"', texto)
     assert achado is not None, "o default do limiar sumiu do healthcheck"
     limiar = int(achado.group(1))
 
-    idade_com_a_rodada_da_semana = 3
-    idade_com_uma_rodada_perdida = 10
+    foto = datetime(2026, 11, 1, 6, 0, tzinfo=UTC)  # domingo, lote das 06:00 UTC
+    segunda_da_semana = (foto - timedelta(days=foto.isoweekday() - 1)).replace(hour=0, minute=0)
+    check = datetime(2026, 11, 5, 12, 0, tzinfo=UTC)  # quinta seguinte, 12:00 UTC
+    idade_com_a_rodada_da_semana = (check - segunda_da_semana) // timedelta(days=1)
+    semana_anterior = segunda_da_semana - timedelta(weeks=1)
+    idade_com_uma_rodada_perdida = (check - semana_anterior) // timedelta(days=1)
+    assert (idade_com_a_rodada_da_semana, idade_com_uma_rodada_perdida) == (10, 17)
     assert idade_com_a_rodada_da_semana <= limiar, "o limiar acusaria FAIL na semana em que rodou"
     assert idade_com_uma_rodada_perdida > limiar, "o limiar não acusa uma rodada perdida"
-    assert limiar == 9, "9 é o teto da faixa que separa; mudar exige nova decisão"
+    assert limiar == 16, "16 é o teto da faixa que separa; mudar exige nova decisão"
 
 
 def test_healthcheck_dos_agregadores_e_agendado_na_quinta() -> None:
-    """`0 12 * * 4`: alerta 2 dias depois da terça e deixa sexta livre para a retentativa.
+    """`0 12 * * 4`: com a foto no domingo, a quinta acusa uma foto perdida 4 dias depois e antes
+    da coleta do sábado seguinte.
 
-    Com o check na segunda (`0 12 * * 1`, a grade da premissa mensal), a falha da terça só seria
-    vista na segunda seguinte — 6 dias depois, já fora da semana ISO em que a observação podia ser
-    salva.
+    A segunda (`0 12 * * 1`) é a grade da premissa mensal, que a emenda 2 aposentou. A emenda 5
+    considerou voltar a ela e preferiu mudar só o limiar, mantendo a linha de cron da VPS.
     """
     runbook = (ROOT / "docs" / "infra_producao.md").read_text(encoding="utf-8")
     assert "0 12 * * 4" in runbook, "o runbook não agenda o healthcheck dos agregadores na quinta"

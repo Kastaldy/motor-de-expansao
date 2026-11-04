@@ -1,5 +1,10 @@
 # Outputs oficiais do M1
 
+> **Em poucas palavras**
+> - **Do que trata:** Os arquivos do ranking oficial de onde expandir, que pontua cada hexágono do mapa (área de uns 5 km²): o papel de cada arquivo e o significado dos campos.
+> - **Quando ler:** Ao escolher de qual arquivo ou campo tirar um número do ranking oficial para um painel, relatório ou análise.
+> - **Atenção:** Números oficiais saem só dos arquivos listados como oficiais. O arquivo enriquecido que acelera o site é derivado: junta outras análises e não substitui o ranking oficial.
+
 Contrato curto e canonico dos artefatos do fechamento nacional do M1.
 
 ## Artefatos

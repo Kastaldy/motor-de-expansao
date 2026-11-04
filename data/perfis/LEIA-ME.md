@@ -1,6 +1,11 @@
 # `perfil.json` — o país deixa de ser constante e passa a ser declarado
 
-- Data: 2026-08-31 · Escopo: Bloco A da §5.0 / BLK-INTL-02 de `docs/plano_multipais.md`
+> **Em poucas palavras**
+> - **Do que trata:** A configuração de cada país: o mesmo programa atende Brasil e Argentina, e um arquivo dá a cada site sua moeda, as réguas da nota e os avisos.
+> - **Quando ler:** Para ver o que muda entre Brasil e Argentina, o que um país novo exige ou por que um site não subiu.
+> - **Atenção:** Os números da Argentina pedem cautela: a renda é estimada, com margem de erro de cerca de 15%, e a viabilidade de lá não serve para fechar contrato.
+
+- Data: 2026-08-31 · Escopo: Bloco A da §5.0 / BLK-INTL-02 de `docs/archive/plano_multipais.md`
 - Arquivos: `data/perfis/AR/perfil.json` (Argentina, preenchida) e `data/perfis/BR/perfil.json` (Brasil, transcrito do código)
 - Este documento explica **como o arquivo é usado**, **o que é obrigatório**, **o que acontece quando falta**, e **o que muda quando o Felipe decidir as âncoras**.
 
@@ -52,7 +57,7 @@ O boot é **fail-closed**. As três formas de falha são diferentes de propósit
 
 ### 3.2 Campo obrigatório ausente ou nulo → o container não sobe
 
-> **Reescrito em 2026-08-31, e é a lista que vale.** A versão anterior desta tabela declarava `rotulos.*`, `particao.*`, `subdivisoes` e `fontes.instituto` **obrigatórios para o boot** — campos que **nenhuma linha deste repositório lê**. Com isso havia **três** schemas em circulação (esta tabela, a spec §1.2 e os dois `perfil.json` entregues) e os dois JSONs eram formalmente inválidos contra o loader que o commit A1 manda escrever. **O schema canônico é o da spec `docs/spec_bloco_a_perfil.md` §1.2** — é o único em que cada campo tem a coluna "quem lê hoje" com `arquivo:linha`. Os dois `perfil.json` foram reescritos nele na mesma passada.
+> **Esta é a lista que vale.** O schema vigente é o que o loader (`src/motor_expansao/perfil.py`) exige; a tabela abaixo diz quem lê cada campo obrigatório. A spec do Bloco A (`docs/archive/spec_bloco_a_perfil.md` §1.2), de onde a lista saiu, não traz todos os campos que o loader exige hoje.
 
 Obrigatórios em qualquer país, para qualquer superfície:
 
@@ -60,7 +65,7 @@ Obrigatórios em qualquer país, para qualquer superfície:
 |---|---|
 | `schema_versao` (`int`, `== 1`) | ninguém lê o valor; existe para o loader **falhar alto** quando um pacote antigo encontrar um loader novo |
 | `pais`, `nome`, `locale` | identidade e formatação. `nome` substitui o `"Brasil"` de `api/coord.py:75` e de `entrada-ponto.ts:116`; `locale` substitui o `'pt-BR'` de `format.ts:6` |
-| `moeda.codigo`, `moeda.simbolo` | `simbolo` substitui os `R$` de `format.ts:38,39,41,52,53,54,105` e de `app.py:3626`. `codigo` entra **declarado sem leitor de produção**: é a chave que o Bloco C+ carimba no PDF/XLSX — se o C+ cair, o campo sai junto |
+| `moeda.codigo`, `moeda.simbolo` | `simbolo` substituiu, no Bloco A (2026-09-02), os `R$` que estavam cravados em `format.ts:38,39,41,52,53,54,105` e em `app.py:3626` (linhas daquela data; a frase do `app.py`, por ser valor de renda, sai desde 2026-09-03 por `simbolo_renda()`); no front ele é lido por `moeda()` (`web/src/lib/perfil.ts`). A volta do `R$` cravado a `web/src/lib/**` é barrada por `tests/contracts/test_sem_moeda_hardcoded_no_front.py` (A10), que separa código de comentário e tem allowlist vazia — em 2026-10-29, zero ocorrências fora de comentário nos 78 arquivos do escopo. Telas e componentes ficam fora dessa guarda por escolha do A10 (a viabilidade sai em reais, decisão 0.6), e é por esse buraco que ainda passa `R$` sobre renda em USD na AR (S4 de `docs/expansao-latam/anexos/fase0-a-acoplamento-e-contrato.md`). `codigo` entrou no Bloco A **declarado sem leitor de produção**, como a chave que o Bloco C+ carimbaria no PDF/XLSX; não ficou assim: o carimbo do C+ saiu com os textos de `avisos.viabilidade_tributo_provisorio`, e desde 2026-09-03 (Bloco B) `codigo` é lido por `simbolo_renda()` (`src/motor_expansao/perfil.py`) e, no front, por `moedaRenda()` (`web/src/lib/perfil.ts`), que o comparam com `indicadores_renda` para não rotular renda em USD com o símbolo do peso — e, desde 2026-10-06 (#446), pela conferência de câmbio da viabilidade (`_moeda_da_viabilidade`, `web/server/app.py`) |
 | `bbox` (4 números) | é a guarda de coordenada de quatro rotas; sem ela volta o corte em −34,0 que exclui Buenos Aires. Invariante validada: `lat_min < lat_max`, `lng_min < lng_max`, dentro de `[-90,90]`/`[-180,180]` |
 | `vista_padrao.lat/lng/zoom` | `VISTA_BRASIL` de `mapa-ponto.ts:32`; sem ela o mapa abre em lugar nenhum |
 | `geocode.countrycodes` | sem ele a busca de endereço casa homônimo brasileiro. **Duas** cópias: `app.py:3978` e `maps_geocoder.py:246` |
@@ -74,7 +79,7 @@ Obrigatórios em qualquer país, para qualquer superfície:
 | `superficies` | não-vazio, e todo item dentro de `ABAS_VALIDAS` (`web/server/acesso.py:39`) |
 | `reguas.uplift_composicao`, `reguas.moradores_por_domicilio` | > 0; fallback nacional da renda exibida (no Brasil valem as tabelas por município e setor; na AR o uplift é 1,0) |
 | `reguas.metas_big_numbers` (as 7 metas, > 0; `score_setor_medio` ≤ 100) | semáforo do Relatório Pontual (`dashboard/censo_report.py`); obrigatório desde 2026-09-02 |
-| `malha_municipal_disponivel` (booleano) | `false` (país sem malha municipal) faz `/api/ponto`, `/api/resolver-ponto` e os dois relatórios responderem 404 nomeado em vez de 500 |
+| `malha_municipal_disponivel` (booleano) | `false` (país sem malha municipal) faz as seis rotas de `ROTAS_QUE_EXIGEM_MALHA_MUNICIPAL` (`web/server/acesso.py`: `/api/ponto`, `/api/resolver-ponto`, `/api/municipio-do-ponto`, os dois relatórios e `/api/demanda-v2`) responderem 404 nomeado em vez de 500; na AR o campo é `true` desde 2026-09-03 (malha adm2 entregue, PR #312) |
 | `avisos`, `operacao` | blocos lidos pelo loader (`_ler_avisos`, `_ler_operacao`); ausência derruba o boot |
 
 **`geocode.regex_cp`** é opcional (`null` = país sem código postal); no Brasil ele carrega o `CEP_RE` de `maps_geocoder.py:32`.
@@ -90,7 +95,7 @@ Esta é a checagem que o validador precisa fazer **por superfície**, não em bl
 | Se `superficies` contém | Então também é obrigatório |
 |---|---|
 | `mapa` | `reguas.faixas_mapa_potencial`, `reguas.faixas_mapa_demanda` (as réguas de corte já são obrigatórias pelo schema) |
-| `oportunidades` (funil) | tudo de `mapa` + `reguas.taxa_fitness`, e `reguas.oferta_destaque_min` **revisada para o país** (na AR ela entrou com o valor brasileiro e passou a 802,5 em 2026-09-08) |
+| `oportunidades` (funil) | tudo de `mapa` + `reguas.taxa_fitness`, e `reguas.oferta_destaque_min` **revisada para o país** (na AR, 802,5) |
 | `viabilidade` | pacote de premissas financeiras do país **ou** `avisos.viabilidade_tributo_provisorio` **ativo** |
 | `ponto` (quando existir como superfície) | nada além do schema: `metas_big_numbers` (os 7 números) já é obrigatório para todo país desde 2026-09-02 |
 
@@ -100,10 +105,10 @@ Esta é a checagem que o validador precisa fazer **por superfície**, não em bl
 
 ### 3.4 O que NÃO derruba o boot
 
-- `_nota`, `_procedencia`, `_medido`, `_metodo`, `_ver_tambem` e qualquer chave iniciada por `_` — são comentários. JSON não tem comentário; esta é a convenção que substitui. **É também onde moram os blocos RECUSADOS pela §3.2** (`_rotulos`, `_particao`, `_subdivisoes`, `_idioma`, `geocode._sufixo`, `fontes._fator_temporal`; o `_metas_big_numbers` virou `reguas.metas_big_numbers` em 2026-09-02): o conteúdo continua no arquivo, revisável em PR, e o loader não o vê. Promover um deles de volta ao schema é apagar o `_` **e** acrescentar a linha que o lê — nessa ordem.
+- `_nota`, `_procedencia`, `_medido`, `_metodo`, `_ver_tambem` e qualquer chave iniciada por `_` — são comentários. JSON não tem comentário; esta é a convenção que substitui. **É também onde moram os blocos RECUSADOS pela §3.2** (`_rotulos`, `_particao`, `_subdivisoes`, `_idioma`, `geocode._sufixo`, `fontes._fator_temporal`): o conteúdo continua no arquivo, revisável em PR, e o loader não o vê. Promover um deles de volta ao schema é apagar o `_` **e** acrescentar a linha que o lê — nessa ordem.
 - **Campos extras que não estão no schema da §3.2** (`reguas.score_pesos`, `reguas.taxa_fitness`, `reguas.faixas_mapa_potencial`, `reguas.faixas_mapa_demanda`, `moeda.*` além de `codigo`/`simbolo` e dos opcionais que o loader já lê; `avisos` e `operacao` saíram desta lista — o loader os exige): o loader os **ignora** — ele valida presença e tipo do que a §3.2 exige e não reprova o que sobra. Eles têm leitor previsto em bloco posterior (B, C, C+) e ficam aqui declarados de propósito. **`reguas.faixas_renda` e `reguas.faixas_densidade` saíram desta lista** (2026-09-08 e 2026-09-10, respectivamente): as duas estão no schema, o loader as valida *fail-closed* (2 a 6 faixas, rótulo ASCII, tetos estritamente crescentes, topo aberto) e elas alimentam as bandas de `dashboard/constants.py`. `null` nelas é escolha declarada — "use a régua brasileira" —, não ausência de leitor.
-- `_pendencias` — é inventário, não configuração. O validador **lê** e imprime no log de boot ("subindo com 8 pendências declaradas: P1, P2, ..."), mas não bloqueia. Pendência declarada é dívida assumida; pendência silenciosa é surpresa.
-- Campos opcionais nulos: `geocode.idioma`, `geocode.sufixo`, `geocode.regex_cp`, `moeda.comparacao`. (`fontes.fator_temporal.artefato` saiu desta lista: o bloco é `_fator_temporal`, recusado, e o artefato que ele cita deixou de ser lido na E0 da correção de renda.)
+- `_pendencias` — é inventário, não configuração. O loader não o lê (é chave `_`-prefixada) e o log de boot não o cita; não bloqueia nada. Pendência declarada é dívida assumida; pendência silenciosa é surpresa.
+- Campos opcionais nulos: `geocode.regex_cp`, `moeda.comparacao`, `moeda.cambio_base`, `moeda.cambio_viabilidade` e `moeda.base_monetaria`.
 
 ## 4. As âncoras de renda e população — decididas em 2026-09-02
 
@@ -111,7 +116,7 @@ Felipe RATIFICOU o default em 2026-09-02 (P1 e P2 do `AR/perfil.json`, após sen
 
 ### O que está lá, e de onde saiu
 
-| Âncora | Brasil (hoje, no código) | Argentina (default provisório) |
+| Âncora | Brasil (hoje, no código) | Argentina (default provisório de 2026-08-31, ratificado em 2026-09-02) |
 |---|---|---|
 | `renda_abs_min` | R$ 300 (p05 = R$ 296) | **US$ 350** (p05 = 342,4) |
 | `renda_abs_max` | R$ 4.000 (satura 0,38%) | **US$ 1.000** (satura 0,29%) |
@@ -126,14 +131,14 @@ O método não foi inventado: é **literalmente o critério escrito** em `src/mo
 
 **(a) Isto não é conversão de moeda.** O teto brasileiro não vira o teto argentino dividido por 1.397,71. R$ 4.000 ÷ 1.397,71 = US$ 2,86 — número sem sentido. O que se transporta é o **critério** (qual percentil vira piso, qual saturação é aceitável), aplicado a uma distribuição diferente.
 
-**(b) A âncora de população brasileira é de HEXÁGONO H3 res 7 — a mesma unidade que a Argentina alimenta.** O **nome da coluna** engana, e por isso este parágrafo já afirmou o contrário até 2026-09-02: `pop_col = "pop_total_setor_2022"` (`:309`) é o valor do setor **carregado no hexágono**, não a granularidade da linha. As linhas do dataframe são hexes, e o código diz isso em três lugares — `:82` mede as âncoras "no universo POVOADO (pop >= 1.000, **21.107 hexes**)", `:265` imprime `f"  Setor: {len(df_ufs):,} hexes"` e `:320` faz merge com o M1 `on="hex_id"`. Confere com `rotulos.unidade_analise` do próprio `BR/perfil.json`. Reusar 1.000/100.000 na Argentina é portanto o **casamento correto de unidade**, e a medição confirma:
+**(b) A âncora de população brasileira é de HEXÁGONO H3 res 7 — a mesma unidade que a Argentina alimenta.** O **nome da coluna** engana: `pop_col = "pop_total_setor_2022"` (`:340`) é o valor do setor **carregado no hexágono**, não a granularidade da linha. As linhas do dataframe são hexes, e o código diz isso em três lugares — `:84` mede as âncoras "no universo POVOADO (pop >= 1.000, **21.107 hexes**)", `:296` imprime `f"  Setor: {len(df_ufs):,} hexes"` e `:351` faz merge com o M1 `on="hex_id"`. Confere com `_rotulos.unidade_analise` do próprio `BR/perfil.json`. Reusar 1.000/100.000 na Argentina é portanto o **casamento correto de unidade**, e a medição confirma:
 
 | | p05 | p50 | p95 |
 |---|---|---|---|
 | BR, hexágono H3 res 7 povoado | 1.103 | 3.561 | 28.845 |
 | AR, hexágono H3 res 7 povoado | 1.127 | 3.699 | 28.500 |
 
-São **a mesma unidade** medida nos dois países — é por isso que os números batem. A consequência inverte a leitura antiga e está escrita assim no `_nota_pop` do perfil AR de propósito: quem migrar a âncora argentina para radio censal estaria **criando** o descasamento que essa nota dizia existir.
+São **a mesma unidade** medida nos dois países — é por isso que os números batem. A consequência está escrita assim no `_nota_pop` do perfil AR de propósito: quem migrar a âncora argentina para radio censal estaria **criando** um descasamento.
 
 ### A tensão que o Felipe precisa resolver (P1)
 
@@ -221,11 +226,11 @@ Cada pendência tem `campo`, `estado`, `decide`, `pergunta`, `default`, `justifi
 | P4 | `moeda.indicadores_renda` (USD ou ARS na tela) | default provisório (USD) | Felipe (produto) | não |
 | P5 | `reguas.metas_big_numbers` | **preenchido** em 2026-09-02 (Felipe: população mantida, renda per capita = 1,2 canastas) — o `_pendencias` do `AR/perfil.json` ainda diz "ausente" | Felipe + Expansão Internacional | não — a leitura de que `ponto` estava bloqueada foi corrigida |
 | P6 | `reguas.score_corte_quente` | default provisório (30,0) | Felipe | não — revisar **depois** de P1/P2 |
-| P7 | malha adm2 (`municipios_<COD>.geojson`) | **ausente** | Juan produz / Felipe aceita | não — bloqueia BLK-INTL-10 |
+| P7 | malha adm2 (`municipios_<COD>.geojson`) | **fechada** em 2026-09-03 (malha adm2 entregue, PR #312) | Juan produz / Felipe aceita | não — bloqueava o BLK-INTL-10 até 2026-09-03 |
 | P8 | `operacao.mem_limit_alvo` | default provisório (2g) | **medição do Bloco E**, não pessoa | não |
 | P9 | `fontes.crescimento.*` (a metade `reguas.oferta_destaque_min` foi decidida por Juan em 2026-09-08: 802,5, ancorada na prioridade 'alta' do pipeline argentino) | default provisório | **dev (Bloco A/B)** — não é decisão do Felipe | não — `oportunidades` está fora de `superficies` |
 
-**P9 nasceu em 2026-08-31, junto com a unificação de schema.** São os dois campos que a spec §1.2 declara obrigatórios e para os quais o pacote do Juan não tem fonte argentina: o loader do commit A1 reprovaria o perfil sem eles. `fontes.crescimento` descreve a **ausência** de um equivalente ao CAGED/RAIS mensal em vez de traduzir a frase brasileira (que afirmaria CAGED e RAIS na Argentina); `oferta_destaque_min` entrou com o valor brasileiro (2.000) e, em 2026-09-08 (decisão de Juan), passou a **802,5** = 0,75 × `capacidade_concorrente` (1.070): o corte é sobre o RESIDUAL, que na Argentina vive em outra escala, e 0,75 é onde o pipeline do país marca prioridade 'alta'. **Não toca a agenda do Felipe.**
+**P9** cobre dois campos que a spec §1.2 declara obrigatórios e que o pacote do Juan não traz prontos (só `fontes.crescimento` segue aberto): o loader do commit A1 reprovaria o perfil sem eles. `fontes.crescimento` descreve a **ausência** de um equivalente ao CAGED/RAIS mensal em vez de traduzir a frase brasileira (que afirmaria CAGED e RAIS na Argentina); `oferta_destaque_min` é **802,5** = 0,75 × `capacidade_concorrente` (1.070), por decisão de Juan em 2026-09-08: o corte é sobre o RESIDUAL, que na Argentina vive em outra escala, e 0,75 é onde o pipeline do país marca prioridade 'alta'. **Não toca a agenda do Felipe.**
 
 **P3 era a única sem default seguro, e foi FECHADA em 2026-09-02** (`AR/perfil.json`, bloco `reguas.score_pesos` e a entrada P3 do inventário). O motor brasileiro calcula `0,60·renda + 0,40·pop`; o parquet argentino já traz um `score_priorizacao` com os pesos **invertidos** (`0,40·renda_pct + 0,60·pop_pct`, percentil nacional). **Decisão do Felipe: a plataforma RECOMPUTA com a fórmula brasileira** (`calibrar_renda_setor_2022.py:160`) sobre as âncoras AR declaradas no perfil. O motivo é de régua, não de gosto: `score_corte_quente = 30` e as faixas de cor foram calibrados contra a saída da fórmula brasileira, e aplicá-los ao score nativo seria usar uma régua sobre uma distribuição que ela não conhece. Consequência medida: **5,5%** dos hexágonos passam no corte 30, contra 12,2% pelo score nativo. As duas colunas convivem no parquet; a servida é a recomputada.
 
@@ -243,6 +248,6 @@ Estão escritos nos `_nota` para não virarem surpresa:
 
 - **Renda argentina tem erro estrutural de ±15%** (mediana urbana; ±24% no P90), e **85% dos hexágonos têm `renda_confianca = "baixa"`** (rural, renda extrapolada da média urbana). O gate de população tira quase todos das teses — mas **a leitura do mapa não tem esse gate**.
 - **A concorrência argentina enxerga ~37% do universo real** de academias. O fator de cobertura 2,675 corrige o **agregado**, não o hexágono individual.
-- **`taxa_fitness_osm_calibrada = 0,3529`** no parquet AR diverge **4,52×** do benchmark de 0,078 e é gravada sem alertar. **Não usar essa coluna** — o perfil declara `taxa_fitness: 0.078`. *Dívida de procedência:* o valor `0,358` (4,6×) que este item trazia até 2026-09-02 só aparece no `dicionario_dados.md` do Juan, em nenhum parquet; como nem o parquet nem o dicionário estão neste repo, a divergência entre as duas fontes **não é conferível daqui** e fecha com o Juan. A conclusão não muda em nenhum dos dois valores.
-- **`mem_limit: 2g` da AR é palpite de disco, não RSS medido.** `carregar_uf_completo` (`web/server/app.py:786-789`) faz `read_parquet` sem projeção de colunas, e o parquet AR carrega `geometry_wkb` por linha — coluna que o enriquecido brasileiro não tem. Medir no Bloco E **antes** de fixar.
-- **O mapa argentino sobe sem nome de rua** (decisão 0.9, aceita por escrito). `_labels_tiles_url` (`censo_map.py:729-738`) devolve `None` sem `API_BASEMAP_LABELS_URL` e **não há fallback embutido** — a falha é silenciosa. `avisos.mapa_sem_toponimo` existe para o silêncio virar frase.
+- **`taxa_fitness_osm_calibrada = 0,3529`** no parquet AR diverge **4,52×** do benchmark de 0,078 e é gravada sem alertar. **Não usar essa coluna** — o perfil declara `taxa_fitness: 0.078`. *Dívida de procedência:* o valor `0,358` (4,6×) só aparece no `dicionario_dados.md` do Juan, em nenhum parquet; como nem o parquet nem o dicionário estão neste repo, a divergência entre as duas fontes **não é conferível daqui** e fecha com o Juan. A conclusão não muda em nenhum dos dois valores.
+- **`mem_limit: 2g` da AR tem folga de ~20×:** o RSS medido no Bloco E (03/09/2026) foi de 108 MiB depois de varrer as 24 partições, e a exportação da AR não embute geometria pesada (`operacao._nota_mem` do perfil AR).
+- **O mapa argentino sobe sem nome de rua** (decisão 0.9, aceita por escrito). `_labels_tiles_url` (`censo_map.py:947`) devolve `None` sem `API_BASEMAP_LABELS_URL` e **não há fallback embutido** — a falha é silenciosa. `avisos.mapa_sem_toponimo` foi declarado para o silêncio virar frase, mas nenhum código o exibe.

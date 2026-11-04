@@ -176,7 +176,7 @@ def test_perfil_e_status_juntos_vao_numa_unidade_de_trabalho_so(
     chamadas: list[dict[str, Any]] = []
 
     def _alterar_acesso(
-        i: int, *, autor: int, perfil: Any = None, ativo: Any = None
+        i: int, *, autor: int, perfil: Any = None, ativo: Any = None, paises: Any = None
     ) -> dict[str, Any]:
         chamadas.append({"alvo": i, "autor": autor, "perfil": perfil, "ativo": ativo})
         return {"id_usuario": i, "perfil": {"mudou": True}, "status": {"mudou": True}}
@@ -208,8 +208,9 @@ def test_um_campo_so_tambem_passa_pela_mesma_unidade_de_trabalho(
     monkeypatch.setattr(
         db_usuarios,
         "alterar_acesso",
-        lambda i, *, autor, perfil=None, ativo=None: vistos.append((perfil, ativo))
-        or {"id_usuario": i},
+        lambda i, *, autor, perfil=None, ativo=None, paises=None: (
+            vistos.append((perfil, ativo)) or {"id_usuario": i}
+        ),
     )
     pilot_app.acessos_usuarios_alterar(9, pilot_app.UsuarioAdminIn(**corpo), remote_user=ADMIN)
     assert vistos == [esperado]
@@ -414,7 +415,13 @@ def test_o_corpo_da_criacao_nao_aceita_senha() -> None:
     é que o modelo NÃO declara o campo.
     """
     assert "senha" not in pilot_app.UsuarioNovoIn.model_fields
-    assert set(pilot_app.UsuarioNovoIn.model_fields) == {"login", "nome", "email", "perfil"}
+    assert set(pilot_app.UsuarioNovoIn.model_fields) == {
+        "login",
+        "nome",
+        "email",
+        "perfil",
+        "paises",
+    }
 
 
 @pytest.mark.parametrize("faltando", ["login", "nome", "email", "perfil"])
@@ -771,7 +778,9 @@ def test_a_recusa_segue_o_STATUS_do_login_mas_fala_portugues() -> None:
         assert "Authelia" in texto, "a recusa tem de dizer por onde se entra hoje"
 
 
-@pytest.mark.parametrize("rota", ["acessos_usuarios_redefinir_senha", "acessos_usuarios_exigir_troca"])
+@pytest.mark.parametrize(
+    "rota", ["acessos_usuarios_redefinir_senha", "acessos_usuarios_exigir_troca"]
+)
 def test_fora_da_allowlist_a_recusa_continua_o_not_found_cru(
     monkeypatch: pytest.MonkeyPatch, rota: str
 ) -> None:
@@ -972,7 +981,7 @@ def test_deploy_sem_banco_na_identidade_do_admin_e_503_e_nao_500(
 
 @pytest.mark.usefixtures("login_proprio")
 def test_deploy_sem_banco_na_troca_da_propria_senha_e_503_e_nao_500(
-    monkeypatch: pytest.MonkeyPatch
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """A sexta rota, que passa por `_minha_identidade` e não por `_identidade_do_admin`."""
     _rbac_sem_banco(monkeypatch)
@@ -1015,7 +1024,7 @@ def test_as_duas_mensagens_de_sem_banco_sao_DIFERENTES(monkeypatch: pytest.Monke
 
 
 def test_banco_AUSENTE_e_banco_FORA_DO_AR_nao_dizem_a_mesma_coisa(
-    monkeypatch: pytest.MonkeyPatch
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Irmãs, e a distinção é operacional, não estética.
 
@@ -1056,3 +1065,117 @@ def test_banco_AUSENTE_e_banco_FORA_DO_AR_nao_dizem_a_mesma_coisa(
     assert "sem banco configurado" not in msg_fora, (
         "o incidente passou a se anunciar como escolha de operação, e ninguém vai olhar"
     )
+
+
+# --------------------------------------------------------------------------------------
+# DEC-081 / P4 (BLK-BANCO-10): a rota de criacao atribui pais
+# --------------------------------------------------------------------------------------
+
+
+def test_criacao_usa_o_pais_do_processo_quando_a_tela_nao_manda(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Default seguro contra o P4: corpo sem paises -> a pessoa herda o pais DESTE processo."""
+    _identidade(monkeypatch, _Eu())
+    visto: dict[str, Any] = {}
+
+    def _criar(**kwargs: Any) -> dict[str, Any]:
+        visto.update(kwargs)
+        return {
+            "id_usuario": 1,
+            "login": "ana",
+            "perfil": "expansao",
+            "falta_cadastrar_no_authelia": True,
+        }
+
+    monkeypatch.setattr(db_usuarios, "criar", _criar)
+    pilot_app.acessos_usuarios_criar(_corpo_novo(), remote_user=ADMIN)
+    assert visto["paises"] == [pilot_app.PERFIL.pais]
+
+
+def test_criacao_repassa_os_paises_escolhidos(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Multipais (DEC-081): o que a tela marca chega ao banco, na ordem."""
+    _identidade(monkeypatch, _Eu())
+    visto: dict[str, Any] = {}
+
+    def _criar(**kwargs: Any) -> dict[str, Any]:
+        visto.update(kwargs)
+        return {
+            "id_usuario": 1,
+            "login": "ana",
+            "perfil": "growth",
+            "falta_cadastrar_no_authelia": True,
+        }
+
+    monkeypatch.setattr(db_usuarios, "criar", _criar)
+    pilot_app.acessos_usuarios_criar(
+        _corpo_novo(perfil="growth", paises=["BR", "AR"]), remote_user=ADMIN
+    )
+    assert visto["paises"] == ["BR", "AR"]
+
+
+def test_criacao_recusa_pais_fora_do_catalogo_sem_tocar_o_banco(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Sigla desconhecida (ex.: ZZ) e' 422 ANTES de criar -- mensagem de dominio, nao 500 do CHECK."""
+    _identidade(monkeypatch, _Eu())
+
+    def _explode(**_k: Any) -> None:
+        raise AssertionError("o banco foi tocado com pais fora do catalogo")
+
+    monkeypatch.setattr(db_usuarios, "criar", _explode)
+    with pytest.raises(HTTPException) as caiu:
+        pilot_app.acessos_usuarios_criar(_corpo_novo(paises=["ZZ"]), remote_user=ADMIN)
+    assert caiu.value.status_code == 422
+
+
+def test_a_listagem_oferece_o_catalogo_de_paises_e_o_padrao(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A tela monta o seletor data-driven (DEC-047): siglas+rotulos vem do backend; o padrao e' o pais do processo."""
+    _identidade(monkeypatch, _Eu())
+    monkeypatch.setattr(db_usuarios, "listar", lambda: [])
+    monkeypatch.setattr(db_usuarios, "perfis", lambda: [])
+    saida = pilot_app.acessos_usuarios_listar(remote_user=ADMIN)
+    siglas = {p["sigla"] for p in saida["paises_disponiveis"]}
+    assert {"BR", "AR"} <= siglas
+    assert all("nome" in p for p in saida["paises_disponiveis"])
+    assert saida["pais_padrao"] == pilot_app.PERFIL.pais
+
+
+# --------------------------------------------------------------------------------------
+# DEC-081 / Fase 2 (BLK-BANCO-11): a rota PATCH aceita paises
+# --------------------------------------------------------------------------------------
+
+
+def test_alterar_repassa_os_paises_ao_banco(monkeypatch: pytest.MonkeyPatch) -> None:
+    """O conjunto desejado chega a `alterar_acesso` como `paises` (replace-all)."""
+    _identidade(monkeypatch, _Eu())
+    visto: dict[str, Any] = {}
+
+    def _alterar(i: int, *, autor: int, perfil: Any = None, ativo: Any = None, paises: Any = None):
+        visto.update({"paises": paises})
+        return {"id_usuario": i, "paises": {"de": ["BR"], "para": ["AR", "BR"], "mudou": True}}
+
+    monkeypatch.setattr(db_usuarios, "alterar_acesso", _alterar)
+    pilot_app.acessos_usuarios_alterar(
+        9, pilot_app.UsuarioAdminIn(paises=["BR", "AR"]), remote_user=ADMIN
+    )
+    assert visto["paises"] == ["BR", "AR"]
+
+
+def test_alterar_recusa_pais_fora_do_catalogo_sem_tocar_o_banco(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Sigla fora do catalogo (ex.: ZZ) e' 422 ANTES de alterar_acesso (molde do criar)."""
+    _identidade(monkeypatch, _Eu())
+
+    def _explode(*_a: Any, **_k: Any) -> None:
+        raise AssertionError("tocou o banco com pais fora do catalogo")
+
+    monkeypatch.setattr(db_usuarios, "alterar_acesso", _explode)
+    with pytest.raises(HTTPException) as caiu:
+        pilot_app.acessos_usuarios_alterar(
+            9, pilot_app.UsuarioAdminIn(paises=["ZZ"]), remote_user=ADMIN
+        )
+    assert caiu.value.status_code == 422

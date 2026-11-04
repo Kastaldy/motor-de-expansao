@@ -33,8 +33,8 @@ import sys
 from pathlib import Path
 
 _AQUI = Path(__file__).resolve().parent
-# data/reports/crescimento -> data/reports -> data
-_DATA_DO_REPO = _AQUI.parents[1]
+# scripts/crescimento -> scripts -> raiz do repositório, onde fica o data/
+_DATA_DO_REPO = _AQUI.parents[1] / "data"
 
 # chave -> (variavel de ambiente, default, para que serve)
 _RAIZES: dict[str, tuple[str, str, str]] = {

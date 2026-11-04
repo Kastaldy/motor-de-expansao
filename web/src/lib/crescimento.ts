@@ -6,7 +6,7 @@
    e este parser — que estava dentro do `NarrativePanel` e por isso nao tinha teste
    nenhum, apesar de ser a unica coisa entre o payload e o grafico na tela.
 
-   Formatos (produzidos por `data/reports/crescimento/06_encode_dims.py` e `07_series.py`):
+   Formatos (produzidos por `scripts/crescimento/06_encode_dims.py` e `07_series.py`):
 
      dims   nome:valor:unidade:posicao:periodo         blocos unidos por ';'
      series nome|unidade|rotulo_ini|rotulo_fim|v1,v2,…  blocos unidos por ';'

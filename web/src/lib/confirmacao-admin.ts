@@ -86,6 +86,8 @@ export type AcaoAdmin =
       email: string
       perfil: string
       capacidades?: number
+      /** Países que a pessoa vai poder acessar, já com os NOMES de exibição (DEC-081). */
+      paises?: string[]
       /** O login próprio está LIGADO? Muda o que a confirmação pode prometer sobre a senha.
        *  Ausente = desligado, o estado de produção até o corte do P19. */
       loginProprio?: boolean
@@ -102,6 +104,7 @@ export type AcaoAdmin =
   | { tipo: 'definir-ativo'; nome: string; login: string; perfil: string; ativo: boolean }
   | { tipo: 'redefinir-senha'; nome: string; login: string; senhaPropria: boolean }
   | { tipo: 'exigir-troca'; nome: string; login: string }
+  | { tipo: 'editar-paises'; nome: string; login: string; de: string[]; para: string[] }
 
 export interface Confirmacao {
   /** Tarja curta acima do título. Caixa alta no componente. */
@@ -165,6 +168,7 @@ export function montarConfirmacao(
           ? `${rot(acao.perfil)} administra o acesso das outras pessoas: pode criar, ` +
             'desativar e trocar o perfil de quem já existe.'
           : `Perfil ${rot(acao.perfil)}.` + contagem(undefined, acao.capacidades),
+        ...(acao.paises?.length ? [`Com acesso a: ${acao.paises.join(', ')}.`] : []),
         // A promessa sobre a senha depende do login próprio (decisão do dono, 24/10/2026).
         // Desligado, quem confere a senha é o Authelia: "nasce com a senha inicial e é
         // levada a trocá-la" era falso, e o passo do Authelia é o que deixa a pessoa entrar.
@@ -265,6 +269,21 @@ export function montarConfirmacao(
           'registrado com o seu nome e a data.',
       ],
       rotuloConfirmar: `Exigir troca de ${acao.nome}`,
+      gravidade: 'media',
+      loginParaDigitar: null,
+    }
+  }
+
+  if (acao.tipo === 'editar-paises') {
+    return {
+      eyebrow: 'Mudar os países de acesso',
+      titulo: `Países de ${acao.nome}`,
+      apoio: [
+        `Login ${acao.login}.`,
+        `De ${acao.de.join(', ') || '(nenhum)'} para ${acao.para.join(', ')}.`,
+        'Concede ou retira o acesso aos sites de cada país. Fica registrado com o seu nome e a data.',
+      ],
+      rotuloConfirmar: `Salvar países de ${acao.nome}`,
       gravidade: 'media',
       loginParaDigitar: null,
     }

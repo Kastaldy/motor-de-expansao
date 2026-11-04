@@ -28,7 +28,6 @@ from pathlib import Path
 from typing import Any
 
 import pytest
-from fastapi import HTTPException
 
 _REPO = Path(__file__).resolve().parents[2]
 _SERVER = _REPO / "web" / "server"
@@ -57,15 +56,19 @@ class _Url:
 
 
 class _Requisicao:
-    """Fake com o que a rota e o portao usam: `.url.path`, `.cookies`, `.scope["headers"]`."""
+    """Fake com o que a rota e o portao usam: `.url.path`, `.method`, `.cookies`,
+    `.scope["headers"]`. (`.headers` explode de proposito -- ver a property abaixo; o portao so'
+    a le' em ESCRITA, e os testes que exercitam o portao aqui sao GET.)"""
 
     def __init__(
         self,
         caminho: str = "/api/verify",
         cookies: dict[str, str] | None = None,
         headers: dict[str, str] | None = None,
+        method: str = "GET",
     ) -> None:
         self.url = _Url(caminho)
+        self.method = method
         self.cookies = cookies or {}
         self.scope: dict[str, Any] = {
             "headers": [
@@ -90,10 +93,21 @@ class _Requisicao:
 _SENTINELA = object()
 
 
-def _sessao(login: str = "vinicius", perfil: str = "growth", id_sessao: int = 42) -> Any:
+def _sessao(
+    login: str = "vinicius",
+    perfil: str = "growth",
+    id_sessao: int = 42,
+    paises: frozenset[str] | None = None,
+) -> Any:
+    # DEC-081: o gate de pais compara `PERFIL.pais` com `identidade.paises`. O DEFAULT e' o
+    # pais DESTE processo (BR em teste), para o caminho-feliz do `/api/verify` passar pelo gate;
+    # os testes de seguranca do gate (secao 8/9) passam `paises=` explicitamente -- outro pais,
+    # ou o conjunto vazio do fail-closed.
+    if paises is None:
+        paises = frozenset({pilot.PERFIL.pais})
     return db_sessoes.SessaoValida(
         identidade=Identidade(
-            id_usuario=7, login=login, perfil=perfil, permissoes=frozenset()
+            id_usuario=7, login=login, perfil=perfil, permissoes=frozenset(), paises=paises
         ),
         id_sessao=id_sessao,
         ultimo_acesso=None,
@@ -300,14 +314,16 @@ def test_com_a_autenticacao_propria_DESLIGADA_a_rota_nao_existe(
 ) -> None:
     """404, e e' fail-CLOSED: o Caddy nega tudo que nao for 2xx, entao apontar o
     `forward_auth` para ca' antes de ligar a env derruba o piloto — que e' o desfecho SEGURO.
-    Responder 200 evitaria a queda e deixaria o piloto PUBLICO enquanto ninguem percebesse."""
+    Responder 200 evitaria a queda e deixaria o piloto PUBLICO enquanto ninguem percebesse.
+
+    DEC-081: o prelude (`_prelude_forward_auth`) passou a RETORNAR a negacao como `Response`
+    (404), em vez de levantar `HTTPException` -- entao a verificacao e' do status DEVOLVIDO."""
     monkeypatch.delenv(db_sessoes.ENV_AUTENTICACAO_PROPRIA, raising=False)
     monkeypatch.setattr(db_sessoes, "validar", lambda _t: pytest.fail("validou desligado"))
 
-    with pytest.raises(HTTPException) as erro:
-        pilot.verify(_Requisicao(cookies={acesso.COOKIE_SESSAO_DEV: "t"}))
+    resposta = pilot.verify(_Requisicao(cookies={acesso.COOKIE_SESSAO_DEV: "t"}))
 
-    assert erro.value.status_code == 404
+    assert resposta.status_code == 404
 
 
 def test_o_404_de_desligado_nao_depende_do_throttle_do_log(
@@ -322,9 +338,8 @@ def test_o_404_de_desligado_nao_depende_do_throttle_do_log(
     monkeypatch.setattr(pilot, "_verify_desligado_logado", False)
 
     for _ in range(3):
-        with pytest.raises(HTTPException) as erro:
-            pilot.verify(_Requisicao())
-        assert erro.value.status_code == 404
+        resposta = pilot.verify(_Requisicao())
+        assert resposta.status_code == 404
 
 
 def test_banco_fora_do_ar_vira_503_e_nao_401(_ligado: None, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -385,33 +400,43 @@ def test_o_CODIGO_da_rota_nao_le_header_nenhum() -> None:
     passaria nos testes de comportamento em producao (leria vazio) e so' quebraria no dia em
     que a limpeza mudasse — que e' o pior momento possivel para descobrir. Aqui o teste le' o
     CODIGO.
-    """
-    arvore = ast.parse(textwrap.dedent(inspect.getsource(pilot.verify)))
-    atributos = {no.attr for no in ast.walk(arvore) if isinstance(no, ast.Attribute)}
 
-    assert "headers" not in atributos, "/api/verify le' headers da requisicao (trava 1)"
+    DEC-081: o corpo de `/api/verify` foi partido em `_prelude_forward_auth` (le o cookie e
+    valida) e `_resposta_200_forward_auth` (emite os headers). A trava vale para a CADEIA
+    inteira -- nenhuma das tres funcoes pode ler header da requisicao, e o token continua
+    saindo de `_token_de_sessao`.
+    """
+    cadeia = (pilot.verify, pilot._prelude_forward_auth, pilot._resposta_200_forward_auth)
+    atributos: set[str] = set()
+    chamadas: set[str] = set()
+    for funcao in cadeia:
+        arvore = ast.parse(textwrap.dedent(inspect.getsource(funcao)))
+        atributos |= {no.attr for no in ast.walk(arvore) if isinstance(no, ast.Attribute)}
+        chamadas |= {
+            no.func.id
+            for no in ast.walk(arvore)
+            if isinstance(no, ast.Call) and isinstance(no.func, ast.Name)
+        }
+
+    assert "headers" not in atributos, "a cadeia do /api/verify le' headers da requisicao (trava 1)"
 
     # A LEITURA DO COOKIE MUDOU DE CASA em 25/09/2026 e a guarda seguiu a indirecao em vez
-    # de ser afrouxada. A rota nao le' mais `request.cookies` direto: chama
+    # de ser afrouxada. A rota nao le' mais `request.cookies` direto: o prelude chama
     # `_token_de_sessao`, que centraliza a regra (e recusa o nome sem prefixo em producao).
-    # Se a asercao tivesse sido apagada, a rota poderia parar de ler cookie NENHUM e nada
+    # Se a asercao tivesse sido apagada, a cadeia poderia parar de ler cookie NENHUM e nada
     # ficaria vermelho -- e uma rota de autenticacao que nao le' credencial e' a falha total.
-    chamadas = {
-        no.func.id
-        for no in ast.walk(arvore)
-        if isinstance(no, ast.Call) and isinstance(no.func, ast.Name)
-    }
     assert "_token_de_sessao" in chamadas, (
-        "/api/verify deixou de obter o token por `_token_de_sessao` — o que ela valida?"
+        "a cadeia do /api/verify deixou de obter o token por `_token_de_sessao` — o que valida?"
     )
     helper = ast.parse(textwrap.dedent(inspect.getsource(pilot._token_de_sessao)))
     do_helper = {no.attr for no in ast.walk(helper) if isinstance(no, ast.Attribute)}
     assert "cookies" in do_helper, "`_token_de_sessao` deixou de ler o cookie"
     assert "headers" not in do_helper, "`_token_de_sessao` passou a ler header (trava 1)"
 
-    fonte = inspect.getsource(pilot.verify)
+    # A emissao do `Remote-User` vive agora em `_resposta_200_forward_auth`.
+    fonte = inspect.getsource(pilot._resposta_200_forward_auth)
     corpo = fonte.split('"""', 2)[-1]  # fora do docstring, que CITA os headers de proposito
-    assert "Remote-User" in corpo, "a rota parou de emitir Remote-User"
+    assert "Remote-User" in corpo, "a cadeia do /api/verify parou de emitir Remote-User"
 
 
 # --------------------------------------------------------------------------------------
@@ -551,11 +576,18 @@ def test_as_excecoes_do_matcher_sao_as_MESMAS_rotas_publicas_do_backend() -> Non
     mandara' ao `forward_auth` uma rota que o backend considera publica -- e ela levara' 401
     antes de chegar. Se acontecer o contrario, a borda abre um buraco que o backend fecha
     sozinho (menos grave, e ainda assim divergencia).
+
+    DEC-081: `/api/verify-sessao` (o `forward_auth` do APEX, pais-neutro) entrou em
+    `ROTAS_PUBLICAS_SEM_SESSAO` (regra do BACKEND, valida em TODOS os hosts) E na linha
+    `not path` do `piloto-br` -- o backend o trata como publico, entao o matcher repete. As
+    CINCO rotas (login/logout/health/verify/verify-sessao) casam EXATO; qualquer uma que ande
+    sem a outra e' a divergencia silenciosa que este teste pega.
     """
     declaradas = set(_linha_do_template("not path ").removeprefix("not path ").split())
-    assert declaradas == set(acesso.ROTAS_PUBLICAS_SEM_SESSAO), (
+    esperado = set(acesso.ROTAS_PUBLICAS_SEM_SESSAO)
+    assert declaradas == esperado, (
         "o `not path` do Caddyfile e `ROTAS_PUBLICAS_SEM_SESSAO` divergiram: "
-        f"{sorted(declaradas ^ set(acesso.ROTAS_PUBLICAS_SEM_SESSAO))}"
+        f"{sorted(declaradas ^ esperado)}"
     )
 
 
@@ -700,3 +732,127 @@ def test_a_leitura_do_cookie_tem_UMA_redacao() -> None:
         "por `_token_de_sessao`; `_cookie_de_sessao` EMITE e `logout` apaga os dois nomes."
     )
     _ = textwrap, inspect
+
+
+# --------------------------------------------------------------------------------------
+# 8. Gate de PAIS da DEC-081 — a 1a camada, dentro do /api/verify (defesa na borda)
+# --------------------------------------------------------------------------------------
+
+#: Um pais que NAO e' o do processo de teste (BR em teste), para exercitar a NEGACAO do gate.
+#: Calculado para nao coincidir com `PERFIL.pais`, aconteca o que acontecer com o perfil.
+_PAIS_FORA = "AR" if pilot.PERFIL.pais != "AR" else "CO"
+
+
+def test_verify_200_quando_a_sessao_TEM_o_pais_do_processo(
+    _ligado: None, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Caminho feliz do gate: o pais que ESTE processo serve esta' entre os da pessoa -> 200."""
+    monkeypatch.setattr(
+        db_sessoes, "validar", lambda _t: _sessao(paises=frozenset({pilot.PERFIL.pais}))
+    )
+
+    resposta = pilot.verify(_Requisicao(cookies={acesso.COOKIE_SESSAO_DEV: "t"}))
+
+    assert resposta.status_code == 200
+    assert resposta.headers["Remote-User"] == "vinicius"
+
+
+def test_verify_403_quando_a_sessao_NAO_tem_o_pais_do_processo(
+    _ligado: None, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Pessoa so'-estrangeira num processo BR: 403 com `motivo=pais`, NUNCA 404.
+
+    404 e' de `motivo_bloqueio_pais` ("a INSTANCIA nao oferece esta rota"); aqui a pergunta e'
+    "esta CONTA alcanca esta instancia", e a resposta honesta e' 403. E o corpo NAO pode LISTAR
+    os paises da pessoa -- isso vazaria a quais instancias ela tem acesso (anti-vazamento).
+    """
+    import json
+
+    monkeypatch.setattr(
+        db_sessoes, "validar", lambda _t: _sessao(paises=frozenset({_PAIS_FORA}))
+    )
+
+    resposta = pilot.verify(_Requisicao(cookies={acesso.COOKIE_SESSAO_DEV: "t"}))
+
+    assert resposta.status_code == 403
+    assert resposta.status_code != 404, "o gate de PESSOA tem de ser 403, nunca o 404 da instancia"
+    corpo = json.loads(resposta.body)
+    assert corpo["motivo"] == "pais"
+    assert "Remote-User" not in resposta.headers, "negacao do gate vazando identidade"
+    assert _PAIS_FORA not in resposta.body.decode("utf-8"), (
+        "o 403 listou o pais da pessoa -- vaza a que instancias ela tem acesso"
+    )
+
+
+def test_verify_403_quando_a_sessao_NAO_tem_pais_nenhum(
+    _ligado: None, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Fail-closed: conjunto de paises VAZIO nega (`PERFIL.pais in frozenset()` e' False).
+
+    E' a pessoa sem linha em `usuario_paises`: existe, autentica, e nao alcanca instancia
+    nenhuma ate' ganhar um pais. O conjunto vazio NUNCA pode virar "qualquer pais".
+    """
+    import json
+
+    monkeypatch.setattr(db_sessoes, "validar", lambda _t: _sessao(paises=frozenset()))
+
+    resposta = pilot.verify(_Requisicao(cookies={acesso.COOKIE_SESSAO_DEV: "t"}))
+
+    assert resposta.status_code == 403
+    assert json.loads(resposta.body)["motivo"] == "pais"
+
+
+# --------------------------------------------------------------------------------------
+# 9. /api/verify-sessao — o forward_auth do APEX (DEC-081): PAIS-NEUTRO
+# --------------------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("paises", [frozenset({_PAIS_FORA}), frozenset()])
+def test_verify_sessao_NUNCA_gateia_por_pais(
+    _ligado: None, monkeypatch: pytest.MonkeyPatch, paises: frozenset[str]
+) -> None:
+    """O apex e' o SELETOR de paises: tem de admitir QUALQUER autenticado, inclusive quem so'
+    tem OUTRO pais -- ou NENHUM -- senao o monopais do outro pais seria trancado fora do proprio
+    seletor. A MESMA sessao que o `/api/verify` NEGA com 403, aqui da' 200."""
+    monkeypatch.setattr(db_sessoes, "validar", lambda _t: _sessao(paises=paises))
+
+    resposta = pilot.verify_sessao(_Requisicao(cookies={acesso.COOKIE_SESSAO_DEV: "t"}))
+
+    assert resposta.status_code == 200
+    assert resposta.headers["Remote-User"] == "vinicius"
+
+
+def test_verify_sessao_herda_o_prelude_desligado_404(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Mesmo prelude do `/api/verify`: com a autenticacao propria DESLIGADA, 404 fail-closed."""
+    monkeypatch.delenv(db_sessoes.ENV_AUTENTICACAO_PROPRIA, raising=False)
+    monkeypatch.setattr(db_sessoes, "validar", lambda _t: pytest.fail("validou desligado"))
+
+    resposta = pilot.verify_sessao(_Requisicao(cookies={acesso.COOKIE_SESSAO_DEV: "t"}))
+
+    assert resposta.status_code == 404
+
+
+def test_verify_sessao_sem_cookie_devolve_401(
+    _ligado: None, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Prelude herdado: sem sessao viva, 401 -- e sem vazar identidade na negacao."""
+    monkeypatch.setattr(db_sessoes, "validar", lambda _t: None)
+
+    resposta = pilot.verify_sessao(_Requisicao())
+
+    assert resposta.status_code == 401
+    assert "Remote-User" not in resposta.headers
+
+
+def test_verify_sessao_banco_fora_do_ar_vira_503(
+    _ligado: None, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Igual ao `/api/verify`: banco ilegivel vira 503, nao 401 -- as sessoes estao intactas."""
+    monkeypatch.setattr(
+        db_sessoes, "validar", lambda _t: (_ for _ in ()).throw(RuntimeError("banco fora"))
+    )
+
+    resposta = pilot.verify_sessao(_Requisicao(cookies={acesso.COOKIE_SESSAO_DEV: "t"}))
+
+    assert resposta.status_code == 503
+    assert "Remote-User" not in resposta.headers

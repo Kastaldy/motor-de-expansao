@@ -130,6 +130,18 @@ describe('o atrito extra so aparece onde foi decidido', () => {
     expect(c.gravidade).toBe('alta')
   })
 
+  it('CRIAR lista os paises com acesso no apoio (DEC-081)', () => {
+    const c = montarConfirmacao({
+      tipo: 'criar',
+      nome: 'Ana Ribeiro',
+      login: 'ana.ribeiro',
+      email: 'ana@ultraacademia.com.br',
+      perfil: 'expansao',
+      paises: ['Brasil', 'Argentina'],
+    })
+    expect(c.apoio.join(' ')).toContain('Com acesso a: Brasil, Argentina.')
+  })
+
   it('REBAIXAR de Growth NAO exige digitar', () => {
     /* O modo de falha e o oposto: tirar acesso e reversivel na mesma tela, e o
        atrito ali so' atrapalharia quem esta consertando um engano. */
@@ -347,5 +359,20 @@ describe('exigir nova senha (15/09)', () => {
     expect(c.apoio.join(' ')).toContain('continua valendo')
     expect(c.gravidade).toBe('media')
     expect(c.loginParaDigitar).toBeNull()
+  })
+})
+
+describe('editar paises (DEC-081, Fase 2)', () => {
+  it('mostra o de-para dos paises no apoio', () => {
+    const c = montarConfirmacao({
+      tipo: 'editar-paises',
+      nome: 'Ana Ribeiro',
+      login: 'ana.ribeiro',
+      de: ['Brasil'],
+      para: ['Brasil', 'Argentina'],
+    })
+    expect(c.apoio.join(' ')).toContain('De Brasil para Brasil, Argentina.')
+    expect(c.loginParaDigitar).toBeNull()
+    expect(c.gravidade).toBe('media')
   })
 })

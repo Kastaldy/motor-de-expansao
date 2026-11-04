@@ -13,7 +13,7 @@ O que este arquivo prova, e por que cada coisa importa:
   bloco posterior sem virar contrato do Bloco A. (`avisos` e `operacao` JA SAIRAM dessa
   lista: ganharam leitor no Bloco C+ e agora sao contrato — ver a secao propria abaixo.)
 
-Spec: `docs/spec_bloco_a_perfil.md` §1.2, §3.1 e §3.2.
+Spec: `docs/archive/spec_bloco_a_perfil.md` §1.2, §3.1 e §3.2.
 """
 
 from __future__ import annotations

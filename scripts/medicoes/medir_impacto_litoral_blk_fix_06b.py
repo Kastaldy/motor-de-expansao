@@ -12,7 +12,7 @@ NAO toca NENHUM artefato oficial. TUDO em scratch:
   - relatorio:              data/reports/base_h3_litoral_impacto_06b.md
 
 Uso:
-    python scripts/medir_impacto_litoral_blk_fix_06b.py
+    python scripts/medicoes/medir_impacto_litoral_blk_fix_06b.py
 """
 
 from __future__ import annotations

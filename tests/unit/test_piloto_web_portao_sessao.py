@@ -46,7 +46,8 @@ class _Url:
 
 
 class _Requisicao:
-    """Fake com o que o PORTAO usa: `.url.path`, `.cookies` e `.scope["headers"]`.
+    """Fake com o que o PORTAO usa: `.url.path`, `.method`, `.cookies`, `.headers` e
+    `.scope["headers"]`.
 
     Mais rico que o `_Requisicao` de `test_acesso_log.py` de proposito -- aquele nao tem
     `scope` nem `cookies`, porque a trilha nao precisa deles.
@@ -57,9 +58,15 @@ class _Requisicao:
         caminho: str = "/api/uf/SP",
         cookies: dict[str, str] | None = None,
         headers: dict[str, str] | None = None,
+        method: str = "GET",
     ) -> None:
         self.url = _Url(caminho)
+        self.method = method
         self.cookies = cookies or {}
+        # `.scope["headers"]` (lista crua) alimenta a limpeza de identidade do portao;
+        # `.headers` (dict) e `.method` ficam genericos para um fake completo. Os dois
+        # derivam do MESMO `headers` passado.
+        self.headers = {chave.lower(): valor for chave, valor in (headers or {}).items()}
         self.scope: dict[str, Any] = {
             "headers": [
                 (chave.lower().encode("latin-1"), valor.encode("latin-1"))
@@ -102,10 +109,24 @@ def _rodar(requisicao: _Requisicao) -> tuple[Any, list[_Requisicao]]:
     return resposta, chegou
 
 
-def _sessao(login: str = "vinicius", id_usuario: int = 7, id_sessao: int = 42) -> Any:
+def _sessao(
+    login: str = "vinicius",
+    id_usuario: int = 7,
+    id_sessao: int = 42,
+    paises: frozenset[str] | None = None,
+) -> Any:
+    # DEC-081: o portao ganhou o gate de pais (`PERFIL.pais in identidade.paises`, so' nas rotas
+    # gateadas). O DEFAULT e' o pais DESTE processo (BR em teste), para o caminho-feliz de injecao
+    # passar pelo gate; os testes do gate (secao 6) passam `paises=` explicitamente.
+    if paises is None:
+        paises = frozenset({pilot.PERFIL.pais})
     return db_sessoes.SessaoValida(
         identidade=Identidade(
-            id_usuario=id_usuario, login=login, perfil="growth", permissoes=frozenset()
+            id_usuario=id_usuario,
+            login=login,
+            perfil="growth",
+            permissoes=frozenset(),
+            paises=paises,
         ),
         id_sessao=id_sessao,
         ultimo_acesso=None,
@@ -427,3 +448,146 @@ def test_a_sessao_nao_carrega_mais_a_marca_de_troca() -> None:
     """
     assert "deve_trocar_senha_usuario" not in db_sessoes.SQL_VALIDAR
     assert not hasattr(db_sessoes.SessaoValida, "deve_trocar")
+
+
+# --------------------------------------------------------------------------------------
+# 6. Gate de PAIS da DEC-081 — a 2a camada (defesa em profundidade, DENTRO do portao)
+# --------------------------------------------------------------------------------------
+# A borda (`/api/verify`) ja' nega quem nao tem o pais; o portao NAO confia nesse veredito e
+# revalida. Se a borda for contornada (acesso direto ao container na rede interna), e' aqui que
+# o processo ainda barra quem nao tem o pais que ELE serve. So' nas rotas GATEADAS: as
+# self-routes do apex (`ROTAS_PAIS_NEUTRO`, ex.: `/api/me`) passam.
+
+#: Pais que NAO e' o do processo de teste (BR), para exercitar a NEGACAO do gate.
+_PAIS_FORA = "AR" if pilot.PERFIL.pais != "AR" else "CO"
+
+
+def test_rota_de_dados_com_sessao_de_OUTRO_pais_leva_403(
+    _ligado: None, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Sessao viva, mas de um pais que ESTE processo nao serve: 403 com `motivo=pais`, e a rota
+    NAO chega ao `call_next`. 403 (pessoa), nao 404 (instancia)."""
+    import json
+
+    monkeypatch.setattr(
+        db_sessoes, "validar", lambda _t: _sessao(paises=frozenset({_PAIS_FORA}))
+    )
+
+    req = _Requisicao(caminho="/api/uf/SP", cookies={acesso.COOKIE_SESSAO_DEV: "t"})
+    resposta, chegou = _rodar(req)
+
+    assert resposta.status_code == 403
+    assert json.loads(bytes(resposta.body))["motivo"] == "pais"
+    assert chegou == [], "a rota gateada por pais chegou ao handler apesar do 403"
+
+
+def test_rota_de_dados_com_o_pais_certo_passa_e_injeta_a_identidade(
+    _ligado: None, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A outra metade: com o pais do processo entre os da pessoa, o portao deixa passar e
+    injeta o `Remote-User` da sessao -- o gate nao atrapalha o caminho-feliz."""
+    monkeypatch.setattr(
+        db_sessoes,
+        "validar",
+        lambda _t: _sessao(login="juancalu", paises=frozenset({pilot.PERFIL.pais})),
+    )
+
+    req = _Requisicao(caminho="/api/uf/SP", cookies={acesso.COOKIE_SESSAO_DEV: "t"})
+    resposta, chegou = _rodar(req)
+
+    assert resposta.status_code == 200
+    assert len(chegou) == 1
+    assert req.valores_de("remote-user") == ["juancalu"]
+
+
+def test_rota_PAIS_NEUTRO_com_sessao_de_outro_pais_NAO_e_barrada(
+    _ligado: None, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """`/api/me` e' pais-NEUTRO (`ROTAS_PAIS_NEUTRO`): o apex precisa dela para montar os
+    cartoes de quem so' tem OUTRO pais. O gate NAO a alcanca -- a requisicao atravessa o portao
+    (chega ao handler) mesmo com a sessao de um pais diferente do que o processo serve."""
+    monkeypatch.setattr(
+        db_sessoes, "validar", lambda _t: _sessao(paises=frozenset({_PAIS_FORA}))
+    )
+
+    req = _Requisicao(caminho="/api/me", cookies={acesso.COOKIE_SESSAO_DEV: "t"})
+    resposta, chegou = _rodar(req)
+
+    assert resposta.status_code == 200
+    assert len(chegou) == 1, "o gate de pais barrou uma rota pais-neutra (/api/me)"
+    assert acesso.rota_exige_pais("/api/me") is False
+
+
+# --------------------------------------------------------------------------------------
+# 7. BLK-BANCO-13: a pagina publica, COM sessao, mostra QUEM acessou na trilha (sem barrar)
+# --------------------------------------------------------------------------------------
+# A pagina (GET /, /entrar.html) e' publica -- nao exige sessao. Mas a trilha (DEC-027)
+# registrava esse acesso como "desconhecido" ate' para quem JA' estava logado, porque o
+# portao so' carimbava o `Remote-User` nas rotas gateadas. Agora, SO' nas rotas que a trilha
+# audita (`relevante`), se ha' sessao, carimba o nome -- best-effort, sem NUNCA barrar.
+
+
+def test_pagina_publica_com_sessao_carimba_o_nome_para_a_trilha(
+    _ligado: None, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """GET / publico + sessao valida: carimba o `Remote-User` (a trilha mostra o nome) e a
+    requisicao CHEGA ao handler (rota publica nao barra)."""
+    monkeypatch.setattr(db_sessoes, "validar", lambda _t: _sessao(login="vinicius"))
+    req = _Requisicao(caminho="/", cookies={acesso.COOKIE_SESSAO_DEV: "t"})
+    resposta, chegou = _rodar(req)
+    assert resposta.status_code == 200
+    assert len(chegou) == 1, "rota publica nao pode barrar"
+    assert req.valores_de("remote-user") == ["vinicius"]
+
+
+def test_pagina_publica_SEM_cookie_segue_desconhecido(
+    _ligado: None, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Visitante sem sessao: SEM cookie o portao nem vai ao banco, e segue sem nome --
+    "desconhecido" na trilha e' o certo para quem nao se identificou."""
+    monkeypatch.setattr(db_sessoes, "validar", lambda _t: pytest.fail("validou sem cookie"))
+    req = _Requisicao(caminho="/")
+    _resposta, chegou = _rodar(req)
+    assert len(chegou) == 1
+    assert req.valores_de("remote-user") == []
+
+
+def test_pagina_publica_com_cookie_invalido_nao_carimba_e_nao_barra(
+    _ligado: None, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Cookie presente mas sessao invalida (expirada/forjada): nao carimba, e a pagina publica
+    continua atendendo (nunca 401 numa rota publica)."""
+    monkeypatch.setattr(db_sessoes, "validar", lambda _t: None)
+    req = _Requisicao(caminho="/entrar.html", cookies={acesso.COOKIE_SESSAO_DEV: "t"})
+    resposta, chegou = _rodar(req)
+    assert resposta.status_code == 200
+    assert len(chegou) == 1
+    assert req.valores_de("remote-user") == []
+
+
+def test_pagina_publica_com_banco_fora_nao_derruba_o_acesso(
+    _ligado: None, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Se o banco cai na validacao best-effort, a pagina publica NAO vira 500/503 -- a trilha
+    nunca derruba o acesso. Segue sem nome."""
+    monkeypatch.setattr(
+        db_sessoes, "validar", lambda _t: (_ for _ in ()).throw(RuntimeError("banco fora"))
+    )
+    req = _Requisicao(caminho="/", cookies={acesso.COOKIE_SESSAO_DEV: "t"})
+    resposta, chegou = _rodar(req)
+    assert resposta.status_code == 200
+    assert len(chegou) == 1
+    assert req.valores_de("remote-user") == []
+
+
+def test_estatico_com_cookie_NAO_paga_a_consulta_de_sessao(
+    _ligado: None, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """O custo (opcao B) e' so' nas rotas que a trilha AUDITA. Um asset (ignorado por
+    `relevante`) nao valida sessao mesmo com cookie -- senao cada .js/.png pagaria uma ida ao
+    banco."""
+    monkeypatch.setattr(db_sessoes, "validar", lambda _t: pytest.fail("estatico validou sessao"))
+    req = _Requisicao(caminho="/assets/app-abc123.js", cookies={acesso.COOKIE_SESSAO_DEV: "t"})
+    _resposta, chegou = _rodar(req)
+    assert len(chegou) == 1
+    assert req.valores_de("remote-user") == []

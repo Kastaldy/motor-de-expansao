@@ -1,5 +1,12 @@
 # Infraestrutura de Produção — Motor de Expansão Ultra Academia
 
+> **Em poucas palavras**
+> - **Do que trata:** O servidor onde o site roda: o que há nele, como publicar ou desfazer uma versão nova, tarefas agendadas, login, alertas e o que fazer em incidentes.
+> - **Quando ler:** Antes de mexer no servidor, ou quando algo sai do ar, um dado não atualiza ou é preciso dar ou tirar acesso de alguém.
+> - **Atenção:** Mexer no servidor é sempre passo manual, confirmado comando a comando. Desde 27/10/2026, no Brasil, tirar alguém só do login antigo não basta; a Argentina ainda usa esse login.
+
+> Histórico dos procedimentos superados e dos incidentes já consertados: `docs/archive/infra_producao_historico.md`.
+
 ## Visão geral
 
 | Componente | Valor |
@@ -16,11 +23,15 @@
 | SO | Ubuntu 22.04 LTS |
 | Recursos | 4 vCPU, 16 GB RAM, 200 GB NVMe, 4 GB swap |
 
-> **DEC-022 (2026-08-03):** o dashboard Streamlit foi aposentado; o app de produção é o
-> **piloto web** (`web/` — SPA React/Vite + FastAPI). O subdomínio
-> `dashboard.ultra-expansao.tech` segue vivo **apenas** como host de `/tiles/*` (o
-> tileserver que alimenta o basemap dos PDFs de api, web e bot; `publicUrl` e styles do
-> openmaptiles INALTERADOS) — a raiz do subdomínio redireciona **301** para
+> **Swap do host.** O container `web` roda com `mem_limit` 8 GB e `memswap_limit` 10 GB
+> (`docker-compose.prod.yml`), o que supõe swap no host. Num servidor novo, criar antes de subir o stack
+> (como root): `fallocate -l 4G /swapfile && chmod 600 /swapfile`, `mkswap /swapfile && swapon /swapfile` e
+> `echo '/swapfile none swap sw 0 0' >> /etc/fstab`; conferir com `free -h` (linha `Swap` com 4 GB).
+
+> **DEC-022:** o subdomínio
+> `dashboard.ultra-expansao.tech` serve **apenas** `/tiles/*` (o
+> tileserver que alimenta o basemap dos PDFs de api, web e bot; o `publicUrl` do
+> openmaptiles aponta para ele (os styles usam `mbtiles://{brazil}` e herdam o endereço do `publicUrl`)) — a raiz do subdomínio redireciona **301** para
 > `piloto.ultra-expansao.tech`.
 
 ## Stack
@@ -188,8 +199,7 @@ de qualquer `scp`, **reiniciar é obrigatório** — `docker compose -f docker-c
 
 ## Integração com gymscraping (repo separado)
 
-> **Status (2026-06):** a coleta de concorrentes roda **automatizada e semanal na própria VPS**
-> (a antiga "Opção B" foi implementada). É camada paralela mercado/residual, **READ-ONLY sobre o M1**
+> **Status:** a coleta de concorrentes roda **automatizada e semanal na própria VPS**. É camada paralela mercado/residual, **READ-ONLY sobre o M1**
 > (não recalcula `score_priorizacao`, `hex_score_estrutural` nem regenera artefatos M1 oficiais). Ver
 > **DEC-013** em `CLAUDE.md` §8.
 
@@ -201,32 +211,26 @@ de qualquer `scp`, **reiniciar é obrigatório** — `docker compose -f docker-c
 - **Imagem:** `gymscraping:local` — `Dockerfile` no próprio repo do scraper (Chrome + webdriver-manager +
   Chromium do Playwright). Reconstruída a cada run (cache acelera).
 - **Runner:** **`/opt/gymscraping-infra/run_weekly_90.sh`**, cuja fonte versionada é
-  **`scripts/cron/run_weekly_90.sh`** (neste repo desde 2026-09-17; instalação por `cp` + `chmod +x`,
-  manual, como a dos outros wrappers). Até então ele era o **único wrapper de produção fora do
-  repositório**, e o custo foi medido: a DEC-059 tirou o mount do checkout velho da etapa de regen em
-  12/09 e **deixou o passo 4.5 (pins M&A) para trás**, porque não havia diff para ninguém revisar — o
-  passo seguiu rodando um checkout congelado em 19/08 e gravando artefato **vazio com `exit 0`** de
-  30/08 a 17/09, contido apenas pela guarda de desenhabilidade. Faz, em sequência:
+  **`scripts/cron/run_weekly_90.sh`** (neste repo; instalação por `cp` + `chmod +x`,
+  manual, como a dos outros wrappers). Faz, em sequência:
   0. **Preserva a safra anterior** em `$INFRA/safra_anterior` **antes** do `git checkout -- Unidades/`
-     (BLK-COLETA-01). O descarte continua — é o preço do fast-forward —, mas deixou de ser perda: sem
-     esse backup, a rede cujo coletor falhasse voltaria ao baseline do repositório, que pode ser de
-     meses atrás (foi o mecanismo do `selfit 231 → 119` em 13/09);
+     (BLK-COLETA-01). O descarte é o preço do fast-forward, e o backup impede a perda: sem
+     ele, a rede cujo coletor falhasse voltaria ao baseline do repositório, que pode ser de
+     meses atrás;
   1. `git pull` + `docker build`. **O pull que falha avisa no chat de ops** e NÃO aborta o lote: a
-     coleta ainda vale, e derrubar o domingo trocaria um dano por outro maior. Até 17/09 ele usava
-     `|| echo`, e foi assim que o clone ficou 8 commits atrás por cinco dias sem ninguém ver;
+     coleta ainda vale, e derrubar o domingo trocaria um dano por outro maior;
   2. **Coleta** dos 90 (`executar_coletores.py --workers 3 --scheduler-policy weighted`, container `--user 0:0`);
   2.5. **Restaura a safra para quem NÃO recoletou** (BLK-COLETA-01), por **conteúdo**: CSV idêntico ao
      commitado **e** diferente da safra ⇒ aquela rede não rodou nesta rodada. Não é parsing do log de
-     propósito — no lote de 13/09 havia 3 linhas de `Resultado: falha` para ~56 redes defasadas,
-     porque o lote morreu no #28 e as demais nunca rodaram. Restaurações > 0 avisam ops;
+     propósito. Restaurações > 0 avisam ops;
   3. **Relatório de crescimento por rede** (`/opt/gymscraping-infra/relatorio_crescimento.py`): snapshot
      `contagem_atual.csv`, diff vs. `contagem_anterior.csv` (delta por rede), histórico `historico_contagem.csv`
      e `relatorio_crescimento_<data>.txt`;
   4. **Integração ao motor** (regen camada paralela, READ-ONLY M1 — ver abaixo);
   5. **Sync do diretório de concorrentes dos apps** (`sync_concorrentes_dashboard.py` — ver abaixo);
   5.5. **Pins de M&A** (`alvos_ma` na imagem da `api`, promovidos só com as guardas de desenhabilidade e de
-     coerência de chave — ver "Entregável de M&A"); se as redes do agregador mudaram, um **2º regen** (2026-10-21);
-  6. **Restart** de `api`/`telegram-bot`/`web` (o `streamlit` saiu da lista com a DEC-022). Os passos 5, 5.5 e 6
+     coerência de chave — ver "Entregável de M&A"); se as redes do agregador mudaram, um **2º regen**;
+  6. **Restart** de `api`/`telegram-bot`/`web`. Os passos 5, 5.5 e 6
      só rodam se o regen da etapa 4 publicar. Depois da coleta o lote também roda o **snapshot semanal**
      (`FONTES="unidades wellhub"`) e, depois do relatório, copia `historico_contagem.csv` para o staging do motor.
 - **Cron:** `0 6 * * 0` (domingo **06:00 UTC = 03:00 BRT**; o servidor é UTC). `crontab -l` no root.
@@ -235,10 +239,8 @@ de qualquer `scp`, **reiniciar é obrigatório** — `docker compose -f docker-c
 ### Integração ao motor (regen mercado/residual — READ-ONLY M1)
 
 A coleta atualiza só os CSVs `Unidades/unidades_<rede>.csv`. A propagação para os apps roda a cadeia
-**paralela** com o código **da imagem** da `api` (que carrega o motor completo — desde a DEC-022; antes
-rodava na imagem do `streamlit` —, `PYTHONPATH=/app/src`, `ROOT=/app`, dados em `/app/data`), pelo wrapper
-`run_regen_mercado.sh` e **sem montar checkout nenhum** (até 2026-09-17 o lote montava `/opt/motor-expansao/app`
-por cima da imagem, e o checkout congelado gravou pins vazios por três semanas):
+**paralela** com o código **da imagem** da `api` (que carrega o motor completo, `PYTHONPATH=/app/src`, `ROOT=/app`, dados em `/app/data`), pelo wrapper
+`run_regen_mercado.sh` e **sem montar checkout nenhum**:
 
 ```
 normalizar_concorrentes → enriquecimento_espacial_hexagonos → calcular_colunas_mercado →
@@ -247,11 +249,7 @@ enriquecer_outputs_residual_mercado → fase1_bi_exports.materialize_enriched_da
 ```
 
 > **`enriquecimento_espacial_hexagonos` (o "Bloco 3") entrou nessa lista com a DEC-059**, e é a razão de
-> a etapa 4 ter virado um wrapper versionado (subseção abaixo). Antes dele a cadeia começava no
-> `calcular_colunas_mercado`: a academia coletada no domingo entrava no cadastro e **não pressionava
-> ninguém**, porque a oferta espacial de 1 km continuava a da última vez que alguém rodou o Bloco 3 à
-> mão. Custo medido do atraso (DEC-048): nove domingos sem propagar moveram **5.105 hexágonos (60,46%)**
-> e tiraram o white space de **808** — mais que o efeito da própria DEC-048.
+> a etapa 4 ter virado um wrapper versionado (subseção abaixo).
 
 Usa-se **`materialize_enriched_dashboard()`** (só o artefato enriquecido derivado), **não** o `main()` do
 `fase1_bi_exports` — assim **não recompõe** os artefatos oficiais do M1 (`hexagonos_brasil_dashboard.parquet`
@@ -264,15 +262,12 @@ host são de root e o usuário não-root da imagem não consegue sobrescrevê-lo
 
 ### Regeneração semanal da camada de mercado (DEC-059 — o wrapper que assume a etapa 4)
 
-**O que mudou.** A etapa 4 deixa de ser um bloco de comandos dentro do `run_weekly_90.sh` e passa a ser
-**`scripts/cron/run_regen_mercado.sh`**, versionado neste repo. Duas mudanças, e a segunda é
-pré-requisito da primeira:
+A etapa 4 é
+**`scripts/cron/run_regen_mercado.sh`**, versionado neste repo. Dois pontos, e o segundo é
+pré-requisito do primeiro:
 
 1. **O Bloco 3 entra na cadeia** (ver o aviso da subseção anterior).
-2. **O regime de escrita muda.** A etapa 4 escrevia **direto no staging vivo**, com `||` tolerante entre
-   os passos: um passo que morria no meio deixava a camada em estado **misto** (mercado novo + carteira
-   velha) e o lote seguia com `exit 0`. Ligar o Bloco 3 — que reescreve a oferta de 1,5 milhão de
-   hexágonos — nesse regime seria irresponsável. Agora: **rascunho → cadeia com `&&` → validação →
+2. **O regime de escrita muda.** Agora: **rascunho → cadeia com `&&` → validação →
    publicação por rename atômico → restart → aviso no Telegram nos dois desfechos**. Reprovou em
    qualquer ponto: **nada publicado, staging vivo intacto**, `exit != 0`.
 
@@ -349,11 +344,10 @@ Confira na saída, antes de seguir:
 | `oferta_var_pct` | dentro de ±15% — fora disso é coleta parcial ou universo trocado |
 | `hexes` | igual a `hexes_publicado` (a cadeia não pode perder hexágono) |
 
-**5. Etapa 4 do lote semanal — já versionada.** Desde 2026-09-17 o lote de domingo é
-`scripts/cron/run_weekly_90.sh` (instalação por `cp`, no cabeçalho dele), e ele já chama
+**5. Etapa 4 do lote semanal — nada a trocar à mão.** O lote de domingo é
+`scripts/cron/run_weekly_90.sh` (instalação por `cp`, no cabeçalho dele), e ele chama
 `/opt/motor-expansao-infra/run_regen_mercado.sh` num `if`: reprovado o regen, **sync, pins e restart
-não rodam** e os apps seguem com o dado anterior — a coleta, que já rodou, não se perde. Não há mais
-bloco a trocar à mão.
+não rodam** e os apps seguem com o dado anterior — a coleta, que já rodou, não se perde.
 
 > O que acabou com a DEC-059 foi o `||` **entre** os passos da cadeia, que publicava estado misto. O
 > wrapper tem `flock` próprio (`/var/lock/motor-regen-mercado.lock`), então uma segunda invocação sai
@@ -394,10 +388,13 @@ a defesa deles é a validação, que impede a publicação ruim em vez de desfaz
 
 > **Por que existe:** o mount `$REPO/Unidades:/app/concorrentes:ro` do passo anterior vale **só dentro do
 > container de regen** — ele alimenta o *parquet*. O diretório **`/opt/motor-expansao/concorrentes`**, que os
-> serviços `api` e `web` montam em `/app/concorrentes`, **não era tocado por ninguém**. Medido em
-> 2026-07-29: estava congelado desde 2026-05-28 com 39 CSVs e 39 logos, enquanto o parquet já tinha 106 redes.
-> Efeito visível: o Streamlit (que lê os CSVs, não o parquet) perdia **68 das 107 redes** no mapa, e os pins do
-> piloto web e dos PDFs caíam no **fallback de sigla** por falta de `logo_<slug>.png`.
+> serviços `api` e `web` montam em `/app/concorrentes`, **não é escrito por nenhum outro passo do lote de
+> domingo** (à mão, sim: ver o "custo conhecido" e a execução sob demanda, abaixo). Sem este passo ele
+> congela, e logo nova não chega a ele: no piloto web e nos PDFs, o pin da rede que ficou sem
+> `logo_<slug>.png` cai no **fallback de sigla**.
+> Medido em 2026-09-29, o
+> próprio passo falhava desde 2026-09-20 e o diretório estava parado em 2026-09-06 — ver **BLK-SAUDE-08**
+> (pendente em 2026-10-29) em `tasks/backlog.md`.
 
 O passo roda `scripts/sync_concorrentes_dashboard.py` (cópia instalada em `/opt/gymscraping-infra/`) dentro da
 imagem da `api`, com `GymScraping` em `:ro` e o diretório dos apps como destino. Duas regras importam:
@@ -447,11 +444,10 @@ cat /opt/gymscraping-infra/relatorio_crescimento_*.txt | tail -100
 Falhas individuais de coletor **não** abortam o lote; redes que falham mantêm o CSV anterior e aparecem como
 "defasadas" no relatório de crescimento. Se o regen falhar, os apps mantêm os dados anteriores (sem restart).
 **Nota:** o runner **não** faz `git pull` do checkout do motor (`/opt/motor-expansao/app`) para não conflitar
-com o deploy; se os pipelines da cadeia mudarem, re-sincronizar o checkout manualmente.
+com o deploy.
 
 > **Pendentes (futuro):** integração dos agregadores ao residual com remodelagem (Huff por tipo de
-> rede + dedup) usando as bases `NAO_ABRA/`. *(O cron **semanal** dos agregadores saiu desta lista
-> no BLK-MA-21 — tem script versionado e seção própria abaixo.)*
+> rede + dedup) usando as bases `NAO_ABRA/`.
 
 ### Snapshot semanal de concorrentes (BLK-MA-06 — insumo de churn/staleness)
 
@@ -504,8 +500,7 @@ DRY_RUN=1 /opt/motor-expansao-infra/run_snapshot_concorrentes.sh
 > se lê como "não há dado" em vez de "caminho errado". Um caminho inexistente, ao contrário, aborta
 > na hora. Se precisar sobrescrever: `HOST_CONCORRENTES=/outro/caminho DRY_RUN=1 ...`.
 
-`--dry-run` roda a cadeia inteira **sem gravar e sem podar** (em regime a poda também não roda desde a
-DEC-064, 2026-09-18: a série é retida inteira e a auditoria sai com `retencao_semanas = 0`; podar virou ato
+`--dry-run` roda a cadeia inteira **sem gravar e sem podar** (em regime a poda também não roda (DEC-064): a série é retida inteira e a auditoria sai com `retencao_semanas = 0`; podar é ato
 manual, `--retencao-semanas N`, com referência `26` = 2× o piso medido de 13 — aritmética na seção do cron
 dos agregadores, abaixo). Se
 `linhas_snapshot` vier `0`, o caminho de `HOST_CONCORRENTES`
@@ -526,9 +521,7 @@ está errado; só agende depois de ver contagem plausível.
 > metade da escala do sinal mais importante do ranking, inacessível justamente na largada.
 >
 > E o prazo vem da **cadência**: com as três fontes semanais, 8 observações são **~2 meses** para
-> todas. Quando esta nota foi escrita, os agregadores ainda não tinham cron e valiam ~8 meses; o
-> BLK-MA-21 deu cron próprio a eles, na terça, e a maturação caiu para ~8 **semanas** — que era
-> justamente o caminho com retorno real, em vez de afrouxar o critério.
+> todas.
 >
 > Fica registrado, para quando houver dado: o parâmetro é **global**, e agora a cadência também é.
 > A assimetria que sobra não é de cadência, é de **buraco**: a semana em que a curadoria recusa um
@@ -538,7 +531,7 @@ está errado; só agende depois de ver contagem plausível.
 ### Coleta semanal dos agregadores (BLK-MA-21 / DEC-039 — o relógio dos independentes)
 
 **Por que existe.** Os **independentes** — o universo-alvo do funil de M&A — vivem **só** no WellHub
-e no TotalPass. O snapshot semanal acima fotografa `--fontes unidades`, que é o feed de **cadeias**.
+e no TotalPass. O snapshot semanal acima fotografa `unidades`, que é o feed de **cadeias**, e o WellHub que esta coleta recolhe no sábado.
 Sem este cron, S3 (churn) e S4 (staleness) sobre independentes **nunca amadurecem**, e o score de
 vulnerabilidade fica preso no regime `{s1,s6}` — em que o `v1` é constante e o que se ordena é
 pressão competitiva renomeada, para sempre.
@@ -553,14 +546,12 @@ cobrindo a janela inteira. READ-ONLY sobre o M1. **O script nunca atualiza o clo
 copia arquivo entre máquinas, nunca abre sessão remota e nunca faz deploy** — tudo isso é passo
 manual, comando a comando (§6 do `CLAUDE.md`).
 
-> **O cron dos agregadores NÃO usa o wrapper de domingo.** O cabeçalho de
-> `run_snapshot_concorrentes.sh` mandava, até 2026-08-25, invocar "este mesmo script com
-> `--fontes totalpass wellhub`" na cadência dos agregadores.
-> Seguir aquilo pularia a curadoria inteira — a escolha do diretório do WellHub e a guarda de
+> **O cron dos agregadores NÃO usa o wrapper de domingo.** Invocar
+> `run_snapshot_concorrentes.sh` com
+> `FONTES="totalpass wellhub"` na cadência dos agregadores pularia a curadoria inteira — a escolha do diretório do WellHub e a guarda de
 > frescor, que são a razão deste bloco existir. Os dois wrappers são distintos e não se substituem.
 
-**Passo 0 do wrapper: a rotação do consolidado, e por que `--no-resume` não bastava**
-*(emenda de 2026-08-25)*. Nos dois coletores, `--no-resume` faz **apenas** `checkpoint.unlink()`. O
+**Passo 0 do wrapper: a rotação do consolidado, e por que `--no-resume` não bastava**. Nos dois coletores, `--no-resume` faz **apenas** `checkpoint.unlink()`. O
 CSV consolidado (`Wellhub/unidades_wellhub.csv`, `TotalPass/unidades_totalpass.csv`) é escrito em
 modo `"a"`, e `ensure_header` **retorna cedo** quando o arquivo já existe com conteúdo: **nada
 trunca o consolidado**. Na segunda semana as duas safras coexistem no mesmo arquivo e `split_by_state`
@@ -585,14 +576,6 @@ fica no disco para auditoria. Só roda quando a coleta vai rodar — com `DRY_RU
 > rotações por ano são **~745 MiB/ano, sem teto e sem dono** — mais do que a série de snapshots
 > inteira. A limpeza é do operador, e agora ela é mensal, não anual.
 
-**E o TotalPass agora também roda `--no-resume`.** Sem ele, `TotalPass/pipeline.py` filtra
-`pending = [s for s in slugs if not checkpoint.already_processed(s)]` e retorna cedo com
-`if not pending` — com o checkpoint cheio (34.982 slugs medidos nesta estação: 15.986 completed +
-50 failed + 18.946 filtered), **praticamente nada era recoletado**. E o `main()` **não parava ali**:
-`split_by_state` rodava em seguida e reescrevia os 27 CSVs por UF em modo `"w"`, com conteúdo
-idêntico e **mtime de agora**. O coletor saía com **sucesso**, então o `|| echo "coletor falhou"` do
-wrapper nunca disparava.
-
 **A curadoria não é `cp`.** Ela é um módulo Python versionado e testado
 (`motor_expansao.vulnerabilidade.curadoria_agregadores`, que viaja **dentro da imagem** da API, logo
 "está no ar" é verificável por digest), e decide duas coisas que, decididas errado, produzem um
@@ -601,16 +584,12 @@ wrapper nunca disparava.
 | decisão | regra | por quê |
 |---|---|---|
 | qual diretório | `TotalPass/csvs`; WellHub prefere `Wellhub/csvs_musculacao` e cai em `Wellhub/csvs` se ele não existir | os dois universos do WellHub diferem por 2-3× (16.432 × 6.850 linhas medidas em SP). `csvs/` já sai filtrado no modo **default** do coletor; `csvs_musculacao/` só é gerado quando o filtro do pipeline está desligado |
-| ambiguidade | `csvs_musculacao/` presente, **mais antigo** que `csvs/` **e** com `data_coleta` diferente ⇒ **aborta**; com a **mesma** `data_coleta` nos dois (mesma coleta, filtro desligado) ⇒ escolhe `csvs_musculacao/` (emenda 4 da DEC-039) | troca de modo real ainda aborta; a ambiguidade medida só por `mtime` era falsa — seguindo a mensagem de erro, o operador apagou o subset filtrado em 2026-09-18 e o universo completo (2,05×) ficou como única cópia |
+| ambiguidade | `csvs_musculacao/` presente, **mais antigo** que `csvs/` **e** com `data_coleta` diferente ⇒ **aborta**; com a **mesma** `data_coleta` nos dois (mesma coleta, filtro desligado) ⇒ escolhe `csvs_musculacao/` (emenda 4 da DEC-039) | troca de modo real ainda aborta; a ambiguidade medida só por `mtime` era falsa |
 | frescor | recusa publicar agregador cuja **`data_coleta`** mais VELHA ainda no diretório passe de `MAX_IDADE_DIAS` (default **3**) | se um coletor morrer no meio da janela de 20h, os CSVs antigos ficam no disco. Fotografá-los faz `semanas_sem_mudanca` crescer sozinho e o **S4 marcar o universo inteiro daquela fonte como "parado"** — falso positivo em massa, no sinal de segundo maior peso, com `exit 0` |
 | piso de volume | recusa volume abaixo de `--piso-relativo` (default **0,5**) do que já está publicado no destino | o teto pega universo que **infla**; sem piso, coleta que morreu na metade passa — CSVs frescos, metade das linhas, e as que faltam viram `sumiu_recente` em massa no **S1**. Inerte na 1ª execução (sem baseline); `0` desliga |
 | teto de volume | recusa volume acima de `--teto-relativo` (default **1,5**) do que já está publicado no destino | com `csvs_musculacao/` ausente a curadoria SUPÕE que `csvs/` veio filtrado; se veio o universo completo (2-3×), o teto barra em vez de dobrar o funil de M&A. Inerte na 1ª execução; `0` desliga (emenda 4 da DEC-039) |
 
-> **A idade sai da linha mais VELHA do feed (`min(data_coleta)`), não do `mtime` nem do máximo**
-> *(emenda de 2026-08-25, régua ajustada para o mínimo em 2026-08-26)*. A guarda nasceu medindo
-> `p.stat().st_mtime` e isso a tornava cega ao caso que ela existe para pegar. Medido no clone real:
-> os 27 CSVs de `TotalPass/csvs/` tinham `mtime` de **hoje** e `data_coleta = 2026-06-01` em
-> **15.982 de 15.986** linhas — **85 dias** reportados como `0`. O `mtime` mede quando o arquivo foi
+> **A idade sai da linha mais VELHA do feed (`min(data_coleta)`), não do `mtime` nem do máximo**. O `mtime` mede quando o arquivo foi
 > *tocado*; `data_coleta`, quando o dado foi *colhido*. Motivo independente: `mtime` **não sobrevive**
 > a `scp`, `git clone`, `cp -r` nem a restore de volume, então a régua antiga protegia só a estação em
 > que o arquivo nasceu — não a VPS. O `mtime` fica como **fallback declarado** (feed sem `data_coleta`
@@ -619,7 +598,7 @@ wrapper nunca disparava.
 > relatório, em `regua_idade`, e no log — com o rótulo `data_coleta_min`, cujo sufixo existe para a
 > procedência não ficar ambígua entre versões da imagem (a anterior agregava por **máximo**).
 >
-> **Por que o mínimo, e não o máximo** *(2026-08-26)*. `Wellhub/split_by_state.py` só reescreve as
+> **Por que o mínimo, e não o máximo**. `Wellhub/split_by_state.py` só reescreve as
 > UFs presentes no consolidado e **nada apaga**: uma coleta que morre no meio deixa as demais UFs com
 > a safra anterior no disco. Simulado com as proporções reais das 27 UFs (só SP recoletada hoje, 26
 > UFs de 7 dias atrás), o **máximo** reportava `idade_dias = 0,0` e publicava **45.526 linhas das
@@ -636,30 +615,19 @@ Fonte recusada **sai do `--fontes`** do snapshot, e a partição registra o que 
 recusado". Se **nenhuma** fonte for publicada, o wrapper sai com código `3`: nada fresco para
 fotografar é falha, não sucesso silencioso.
 
-A curadoria decide os **dois** agregadores antes de copiar qualquer byte *(emenda de 2026-08-25)*:
-no laço único anterior, o `totalpass` (primeiro na ordem canônica) já tinha sido publicado quando a
-ambiguidade do `wellhub` levantava, e o destino ficava com meia curadoria de uma semana nova enquanto
-o wrapper abortava.
+A curadoria decide os **dois** agregadores antes de copiar qualquer byte.
 
 > **SUPERADO pela emenda 4 da DEC-039 (2026-09-18).** Seguir esta instrução apagou o subset filtrado e deixou o
 > universo completo (2,05×) como única cópia; desde a emenda, a mesma `data_coleta` nos dois diretórios escolhe
 > `csvs_musculacao/` sozinha e o teto de volume (1,5) barra o universo completo. Só apague diretório à mão se a
 > curadoria ABORTAR por troca de modo real (`data_coleta` diferente), depois de conferir em que modo o coletor rodou.
-> Texto original, para registro: **Ação humana pendente, e ela se repete toda SEMANA se não for resolvida.** O wrapper roda o WellHub
-> no modo **default** (filtro do pipeline ligado), em que só `csvs/` é regenerado —
-> `Wellhub/csvs_musculacao/` fica para trás e vira "estritamente mais antigo", que é exatamente o
-> gatilho da linha *ambiguidade* acima. Nesta estação o clone já está nesse estado
-> (`csvs/` de `2026-08-18` contra `csvs_musculacao/` de `2026-08-07`). **Antes da primeira execução
-> agendada:** confirmar de que modo o coletor rodou e **apagar `Wellhub/csvs_musculacao/` à mão**. Com
-> o filtro ligado, `csvs/` já É o subset de musculação e o diretório antigo não tem função.
+> Texto original, para registro: `docs/archive/infra_producao_historico.md`.
 
-**Retenção — desde a DEC-064 (2026-09-18) a poda NÃO roda em regime:** a série é retida inteira (auditoria com
-`retencao_semanas = 0`) e a leitura passou a ser recortada na origem, então o teto de RSS medido abaixo deixou de
-restringir. O que segue vale como **referência para a poda manual** (`--retencao-semanas N`): `RETENCAO_SEMANAS`
-voltou de `78` para `26`, e nunca abaixo de 13.
+**Retenção — a poda NÃO roda em regime (DEC-064):** a série é retida inteira (auditoria com
+`retencao_semanas = 0`) e a leitura é recortada na origem, então o teto de RSS medido abaixo não restringe. O que segue vale como **referência para a poda manual** (`--retencao-semanas N`): `RETENCAO_SEMANAS`
+= `26`, e nunca abaixo de 13.
 `podar_snapshots` é keep-newest-N sobre diretórios `semana=`. Com as **três** fontes semanais, N
-partições = N observações de **cada** fonte no caminho feliz — o divisor `4,345` do feed mensal não
-existe mais. O piso é **13**, medido: `_semanas_sem_mudanca` conta observações estritamente **após**
+partições = N observações de **cada** fonte no caminho feliz. O piso é **13**, medido: `_semanas_sem_mudanca` conta observações estritamente **após**
 a última mudança, logo vale `k-1` com hash constante, contra o denominador `STALE_SEMANAS = 12`.
 
 | N | `semanas_sem_mudanca` | `v4` | |
@@ -672,44 +640,14 @@ a última mudança, logo vale `k-1` com hash constante, contra o denominador `ST
 `26` é o menor N que ainda satura o `v4` com uma fonte perdendo **metade** das semanas (26 semanas,
 50% de falha → 13 observações → `semanas_sem_mudanca = 12` → `v4 = 1,0000`, exatamente no piso).
 Custo em disco medido em 2026-08-26 (42.535 linhas/semana somando as três fontes, 151,7
-bytes/linha): **160,0 MB** — não é restrição num NVMe de 200 GB. O que restringe é a **leitura**:
-`ler_snapshots` carrega a série inteira em memória e o pico de RSS medido cresce ~70,5 MB por semana
-retida (N=13 → 999 MB; N=26 → 1,9 GB). Numa KVM4 de 16 GB com 6 containers permanentes, 1,9 GB é
-folgado; o `78` extrapolava para ~5,6 GB, que não é obviamente seguro.
+bytes/linha): **160,0 MB** — não é restrição num NVMe de 200 GB. O que restringiria é a **leitura** sem recorte: com a série inteira em memória, o pico de RSS medido cresce ~70,5 MB por semana
+retida (N=13 → 999 MB; N=26 → 1,9 GB); hoje `ler_snapshots` recorta na varredura (DEC-064). Numa KVM4 de 16 GB, 1,9 GB é folgado (a conta foi feita com 6 containers permanentes; hoje são pelo menos 8).
 
-**Ordem de aplicação — ela é a defesa contra o modo destrutivo.** A partição passou a ter **duas**
+**Ordem de aplicação — ela é a defesa contra o modo destrutivo.** A partição tem **duas**
 chaves (`semana=AAAA-SS/fonte=<fonte>/`), porque duas cadências escrevem na mesma semana ISO e, com
-uma chave só, `delete_matching` fazia a segunda apagar a primeira.
+uma chave só, `delete_matching` faria a segunda apagar a primeira.
 
-1. **Publicar e aplicar a imagem da API com o BLK-MA-21** (`docs/deploy_api_bot.md`, deploy por
-   digest) **antes de qualquer cron**. Uma imagem antiga escreve com **uma** chave e **apaga** a
-   folha da outra cadência.
-2. Se o snapshot **semanal** já tiver rodado com a imagem antiga, **copiar
-   `snapshots_concorrentes/` inteiro** e só então migrar o layout **na imagem nova**:
-   `python -m motor_expansao.vulnerabilidade.snapshots --migrar-layout --dry-run` e depois sem o
-   `--dry-run`. A escrita **recusa** semana com arquivo legado solto — sem isso, legado + folha nova
-   da mesma fonte na mesma semana devolve a linha **duas vezes** na leitura, e o erro só aparece
-   dias depois, longe da causa.
-
-   > **A cópia não é zelo, é a única defesa contra a janela residual** *(emenda de 2026-08-25)*. A
-   > migração agora escreve as folhas num diretório temporário **irmão** de `snapshots_concorrentes/`
-   > e as move por rename atômico — antes ela gravava direto no caminho final, e um crash no meio do
-   > `write_dataset` deixava uma folha **parcial** ao lado do legado, que é exatamente o par que faz a
-   > leitura duplicar linha (e que então travava a retentativa na guarda de estado ambíguo). Sobra uma
-   > janela de alguns renames, entre a primeira folha movida e o `unlink` do legado; eliminá-la
-   > exigiria rename atômico de diretório sobre diretório, que nem POSIX nem Windows oferecem.
-   >
-   > O `--dry-run` agora **DIAGNOSTICA** em vez de levantar: imprime
-   > `{"migrar_layout": [...], "ambiguas": [...], "dry_run": True}` com **todas** as semanas ambíguas
-   > de uma vez. Antes ele levantava na primeira, e com duas ambíguas a segunda só aparecia depois de
-   > a primeira ser resolvida à mão — uma por execução. Se `ambiguas` não vier vazia, **não migre**:
-   > resolva à mão primeiro.
-3. Concluir os três passos pendentes do **BLK-MA-06** (cópia do wrapper semanal, `DRY_RUN=1`, linha
-   no `run_weekly_90.sh`). É ele quem prova o caminho dos CSVs e o `API_IMAGE`.
-4. Atualizar o clone `/opt/gymscraping` (traz o `GymScraping` #11 — a caixa exata de `TotalPass/`;
-   sem ele o passo 1 do wrapper aborta com mensagem própria).
-5. Instalar o wrapper e rodar o modo seco.
-6. Só então: a linha de crontab e a linha do healthcheck.
+Os seis passos da primeira aplicação do BLK-MA-21 (imagem nova antes do cron, migração do layout com `--migrar-layout`, clone do coletor) estão em `docs/archive/infra_producao_historico.md`.
 
 **Instalação, uma vez.** Se o checkout `/opt/motor-expansao/app` estiver desatualizado, envie o
 arquivo por `scp` da estação direto para `/opt/motor-expansao-infra/` — neste caso confira que ele
@@ -752,16 +690,15 @@ Confira na saída, nesta ordem:
 > fotografadas numa chamada só no lote de domingo (`FONTES="unidades wellhub"`, `scripts/cron/run_weekly_90.sh`).
 > A terça (`0 2 * * 2`) é incompatível com a guarda de frescor de 3 dias do D4: a curadoria recusaria o feed toda semana.
 
-**Sem guarda de dia do mês** — ela existia só para emular "1ª terça", e com ela cai também o `%`
-escapado (`\%`) que o crontab exigia. No sábado 03:00 UTC o WellHub mede **~25h57** (rodadas de 05 e 12/09/2026) e termina
+No sábado 03:00 UTC o WellHub mede **~25h57** (rodadas de 05 e 12/09/2026) e termina
 ~04:58 UTC de domingo: **margem de 62 min** antes do lote de domingo (06:00 UTC), que é quem fotografa.
 Não é defeito, é fio de alarme — passar de ~27h põe o WellHub disputando a VPS com os 90 coletores
 (emenda 3 da DEC-039).
 
 > **Terça e domingo caem na MESMA semana ISO** (medido: `2026-08-25` e `2026-08-30` são ambos
-> `2026-35`), então as três fontes colidem numa partição **por construção** — é para isso que a
-> chave dupla `semana=/fonte=` existe. E `materializar` deriva a semana de `date.today()` no passo
-> 3, nunca de `data_coleta`, então nem a banda alta de 31h atravessa a fronteira ISO.
+> `2026-35`), e sábado e domingo também, então duas execuções de snapshot nesses dias colidiriam numa partição **por construção** — é para isso que a
+> chave dupla `semana=/fonte=` existe (hoje `unidades` e `wellhub` saem numa chamada só, no lote de domingo — emenda 3 da DEC-039). E `materializar` deriva a semana de `date.today()` no passo
+> 1.5 do `run_weekly_90.sh`, nunca de `data_coleta`, então nem a banda alta de 31h atravessa a fronteira ISO.
 
 **Alerta de idade** (a partir daqui a ausência do cron deixa de ser silenciosa):
 
@@ -769,41 +706,37 @@ Não é defeito, é fio de alarme — passar de ~27h põe o WellHub disputando a
 0 12 * * 4 /opt/motor-monitoring/healthcheck_vps.sh agregadores   # quinta 09h BRT
 ```
 
-O check olha a partição **por fonte** (`fonte=wellhub`, `fonte=totalpass`) e não a série inteira: o
+O check olha a partição **por fonte** (hoje só `fonte=wellhub`: o TotalPass, arquivado, saiu da lista pela
+emenda 5 da DEC-039 e volta junto com a coleta) e não a série inteira: o
 cron de domingo escreve toda semana, então a série nunca *parece* velha e um cron de agregador morto
-passaria despercebido para sempre. Limiar `MONITOR_AGREGADOR_MAX_DIAS` (default **9**). Partição que
+passaria despercebido para sempre. Limiar `MONITOR_AGREGADOR_MAX_DIAS` (default **16**). Partição que
 **nunca existiu** também dispara `FAIL` — que é o estado real enquanto o cron não for agendado.
 
-> **Por que quinta, e por que 9** *(2026-08-26)*. A régua deriva a idade da **segunda-feira da semana
-> ISO** da partição, não do instante da coleta. Na quinta 12:00 UTC: com a rodada da própria terça a
-> idade mede **3** dias; com uma rodada perdida, **10**. A faixa que separa os dois casos é `[3, 9]`
-> inteira, e `9` é o **teto** dela — o mais tolerante a uma rodada que legitimamente escorregue
-> dentro da semana. (Não é o *único* valor que separa; a justificativa de unicidade era falsa.) O
-> `45` herdado da premissa mensal deixava passar **até 6 rodadas perdidas** antes do primeiro `FAIL`.
-> Quinta alerta 2 dias depois da falha e deixa sexta livre para a retentativa dentro da semana ISO.
+> **Por que quinta, e por que 16** (emenda 5 da DEC-039). A régua deriva a idade da **segunda-feira da semana
+> ISO** da partição, não do instante da coleta, e a foto sai no lote de domingo, o último dia da semana ISO.
+> Na quinta 12:00 UTC: com a foto do domingo anterior a idade mede **10** dias; com uma foto perdida, **17**.
+> A faixa que separa os dois casos é `[10, 16]` inteira, e `16` é o **teto** dela — o mais tolerante a uma
+> rodada que legitimamente escorregue.
+> Quinta acusa uma foto perdida 4 dias depois dela, antes da coleta do sábado seguinte. O `9` anterior era o
+> teto da grade da terça (`[3, 9]`) e, com a foto no domingo, acusava falha toda quinta.
 
-> **A idade sai da chave `semana=AAAA-SS`, não do mtime do diretório `fonte=`** *(emenda de
-> 2026-08-25)*. O check media `stat -c %Y` da folha, e o **passo 2 obrigatório desta mesma ordem de
-> aplicação** — `--migrar-layout` — **cria** a folha com mtime de agora. Medido sobre cópia da
+> **A idade sai da chave `semana=AAAA-SS`, não do mtime do diretório `fonte=`**. O check media `stat -c %Y` da folha, e o **passo 2 obrigatório da ordem de
+> aplicação** (hoje em `docs/archive/infra_producao_historico.md`) — `--migrar-layout` — **cria** a folha com mtime de agora. Medido sobre cópia da
 > partição viva: dado de `2026-08-05` (20 dias) reportado como `0d`; com o limiar herdado de 45, o `FAIL`
 > atrasaria ~20 dias, e a distância é arbitrária para qualquer `rsync`/restore do volume. A conversão
 > ISO-week é feita à mão (`date -d` não parseia data ISO-week em nenhum coreutils): 4 de janeiro cai
 > sempre na semana 1. A régua nova pode **adiantar** o alerta em até ~1 dia, nunca atrasá-lo — direção
 > segura para um monitor. Chave ilegível cai no mtime e **diz** que caiu, no texto do alerta.
 
-**Fronteira com o BLK-MA-20 (DEC-039, D9) — o recorte por FONTE acabou** *(emenda de
-2026-08-25; revogada pela DEC-066 em 2026-09-17)*. A partição do **TotalPass é gravada desde a
-primeira semana** (o cronômetro de `MIN_SEMANAS = 8` são 8 semanas na cadência real — cada semana
-de espera é irrecuperável). **O BLK-MA-20 fechou:** a dedup TP × WH foi calibrada contra par real
-(a régua de 50 m, antes *arbitrada*, foi medida e MANTIDA) e o TotalPass entra **inteiro** — oferta
-E série. Até 2026-09-17 este parágrafo dizia que ele entrava só na oferta e que "o SINAL 1 continua
-fora" por ser medido por hexágono: essa foi a meia-entrada **considerada e descartada**, porque
-custaria as 15.841 candidatas que só o TotalPass conhece. O erro de 36,99% é real e continua sendo
-o motivo de o `s1` não pesar — mas quem o contém agora é o `SINAIS_INATIVOS`, não o recorte de
+**Fronteira com o BLK-MA-20 (DEC-039, D9; DEC-066).** A partição do **TotalPass** entra na série desde a
+primeira semana em que ele é coletado (o cronômetro de `MIN_SEMANAS = 8` são 8 semanas na cadência real — cada semana
+de espera é irrecuperável); na VPS o coletor dele está arquivado, e o lote de domingo fotografa só `unidades wellhub`. A dedup TP × WH foi calibrada contra par real
+(a régua de 50 m foi medida e MANTIDA) e o TotalPass entra **inteiro** — oferta
+E série. O erro de 36,99% do `s1` medido por hexágono é real e é
+o motivo de ele não pesar — quem o contém é o `SINAIS_INATIVOS`, não um recorte de
 fonte.
 
-**A fronteira não sumiu: mudou de lugar.** O que impedia o TotalPass de contaminar o ranking era
-a FONTE ficar fora da série; desde a DEC-066 é o **SINAL** ficar fora da conta — `s1` está em
+**A fronteira é o SINAL, não a fonte.** O que impede o TotalPass de contaminar o ranking é o **SINAL** ficar fora da conta (DEC-066) — `s1` está em
 `SINAIS_INATIVOS`, propagado como fato e sem peso. Proteger pela fonte custaria as 15.841
 candidatas que só o TotalPass conhece; proteger pelo sinal custa zero, porque `v1` hoje vale o
 mesmo para todas as academias.
@@ -816,22 +749,19 @@ O recorte é imposto por código **na ausência de gesto**: `alvos_ma` sem `--fo
 > `SINAIS_INATIVOS` sem levar o sinal ao grão por ACADEMIA ressuscita, no mesmo instante, o erro de
 > 36,99% que a DEC-066 mediu. Os dois atos são inseparáveis.
 
-O flag `--todas-as-fontes` continua existindo e continua sendo o gesto EXPLÍCITO para consumir a
-série **inteira** — hoje isso significa "além das duas do default" (incompatível com `--fontes`, e o
-log sai em `WARNING`). O que ele deixou de ser é a porta que separava o TotalPass do ranking: essa
-porta virou o `SINAIS_INATIVOS`. A primeira implementação do recorte tinha `default=None` e, com
-isso, a propriedade que a DEC-039 rejeitou com a frase *"é prosa: a cadeia roda com as duas fontes
-sem editar uma linha"* — o gesto que vazava era **não digitar o flag**, e duas das três receitas
-canônicas do próprio repositório o omitiam. A lição sobrevive à DEC-066 e é por isso que o default
-continua sendo declarado em toda receita copiável.
+O flag `--todas-as-fontes` é o gesto EXPLÍCITO para consumir a série **inteira** — desde a DEC-066,
+isso significa "além das duas do default" (incompatível com `--fontes`, e o log sai em `WARNING`). Sem nenhum dos dois flags, o recorte vale: o `--fontes` continua com
+`default=None` no `argparse`, e é `resolver_fontes` que troca essa ausência por
+`FONTES_ENTREGAVEL_DEFAULT`, antes de qualquer leitura. A primeira implementação do recorte (DEC-039, emenda 1, E3) tinha o
+mesmo `default=None` sem essa troca e, com isso, a propriedade que a DEC-039 rejeitou com a frase
+*"é prosa: a cadeia roda com as duas fontes sem editar uma linha"* — o gesto que vazava era **não
+digitar o flag**, e duas das três receitas canônicas do próprio repositório o omitiam. A lição sobrevive à DEC-066 e é por isso que o default continua sendo declarado, em
+prosa, ao lado de toda receita copiável, que omite `--fontes` de propósito.
 
 ### Entregável de M&A no piloto (BLK-MA-19 — os pins de academia no Mapa Territorial)
 
 **Por que esta seção existe.** O snapshot acima produz a **série**; esta seção trata do **produto**
-dela, que é outra coisa e tem outro ciclo de vida. Entre 2026-08-19 e 2026-08-24 o código dos pins
-esteve publicado e funcionando em produção sem que **nenhum dos dois parquets** tivesse sido
-enviado — a camada não existia para ninguém, e nada acusou. Não havia bloco de backlog, não havia
-linha de runbook, e `scripts/check_artifacts.py` imprimia "OK".
+dela, que é outra coisa e tem outro ciclo de vida.
 
 **Os dois artefatos.** Ambos vivem em `data/staging/` (gitignored, carregam identidade — autorizado
 pela emenda de 2026-08-14 à DEC-028) e são **opt-in**: sem a flag, nada nomeado é gravado.
@@ -855,14 +785,9 @@ python -m motor_expansao.vulnerabilidade.alvos_ma \
   --saida-redes    data/staging/vulnerabilidade_ma_redes.parquet
 ```
 
-> **Não falta `--fontes` aqui — a omissão JÁ aplica o recorte vigente** *(DEC-039, D9; emenda de
-> 2026-08-25; default trocado pela DEC-066 em 2026-09-17)*. Omitir o flag aplica
+> **Não falta `--fontes` aqui — a omissão JÁ aplica o recorte vigente** *(DEC-039, D9; DEC-066)*. Omitir o flag aplica
 > `FONTES_ENTREGAVEL_DEFAULT = ("totalpass", "wellhub")`, e o log da execução diz qual recorte
-> valeu. **Até 2026-09-17 este mesmo blockquote afirmava que a omissão aplicava `("wellhub",)`** — e
-> deixou de ser verdade no dia em que o default mudou, no bloco que o operador COPIA; é a mesma
-> falha que originou a emenda E3 da DEC-039, quando o bloco rodava **sem recorte nenhum** vinte e
-> quatro linhas depois de a seção do cron prometer, em prosa, que "o entregável roda `--fontes
-> wellhub`". Para reproduzir o universo anterior à DEC-066 (19.329 academias): `--fontes wellhub`.
+> valeu. Para reproduzir o universo anterior à DEC-066 (19.329 academias): `--fontes wellhub`.
 > Para a série inteira, além das duas: `--todas-as-fontes`.
 
 > **A dedup de cadeias da DEC-062 também vale sem flag.** O entregável liga a trava de município e
@@ -905,9 +830,9 @@ campo que guarda a referência com que o container foi criado, comparável carac
 docker inspect motor_expansao_web --format '{{.Config.Image}}'
 ```
 
-**Não use `{{.Image}}` para isso.** Até 29/09/2026 esta linha mandava usar aquele campo, e ele é o
+**Não use `{{.Image}}` para isso.** Ele é o
 **id** da imagem — um sha256 sobre o config, não sobre o manifesto. Ele nunca casa com o `@sha256:`
-do `WEB_IMAGE`, então a conferência reprovava sempre, inclusive com a imagem certa no ar.
+do `WEB_IMAGE`, então a conferência reprova sempre, inclusive com a imagem certa no ar.
 
 **Transportar — `.tmp` + `md5sum` + rename atômico**, para não haver janela de arquivo truncado
 sendo lido por um container de pé (mesmo molde da camada de crescimento):
@@ -947,11 +872,7 @@ Esperado: `independentes.disponivel = true` com `total > 0`, e **pelo menos um i
 o `diag` é o que acende o halo). Na tela, a pílula **"Ver academias independentes"** aparece no
 drill-down.
 
-> **`pins.redes_disponivel` não serve de aceite enquanto a imagem no ar for anterior ao BLK-MA-19.**
-> O campo nasceu nesse bloco (`web/server/app.py`), então **ausente não é falha** — é uma imagem
-> mais velha, e o deploy pode estar perfeito. Ele só passa a valer como sinal depois do merge **e**
-> do próximo deploy de imagem, que é passo separado e manual (por digest, §6 do `CLAUDE.md`). Até
-> lá, o aceite é a contagem de `diag`.
+> A nota sobre `pins.redes_disponivel` em imagem anterior ao BLK-MA-19 está em `docs/archive/infra_producao_historico.md`.
 
 Dois erros de leitura a evitar no `403` e no `200`:
 
@@ -964,7 +885,7 @@ Dois erros de leitura a evitar no `403` e no `200`:
   ou seja, qualquer nome passa. O `200` prova a camada, não a allowlist.
 
 > **Contagem de pins não fecha com o total do artefato, e isso é correto.** Das 2.844 unidades de
-> rede, só as que têm `tem_pin_proprio = True` são desenhadas (**851** na DEC-035; a dedup da DEC-062 — trava de município + raio de 300 m — levou o feed a **714**, e a contagem muda a cada safra): as demais colapsaram contra um
+> rede, só as que têm `tem_pin_proprio = True` são desenhadas (a dedup da DEC-062 — trava de município + raio de 300 m — levou o feed a **714**, e a contagem muda a cada safra): as demais colapsaram contra um
 > ponto de `concorrentes_mapeados` na dedup da DEC-034/FU4 e **já têm bandeira naquele endereço** —
 > desenhá-las de novo daria duas bandeiras no mesmo lugar. Esperar 2.844 bandeiras é expectativa
 > errada, não defeito.
@@ -1162,19 +1083,16 @@ requisição seguinte, sem restart); mudanças no `Caddyfile` seguem pedindo
 
 ## Gerenciar usuários do login (Authelia)
 
-> O login continua igual após a DEC-022: o Authelia protege `piloto.ultra-expansao.tech`
-> e `/tiles/` em `dashboard.ultra-expansao.tech` com a mesma base de usuários.
+> Até o corte do P19, o Authelia protegia `piloto.ultra-expansao.tech` e `/tiles/` em
+> `dashboard.ultra-expansao.tech` com a mesma base de usuários; desde o corte, o piloto BR tem login
+> próprio (abaixo), e o Authelia segue de pé para a instância AR.
 >
-> **Com o banco ligado no BR (desde 23/10/2026), quem usa o piloto brasileiro depende de DOIS
-> cadastros:** o Authelia autentica (`users_database.yml`) e o banco autoriza (a linha da pessoa
-> em `usuarios`, com o perfil). Sem a linha no banco ela entra e abre o piloto vazio; sem a
-> entrada no Authelia ela não entra. A instância AR não tem banco e segue pelo `acesso_abas.json`
+> **Desde o corte, no BR,
+> quem autentica é o próprio piloto, pela senha do banco** (`MOTOR_AUTENTICACAO_PROPRIA` ligada e o
+> `forward_auth` do Caddy apontando para o nosso `/api/verify`, DEC-067, D4) — ver o aviso "Depois do
+> corte do P19", abaixo. A instância AR não tem banco e segue pelo Authelia e pelo `acesso_abas.json`
 > dela. Os gestos de senha do banco — "Trocar a minha senha", "Redefinir senha" e "Exigir troca" —
-> só aparecem e só funcionam com `MOTOR_AUTENTICACAO_PROPRIA` ligada (P19); até o corte, a senha
-> que vale é a do Authelia, e a coluna "Senha (banco)" da tela de Acessos fala da senha do banco.
-> Esse comportamento e o nome da coluna chegam com a imagem da mudança de 24/10/2026. Na que estava no ar
-> nesse dia (`d1cc438e…`), eles ainda aparecem (o cadeado, para todos) e não devem ser usados até o
-> corte: o cadeado pede a senha inicial sorteada, e a temporária de "Redefinir senha" não abre a entrada.
+> só aparecem e só funcionam com `MOTOR_AUTENTICACAO_PROPRIA` ligada (P19); a coluna "Senha (banco)" da tela de Acessos fala da senha do banco.
 
 ### Adicionar usuário
 
@@ -1203,7 +1121,7 @@ requisição seguinte, sem restart); mudanças no `Caddyfile` seguem pedindo
 5. **Banco (piloto BR, desde 23/10/2026):** criar a pessoa na tela de **Acessos** do piloto, com o
    perfil (`expansao`, `consultoria`, `lideres` ou `growth`). Quem cria é um admin da allowlist do
    painel (`MOTOR_ACESSOS_ADMIN_USUARIOS`) com perfil `growth`. A ordem dos dois cadastros não
-   importa; a pessoa só usa o piloto quando os dois existem.
+   importa. Desde o corte do P19 (27/10/2026), no BR o banco basta: a pessoa já entra com a senha inicial e é convidada a trocá-la no primeiro acesso; o cadastro no Authelia (passos 1 a 4) mantém o rollback possível durante a janela de observação do corte.
 
 ### Revogar usuário
 
@@ -1211,11 +1129,7 @@ São **quatro** portas independentes, e revogar só a primeira não fecha as out
 
 **Com o banco ligado (BR desde 23/10/2026), sair é em TRÊS lugares — as portas 1, 3 e 4:** remover
 do Authelia, remover da allowlist do bot e desativar na tela de Acessos. A porta 2 não corta nada no
-BR enquanto o banco estiver ligado. Até o corte do P19, quem barra a **entrada** é o Authelia:
-desativar só no banco tira o piloto da pessoa (sem linha ativa em `usuarios` o RBAC não concede
-capacidade nenhuma, e ela abre o piloto vazio), mas ela segue autenticando — e, se o banco cair com
-queda provada, as rotas não sensíveis passam sem conferir permissão (Runbook de incidente, cenário
-4). Por isso a porta 1 não pode faltar.
+BR enquanto o banco estiver ligado.
 
 > **A porta 1 DEIXA DE REVOGAR O BR no dia do corte do P19, e a 4 passa a cortar também a entrada.** Depois
 > que `MOTOR_AUTENTICACAO_PROPRIA` estiver preenchida, quem autentica o piloto brasileiro é o
@@ -1245,15 +1159,12 @@ queda provada, as rotas não sensíveis passam sem conferir permissão (Runbook 
 4. **Linha em `usuarios`** — desativar a pessoa pelo painel de **Acessos** do piloto. É a
    única porta que revoga de verdade no BR depois do corte, e é **imediata**: `SQL_VALIDAR`
    exige `u.ativo` a cada requisição guardada, então a sessão dela morre na requisição
-   **seguinte** — sem janela de 8 h e sem reiniciar serviço nenhum. Antes do corte ela já tira o
-   piloto da pessoa (com o banco ligado, o RBAC não concede nada a quem está inativo), mas não a
-   impede de autenticar no Authelia: até o corte, a porta 1 continua obrigatória.
+   **seguinte** — sem janela de 8 h e sem reiniciar serviço nenhum.
 
-> **Por que o passo 3 existe.** Até 2026-09-24 o bot tinha uma única porta: a senha
-> COMPARTILHADA. O "login" pedido depois dela nunca foi verificado contra nada — é
-> rótulo de trilha, não identidade. Medido no offboarding de 24/09: revogar no
-> Authelia **não fechava o bot**, porque o bot nunca consultou o Authelia. E trocar a
-> senha também não resolveria, porque as sessões são persistidas em disco com
+> **Por que o passo 3 existe.** O bot nunca consulta o Authelia: revogar no Authelia **não fecha o bot**. Ele tem a senha
+> COMPARTILHADA, e o "login" pedido depois dela não é verificado contra nada — é
+> rótulo de trilha, não identidade. E trocar a
+> senha também não resolve, porque as sessões são persistidas em disco com
 > `autorizado: true` e recarregadas no arranque.
 
 ### Allowlist do bot do Telegram
@@ -1299,7 +1210,7 @@ Arquivo: `/opt/motor-expansao/cadastro/bot_allowlist.json`. Um `chat_id` por ent
 
 ---
 
-## Hardening do servidor (BLK-SEC-03, aplicado 2026-07-13)
+## Hardening do servidor (BLK-SEC-03)
 
 Estado após o hardening — cada item com seu rollback:
 
@@ -1309,12 +1220,10 @@ Estado após o hardening — cada item com seu rollback:
 | SSH sem senha | `PasswordAuthentication no` + `PermitRootLogin prohibit-password` | `/etc/ssh/sshd_config.d/00-hardening.conf` (prefixo `00-` vence os demais — sshd usa o PRIMEIRO valor). Rollback: remover o arquivo + `systemctl reload ssh` (pelo console web da Hostinger se preciso) |
 | fail2ban | jail `sshd` ativa (ban 30 min / 5 tentativas / 10 min, backend systemd) | `/etc/fail2ban/jail.local`; `fail2ban-client status sshd` |
 | Patches automáticos | `unattended-upgrades` diário (só security) | `/etc/apt/apt.conf.d/20auto-upgrades`; log em `/var/log/unattended-upgrades/` |
-| Kernel | reboot aplicado em 2026-07-13 (5.15.0-177 → 185) | ver política abaixo |
 
 **Acesso de emergência (porta dos fundos):** hPanel Hostinger → VPS → Gerenciar → **"Terminal do
 navegador"** — login `root` + senha root (login de console, NÃO passa pelo sshd; continua aceitando
-senha mesmo com o SSH endurecido). Senha root redefinível em VPS → Configurações. Validado em
-2026-07-13. **Sempre validar esse acesso ANTES de mexer em SSH/firewall.**
+senha mesmo com o SSH endurecido). Senha root redefinível em VPS → Configurações. **Sempre validar esse acesso ANTES de mexer em SSH/firewall.**
 
 **Chaves SSH autorizadas:** no `root`, somente as chaves da máquina do Felipe (operador
 `silva@Ultra-2025-032` + a de automação `id_ultra_mcp`). Senha NÃO volta a ser opção.
@@ -1373,8 +1282,7 @@ cd /opt/motor-expansao/app && unset MOTOR_DATABASE_URL && docker compose -f dock
 
 > **Com o banco no ar, prefira reiniciar só o serviço afetado (acima).** O `down` derruba também
 > o `postgres`, que é do mesmo compose, e no `up` o `web` não espera o banco ficar pronto
-> (`depends_on` é `service_started`): nos primeiros segundos, antes do corte do P19, o RBAC do BR
-> responde degradado ou 503 (Runbook de incidente, cenário 4); depois do corte, ninguém entra até
+> (`depends_on` é `service_started`): nos primeiros segundos, ninguém entra até
 > o banco aceitar conexão. O volume do banco (`app_postgres_data`) sobrevive ao `down` —
 > **nunca** use `down -v`, que o apaga (a volta seria o restore do dump, §10 do
 > `docs/banco_deploy.md`). E o `up` relê o `.env`, mas sem o `unset` uma `MOTOR_DATABASE_URL`
@@ -1429,9 +1337,7 @@ O que é vigiado e a cadência (crontab do root):
 > podem começar em FAIL.
 
 > **Por que os pins têm monitor próprio.** A guarda de desenhabilidade do passo 4.5 do lote de
-> domingo faz o certo ao barrar artefato ruim, mas o efeito dela é **invisível**: entre 30/08 e
-> 17/09 ela preservou os pins bons por três semanas seguidas enquanto o mapa servia dado cada vez
-> mais velho, e nada alertou. Sem relógio, uma guarda que só bloqueia troca "pin errado" por "pin
+> domingo faz o certo ao barrar artefato ruim, mas o efeito dela é **invisível**. Sem relógio, uma guarda que só bloqueia troca "pin errado" por "pin
 > velho em silêncio". Aqui o **mtime é confiável** — ao contrário do monitor de `mercado`, em que
 > o arquivo é reescrito toda semana —, porque este só é tocado pelo `mv` da promoção.
 
@@ -1485,7 +1391,7 @@ tail -20 /var/log/motor-monitoring/healthcheck.log
 com os dois wrappers: se um deles mudar a frase que escreve no log, o teste avisa antes de o
 monitor passar a dizer "nenhuma execução registrada" na VPS.
 
-#### Alerta de borda — varreduras com assinatura (2026-09-23)
+#### Alerta de borda — varreduras com assinatura
 
 Cron próprio (não é `healthcheck_vps.sh`): `scripts/cron/run_alerta_borda.sh`, instalado em
 `/opt/motor-expansao-infra/`, roda **08:23 UTC = 05:23 BRT** e cobre o **dia BRT anterior**
@@ -1496,7 +1402,7 @@ inteiro — janela já fechada, o que dispensa guardar estado do que já foi ale
 0 */3 * * * /opt/motor-expansao-infra/run_alerta_borda.sh --dia $(TZ=America/Sao_Paulo date +\%F) >> /var/log/motor-monitoring/alerta_borda.log 2>&1
 ```
 
-> **A segunda linha (23/09) é a vigilância do dia CORRENTE.** O diário cobre a janela fechada, então
+> **A segunda linha é a vigilância do dia CORRENTE.** O diário cobre a janela fechada, então
 > um ataque às 10h só apareceria às 05:23 do dia seguinte — latência grande demais para "identificar
 > e barrar quem está fazendo". De 3 em 3h o dia corrente é reexaminado; o wrapper repassa `"$@"`, e o
 > `--dia` da linha vence o padrão (ontem). O `%` **precisa** ir escapado (`+\%F`): no crontab, `%` cru
@@ -1508,8 +1414,8 @@ inteiro — janela já fechada, o que dispensa guardar estado do que já foi ale
 > ruído. Em dia normal nada sai (`--so-notavel`). Remover a repetição exige arquivo de estado **no
 > módulo**, o que custa imagem nova + deploy.
 
-Nasceu da investigação do "login desconhecido" de 22/09: a tela de entrar é a primeira rota do
-produto servida **sem autenticação**, e com ela a internet anônima passou a bater na porta. Lê o
+A tela de entrar é a primeira rota do
+produto servida **sem autenticação**, e com ela a internet anônima bate na porta. O alerta lê o
 access log do Caddy (`/opt/motor-expansao/logs/caddy`, montado `:ro`), inclusive os `.gz` — a
 rotação é por **tamanho**, então o dia de ontem pode estar partido em dois arquivos.
 
@@ -1533,8 +1439,7 @@ Sob demanda, sem enviar nada:
 
 > **`--user 0:0` não é cosmético.** A imagem roda como `appuser` (uid 1000), e os dois diretórios de
 > log têm donos diferentes: a trilha da DEC-027 é `ubuntu:ubuntu 0700` (uid 1000 — o container lê),
-> mas o access log do Caddy é `root:root 0700`. Espelhar o `run_relatorio_acessos.sh` sem olhar o
-> dono foi o defeito, pego no smoke de instalação em 23/09. Rodar como root é menos invasivo que
+> mas o access log do Caddy é `root:root 0700`. Rodar como root é menos invasivo que
 > afrouxar a permissão no host: o mount é `:ro`, o container é efêmero, e o relaxamento valeria para
 > todo processo da máquina em vez de um run de 2 segundos.
 
@@ -1586,7 +1491,7 @@ dia, o `banco_medicao` do `banco`. **Em 24/10/2026 nenhuma das duas checagens es
 root não vigia o postgres nem tem o `banco` (ver "Alertas automáticos") —, e nada mais avisa.
 **O `auth` só acusa depois do corte do P19, e só na versão do repo a partir de 24/10/2026:** a
 sonda leva um cookie de sessão falso, e o `/api/verify` responde 503 quando não consegue consultar
-o banco (com ele de pé, 401). Antes do corte quem responde é o Authelia, que não usa o banco. A
+o banco (com ele de pé, 401). A
 sonda antiga ia sem cookie, e sem cookie o `/api/verify` responde 401 sem consultar o banco: banco
 fora passava como "auth OK". O `/api/health` segue 200 (não olha o banco, de propósito).
 
@@ -1603,8 +1508,7 @@ O que a equipe vê com o P19 desligado (login pelo Authelia):
   comando de mais de 2 s, conexão que não abre em 2 s, container pausado): toda rota controlada
   responde 503 "Piloto ocupado no momento. Tente novamente em instantes.", com `Retry-After: 2`.
   Com a imagem que traz o follow-up A do #463 (código de 24/10/2026), o `/api/me` dá o mesmo 503 e a
-  SPA tenta de novo (três tentativas, 2 s entre elas); nas anteriores — inclusive a que estava no ar
-  em 24/10/2026 — ele escondia as abas sensíveis (um F5 as traz de volta quando o banco responde).
+  SPA tenta de novo (três tentativas, 2 s entre elas).
 
 Diagnóstico por SSH (conta `deploy` ou root, comando a comando — §6 do `CLAUDE.md`). O painel de
 Acessos e o `/api/acessos/saude-artefatos` não servem nessa hora: dependem de capacidade sensível e
@@ -1636,7 +1540,7 @@ não volta (a volta do dado é restore de dump, §10).
 **Depois do corte do P19 (`MOTOR_AUTENTICACAO_PROPRIA` ligada), banco fora = piloto BR fora:** a
 sessão vive em tabela, o `/api/verify` responde 503 e o Caddy nega tudo; quem estava dentro sai
 junto, e o login também não funciona. O interruptor do §8 deixa de existir (sem banco ninguém
-entra): primeiro desfaz-se o P19 — `docs/repasse_corte_p19.md`, "Se precisar voltar atrás" (o bloco
+entra): primeiro desfaz-se o P19 — `docs/archive/repasse_corte_p19.md`, "Se precisar voltar atrás" (o bloco
 do Caddy de `Caddyfile.antes-do-p19`, depois a chave vazia), o que só devolve a entrada enquanto os
 logins BR ainda estiverem no Authelia —, e só então, se o banco seguir fora, o §8. Conferir o
 estado: `grep '^MOTOR_AUTENTICACAO_PROPRIA=' /opt/motor-expansao/app/.env`.
@@ -1734,5 +1638,5 @@ prefixo do projeto `app`; `docker volume ls`), o único que nenhum pipeline rege
 - **Nunca commitar** `.env`, `Caddyfile`, `authelia/users_database.yml` ou `authelia/configuration.yml` com dados reais
 - **Backup dos parquets:** manter cópia local em `data/outputs/` na máquina de desenvolvimento
 - **Scrapers M2/M3:** agendar em janela noturna 2h–5h BRT para não competir com usuários ativos
-- **Memória:** limite de 8 GB no container `web` (`memswap_limit` 10 GB; teto herdado da função do Streamlit — DEC-022); monitorar com `docker stats` se houver lentidão
+- **Memória:** limite de 8 GB no container `web` (`memswap_limit` 10 GB); monitorar com `docker stats` se houver lentidão
 - **Atualizações de sistema:** rodar mensalmente `apt-get update && apt-get upgrade -y` no servidor

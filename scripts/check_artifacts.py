@@ -6,7 +6,7 @@ Uso: python scripts/check_artifacts.py
 Retorna exit code 1 se algum artefato critico estiver ausente.
 
 RAIZ: le `MOTOR_DATA_DIR`, a MESMA variavel que `web/server/app.py` e
-`data/reports/crescimento/_raizes.py` usam. Ate aqui este script olhava sempre
+`scripts/crescimento/_raizes.py` usam. Ate aqui este script olhava sempre
 `<repo>/data`, entao numa maquina que aponta `MOTOR_DATA_DIR` para outro lugar ele
 respondia sobre uma pasta que o app nao le — dava [FALTA] com o piloto funcionando, ou
 [OK] com o piloto vazio. Um verificador que discorda do programa verificado e' pior que
@@ -151,7 +151,7 @@ def main() -> None:
         print("     cor no mapa, sem erro nenhum na tela. Os passos 1, 2, 3 e 5 seguem.")
         print("  -> Eles NAO vem do git nem da imagem Docker (`.gitignore`:")
         print("     `data/staging/*`; `.dockerignore` corta `data/`). Sao gerados por")
-        print("     `data/reports/crescimento/` a partir de insumos que nao estao no")
+        print("     `scripts/crescimento/` a partir de insumos que nao estao no")
         print("     repo, e chegam em producao so' pelo bind mount do compose.")
         print("  -> No ar, conferir com: curl -fsS <host>/api/health")
     if faltando_ma:

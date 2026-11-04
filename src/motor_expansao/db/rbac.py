@@ -53,11 +53,12 @@ ENV_SINAL_PRODUCAO = "MOTOR_CADASTRO_DIR"
 # nao ha DOIS logins iguais entre ativos, mas um login pode existir numa linha INATIVA. Sem o
 # filtro, alguem desativado voltaria a ser resolvido -- e o piloto ja' barra login de inativo.
 SQL_IDENTIDADE = """
-SELECT u.id_usuario, p.nome_perfil, pe.chave
+SELECT u.id_usuario, p.nome_perfil, pe.chave, up.pais
 FROM usuarios u
 JOIN perfis p ON p.id_perfil = u.id_perfil
 LEFT JOIN perfil_permissoes pp ON pp.id_perfil = u.id_perfil
 LEFT JOIN permissoes pe ON pe.id_permissao = pp.id_permissao
+LEFT JOIN usuario_paises up ON up.id_usuario = u.id_usuario
 WHERE u.login_usuario = %s AND u.ativo
 """
 
@@ -70,6 +71,10 @@ class Identidade:
     login: str
     perfil: str
     permissoes: frozenset[str]
+    #: Paises que ESTA PESSOA pode acessar (gate da DEC-081). Vem de `usuario_paises`, no
+    #: MESMO SELECT (coluna `up.pais`), nunca numa 2a ida ao banco. Conjunto VAZIO = nega em
+    #: todo processo de pais (o gate faz `PERFIL.pais in paises`, e `in frozenset()` e' False).
+    paises: frozenset[str]
 
     def pode(self, chave: str) -> bool:
         return chave in self.permissoes
@@ -124,5 +129,10 @@ def identidade(remote_user: str | None) -> Identidade | None:
     perfil = linhas[0][1]
     # `chave` vem NULL quando o perfil nao tem permissao nenhuma (LEFT JOIN): a pessoa existe e
     # nao pode nada. E' diferente de nao existir, e o chamador precisa poder distinguir os dois.
-    chaves = frozenset(chave for _, _, chave in linhas if chave is not None)
-    return Identidade(id_usuario=id_usuario, login=login, perfil=perfil, permissoes=chaves)
+    chaves = frozenset(linha[2] for linha in linhas if linha[2] is not None)
+    # `up.pais` (4a coluna, LEFT JOIN usuario_paises): os paises da pessoa. NULL quando ela
+    # nao tem pais nenhum -> frozenset() vazio -> o gate NEGA em todo processo (fail-closed).
+    paises = frozenset(linha[3] for linha in linhas if linha[3] is not None)
+    return Identidade(
+        id_usuario=id_usuario, login=login, perfil=perfil, permissoes=chaves, paises=paises
+    )

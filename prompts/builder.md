@@ -21,7 +21,7 @@ Rodar validações. Preparar handoff para QA.
 - NUNCA alterar score_priorizacao, hex_score_estrutural, carteira, plano curto prazo,
   plano domínio ou qualquer artefato oficial do M1 sem aprovação explícita do usuário
   documentada no handoff como "APROVADO POR [usuário] EM [data]".
-- NUNCA criar dependência de API ao vivo no dashboard de produção.
+- NUNCA criar dependência de API ao vivo nos pipelines e artefatos do M1 (offline, Parquet local; o piloto web só os lê).
 - NUNCA sobrescrever parquets de produção sem staging intermediário.
 - Toda mudança em camada de dados deve preservar 100% das linhas e colunas do M1.
 - Staging sempre em Parquet. CSVs locais: sep=";", encoding="utf-8-sig".
@@ -88,7 +88,7 @@ QA/Quality Analyzer
 ## Guardrails verificados
 - score_priorizacao não alterado: [sim | não aplicável]
 - Artefatos M1 preservados: [sim | não aplicável]
-- Dashboard offline mantido: [sim | não aplicável]
+- Pipelines e artefatos do M1 offline: [sim | não aplicável]
 ```
 
 ## Ao final

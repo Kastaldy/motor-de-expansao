@@ -1,14 +1,14 @@
 {
   "schema_versao": 1,
   "_schema": "perfil-pais/1 (rotulo legado; o campo NORMATIVO e `schema_versao`, spec 1.2 - `_schema` e chave `_`-prefixada e o loader a IGNORA)",
-  "_nota": "Perfil da ARGENTINA. Vai em MOTOR_DATA_DIR/perfil.json da instancia AR. Lido UMA vez no import (ao lado de onde MOTOR_DATA_DIR ja e resolvido, web/server/app.py:99-108), congelado, sem I/O em caminho quente. Boot FAIL-CLOSED: perfil ausente, JSON invalido ou campo obrigatorio nulo derruba o container. Estrutura conforme docs/plano_multipais.md §6.2. Toda linha marcada 'DEFAULT PROVISORIO' esta listada em _pendencias no fim do arquivo.",
+  "_nota": "Perfil da ARGENTINA. Vai em MOTOR_DATA_DIR/perfil.json da instancia AR. Lido UMA vez no import (ao lado de onde MOTOR_DATA_DIR ja e resolvido, web/server/app.py:99-108), congelado, sem I/O em caminho quente. Boot FAIL-CLOSED: perfil ausente, JSON invalido ou campo obrigatorio nulo derruba o container. Estrutura conforme docs/archive/plano_multipais.md §6.2. Toda linha marcada 'DEFAULT PROVISORIO' esta listada em _pendencias no fim do arquivo.",
   "_procedencia": "Numeros da Argentina vem de: (a) pacote Motor-Argentina do Juan, 2026-07-23 (HANDOFF.md + docs/dicionario_dados.md); (b) medicao feita direto no parquet dados/hexagonos_h3 (42.388 hexagonos) em 2026-08-31; (c) codigos INDEC lidos das 24 particoes provincia= do proprio pacote. Onde nao ha fonte, o campo e null e aparece em _pendencias — nenhum numero foi inventado.",
   "pais": "AR",
   "nome": "Argentina",
   "_idioma": "es-AR (RECUSADO pela spec 1.4: sem leitor. `format.ts:6` le `locale`; o Accept-Language do geocoder le `geocode.idioma`, que aqui e \"es-AR,es\". Mantido `_`-prefixado como comentario.)",
   "locale": "es-AR",
   "moeda": {
-    "_nota": "Tres moedas convivem e confundir uma com a outra e a forma mais barata de produzir numero errado. `codigo` e a moeda do pais. `indicadores_renda` e a moeda em que a coluna de renda do parquet chega (renda_estimada_usd = renda_per_capita, o insumo do score — dicionario_dados.md, bloco Renda). `comparacao` e a moeda de leitura executiva (plano_multipais.md §6.2). A superficie `viabilidade` do dia 1 NAO usa nenhuma das tres: ela sai em BRL com tributo brasileiro (decisao 0.6) e carrega o aviso de `avisos.viabilidade_tributo_provisorio`.",
+    "_nota": "Tres moedas convivem e confundir uma com a outra e a forma mais barata de produzir numero errado. `codigo` e a moeda do pais. `indicadores_renda` e a moeda em que a coluna de renda do parquet chega (renda_estimada_usd = renda_per_capita, o insumo do score — dicionario_dados.md, bloco Renda). `comparacao` e a moeda de leitura executiva (docs/archive/plano_multipais.md §6.2). A superficie `viabilidade` do dia 1 NAO usa nenhuma das tres: ela sai em BRL com tributo brasileiro (decisao 0.6) e carrega o aviso de `avisos.viabilidade_tributo_provisorio`.",
     "codigo": "ARS",
     "simbolo": "$",
     "nome_exibicao": "peso argentino",
@@ -31,7 +31,7 @@
     "_nota_separadores": "es-AR usa ponto de milhar e virgula decimal, igual ao pt-BR. Nenhuma mudanca de mascara em relacao ao Brasil — o que muda e o simbolo e o codigo, nao a pontuacao."
   },
   "bbox": {
-    "_nota": "Guarda grosseira de coordenada (anti-absurdo), nao afirmacao de soberania. Substitui as seis copias divergentes do Brasil listadas em plano_multipais.md §3 item 3. RESOLVE A DECISAO 0.8: Buenos Aires (-34,6037 / -58,3816) fica CONFORTAVELMENTE dentro — o corte em -34,0 de src/motor_expansao/api/coord.py:13, web/src/lib/coord.ts:8 e web/src/lib/entrada-ponto.ts:44 e brasileiro e morre com este campo.",
+    "_nota": "Guarda grosseira de coordenada (anti-absurdo), nao afirmacao de soberania. Substitui as seis copias divergentes do Brasil listadas em docs/archive/plano_multipais.md §3 item 3. RESOLVE A DECISAO 0.8: Buenos Aires (-34,6037 / -58,3816) fica CONFORTAVELMENTE dentro — o corte em -34,0 de src/motor_expansao/api/coord.py:13, web/src/lib/coord.ts:8 e web/src/lib/entrada-ponto.ts:44 e brasileiro e morre com este campo.",
     "lat_min": -55.2,
     "lat_max": -21.6,
     "lng_min": -74.0,
@@ -226,12 +226,12 @@
     "renda_abs_min": 350.0,
     "renda_abs_max": 1000.0,
     "renda_unidade": "USD per capita/mes (coluna renda_estimada_usd = renda_per_capita)",
-    "_nota_renda": "DEFAULT PROVISORIO — decide FELIPE (pendencia P1). Metodo: espelha LITERALMENTE o criterio escrito em src/motor_expansao/pipelines/calibrar_renda_setor_2022.py:83-86, que fixou o piso no p05 arredondado e o teto acima do p99 e abaixo do maximo, saturando <0,4%. Medido no pacote AR em 2026-08-31, universo povoado (pop >= 1.000, 5.148 hexagonos): p05 = 342,4 · p50 = 478,4 · p95 = 740,5 · p99 = 926,2 · max = 1.141,1 USD. Piso 350 (p05 arredondado, zera 7,4%) e teto 1.000 (satura 0,29% — o Brasil satura 0,38% com R$ 4.000). NAO E CONVERSAO DE MOEDA: e a mesma receita aplicada a outra distribuicao.",
+    "_nota_renda": "DECIDIDO por Felipe em 2026-09-02 (pendencia P1, apos analise de sensibilidade); ate' la' era DEFAULT PROVISORIO. Metodo: espelha LITERALMENTE o criterio escrito em src/motor_expansao/pipelines/calibrar_renda_setor_2022.py:83-86, que fixou o piso no p05 arredondado e o teto acima do p99 e abaixo do maximo, saturando <0,4%. Medido no pacote AR em 2026-08-31, universo povoado (pop >= 1.000, 5.148 hexagonos): p05 = 342,4 · p50 = 478,4 · p95 = 740,5 · p99 = 926,2 · max = 1.141,1 USD. Piso 350 (p05 arredondado, zera 7,4%) e teto 1.000 (satura 0,29% — o Brasil satura 0,38% com R$ 4.000). NAO E CONVERSAO DE MOEDA: e a mesma receita aplicada a outra distribuicao.",
     "_tensao_renda": "As duas leituras defensaveis do metodo brasileiro DISCORDAM em ~1,6x e Felipe precisa escolher uma. (a) Mesma SATURACAO: teto 1.000 (o default acima). (b) Mesma posicao relativa do p95: o Brasil pos o teto em 2,12x o p95, o que na AR daria 1.570 USD — acima do maximo observado (1.141), ou seja impossivel. A distribuicao argentina e COMPRIMIDA porque a renda e MODELADA (EPH), nao medida: p95/p05 = 2,2 na AR contra 6,4 no Brasil. Consequencia pratica: com o default, o hexagono mediano tira nota 20 de renda e o p95 tira 60 — contra 43 no p95 brasileiro. O default e mais generoso no topo.",
     "pop_abs_min": 1000.0,
     "pop_abs_max": 100000.0,
     "pop_unidade": "habitantes por hexagono H3 res 7 (coluna pop_total do pacote CRU do motor AR; o exportador a entrega ao piloto como pop_total_setor_2022 — ver o de-para de montar_hexagonos, pop_total no pacote BR e o municipio repetido por hexagono)",
-    "_nota_pop": "DEFAULT PROVISORIO — decide FELIPE (pendencia P2), mas a RECOMENDACAO E MANTER. Valores IDENTICOS aos do Brasil (POP_ABS_MIN/POP_ABS_MAX, calibrar_renda_setor_2022.py:91-92), e isso e CASAMENTO DE UNIDADE, nao analogia: a ancora brasileira foi medida sobre HEXAGONO H3 res 7, exatamente o objeto que o pacote AR entrega. O codigo diz isso em tres lugares — o cabecalho das ancoras (:82) mede 'no universo POVOADO (pop >= 1.000, 21.107 hexes)', :265 imprime 'Setor: {len(df_ufs):,} hexes' e :320 faz merge com o M1 on='hex_id'. O nome da coluna (pop_col = 'pop_total_setor_2022', :309) e o valor do setor CARREGADO NO HEXAGONO, nao a granularidade da linha; ler esse nome como 'setor' foi o erro que esta nota afirmou ate 2026-09-02. Medicao confirma: BR hexagono povoado p05 1.103 / p50 3.561 / p95 28.845 · AR hexagono povoado p05 1.127 / p50 3.699 / p95 28.500 (2026-08-31). Teto 100.000 satura 0,136% na AR e 0,000% no BR. Derivar a ancora AR de radio censal seria a UNICA opcao que CRIA descasamento de unidade com o Brasil.",
+    "_nota_pop": "DECIDIDO por Felipe em 2026-09-02 (pendencia P2): MANTIDO, como era a recomendacao; ate' la' era DEFAULT PROVISORIO. Valores IDENTICOS aos do Brasil (POP_ABS_MIN/POP_ABS_MAX, calibrar_renda_setor_2022.py:91-92), e isso e CASAMENTO DE UNIDADE, nao analogia: a ancora brasileira foi medida sobre HEXAGONO H3 res 7, exatamente o objeto que o pacote AR entrega. O codigo diz isso em tres lugares — o cabecalho das ancoras (:82) mede 'no universo POVOADO (pop >= 1.000, 21.107 hexes)', :265 imprime 'Setor: {len(df_ufs):,} hexes' e :320 faz merge com o M1 on='hex_id'. O nome da coluna (pop_col = 'pop_total_setor_2022', :309) e o valor do setor CARREGADO NO HEXAGONO, nao a granularidade da linha; ler esse nome como 'setor' foi o erro que esta nota afirmou ate 2026-09-02. Medicao confirma: BR hexagono povoado p05 1.103 / p50 3.561 / p95 28.845 · AR hexagono povoado p05 1.127 / p50 3.699 / p95 28.500 (2026-08-31). Teto 100.000 satura 0,136% na AR e 0,000% no BR. Derivar a ancora AR de radio censal seria a UNICA opcao que CRIA descasamento de unidade com o Brasil.",
     "score_pesos": {
       "renda": 0.6,
       "pop": 0.4
@@ -493,11 +493,11 @@
     {
       "id": "P7",
       "campo": "fontes / malha adm2 (municipios_<COD>.geojson)",
-      "estado": "ausente",
+      "estado": "entregue",
       "decide": "Juan (produz) / Felipe (aceita)",
       "pergunta": "Quem entrega a malha de departamentos argentinos em GeoJSON, na convencao municipios_<COD>.geojson com codarea/CD_MUN/cod_municipio?",
       "default": null,
-      "justificativa": "Item D6 do contrato de pais (§6.1), marcado Pendente. E a porta de entrada de src/motor_expansao/api/service.py:73-102. Nao bloqueia o dia 1 porque a superficie `ponto` esta fechada, mas bloqueia o BLK-INTL-10.",
+      "justificativa": "Item D6 do contrato de pais (§6.1), marcado Pendente. E a porta de entrada de src/motor_expansao/api/service.py:73-102. Nao bloqueia o dia 1 porque a superficie `ponto` esta fechada, mas bloqueia o BLK-INTL-10. [2026-09-03: malha entregue (PR #312); `malha_municipal_disponivel` = true, e ponto e municipal liberados na AR.]",
       "o_que_muda_quando_decidir": "Desbloqueia o modo Ponto argentino."
     },
     {

@@ -8,7 +8,7 @@ Nao existe (e nao deve passar a existir) nenhum `if pais == "AR"` na plataforma:
 muda entre paises sao os NUMEROS e os TEXTOS que este arquivo carrega, nunca o caminho
 de codigo. `tests/contracts/test_fio_de_alarme_pais.py` (commit A10) e o que trava isso.
 
-Ver `docs/spec_bloco_a_perfil.md` §1 (schema), §3 (carga) e `docs/decisions/DEC-047.md`.
+Ver `docs/archive/spec_bloco_a_perfil.md` §1 (schema), §3 (carga) e `docs/decisions/DEC-047.md`.
 """
 
 from __future__ import annotations
@@ -815,7 +815,7 @@ def carregar_perfil(caminho: Path, *, raiz: Path | None = None) -> Perfil:
     except FileNotFoundError as exc:
         raise PerfilInvalidoError(
             f"perfil.json ausente em {caminho}. Em producao o arquivo e montado no "
-            f"volume (`MOTOR_DATA_DIR`); ver docs/spec_bloco_a_perfil.md §6.1."
+            f"volume (`MOTOR_DATA_DIR`); ver docs/archive/spec_bloco_a_perfil.md §6.1."
         ) from exc
     except OSError as exc:
         raise PerfilInvalidoError(f"perfil.json ilegivel em {caminho}: {exc}") from exc

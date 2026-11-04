@@ -37,5 +37,6 @@ CI verde é gate **antes** do merge; a imagem só publica **depois** do merge na
   rebuild resolve. Ciclo que **regenera artefatos oficiais** → os `.parquet`
   ficam na máquina do colaborador; Felipe regenera local ou recebe e faz `scp`
   pro VPS (`docs/infra_producao.md`). Marcar no backlog quais blocos tocam dados.
-- **Assets de branding / segredos são server-only** (`data/ultra/`, `.env`,
-  `authelia/*`) — domínio do Felipe; o colaborador não toca.
+- **Assets de branding e segredos são domínio do Felipe** e ficam fora do git (`data/ultra/`, `.env`,
+  `authelia/*`). Para gerar PDF na máquina, o colaborador recebe uma cópia de `data/ultra/` (lista em
+  `docs/artefatos_dados.md` §4) e não a altera; `.env`, `Caddyfile`, `authelia/` e `secrets/` não se repassam.

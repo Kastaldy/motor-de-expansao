@@ -45,6 +45,7 @@ id de alvo, para nao haver como chamar isso para outra pessoa por engano.
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any
@@ -61,6 +62,9 @@ EVENTO_SENHA_DEFINIDA = "usuario.senha_definida"
 #: caminho, e nao deixava evento -- ver o fim da §2.7 do contrato.
 EVENTO_SENHA_REDEFINIDA = "usuario.senha_redefinida"
 EVENTO_TROCA_EXIGIDA = "usuario.troca_exigida"
+#: Os paises de uma pessoa (DEC-081, Fase 2 do P4). metadados = {"pais": sigla}, sem PII.
+EVENTO_PAIS_ATRIBUIDO = "usuario.pais_atribuido"
+EVENTO_PAIS_REMOVIDO = "usuario.pais_removido"
 
 #: Valor de `entidade` para os eventos daqui (D24).
 ENTIDADE_USUARIO = "usuario"
@@ -105,7 +109,9 @@ SQL_LISTAR = """
 SELECT u.id_usuario, u.login_usuario, u.nome_usuario, u.email,
        p.nome_perfil, u.ativo, u.criado_em_usuario, u.atualizado_em_usuario,
        (u.senha_definida_em_usuario IS NOT NULL) AS senha_propria,
-       u.deve_trocar_senha_usuario
+       u.deve_trocar_senha_usuario,
+       COALESCE((SELECT array_agg(up.pais ORDER BY up.pais)
+                 FROM usuario_paises up WHERE up.id_usuario = u.id_usuario), ARRAY[]::text[]) AS paises
 FROM usuarios u
 JOIN perfis p ON p.id_perfil = u.id_perfil
 ORDER BY u.ativo DESC, u.login_usuario
@@ -156,6 +162,29 @@ INSERT INTO usuarios (login_usuario, nome_usuario, email, senha_hash, id_perfil)
 VALUES (%s, %s, %s, %s, %s)
 RETURNING id_usuario
 """
+
+# Companheiro de SQL_CRIAR: o pais da pessoa (DEC-081, P4) entra na MESMA transacao da criacao,
+# uma linha por pais. A PK composta (021) recusa pais repetido; o CHECK chk_usuario_paises_sigla
+# recusa sigla fora de `^[A-Z]{2}$`. A validacao em Python so' adianta o erro com mensagem clara.
+SQL_CRIAR_PAIS = """
+INSERT INTO usuario_paises (id_usuario, pais) VALUES (%s, %s)
+"""
+
+# Companheiros do SQL_CRIAR_PAIS para a Fase 2 (editar/remover pais de usuario existente). A
+# remocao e' um DELETE por linha (o GRANT de DELETE ao `app` entra no §3 do
+# papeis-e-privilegios.md); a leitura serve para computar o diff do replace-all.
+SQL_REMOVER_PAIS = """
+DELETE FROM usuario_paises WHERE id_usuario = %s AND pais = %s
+"""
+
+SQL_PAISES_DO_USUARIO = """
+SELECT pais FROM usuario_paises WHERE id_usuario = %s ORDER BY pais
+"""
+
+#: Mesma regra do CHECK `chk_usuario_paises_sigla` (021:19) e do `perfil._RE_PAIS`: 2 letras
+#: MAIUSCULAS. Replicado aqui (e nao importado de `perfil`, outra camada) para a camada de dados
+#: nao depender da de aplicacao. NAO e' `if pais == "XX"`: valida FORMATO, nao uma sigla (DEC-047).
+_RE_SIGLA_PAIS = re.compile(r"^[A-Z]{2}$")
 
 # Le o hash para conferir a senha atual, e trava a linha ate' o fim da transacao: sem `FOR UPDATE`,
 # duas trocas simultaneas gravariam dois hashes e a segunda venceria sem registro da primeira.
@@ -272,6 +301,8 @@ class UsuarioAdmin:
     senha_propria: bool = False
     #: Se a proxima entrada dela deve pedir troca (016).
     deve_trocar_senha: bool = True
+    #: Paises que a pessoa pode acessar (DEC-081, siglas). Tupla (imutavel) p/ o frozen dataclass.
+    paises: tuple[str, ...] = ()
 
     def como_json(self) -> dict[str, Any]:
         return {
@@ -286,6 +317,7 @@ class UsuarioAdmin:
             # pessoa ja' definiu a dela, e isso e' um booleano.
             "senha_propria": self.senha_propria,
             "deve_trocar_senha": self.deve_trocar_senha,
+            "paises": list(self.paises),
         }
 
 
@@ -307,6 +339,7 @@ def listar() -> list[UsuarioAdmin]:
             ativo=bool(linha[5]),
             senha_propria=bool(linha[8]),
             deve_trocar_senha=bool(linha[9]),
+            paises=tuple(linha[10] or ()),
         )
         for linha in linhas
     ]
@@ -401,6 +434,37 @@ def _aplicar_ativo(
     return {"id_usuario": id_alvo, "ativo": ativo, "mudou": True}
 
 
+def _aplicar_paises(
+    con: Any, id_alvo: int, paises_antes: list[str], paises_desejados: list[str], *, autor: int
+) -> dict[str, Any]:
+    """O passo de ajustar os paises de uma pessoa (replace-all), DENTRO de uma transacao aberta.
+
+    `paises_desejados` ja' vem de `_normalizar_paises` (MAIUSCULAS, sem repetido, NAO-vazio) --
+    conjunto vazio nunca chega aqui, e e' assim que a Fase 2 impede alguem de ficar sem pais (o
+    gate fail-closed, o proprio bug do P4). Computa o diff contra `paises_antes` e aplica so' a
+    diferenca: um INSERT por pais novo, um DELETE por pais removido, cada um com SEU evento (a
+    mesma regra "sem mudanca, sem evento" de `_aplicar_perfil`). A remocao e' um DELETE porque
+    `usuario_paises` nao tem trigger de historico -- o evento `usuario.pais_removido` e' o rastro.
+    """
+    antes, desejados = set(paises_antes), set(paises_desejados)
+    adicionar = [p for p in paises_desejados if p not in antes]
+    remover = sorted(antes - desejados)
+    de, para = sorted(antes), sorted(desejados)
+    if not adicionar and not remover:
+        return {"id_usuario": id_alvo, "de": de, "para": para, "mudou": False}
+    for sigla in adicionar:
+        con.execute(SQL_CRIAR_PAIS, (id_alvo, sigla))
+        _registrar(
+            con, autor=autor, tipo=EVENTO_PAIS_ATRIBUIDO, id_alvo=id_alvo, metadados={"pais": sigla}
+        )
+    for sigla in remover:
+        con.execute(SQL_REMOVER_PAIS, (id_alvo, sigla))
+        _registrar(
+            con, autor=autor, tipo=EVENTO_PAIS_REMOVIDO, id_alvo=id_alvo, metadados={"pais": sigla}
+        )
+    return {"id_usuario": id_alvo, "de": de, "para": para, "mudou": True}
+
+
 def alterar_perfil(id_alvo: int, novo_perfil: str, *, autor: int) -> dict[str, Any]:
     """Troca o perfil e registra `usuario.perfil_alterado`. Devolve o de-para aplicado."""
     _recusar_auto_alvo(id_alvo, autor)
@@ -428,9 +492,14 @@ def definir_ativo(id_alvo: int, ativo: bool, *, autor: int) -> dict[str, Any]:
 
 
 def alterar_acesso(
-    id_alvo: int, *, autor: int, perfil: str | None = None, ativo: bool | None = None
+    id_alvo: int,
+    *,
+    autor: int,
+    perfil: str | None = None,
+    ativo: bool | None = None,
+    paises: list[str] | None = None,
 ) -> dict[str, Any]:
-    """Perfil e/ou status de UMA pessoa numa transacao SO', com um evento por mudanca.
+    """Perfil, status e/ou paises de UMA pessoa numa transacao SO', com um evento por mudanca.
 
     E' o que o `PATCH /api/acessos/usuarios/{id}` chama (#463, follow-up B). Ate' 24/10/2026 a
     rota chamava `alterar_perfil` e `definir_ativo` em sequencia -- DUAS transacoes. Se a
@@ -446,9 +515,12 @@ def alterar_acesso(
     `alterar_perfil` e `definir_ativo` ficam com a assinatura de sempre; as tres compartilham os
     passos (`_aplicar_perfil`, `_aplicar_ativo`), entao cada regra tem UMA redacao.
     """
-    if perfil is None and ativo is None:
-        raise ValueError("Informe `perfil`, `ativo`, ou os dois.")
+    if perfil is None and ativo is None and paises is None:
+        raise ValueError("Informe `perfil`, `ativo`, `paises`, ou uma combinação.")
     _recusar_auto_alvo(id_alvo, autor)
+    # Normaliza/valida FORA da transacao (recusa vazio cedo -- vazio e' o bug do P4); o
+    # pertencimento ao catalogo (BR/AR) ja' foi conferido na rota.
+    paises_norm = _normalizar_paises(paises) if paises is not None else None
 
     resultado: dict[str, Any] = {"id_usuario": id_alvo}
     with transacao(id_usuario=autor) as con:
@@ -457,6 +529,13 @@ def alterar_acesso(
             resultado["perfil"] = _aplicar_perfil(con, id_alvo, perfil_antes, perfil, autor=autor)
         if ativo is not None:
             resultado["status"] = _aplicar_ativo(con, id_alvo, ativo_antes, ativo, autor=autor)
+        if paises_norm is not None:
+            paises_antes = [
+                str(r[0]) for r in con.execute(SQL_PAISES_DO_USUARIO, (id_alvo,)).fetchall()
+            ]
+            resultado["paises"] = _aplicar_paises(
+                con, id_alvo, paises_antes, paises_norm, autor=autor
+            )
     return resultado
 
 
@@ -493,7 +572,29 @@ def _traduzir_conflito(erro: Exception) -> Exception:
     return erro
 
 
-def criar(*, login: str, nome: str, email: str, perfil: str, autor: int) -> dict[str, Any]:
+def _normalizar_paises(paises: list[str]) -> list[str]:
+    """Normaliza e valida os paises de uma pessoa (DEC-081, P4).
+
+    strip + MAIUSCULAS, remove repetidos preservando a ordem, e RECUSA lista vazia -- vazio e' o
+    proprio bug do P4 (pessoa sem pais cai no gate fail-closed e nao entra em lugar nenhum). Valida
+    o FORMATO de cada sigla (2 letras maiusculas), nunca uma sigla especifica (DEC-047); o
+    pertencimento ao catalogo da plataforma (BR/AR) e' checado na rota, que conhece o catalogo.
+    """
+    vistos: list[str] = []
+    for bruto in paises:
+        sigla = bruto.strip().upper()
+        if not _RE_SIGLA_PAIS.match(sigla):
+            raise ValueError(f"País inválido: {bruto!r}. Use a sigla de 2 letras (ex.: BR, AR).")
+        if sigla not in vistos:
+            vistos.append(sigla)
+    if not vistos:
+        raise ValueError("Selecione pelo menos um país.")
+    return vistos
+
+
+def criar(
+    *, login: str, nome: str, email: str, perfil: str, paises: list[str], autor: int
+) -> dict[str, Any]:
     """Cria a pessoa com a senha INICIAL e registra `usuario.criado`. Devolve o id novo.
 
     E' o unico caso desta camada em que o alvo NAO existe antes da chamada -- logo, nao ha
@@ -521,6 +622,7 @@ def criar(*, login: str, nome: str, email: str, perfil: str, autor: int) -> dict
         raise ValueError("Login, nome e e-mail são obrigatórios.")
     if "@" not in email:
         raise ValueError("E-mail inválido.")
+    paises_norm = _normalizar_paises(paises)
 
     # Fora da transacao de proposito: hashear custa ~64 MB e ~100 ms, e segurar uma transacao
     # aberta durante isso prenderia a linha de `perfis` sem motivo.
@@ -545,6 +647,12 @@ def criar(*, login: str, nome: str, email: str, perfil: str, autor: int) -> dict
             raise RuntimeError("INSERT em usuarios nao devolveu id")
         id_novo = int(linha[0])
 
+        # Os paises da pessoa, na MESMA transacao da criacao (DEC-081, P4): criacao+pais sao
+        # atomicos. Sem isto a pessoa nasce com conjunto vazio e o gate fail-closed a barra em
+        # todo host -- o bug que esta fase estanca.
+        for sigla in paises_norm:
+            con.execute(SQL_CRIAR_PAIS, (id_novo, sigla))
+
         # `metadados` leva SO' o perfil. Nunca login, nome ou e-mail: e' PII, e a §4 do contrato
         # vale aqui como em todo lugar -- o `entidade_id` basta para quem le resolver em `usuarios`.
         _registrar(
@@ -559,6 +667,7 @@ def criar(*, login: str, nome: str, email: str, perfil: str, autor: int) -> dict
         "id_usuario": id_novo,
         "login": login,
         "perfil": perfil,
+        "paises": paises_norm,
         # O passo que continua manual, nos DOIS estados da chave (ver o docstring): desligada,
         # sem ele a pessoa nao entra; ligada, sem ele um rollback do corte a deixaria de fora.
         "falta_cadastrar_no_authelia": True,

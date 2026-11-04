@@ -6,7 +6,7 @@
   - `anexos/fase0-a-acoplamento-e-contrato.md` traz o mapa de acoplamento com `arquivo:linha`, as contagens de grep e o contrato completo.
   - `anexos/fase0-b-receita-argentina.md` traz as fontes AR, a linha do tempo, os PRs e os 23 problemas, cada um com sua lição.
   - Este documento é a síntese. Quando ele e o anexo divergirem, vale o anexo, que traz a evidência.
-- **Regra de leitura:** o `docs/plano_multipais.md` (2026-08-31) está **defasado**. Os Blocos A–E, o portal (BLK-INTL-13) e a cauda de correções de setembro e outubro já estão no código. Onde o plano e o código divergem, vale o **código**.
+- **Regra de leitura:** o `docs/archive/plano_multipais.md` (2026-08-31) está **defasado**. Os Blocos A–E, o portal (BLK-INTL-13) e a cauda de correções de setembro e outubro já estão no código. Onde o plano e o código divergem, vale o **código**.
 
 ---
 
@@ -170,7 +170,7 @@ Desde a DEC-077, esta é a fila da instância SEM régua da recomendação únic
 | S5 | `mascara.ts` com gramática pt-BR fixa: em es-MX e es-PE (`1,500.00`) o valor digitado sai **errado sem erro** | **MX, PE** | M |
 | S6 | Join do crescimento por `cod6` IBGE | CO, MX (5 dígitos) | P |
 | S7 | Âncoras e pesos da camada 5, `CONC_ADENSAR_MAX`, `CRIT_PONTO_*` literais | quando `oportunidades` ligar | P–M |
-| S10 | Fallbacks BR escondidos: `k = 1.0239`, `fillna(2_500)`, `TAXA_FITNESS_FALLBACK = 0,10` (o `FATOR_TEMPORAL = 1,0` rotulado "julho/2022 (Censo IBGE)" deixou de ser fallback com a DEC-075: país sem `renda/fatores/<PAIS>/` não sobe; na AR, fator e rótulo estão declarados no arquivo dela) | pacote incompleto | P cada |
+| S10 | Fallbacks BR escondidos: `k = 1.0239`, `fillna(2_500)`, `TAXA_FITNESS_FALLBACK = 0,10` (o `FATOR_TEMPORAL = 1,0` rotulado "julho/2022 (Censo IBGE)" não é fallback (DEC-075): país sem `renda/fatores/<PAIS>/` não sobe; na AR, fator e rótulo estão declarados no arquivo dela) | pacote incompleto | P cada |
 | S12 | **Viabilidade inteira em regime e moeda BR.** Furos fora de `Premissas` (`aluguel_teto_clusters`, `flag_viavel`, payload, XLSX). Trocar alíquota é parâmetro; **trocar regime (IVA/IGV/ICA/ISR/PTU) é código** | todos | GG: 2–4 semanas de eng. uma vez + 3–6 semanas humanas por país |
 | C1–C9 | Cosméticos: "IBGE/Censo 2022/CAGED" em PDFs e metodologia; vocabulário "estado/UF"; bandeira só BR+AR; sem i18n (1,5–2,5 mil strings no front + 453 nos PDFs); mapas sem rótulo de rua fora do BR | todos | P a GG (i18n) |
 

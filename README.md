@@ -2,11 +2,13 @@
 
 Base territorial do MVP nacional do `motor-de-expansao`.
 
-O contrato canonico do projeto esta em `CLAUDE.md`; detalhes do ciclo ativo ficam em `PRD.md`.
+> **Novo no projeto?** Comece pelo ["Comece por aqui"](docs/README.md#comece-por-aqui), que diz em palavras simples o que é o Motor e por onde ler conforme o que você faz, e deixe o [glossário](docs/glossario.md) aberto ao lado. Este README é o guia técnico de rodar e publicar o código.
 
-O app de producao e o **piloto web** (`web/` — SPA React/Vite + deck.gl no front, FastAPI em `web/server/app.py` no back), que abre no **Inicio** (seletor de modo em duas trilhas: expandir a rede e operacoes) e tem as telas **Mapa Territorial** (Explorar uma regiao: funil de 5 camadas por UF e municipio; no Brasil a camada 5 e o Top 10 unico da DEC-077), **Oportunidades** (Top 10 de hexagonos), **Ponto** (analise de ponto ou imovel), **Viabilidade do ponto** (stress-test de um imovel), **Visao Executiva** (a rede Ultra real, via Growth API), **Oportunidades imobiliarias** (DEC-037) e **Acessos** (restrita por allowlist). Os relatorios em PDF (Pontual Censitario 1,0 km e Municipal) saem do Mapa e da Viabilidade. Em producao tudo roda num unico container (`motor_expansao_web`) em `piloto.ultra-expansao.tech`, atras de Caddy + Authelia. Detalhes de produto em `web/README.md`; arquitetura em `docs/arquitetura_app_atual.md`.
+O contrato canônico do projeto está em `CLAUDE.md`; o status dos blocos fica em `tasks/backlog.md`, e o histórico de conclusão, em `tasks/completed.md`.
 
-O dashboard Streamlit — o app original, estabilizado nos ciclos de mai/2026 — foi **aposentado em 2026-08-03 pela DEC-022** (escopo do corte definido na DEC-020: paridade de Mapa + Visao Executiva + Viabilidade; Expansao de Dominio e Carteira/Plano nao viraram telas). O **motor compartilhado** que ele usava (`src/motor_expansao/dashboard/` — dados, censo, relatorios, concorrentes, viabilidade) continua vivo e e consumido pelo piloto, pela API GeoEspacial, pelo bot Telegram e pelo `fase1_bi_exports`; so a UI Streamlit saiu do repo. Historia dos ciclos: `tasks/completed.md` e `docs/decisions/DEC-020.md`/`DEC-022.md`.
+O app de producao e o **piloto web** (`web/` — SPA React/Vite + deck.gl no front, FastAPI em `web/server/app.py` no back), que abre no **Inicio** (seletor de modo em duas trilhas: expandir a rede e operacoes) e tem as telas **Mapa Territorial** (Explorar uma regiao: funil de 5 camadas por UF e municipio; no Brasil a camada 5 e o Top 10 unico da DEC-077), **Oportunidades** (Top 10 de hexagonos), **Ponto** (analise de ponto ou imovel), **Viabilidade do ponto** (stress-test de um imovel), **Visao Executiva** (a rede Ultra real, via Growth API), **Oportunidades imobiliarias** (DEC-037) e **Acessos** (restrita por allowlist). Os relatorios em PDF (Pontual Censitario 1,0 km e Municipal) saem do Mapa e da Viabilidade. Em producao tudo roda num unico container (`motor_expansao_web`) em `piloto.ultra-expansao.tech`, atrás do Caddy, com o login próprio do piloto (DEC-067). Detalhes de produto em `web/README.md`; arquitetura em `docs/arquitetura_app_atual.md`.
+
+O **motor compartilhado** (`src/motor_expansao/dashboard/` — dados, censo, relatorios, concorrentes, viabilidade) continua vivo e e consumido pelo piloto, pela API GeoEspacial, pelo bot Telegram e pelo `fase1_bi_exports`; so a UI Streamlit saiu do repo (DEC-022).
 
 ## Quickstart local
 
@@ -103,7 +105,7 @@ Runbook completo: `docs/deploy_piloto_web.md`. API GeoEspacial + bot: `docs/depl
 Recomendacoes operacionais:
 
 - montar `/opt/motor-expansao/data/{outputs,staging,ibge,ultra}` e `concorrentes/` como volumes `:ro`;
-- expor o app somente atras do Caddy + Authelia (subdominio `piloto.ultra-expansao.tech`);
+- expor o app somente atrás do Caddy, com o login próprio do piloto (DEC-067; subdomínio `piloto.ultra-expansao.tech`);
 - `dashboard.ultra-expansao.tech` fica vivo APENAS para `/tiles/*` (tileserver dos PDFs); a raiz redireciona 301 para o piloto (DEC-022);
 - nao embutir dados ou secrets na imagem Docker;
 - deploy e sempre passo manual do Felipe, por digest (DEC-016/§6 do CLAUDE.md — auto-merge nao deploya).
@@ -119,7 +121,7 @@ Fluxo oficial:
 Regra canonica de score:
 
 ```python
-# populacao_proxy = pop_total (trava de faixa etária 18-45 removida em 2026-05-15)
+# populacao_proxy = pop_total (população de todas as idades)
 renda_pct_nacional = percentil_nacional(renda_per_capita)
 pop_pct_nacional = percentil_nacional(populacao_proxy)
 
@@ -170,14 +172,12 @@ O contrato de handoff do repositorio esta em `docs/handoff_repositorio.md`.
 ## Mapa de docs
 
 - `CLAUDE.md`: contrato canonico curto e guardrails permanentes.
-- `PRD.md`: visao de produto (versao de 2026-07-19, anterior ao corte do Streamlit); o status dos blocos vive em `tasks/backlog.md` e `tasks/completed.md`.
+- `docs/README.md`: índice dos documentos, que abre com "Comece por aqui" (o que é o Motor e por onde ler, conforme o que você faz); os termos estão em `docs/glossario.md`.
 - `web/README.md`: produto e telas do piloto web.
 - `docs/arquitetura_app_atual.md`: arquitetura do app atual (piloto web) + historia do Streamlit.
 - `docs/deploy_piloto_web.md`: runbook de deploy do piloto na VPS (digest, Caddy, Authelia).
 - `docs/handoff_repositorio.md`: checklist para compartilhar o repo com a equipe.
 - `docs/artefatos_dados.md`: manifesto de dados, politica de versionamento e artefatos externos.
-- `docs/streamlit_dashboard_m1.md`: governanca do dashboard Streamlit (HISTORICO — app aposentado pela DEC-022).
-- `docs/analise_pontual_entorno.md`: contrato de UX, metricas de raio e limites tecnicos da analise pontual e Visao Executiva Ultra.
 - `docs/modelo_mercado_hexagonos.md`: contrato tecnico da camada de mercado.
 - `docs/api_geoespacial_contrato.md`: contrato da API GeoEspacial on-demand (implementada; container `motor_expansao_api`, consumida pelo bot Telegram — runbook em `docs/deploy_api_bot.md`).
 - `fora_primeira_fase/README.md`: inventario dos codigos, docs e dados separados do deploy inicial.
@@ -318,11 +318,10 @@ O caminho de producao usa duas imagens publicadas no GHCR pelo CI e pinadas por 
 - `motor-expansao-web` (`Dockerfile.web`): o piloto — estagio Node builda o Vite, estagio Python serve SPA + API na porta 8899.
 - `motor-expansao-api` (`Dockerfile.api`): API GeoEspacial on-demand + bot Telegram (mesma imagem, dois containers).
 
-A imagem `motor-expansao-streamlit` morreu com o corte (DEC-022); fica retida no GHCR por algumas semanas so para rollback. O legado de PostGIS/Prefect de `fora_primeira_fase/api_postgis/` nao entra no caminho de producao; o banco de producao e outro, o servico `postgres` (`postgis/postgis:18-3.6`) do `docker-compose.prod.yml`, opcional por construcao (`MOTOR_DATABASE_URL` vazia = comportamento pre-banco; `docs/banco_deploy.md`).
+A imagem `motor-expansao-streamlit` morreu com o corte (DEC-022); fica retida no GHCR por algumas semanas so para rollback. O legado de PostGIS/Prefect de `fora_primeira_fase/api_postgis/` nao entra no caminho de producao; o banco de producao e outro, o servico `postgres` (`postgis/postgis:18-3.6`) do `docker-compose.prod.yml`, opcional no código (`MOTOR_DATABASE_URL` vazia = comportamento pré-banco; `docs/banco_deploy.md`), mas obrigatório no piloto BR desde o corte do P19, porque o login depende dele.
 
 ## Fora do caminho de producao
 
-- PostGIS obrigatorio
 - Prefect
 - pipelines nacionais pesados (rodam offline, fora dos containers)
 - modulos M2/M3, pesquisas e legados em `fora_primeira_fase/`

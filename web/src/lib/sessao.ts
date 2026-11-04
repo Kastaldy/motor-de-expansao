@@ -1,73 +1,49 @@
 /**
- * Queda de SESSÃO do Authelia — como o piloto descobre, e como ele avisa.
+ * Queda de SESSÃO — como o piloto descobre, e como ele avisa.
  *
  * ## O defeito que isto conserta
  *
- * O piloto não tem sessão própria: quem autentica é o Authelia, e o Caddy repassa o
- * usuário no header `Remote-User` (`web/server/acesso.py`, `web/server/app.py:359`).
- * O bloco do host, em `docs/deploy_piloto_web.md` §3, é:
+ * Com a sessão vencida, uma requisição a `/api/*` protegido volta **401**: a borda faz
+ * `forward_auth` ao nosso `/api/verify` e o Caddy copia o 401 ao cliente (DEC-081). O
+ * `lib/api.ts` já trata esse 401 direto (`relatarAcessoNegado`), sem precisar de sonda.
  *
- *     piloto.ultra-expansao.tech {
- *         forward_auth authelia:9091 {
- *             uri /api/verify?rd=https://auth.ultra-expansao.tech
- *             copy_headers Remote-User Remote-Groups Remote-Name Remote-Email
- *         }
- *         reverse_proxy web:8899
- *     }
+ * Sobra o caso em que a falha chega como ERRO DE REDE (`TypeError`): um blip, um timeout
+ * de proxy, ou o backend fora do ar. Do lado do JavaScript "sessão vencida" e "servidor
+ * caído" podem chegar iguais — foi por isso que o operador já viu a frase de dev "Ele está
+ * rodando na porta 8899?" (`api.ts`) quando o problema era outro. Para não adivinhar,
+ * depois de uma falha de rede mandamos uma SONDA e classificamos pelo que ela responde.
  *
- * `forward_auth` é açúcar de `reverse_proxy` com `@good status 2xx`: quando o Authelia
- * responde 2xx a requisição segue; quando responde QUALQUER outra coisa, o Caddy copia
- * essa resposta de volta ao cliente — status, headers e corpo. E o Authelia, no
- * endpoint legado `/api/verify` com `rd=`, responde à sessão ausente com **302** para a
- * tela de login (ele só devolve 401 quando o pedido se identifica como XHR ou não
- * aceita `text/html`; o `fetch` do browser manda o Accept curinga (`asterisco/asterisco`,
- * escrito por extenso aqui porque a sequencia literal fecharia este comentario), e o
- * curinga na primeira posicao conta como aceitar `text/html`).
- *
- * Consequência para a SPA: com a sessão expirada — `inactivity` na config do Authelia,
- * citada em `docs/spec_portal_selecao_pais.md:682`; era `30m` e passa a `2h` pela emenda
- * da DEC-067 (D2) de 14/10/2026, troca MANUAL na VPS (`docs/repasse_logout_2h.md`). Nada
- * aqui depende do número: a sonda é reativa — o `fetch` de `/api/...`
- * recebe um 302 para `https://auth.ultra-expansao.tech/...`, SEGUE o redirect (o
- * default é `redirect: 'follow'`), bate noutra origem que não manda header de CORS e
- * **rejeita com `TypeError`**. Do lado do JavaScript isso é indistinguível de "o
- * servidor não respondeu" — e é por isso que o operador via a frase de dev
- * "Ele está rodando na porta 8899?" (`api.ts`) quando o que aconteceu foi o login
- * vencer. Meia hora parado numa aba aberta bastava.
+ * (Até a DEC-081 havia um terceiro caminho: com o Authelia na borda, a sessão vencida
+ * virava um **302** cross-origin que o `fetch` seguia e o CORS derrubava como `TypeError`,
+ * mascarando a queda; a sonda usava `redirect: 'manual'` para enxergar esse 302 como
+ * `opaqueredirect`. Com o Authelia aposentado esse 302 não existe mais — a queda é o 401
+ * acima —, então a sonda deixou de precisar do `manual` e do `opaqueredirect`.)
  *
  * ## Como distinguir (e por que NÃO adivinhar)
  *
  * Backend fora do ar e sessão vencida são coisas diferentes: dizer "sua sessão expirou"
  * para quem está com o servidor caído manda a pessoa relogar num sistema que não vai
- * responder. Então, depois de uma falha de REDE, mandamos uma SONDA e classificamos
- * pelo que ela responde — sem inferir nada do erro original:
+ * responder. A sonda classifica assim:
  *
- *   - `type === 'opaqueredirect'` (só possível com `redirect: 'manual'`) ou status 401
- *     -> a borda respondeu, e respondeu mandando para o login: SESSÃO.
+ *   - status 401 -> a borda respondeu negando o acesso: SESSÃO.
  *   - resposta 2xx -> a borda respondeu E nos reconhece: a sessão está viva, a falha
  *     original foi outra coisa (blip de rede, timeout de proxy). NÃO é sessão.
  *   - qualquer outro status, ou a sonda também rejeitar -> não dá para afirmar sessão:
  *     fica em `servidor` e o app segue com a mensagem de erro que já tinha.
  *
- * `redirect: 'manual'` é o que torna o 302 VISÍVEL: com o `follow` default o redirect é
- * seguido e some dentro do erro de CORS; com `manual` o browser devolve uma resposta
- * filtrada de tipo `opaqueredirect` — sem corpo e sem headers, mas com o `type`, que é
- * tudo de que precisamos.
- *
  * ## Por que a sonda é `/api/health`
  *
- * É a única rota que atravessa os três portões do backend sem depender de nada do
- * usuário: está em `ROTAS_LIVRES` (sem gate de aba), fora de `SUPERFICIE_DA_ROTA` (sem
- * gate de país) — as duas em `web/server/acesso.py` — e em `_ROTAS_IGNORADAS` de
+ * É a única rota que atravessa os portões do backend sem depender de nada do usuário:
+ * está em `ROTAS_LIVRES` (sem gate de aba), fora de `SUPERFICIE_DA_ROTA` (sem gate de
+ * país) — as duas em `web/server/acesso.py` — e em `_ROTAS_IGNORADAS` de
  * `src/motor_expansao/dashboard/acesso_log.py:45`, então a sonda NÃO polui a trilha de
  * acesso da DEC-027. Ela é barata e não tem efeito colateral nenhum.
  *
  * ## Em DEV isto fica quieto
  *
- * Sem Authelia na frente, o `/api/health` atravessa o proxy do Vite e volta 200 -> `ok`
- * -> nenhum pop-up. Com o backend desligado a sonda falha -> `servidor` -> também
- * nenhum pop-up, e a tela continua mostrando o erro inline que sempre mostrou. O
- * pop-up SÓ nasce do diagnóstico `sessao`.
+ * O `/api/health` atravessa o proxy do Vite e volta 200 -> `ok` -> nenhum pop-up. Com o
+ * backend desligado a sonda falha -> `servidor` -> também nenhum pop-up, e a tela continua
+ * mostrando o erro inline que sempre mostrou. O pop-up SÓ nasce do diagnóstico `sessao`.
  */
 
 /** Rota da sonda. Ver o bloco "Por que a sonda é /api/health" acima. */
@@ -82,10 +58,10 @@ export type Diagnostico = 'sessao' | 'servidor' | 'ok'
 /** Manda a sonda e classifica. Nunca lança: falha de sonda é `servidor`. */
 export async function diagnosticarAcesso(): Promise<Diagnostico> {
   try {
-    const r = await fetch(ROTA_SONDA, { redirect: 'manual', cache: 'no-store' })
-    // `opaqueredirect` = a borda mandou um 3xx (o login do Authelia). 401 cobre o outro
-    // ramo do Authelia, o que ele usa quando o pedido se declara XHR.
-    if (r.type === 'opaqueredirect' || r.status === 401) return 'sessao'
+    const r = await fetch(ROTA_SONDA, { cache: 'no-store' })
+    // 401 = a borda respondeu negando o acesso. (Até a DEC-081 a queda também podia chegar
+    // como 302 cross-origin -> `opaqueredirect`, do Authelia; aposentado ele, resta o 401.)
+    if (r.status === 401) return 'sessao'
     if (r.ok) return 'ok'
     return 'servidor'
   } catch {
@@ -128,7 +104,7 @@ function anunciar(): void {
 }
 
 /**
- * Uma resposta que já diz, por si, que o acesso caiu (401 vindo do Authelia pelo Caddy).
+ * Uma resposta que já diz, por si, que o acesso caiu (401 vindo da borda pelo Caddy).
  * Não precisa de sonda: o status é a prova.
  */
 export function relatarAcessoNegado(): void {
@@ -156,38 +132,18 @@ export function relatarFalhaDeRede(): Promise<Diagnostico> {
 /**
  * Leva o operador de volta ao login DE VERDADE.
  *
- * VAI PARA `/entrar.html`, e esta é a única saída que está CERTA NOS DOIS MUNDOS —
- * por isso ela não precisa saber em qual deles está rodando:
+ * VAI PARA `/entrar.html`: depois do corte (DEC-081) o matcher `@protegido` da borda cobre
+ * só `/api/*`, então `/entrar.html` é servido direto e a pessoa vê a nossa tela de entrar.
  *
- *  * **Com o Authelia na frente (hoje):** o `forward_auth` do bloco de host cobre TUDO,
- *    então esta navegação de topo passa por ele, o Authelia responde 302 para
- *    `https://auth.ultra-expansao.tech/?rd=<destino>` e o browser SEGUE — navegação de
- *    topo não tem CORS, que é o que impedia o `fetch` de fazer o mesmo. Idêntico ao que
- *    o `reload()` fazia antes.
- *  * **Depois do corte (P19/DEC-067):** o matcher `@protegido` cobre só `/api/*`, então
- *    `/entrar.html` é servido direto e a pessoa vê a nossa tela de entrar.
- *
- * ERA `window.location.reload()`, E ISSO VIRAVA UM LAÇO FECHADO no dia do corte. O
- * raciocínio antigo — "a navegação de topo passa pelo `forward_auth`" — deixa de valer
- * quando o matcher passa a cobrir só a API: o `reload()` recarregaria a MESMA SPA, a
- * primeira chamada levaria 401 de novo, a sobreposição reabriria, e o único botão dela
- * faria tudo outra vez. A única saída seria alguém saber digitar `/entrar.html` na barra
- * de endereço.
+ * ERA `window.location.reload()`, e isso recarregaria a MESMA SPA — a primeira chamada
+ * levaria 401 de novo, a sobreposição reabriria e o único botão dela faria tudo de novo. A
+ * navegação de topo para `/entrar.html` é o que sai desse laço.
  *
  * O `rd` carrega de onde a pessoa veio, para o login devolvê-la à página que ela tentava
- * abrir. É o mesmo parâmetro que o Authelia usa e que `lib/authelia.ts::destinoSeguro`
- * valida na outra ponta — ele RECUSA destino de fora do domínio, senão o link de login
- * viraria redirecionamento aberto.
- *
- * O QUE ESTA FUNÇÃO PRODUZ, E POR QUE O OUTRO LADO PRECISA DESEMBRULHAR. Antes do corte
- * a premissa acima é verdadeira e tem um efeito que só apareceu medindo: como
- * `/entrar.html` está atrás do `forward_auth`, o Caddy responde 302 e carimba
- * `rd=<ESTA URL INTEIRA>` — ou seja, o destino que chega à tela de entrar é a própria
- * tela de entrar, com o destino de verdade aninhado dentro dele. Autenticar e obedecer a
- * esse destino devolve a pessoa ao formulário; foi o laço de 29/09/2026. Quem desfaz o
- * embrulho é `destinoSeguro`, que tem a medição no docstring. Esta função continua certa
- * como está: mudá-la para navegar ao destino final quebraria o mundo PÓS-corte, que é a
- * razão de ela não ser mais um `reload()`.
+ * abrir. `lib/destino.ts::destinoSeguro` valida esse `rd` na outra ponta — RECUSA destino
+ * de fora do domínio (senão o link viraria redirecionamento aberto) e desembrulha o `rd`
+ * aninhado que a borda pode carimbar apontando para a própria tela de entrar (o laço
+ * medido em 29/09/2026).
  */
 export function entrarNovamente(): void {
   const destino = `/entrar.html?rd=${encodeURIComponent(window.location.href)}`

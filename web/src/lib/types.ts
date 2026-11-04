@@ -2608,6 +2608,9 @@ export interface AdminUsuario {
   /** Se a próxima entrada dela deve pedir troca (016). Não é o inverso do de cima: um
    *  admin pode forçar troca de quem já definiu, e aí os dois são verdadeiros. */
   deve_trocar_senha: boolean
+  /** Países (siglas) que a pessoa pode acessar (DEC-081). A tabela mostra como chips e o
+   *  editor por linha manda o conjunto desejado no PATCH. Vem agregado do backend. */
+  paises: string[]
 }
 
 /** Opção do seletor de perfil. A ordem vem do backend e é a hierarquia da D22
@@ -2616,6 +2619,13 @@ export interface AdminPerfil {
   perfil: string
   descricao: string
   capacidades: number
+}
+
+/** Uma opção do seletor de países do cadastro (DEC-081). Sigla e rótulo vêm do backend
+ *  (data-driven, DEC-047): o front nunca decide por sigla; a bandeira mora em SelecaoPais. */
+export interface AdminPais {
+  sigla: string
+  nome: string
 }
 
 export interface AdminUsuariosPayload {
@@ -2630,6 +2640,10 @@ export interface AdminUsuariosPayload {
    *  Opcional por defesa: ausente conta como desligado, o lado conservador
    *  (`loginProprioDoPayload`, em `lib/painel-usuarios.ts`). */
   login_proprio?: boolean
+  /** Catálogo de países para o seletor do cadastro (DEC-081) e qual vem marcado por padrão
+   *  (o país DESTE processo). Opcional por defesa: deploy antigo sem o campo cai no padrão só. */
+  paises_disponiveis?: AdminPais[]
+  pais_padrao?: string
 }
 
 /** Resposta do PATCH. Cada bloco só vem se o campo correspondente foi enviado, e
@@ -2638,6 +2652,7 @@ export interface AdminAlteracao {
   id_usuario: number
   perfil?: { id_usuario: number; de: string; para: string; mudou: boolean }
   status?: { id_usuario: number; ativo: boolean; mudou: boolean }
+  paises?: { id_usuario: number; de: string[]; para: string[]; mudou: boolean }
 }
 
 /** Corpo do POST de criação (D26). Sem campo de senha DE PROPÓSITO: quem nasce pela
@@ -2650,6 +2665,9 @@ export interface AdminUsuarioNovo {
   nome: string
   email: string
   perfil: string
+  /** Países que a pessoa poderá acessar (DEC-081). Pelo menos um; o seletor marca o país do
+   *  processo por padrão. Vazio é recusado no backend (é o próprio bug do P4). */
+  paises: string[]
 }
 
 /** Resposta do POST. `falta_cadastrar_no_authelia` vem `true` nos DOIS estados do login

@@ -5,7 +5,7 @@ com `C:\\dados\\...` hardcoded e a lista de meses congelada em 2026-04 — as du
 armadilhas "caminho fixo na maquina de uma pessoa" e "campo derivado congelado").
 Aqui os meses sao DESCOBERTOS do proprio consolidado e o caminho vem por argumento.
 
-Contrato do consolidado (o que `data/reports/crescimento/{02,07,09,10}` leem):
+Contrato do consolidado (o que `scripts/crescimento/{02,07,09,10}` leem):
 
     competencia,cod_municipio,uf,saldo,admissoes,desligamentos,salario_medio_adm
     202001,110001,11,-18,52,70,1169.413653846154
@@ -62,7 +62,7 @@ MAX_MESES_POR_RODADA = 8
 
 #: Nome canonico do consolidado (sem periodo embutido: o `_2020_2026` legado
 #: congelava o fim da serie no NOME — em 2027 o cron atualizaria um arquivo que a
-#: cadeia nao le). O mesmo par de nomes vive em `data/reports/crescimento/_raizes.py`
+#: cadeia nao le). O mesmo par de nomes vive em `scripts/crescimento/_raizes.py`
 #: (que nao pode importar daqui); `tests/unit/test_crescimento_atualizacao.py` trava
 #: a paridade dos dois lados.
 NOME_CONSOLIDADO = "caged_municipio_mensal_consolidado.csv"

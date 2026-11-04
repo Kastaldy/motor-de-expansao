@@ -23,7 +23,6 @@ buscar o sinal que falta). Recomendação: A agora + B como aposta. Ver BLK-DIM-
 
 > Blocos BLK-OPS-02/03/04, BLK-ARCH-01 e BLK-SCORE-01/02/03 originados do "Programa de
 > Melhorias — Referência do Master Orchestrator" (PRD.md), migrados em 2026-05-29.
-> Mapa de dependências e ordem recomendada do programa: ver §3 do PRD.md original.
 > Ordem deste backlog: arquitetura (BLK-ARCH-01) à frente da trilha de score (BLK-SCORE-*).
 
 ---
@@ -243,73 +242,8 @@ tolerância a tile faltando, e inserção/ausência da página nos dois tamanhos
 
 ---
 
-### BLK-RELPON-14 — Unificação do gerador de PDF + remoção do slide "Imagem do Entorno" + borda no hex central + cadastro de 68 redes
+- BLK-RELPON-14 (concluído 2026-10-29) — ver tasks/completed.md
 
-| Campo | Valor |
-|---|---|
-| **Criticidade** | Alta |
-| **Status** | **Mergeado** (PR #158, 2026-07-28; o housekeeping anunciado em 2026-07-29 não chegou ao `completed.md`). Emenda de 2026-07-28 à [DEC-011](../docs/decisions/DEC-011.md) **PENDENTE DE APROVAÇÃO por Vinicius** — merge exige a label `aprovado-humano`. |
-| **ClickUp** | — |
-
-> **Criticidade Alta porque emenda a DEC-011** (Alta): a representação do raio de 5 km nos painéis
-> de Socioeconomia/Residual muda, e a emenda de 2026-07-22 daquela DEC dizia explicitamente "dois
-> raios distintos, cada um **ROTULADO** no próprio mapa". Nada de M1: é camada de visualização/
-> relatório (§5 guardrail permanente) — `setor_censitario_intersecao_area_1km`, raio de 1,0 km
-> (DEC-021), `score_priorizacao`, carteira, plano e artefatos oficiais ficam INTOCADOS.
-
-**Escopo (4 partes, decididas por Felipe):**
-
-1. **Unificação do gerador de PDF — a estética CLÁSSICA vence.** Ela já era o default de produção
-   no dashboard, na API e no bot; `gerar_pdf_relatorio_pontual_classico` passa a ser **A**
-   implementação única. `gerar_pdf_relatorio_pontual_censitario` vira **wrapper fino** que só
-   repassa os kwargs para a clássica, com `DeprecationWarning` — não quebra a branch piloto-web,
-   que ainda a chama pelo nome. As funções de página duplicadas do template "recente"
-   (`_cover_page`, `_socioeconomia_residual_page`, `_mapas_calor_page`, `_competitors_page`,
-   `_perfil_bairro_page`, `_credit_page`, `_entorno_page`) são **DELETADAS**; as compartilhadas
-   (`_big_numbers_page`, `_viabilidade_page`, `_fotos_imovel_page`, `_info_imovel_page`) **FICAM**.
-2. **Slide "Imagem do Entorno" REMOVIDO por completo** — página do PDF, camada PNG `entorno`,
-   constantes órfãs (`RAIO_ENTORNO_DISPLAY_KM`, `_ENTORNO_VALOR_LINHA`, o parâmetro `rotulo_escala`
-   e o override local de `zoom_bump`) e a chave `entorno` em `CAMADAS_CENSITARIAS`/`MAP_LAYER_TITLES`.
-   O PDF base cai de **8 → 7 páginas** (`/Count 7`, `PDF_SECTION_HEADERS` com 7 strings) e o teto com
-   as opcionais de **12 → 11**. Os ordinais de `_tema_bicolor` são absolutos: liberar o `-1` que só
-   servia a essa página **não desloca cor nenhuma**. Reverte o BLK-RELPON-11 (2026-07-22).
-3. **Raio dos painéis Socioeconomia e Residual Fitness: o VALOR não muda, a REPRESENTAÇÃO sai.**
-   `RAIO_RESIDUAL_DISPLAY_KM = 5.0` **PERMANECE** — continua definindo o ENQUADRAMENTO dos dois
-   painéis; encolhê-lo reintroduziria o mosaico chapado de 3 a 5 hexágonos medido no gate de
-   2026-07-21 (o motivo de existir do raio de exibição, DEC-011). O que sai é o desenho: **círculo
-   azul removido** e **rótulo "Raio X km" removido** do rodapé e do título. No lugar, o **hexágono
-   H3 res-7 que CONTÉM o ponto ganha uma borda fina de destaque** (`destaque_3857`,
-   `_HEX_CENTRAL_EDGE_COLOR` = o mesmo azul do antigo círculo, `_HEX_CENTRAL_LINEWIDTH = 3`) — só a
-   borda; o preenchimento continua vindo do `color_fn`, e sem hex central desenhável simplesmente
-   não há borda. As camadas de 1,0 km seguem com círculo + rótulo, byte-a-byte idênticas.
-4. **Cadastro de 68 redes** do coletor semanal (VinhoAbencoado/GymScraping, [DEC-013](../docs/decisions/DEC-013.md))
-   em `dashboard/competitors.py`: as redes já tinham CSV em `concorrentes/Unidades/unidades_<slug>.csv`,
-   mas caíam em `independente` porque `load_competitor_points` só itera `COMPETITOR_SPECS`. Entram nos
-   três registros — `COMPETITOR_SPECS`, estilos de marca (`label`/`short` de 3 chars único/cores,
-   reusando a paleta existente) e o registro de logos `logo_<slug>.png`. **10 redes ainda não têm PNG**
-   no GymScraping: `preload_logos` ignora o arquivo ausente e o pin cai no fallback de sigla, que é o
-   comportamento projetado. A normalização de nomes invertidos/slugs divergentes (`companhiafit`,
-   `malibu`, `marrafit`, `matchfit`, `moinhosfit`) acontece na **cópia dos PNGs para a VPS**, não no
-   registro.
-
-**Gate humano:** aprovação da emenda de 2026-07-28 à DEC-011 por Vinicius (o único ponto que sai do
-já decidido). As partes 1, 2 e 4 são estrutura de relatório/cadastro e não emendam DEC alguma.
-
-**Testes:** contagem de páginas e headers para `/Count 7` (e `/Count 11` no teto com as opcionais,
-em `test_relatorio_pontual_viabilidade.py`/`test_relatorio_pontual_orquestracao.py`); as 7 chaves de
-`CAMADAS_CENSITARIAS`; a bateria da camada/página `entorno` **removida**; ausência de círculo e de
-rótulo de raio nos dois painéis de 5 km; borda do hex central mudando pixels sem alterar a cor do
-choropleth; equivalência do wrapper depreciado com a clássica (mesmo PDF + `DeprecationWarning`);
-regressão de byte-identidade das camadas de 1,0 km.
-
-**Impacto cruzado:** `BLK-WEB-*` (piloto web) importa `gerar_pdf_relatorio_pontual_censitario` pelo
-nome — por isso o wrapper, e não a remoção do símbolo. Deploy: mudança em `dashboard/` **não**
-dispara o rebuild da imagem da API — republicar manualmente e conferir o smoke de
-`CAMADAS_CENSITARIAS` (7 chaves) em `docs/deploy_api_bot.md`.
-
-**Docs atualizadas:** `docs/relatorio_pontual_censitario.md` (§3/§6/§7), `docs/decisions/DEC-011.md`
-(emenda 2026-07-28, pendente), `docs/deploy_api_bot.md`, `docs/api_geoespacial_contrato.md`,
-`docs/api_geoespacial_uso.md`, `docs/api_geoespacial_openapi.yaml`, `docs/arquitetura_app_atual.md`.
 
 ---
 
@@ -584,7 +518,7 @@ Permanece como roadmap até nova decisão de Felipe.
 
 **Supersessão (2026-06-12, decisão de Felipe).** O SCORE-05 era um diagnóstico read-only de
 "existe proxy exógeno de demanda + maturação para tentar modelar?". Essa pergunta é exatamente a
-**Camada 1 (aderência/penetração calibrada)** do novo `docs/modelo_dimensionamento_expansao.md` (CEO),
+**Camada 1 (aderência/penetração calibrada)** do novo `docs/archive/modelo_dimensionamento_expansao.md` (CEO),
 que a subsume e melhora: em vez de só diagnosticar, calibra com validação honesta (LOO-CV vs
 baseline) e entrega um motor inverso de 4 camadas (Potencial → Captura → Dimensionamento m² →
 Viabilidade financeira). A **disciplina de GO/NO-GO honesto** e os bloqueios estruturais
@@ -596,7 +530,7 @@ permanece intacta. Detalhe e decomposição abaixo (epic BLK-DIM).
 
 ## Epic BLK-DIM — Motor de Dimensionamento e Viabilidade de Unidades (camada paralela)
 
-> **Origem:** `docs/modelo_dimensionamento_expansao.md` (raiz do repo; spec/handoff do CEO, 2026-06-10),
+> **Origem:** `docs/archive/modelo_dimensionamento_expansao.md` (spec/handoff do CEO, 2026-06-10),
 > derivado dos testes do projeto externo `Análise Preditiva` (base de 54 academias). Substitui o
 > BLK-SCORE-05.
 >
@@ -845,7 +779,7 @@ Criticidade: estratégica
 Prioridade: média
 Tipo: refatoração
 Skill recomendada: /run-cycle (fluxo estratégico)
-Resumo: Migrado do PRD.md. Próxima etapa de planejamento estrutural do repositório.
+Resumo: Próxima etapa de planejamento estrutural do repositório.
 Dependências: nenhuma bloqueadora
 Observações: requer planejamento detalhado antes de execução. Não iniciar sem aprovação.
 
@@ -1028,9 +962,9 @@ a base de calibração DENTRO do formato Ultra, e revalidar a curva (reabre BLK-
 > "a folha deve acompanhar o faturamento de cada mês, inclusive menor na rampa" (Escopo) e "folha escala com a
 > receita" (Aceite item 3) descrevem a regra **ANTIGA/DESCARTADA** — a folha percentual do mês diluía o custo na
 > rampa, subestimava a queima de caixa do mês 1 em ~R$33,3 mil e deixava o break-even otimista (840,6 em vez de
-> 1.152,0 alunos totais no caso de referência). **O que continua PENDENTE deste bloco é só o NÍVEL do percentual**
-> (0,17 vigente x 0,25–0,26 apurados nas 6 DREs), com a controladoria; ver `PREMISSAS_VIABILIDADE.md` §4.1 e
-> `docs/nota_impacto_fin_viab_01.md`.
+> 1.152,0 alunos totais no caso de referência). **O NÍVEL do percentual foi decidido em 30/09/2026 (Felipe): 0,17 permanece**
+> (contra 0,25–0,26 apurados nas 6 DREs; o BLK-VIAB-11 foi cancelado); ver `PREMISSAS_VIABILIDADE.md` §4.1 e §9(a) e
+> `docs/archive/nota_impacto_fin_viab_01.md`.
 
 **Contexto.** O simulador (`dimensionamento/simulador.py::viabilidade`) modela a folha como um **custo fixo absoluto**
 `SIM_PESSOAL_MES = R$50.128,16` (`dimensionamento/config.py:103`), aplicado **igual a toda unidade**, independente de
@@ -1092,7 +1026,7 @@ Boulevard Londrina): a 17% a folha é **R$49.003,79** e o EBITDA fecha em **R$11
 ou seja, a unidade deixaria de atender o critério de payback de 36 meses. (Os números que esta nota trazia antes —
 R$47.942,66 / R$109.233,60 / 38,73% / 859,6 / 29 → 58 — eram da rodada com a **anuidade desligada**, estado que
 deixou de valer em 2026-07-24.) Premissas e conflito documentados em
-`PREMISSAS_VIABILIDADE.md` (§4 e §9-a); impacto no comitê em `docs/nota_impacto_fin_viab_01.md`. **Status e
+`PREMISSAS_VIABILIDADE.md` (§4 e §9-a); impacto no comitê em `docs/archive/nota_impacto_fin_viab_01.md`. **Status e
 criticidade deste bloco permanecem inalterados.**
 
 ---
@@ -1222,7 +1156,7 @@ por persona** (executivo, operador, leigo). Relatório de problemas priorizados 
 | **Autonomia** | **manual (NÃO loop-safe)** — design/UX; exige julgamento humano. NÃO marcar loop-safe. |
 
 **Contexto.** Reduzir a complexidade para leigos sem perder poder para power users.
-Insumo de benchmark externo: `docs/system_design_referencia.md` (§3 layout, §4 navegação, §7 progressive
+Insumo de benchmark externo: `docs/archive/system_design_referencia.md` (§3 layout, §4 navegação, §7 progressive
 disclosure, §8 fluxo triagem→viabilidade com H3, §10 matriz persona).
 **Objetivo.** Redesenhar a **arquitetura de informação** em torno dos fluxos core (triagem→viabilidade, per
 `docs/estado_dos_modelos.md`); **progressive disclosure** (modo simples p/ leigo vs avançado); wireframes de baixa
@@ -1244,7 +1178,7 @@ fidelidade por persona. Usar o guia `frontend-design`.
 
 **Contexto.** Consolidar a linguagem visual (a direção **turquesa Ultra + magenta concorrente** do BLK-UI-10;
 tipografia; componentes) e o sistema de dataviz dos mapas/gráficos.
-Insumo de benchmark externo: `docs/system_design_referencia.md` (§5 componentização — design system de 5-6
+Insumo de benchmark externo: `docs/archive/system_design_referencia.md` (§5 componentização — design system de 5-6
 componentes canônicos; §6.2 paletas acessíveis e dataviz para leigos).
 **Objetivo.** Proposta de **design system** (tokens, componentes, paletas acessíveis light/dark) reusando os guias
 `frontend-design` e `dataviz`.
@@ -1264,7 +1198,7 @@ componentes canônicos; §6.2 paletas acessíveis e dataviz para leigos).
 | **Autonomia** | **manual (NÃO loop-safe)** — decisão estratégica; gate humano obrigatório + DEC. NÃO marcar loop-safe. |
 
 **Contexto.** Consolidar tudo numa recomendação acionável.
-Insumo de referência: `docs/system_design_referencia.md` (§2 diagnóstico técnico do gargalo rerun/pydeck e
+Insumo de referência: `docs/archive/system_design_referencia.md` (§2 diagnóstico técnico do gargalo rerun/pydeck e
 §11 recomendações priorizadas alimentam o critério de performance e o de custo de dev da matriz de decisão).
 **Objetivo.** Relatório executivo que junta **perf** (REV-01..06), **arquitetura** (REV-07/08) e **UX** (REV-09..11)
 numa **recomendação de rumo** (rebuild vs refactor incremental), **stack alvo**, direção de UX e **roadmap faseado**
@@ -2114,9 +2048,10 @@ PDF/CSV). Sub-blocos independentes (podem ir em PRs separados); cada um traz seu
 > **Origem (2026-07-19, pedido de Felipe):** construir o **piloto completo** de um web app dedicado que
 > reproduz o Motor com UX/UI muito melhor, começando pelas **duas telas** do protótipo — **Mapa** e
 > **Viabilidade** — **preservando 100% das funções que essas abas têm hoje** (seleção de hex, busca,
-> entorno, cenário multi-hex, relatórios, etc.). Handoff de produto: **`PLANO_APP_WEB.md`** (raiz, ajustado
-> nesta mesma entrega para refletir a realidade do repo). Referência visual: **`Motor de Expansão -
-> Referência (standalone).html`** (raiz) — spec visual de alta fidelidade; **o mapa nela é FALSO** (hexágonos
+> entorno, cenário multi-hex, relatórios, etc.). Handoff de produto: **`docs/archive/PLANO_APP_WEB.md`** (ajustado
+> nesta mesma entrega para refletir a realidade do repo). Referência visual:
+> **`docs/archive/referencia_visual_piloto_standalone.html`** (até 31/10/2026 na raiz, com o nome
+> `Motor de Expansão - Referência (standalone).html`) — spec visual de alta fidelidade; **o mapa nela é FALSO** (hexágonos
 > em CSS, dados mockados) → no app vira `H3HexagonLayer` deck.gl sobre dados reais.
 >
 > **Arquitetura alvo:** motor Python **INTOCADO** → **API FastAPI fina read-only** (estende a que já existe)
@@ -2349,7 +2284,7 @@ acumulado**, **DRE em cascata** — V8), **Excel** (V9) e **Relatório completo 
 | **Depende de** | **BLK-WEB-08** + **BLK-WEB-09**. |
 | **Autonomia** | **manual (NÃO loop-safe)** — os critérios de aceite incluem UX ("<60s sem treino") e paridade visual que exigem olho humano; a parte de teste de contrato é automatizável, o veredito de aceite é humano. |
 
-**Contexto.** Critérios da **§1/§15 do `PLANO_APP_WEB.md`**: paridade numérica byte-a-byte, performance por UF ≤
+**Contexto.** Critérios da **§1/§15 do `docs/archive/PLANO_APP_WEB.md`**: paridade numérica byte-a-byte, performance por UF ≤
 baseline (`data/reports/perf_baseline_dashboard.md`), zero recálculo de score, analista jr. → recomendação de UF < 60s.
 
 **Objetivo.** **Testes de contrato** comparando o JSON de cada endpoint com a saída do Streamlit (mesmas funções puras,
@@ -2702,10 +2637,12 @@ barata e sem tocar `web/**`: cron que roda a validação HTTP da §5 do
 
 ## Epic BLK-INTL — Internacionalização do Motor de Expansão (instância por país; AR primeiro; READ-ONLY sobre o M1)
 
-> Aberta em **2026-08-31** a partir de `docs/plano_multipais.md` e de [DEC-047](../docs/decisions/DEC-047.md).
-> Leituras obrigatórias antes de pegar qualquer bloco: **§0** do plano (as 19 decisões do dono, que
-> **não se rediscutem** durante a subida da Argentina), **§1.1** (fronteira de repositório) e **§5.0**
-> (o caminho crítico). O **Bloco A** tem spec executável própria — `docs/spec_bloco_a_perfil.md`
+> Aberta em **2026-08-31** a partir do plano multipaís (hoje em `docs/archive/plano_multipais.md`) e de
+> [DEC-047](../docs/decisions/DEC-047.md). Leituras obrigatórias antes de pegar qualquer bloco: a DEC-047 (a
+> decisão de arquitetura, a fronteira de repositório e, na seção «Decisões de subida do dono», as decisões
+> 0.1–0.19 e D4–D7b) e o `docs/expansao-latam/00-baseline-argentina.md` (§4.3, o que ficou de fora ou
+> provisório na Argentina, e §5.3, o baseline de esforço por país). O **Bloco A** teve spec executável
+> própria — `docs/archive/spec_bloco_a_perfil.md`
 > (schema de 23 campos, **37 sítios** de substituição numerados, **10 commits** cada um verde sozinho,
 > 10 critérios de aceite por comando, e os 7 testes que quebram contra os 7 que não quebram).
 
@@ -2727,6 +2664,20 @@ processo sairia como fator de renda de um país no PDF do outro.
   se confundem com a numeração `BLK-INTL-00..12` do **§5** do plano (os blocos de plataforma que
   ficaram **fora** do caminho crítico e que serão abertos quando entrarem na fila). Nenhum sufixo é
   prefixo de outro — grep e label ficam inequívocos.
+
+**Blocos do §5 do plano sem bloco aberto aqui** (especificação em `docs/archive/plano_multipais.md` §5;
+abrir quando entrarem na fila; o 02, o 03, o 05 e o 08 saíram como A1 a E1):
+- `BLK-INTL-00` (padrões CRITICO do `loop_guard` por conceito, para artefato de país com nome novo não sair
+  LIMPO) · `BLK-INTL-01` (expectativa da AR por escrito ao time de Expansão Internacional; sem rastro de
+  entrega) · `BLK-INTL-04` (`_UF_RE` alfanumérico com teste de traversal; fim das siglas fabricadas).
+- `BLK-INTL-06` (cache orçado em bytes nos quatro caches pesados) · `BLK-INTL-07` (`docs/contrato_pacote_pais.md`
+  + `scripts/validar_pacote_pais.py`; o exportador já veio no B1) · `BLK-INTL-09` (operação em matriz:
+  healthcheck derivado e `EDGE_URL` por país).
+- `BLK-INTL-10` (superfície `ponto`/municipal para país novo; na AR ela saiu pelo exportador) · `BLK-INTL-11`
+  (premissas financeiras por país; aposenta o tributo provisório da AR) · `BLK-INTL-12` (extração dos textos de
+  PDF, por último; traduzir só por ordem do Felipe).
+- Sobra do `BLK-INTL-02`: baseline de desempenho versionada e uma rota de diagnóstico com RSS, bytes de cache,
+  taxa de acerto de `carregar_uf` e data da última coleta.
 
 **Fronteira de repositório (§1.1 do plano; DEC-047).** UM repositório de **PLATAFORMA** (este) — o
 único com código que serve tráfego. N repositórios de **PIPELINE** (do Juan, um por país) — o método
@@ -2822,7 +2773,7 @@ do plano, ele não entra sem DEC nova.**
 | **Depende de** | — (primeiro bloco da onda). Consome a decisão de âncoras do Felipe, que **já tem default declarado** em `data/perfis/AR/perfil.json` e **não trava o início**. |
 | **Esforço** | **7-11 dias · 1 dev** (era 6-8 antes de A1, A2 e A3 entrarem). |
 | **Autonomia** | **manual (NÃO loop-safe)** — CRITICO + `^web/`. NÃO marcar loop-safe. |
-| **DEC / Spec** | [DEC-047](../docs/decisions/DEC-047.md) ✅ registrada · **`docs/spec_bloco_a_perfil.md`** ✅ (37 sítios, 10 commits, 10 aceites por comando) — **quem for codar lê os números de lá**, não do plano: as citações de `web/server/app.py` acima da linha ~3200 no plano estão **14 linhas defasadas**, e a tabela de conversão está no §0 da spec. |
+| **DEC / Spec** | [DEC-047](../docs/decisions/DEC-047.md) ✅ registrada · **`docs/archive/spec_bloco_a_perfil.md`** ✅ (37 sítios, 10 commits, 10 aceites por comando) — **quem for codar lê os números de lá**, não do plano: as citações de `web/server/app.py` acima da linha ~3200 no plano estão **14 linhas defasadas**, e a tabela de conversão está no §0 da spec. |
 
 **Os quatro defeitos que este bloco conserta — nenhum é cosmético.**
 
@@ -3685,7 +3636,7 @@ Decidir qual, aplicar no compose por PR, e a aplicação na VPS é passo manual 
 | **Criticidade** | **Média** — o passo é fail-soft por desenho e os apps seguem com os arquivos anteriores; o dano é obsolescência silenciosa, não corrupção. |
 | **Prioridade** | **Média** — está quebrado há 3 semanas e ninguém soube. |
 | **Esteira** | `[aplicação na VPS: passo MANUAL, comando a comando — §6]` + PR neste repositório (o lote de domingo é versionado em `scripts/cron/run_weekly_90.sh` desde 2026-09-17, PR #377; a cópia em `/opt/gymscraping-infra/` é instalação) |
-| **Status** | Pendente |
+| **Status** | **Em andamento** — conserto do repositório pronto na branch `fix/achados-conferencia` (`b02e805a`, 29/10/2026, ainda sem PR); aplicação na VPS pendente |
 | **Depende de** | — |
 | **Autonomia** | **manual (NÃO loop-safe)** — VPS + repositório irmão. NUNCA marcar loop-safe. |
 
@@ -3714,6 +3665,8 @@ DEC-059 existe para impedir (lá, nove domingos sem propagar moveram 60,46% dos 
 além das logos. O passo 4.5 do mesmo script (pins M&A) lê os **feeds CRUS montados**, não este
 diretório (decisão de 2026-09-02, comentada na linha 257) — mas eu não tracei todos os consumidores.
 Primeiro entregável do bloco: traçar isso.
+
+**Conferido em produção em 29/10/2026** (achado a-02 da conferência da higiene dos docs; leitura só de contagens, com simulacro antes): o domingo de **25/10 falhou de novo**, com 1 linha `AVISO: sync falhou` e 2 de `PerfilInvalidoError` no `weekly_20261025-060001.log`. O diretório segue em **06/09 10:15** (204 arquivos, 97 logos; 53 dias), e o script instalado em `/opt/gymscraping-infra/run_weekly_90.sh` não tem `MOTOR_DATA_DIR` (0 linhas). Os consertos (a) e (b) estão no repositório, na branch `fix/achados-conferencia` (commit `b02e805a`, ainda sem PR), com dois testes de contrato; a aplicação na VPS segue manual. O traçado dos consumidores dos `unidades_*.csv` continua por fazer.
 
 ---
 
@@ -4599,7 +4552,7 @@ Felipe; nenhuma etapa de modelo roda antes da exploratória revisada):
 - **Idade do público:** o "18–45" do CLAUDE.md nunca foi medido. **05/10:** o Felipe corrigiu que a Ultra atende
   todas as idades; o "18–45" de `CLAUDE.md:12` e `PRD.md:52` não é real. A sonda da Growth confirma: mediana de 37
   anos, e um terço dos alunos tem 45 anos ou mais.
-  - Corrigidos em 05/10 só numa cópia local, **nunca commitados**: `CLAUDE.md:12`, `PRD.md:52` e `docs/expansao_dominio.md:127` seguem com o "18-45" na `main` (conferido em 2026-10-23).
+  - Corrigidos em 05/10 só numa cópia local, **nunca commitados**: `CLAUDE.md:12`, `PRD.md:52` e `docs/expansao_dominio.md:127` seguem com o "18-45" na `main` (conferido em 2026-10-23). Em 29/10/2026, na limpeza da documentação, o `PRD.md` saiu do repositório e o `docs/expansao_dominio.md` foi corrigido; e em 02/11/2026 o `CLAUDE.md` também, no PR #504 (decisão do Vinicius, responsável pela documentação: a Ultra visa todas as idades).
   - Sobra um comentário de código em `src/motor_expansao/dashboard/constants.py:461` ("classe média urbana-alvo Ultra
     (18-45)"), que vai no próximo PR.
 - **Idade da população por setor: a base EXISTE no IBGE.** `Agregados_por_setores_demografia_BR.zip` (22 MB, de
@@ -5079,7 +5032,7 @@ Vinicius (avaliação na DEC); (3) deploy das imagens `web`/`api` e `restart web
 | **Depende de** | **BLK-BANCO-03** (o monitor tem de vigiar o banco antes de ele virar o ponto único do login), **BLK-SEC-03-FU2** (conciliação Authelia × banco) e o merge da branch `feat/banco-completo` (a imagem nova do Passo 2 do runbook, que esconde o cadeado e o convite de troca enquanto a chave estiver desligada) |
 | **Autonomia** | **manual (NÃO loop-safe)** — VPS, Caddy e credenciais. NUNCA marcar loop-safe. |
 
-Referência: `docs/repasse_corte_p19.md`, adaptado em 24/10/2026 ao estado de 23/10: conta `deploy`,
+Referência: `docs/archive/repasse_corte_p19.md`, adaptado em 24/10/2026 ao estado de 23/10: conta `deploy`,
 template do Caddy por `scp` e nenhum `git pull`, porque o checkout de `/opt/motor-expansao/app` é do
 root, num commit antigo, com o compose trocado à mão. O kit de scripts simulados do item 2 ficou
 pronto em 25/10/2026, na estação do Vinicius (`p19b` conferir, `p19c` senha, `p19d` ligar, `p19e`
@@ -5112,7 +5065,7 @@ real (`docs/banco_deploy.md` §10), feito em 25/10/2026.
    decidir quando tirar os logins BR do `users_database.yml`. O serviço `authelia` não sai, porque
    a AR depende dele. Depois, re-cifrar o Caddyfile e o `.env` (BLK-BANCO-04).
 
-**Evidência:** `docs/repasse_corte_p19.md`; `docs/decisions/DEC-067.md`;
+**Evidência:** `docs/archive/repasse_corte_p19.md`; `docs/decisions/DEC-067.md`;
 `deploy/caddy/piloto-br.Caddyfile.template`; `alinhar-senhas` em `src/motor_expansao/db/cli.py`;
 fumaça do dia: `tests/integration/test_login_ponta_a_ponta.py`. Recomendada antes da janela, sem
 travá-la: a cópia off-box (BLK-BANCO-02).
@@ -5253,9 +5206,9 @@ registra que o corte é gatilho por si e que isso é "bloco próprio". **Evidên
 |---|---|
 | **Criticidade** | **Alta** — a superfície pública de login depois do corte; READ-ONLY sobre o M1. |
 | **Prioridade** | Baixa — piloto de 20 pessoas; decidir antes do corte ou logo depois. |
-| **Esteira** | `[DECISÃO DO VINICIUS]` → se limitar: código (`web/server/`) ou borda (Caddy) |
-| **Quem** | Vinicius |
-| **Status** | Pendente — aguardando decisão |
+| **Esteira** | código (`web/server/app.py` + teste em `tests/unit/test_piloto_web_login.py`) → PR próprio (conferência do Vinicius) |
+| **Quem** | qualquer um |
+| **Status** | Em andamento (decidido por Vinicius 04/11: semáforo no Argon2; iniciado 04/11) |
 | **Depende de** | — |
 | **Autonomia** | **manual (NÃO loop-safe)** |
 
@@ -5267,6 +5220,8 @@ uma verificação Argon2id de 64 MiB (`MEMORIA_KIB`, em `src/motor_expansao/db/s
 limite por IP nem de concorrência no processo (a DEC-067 declara a falta da camada por IP). Que uma
 rajada de logins inexistentes esgote a memória é inferência, não medida. **Opções:** aceitar, pôr
 um semáforo no Argon2 ou um rate-limit na borda.
+
+**DECIDIDO (Vinicius, 04/11): semáforo no Argon2.** Medição (benchmark local, params reais de `senhas.py`): cada verificação custa **64 MiB + ~60 ms**, e o login INEXISTENTE paga o mesmo `ph.hash`. Pico linear medido: **32 concorrentes = 2077 MiB > `mem_limit` 2 GiB** do web (OOM); antes disso ~40 saturam o threadpool compartilhado (DoS geral). Um burst de ~32 (ou ~540 req/s) basta; sem limite por IP, a trava de 5/15 min não pega inexistente. **Fix:** `_SEM_LOGIN` (`threading.Semaphore`, env `MOTOR_LOGIN_MAX_CONCORRENTES`, default 6), NÃO-BLOQUEANTE no handler `login` — cheio → **503 imediato** (não segura a thread, não roda o Argon2); libera o slot no `finally` (sucesso e recusa). Pico cai para ~384 MiB, ~100 login/s (folga enorme para o piloto). O 503 é por CARGA, independe de a conta existir (não abre oráculo). Rate-limit por IP na borda fica como defesa adicional futura (não feito aqui). READ-ONLY sobre o M1.
 
 ---
 
@@ -5333,8 +5288,8 @@ são lugares onde um diagnóstico de rotina a imprime por acidente.
 
 1. **`docker compose run --rm` sem `--no-deps`** recria o `postgres` quando a config dele mudou (uma
    `POSTGRES_OWNER_PASSWORD` trocada basta), o mesmo risco que o `--no-deps` tirou dos `up` em
-   25/10/2026. Medido no Compose 2.33 e no 5.6. Aparece no Passo 3 do `docs/repasse_corte_p19.md`, no
-   `docs/banco_deploy.md` (§5, §7, §8, §9.0, §9.0.1 e §10) e no `docs/repasse_migracoes_p19.md`. Os
+   25/10/2026. Medido no Compose 2.33 e no 5.6. Aparece no Passo 3 do `docs/archive/repasse_corte_p19.md`, no
+   `docs/banco_deploy.md` (§5, §7, §8, §9.0, §9.0.1 e §10) e no `docs/archive/repasse_migracoes_p19.md`. Os
    kits usam `run --rm --no-deps -T`.
 2. **Credencial do dono por `export` + `-e MOTOR_DATABASE_URL_ADMIN`.** Assim a URL do dono fica no
    ambiente do `docker compose` e na `Config.Env` do container descartável, onde um `docker inspect`
@@ -5344,7 +5299,7 @@ são lugares onde um diagnóstico de rotina a imprime por acidente.
    que é o roteiro que a skill de deploy manda seguir quando a imagem traz migration; depois §5, §8 e
    §9.0.1 e o `repasse_migracoes_p19.md`. O `-e PGPASSWORD` do `scripts/cron/run_expurgo_sessoes.sh`
    fica: sem humano e sem impressão, dura segundos por dia, e o público é o mesmo.
-3. **O Passo 3 do `docs/repasse_migracoes_p19.md` IMPRIME a senha do dono**
+3. **O Passo 3 do `docs/archive/repasse_migracoes_p19.md` IMPRIME a senha do dono**
    (`grep -E '^POSTGRES_(DB|OWNER_USER|OWNER_PASSWORD)=' .env`). O documento não se aplica à produção
    atual (o banco nasceu com as 21 migrations), mas o comando está lá: trocar pela conferência só de
    contagens do 0.c do roteiro do corte, ou marcar o passo como obsoleto.
@@ -5365,3 +5320,99 @@ Menores, no código do banco:
   DEBUG, que o CLI não configura;
 - a dica do CLI diz que `@ : / # ou %` quebram a URL. Medido: quebram `@`, `/`, `%` inválido e
   espaço; `:`, `#` e `?` não.
+
+---
+
+### BLK-BANCO-10 — Cadastro de usuário passa a atribuir país (Fase 1 do P4 da DEC-081)
+
+| Campo | Valor |
+|---|---|
+| **Criticidade** | **Alta** — mexe no cadastro que alimenta o gate de país (autenticação); READ-ONLY sobre o M1. Toca `src/motor_expansao/db/usuarios.py`: no mesmo PR sobe para **Crítica** pelo guard. |
+| **Prioridade** | **Topo** — estanca um lockout silencioso ATIVO (abaixo). |
+| **Esteira** | código (`src/motor_expansao/db/usuarios.py` + `web/server/app.py` + `web/src/`) → testes → PR próprio (conferência do Vinicius antes de abrir) |
+| **Quem** | qualquer um; decisões de produto já cravadas pelo Vinicius (03/11/2026) |
+| **Status** | Em andamento (iniciado em 03/11/2026) |
+| **Depende de** | — (o `GRANT INSERT` do `app` em `usuario_paises` já está aplicado na VPS desde 03/11/2026) |
+| **Autonomia** | **manual (NÃO loop-safe)** — autenticação/gate de país e banco. |
+
+**O bug (ATIVO desde 27/10/2026).** Com o login próprio do BR no ar, todo usuário criado pelo painel de Acessos nasce com ZERO países: `usuarios.criar` (`src/motor_expansao/db/usuarios.py:496-565`) grava só na tabela `usuarios`, nunca em `usuario_paises` — o único INSERT nessa tabela em todo o motor é o backfill da migration (`src/motor_expansao/db/migracoes/021-usuario-paises.sql:30`). O gate é fail-closed (`web/server/app.py:802` e `:6307`; conjunto vazio em `rbac.py:135`/`sessoes.py:332`), então a pessoa loga e é barrada em tudo (403) no host do país e vê "sem acesso" no apex — enquanto a tela de criação responde "sucesso" e só avisa do passo do Authelia. Onboarding de gente nova quebra sem erro visível. Estudo em 03/11/2026 (workflow de 5 agentes sobre `origin/main`): escala MÉDIA, backend-centrada.
+
+**Decisões de produto cravadas por Vinicius (03/11/2026):** (1) o admin ESCOLHE os países no cadastro, com o país do processo (`PERFIL.pais`) LIGADO por padrão; (2) multipaís pela tela (pode marcar mais de um); (4) o seletor COBRE o `AR` (data-driven), aposentando o seed AR manual. A decisão (3) — editar/remover país — é a Fase 2 (BLK-BANCO-11), porque exige `DELETE`.
+
+**Escopo (Fase 1 — só CRIAR com país):**
+- **Backend / modelo:** campo `paises: list[str]` em `UsuarioNovoIn` (`web/server/app.py:5551-5564`).
+- **Backend / função:** parâmetro `paises` em `usuarios.criar` (`:496`) e, DENTRO do `with transacao` já existente (`:529`, após o `RETURNING id_usuario` em `:546`), um INSERT em `usuario_paises` por país — criação+país atômicos, mesma disciplina do evento (`:550-556`).
+- **Backend / rota:** `acessos_usuarios_criar` (`web/server/app.py:5823`) repassa os países; default = `[PERFIL.pais]` (disponível em `app.py:168/172`) quando o corpo não trouxer.
+- **Backend / validação fail-closed:** RECUSAR lista de países vazia (vazio = o próprio bug) e validar cada sigla contra `perfil._RE_PAIS` (`perfil.py:76`) / o CHECK `chk_usuario_paises_sigla` (`021:19`); traduzir no `_erro_de_usuarios` (`app.py:5708`).
+- **Backend / fonte data-driven:** expor a lista de siglas/rótulos válidos ao painel (como `perfis` já vem no `AdminUsuariosPayload`), sem hardcode por sigla (fio de alarme DEC-047).
+- **Frontend:** seletor multi-país no formulário de criar (`web/src/components/PainelUsuarios.tsx`), campo `paises: string[]` em `AdminUsuarioNovo` (`types.ts:2644`) ligado ao `POST`; país do processo pré-marcado; botão "Criar" exige ≥1 país.
+- **Testes:** criar pelo painel grava linha em `usuario_paises`; recusa lista vazia; regressão do gate (usuário criado NÃO nasce com zero países); contrato DEC-047 (seletor data-driven, sem `if pais ==`).
+
+Guardrails: READ-ONLY sobre o M1; conferência do Vinicius antes de abrir o PR; PR crítico exige `critica-aprovada` + `aprovado-humano` de não-autor.
+
+---
+
+### BLK-BANCO-11 — Editar/remover países de usuário + GRANT DELETE no §3 (Fase 2 do P4 da DEC-081)
+
+| Campo | Valor |
+|---|---|
+| **Criticidade** | **Alta** — edição do gate de país + privilégio de banco (`DELETE`); cruza o repo `banco-de-reservas`. Toca `src/motor_expansao/db/`: no mesmo PR sobe para **Crítica** pelo guard. |
+| **Prioridade** | Média — depois da Fase 1. |
+| **Esteira** | PR no `banco-de-reservas` (§3 ganha `DELETE`) → `GRANT DELETE` na VPS (manual, Vinicius) → código de edição → testes → PR próprio |
+| **Quem** | qualquer um; o `GRANT` na VPS é manual do Vinicius |
+| **Status** | Pendente |
+| **Depende de** | BLK-BANCO-10 (Fase 1) + merge do §3 no `banco-de-reservas` |
+| **Autonomia** | **manual (NÃO loop-safe)** — autenticação, privilégio de banco, cross-repo. |
+
+**Pré-requisito de banco (a diferença da Fase 1).** Remover um país usa `DELETE`, que o `sql/papeis-e-privilegios.md` §3 do `banco-de-reservas` HOJE NEGA ao `app` (linha 134: `usuario_paises | SELECT, INSERT, UPDATE | ... Sem DELETE`). A Fase 2 começa por um PR lá acrescentando `DELETE` ao §3 (GRANT da linha 145 e tabela de conferência da linha 612), depois `GRANT DELETE ON usuario_paises TO app` aplicado na VPS (manual, molde do realinhamento de 03/11/2026).
+
+**Escopo (editar/remover país de usuário existente):**
+- **Backend / função:** `definir_paises`/`adicionar_pais`/`remover_pais` em `usuarios.py`, com INSERT/DELETE em `usuario_paises` dentro de transação e evento na MESMA transação (molde de `_aplicar_perfil`/`_aplicar_ativo`, `usuarios.py:358-401`).
+- **Backend / trava anti-auto-lockout:** `_recusar_auto_alvo` análogo (`usuarios.py:325`) — ninguém remove o próprio último país e se tranca para fora.
+- **Backend / endpoint:** `PATCH /api/acessos/usuarios/{id}/paises` (ou estender `UsuarioAdminIn`, `app.py:5544`), sob o gate duplo do painel (allowlist `_exigir_admin_acessos` `app.py:5450` + capacidade `acesso.usuario_gerir`).
+- **Backend / listagem:** agregar os países de cada pessoa em `SQL_LISTAR` (`usuarios.py:104`) e `UsuarioAdmin.como_json` (`usuarios.py:276`), para a tela mostrar o estado atual.
+- **Backend / eventos:** `usuario.pais_atribuido`/`usuario.pais_removido` nas constantes `EVENTO_*` e no `docs/eventos_contrato.md`.
+- **Frontend:** editar países por linha no `PainelUsuarios.tsx`, coluna/chips com os países atuais, confirmação (`confirmacao-admin.ts`) do de-para, validação de ≥1 país.
+- **Testes:** editar (adicionar/remover) grava certo; NÃO permite remover o próprio último país; evento registrado.
+
+
+---
+
+### BLK-BANCO-12 — O `/api/login` bem-sucedido deixa de constar como "desconhecido" na trilha (DEC-027)
+
+| Campo | Valor |
+|---|---|
+| **Criticidade** | **Alta** — mexe no middleware da trilha de acesso (roda em TODA requisição) e no handler de login; READ-ONLY sobre o M1. Toca só `web/server/app.py` (não `src/motor_expansao/db/`), então é **governança** no guard (`aprovado-humano`), não Crítica. |
+| **Prioridade** | Média — melhoria de auditoria; o corte da DEC-081 não depende dela. |
+| **Esteira** | código (`web/server/app.py` + teste em `tests/unit/test_piloto_web_login.py`) → PR próprio (conferência do Vinicius) |
+| **Quem** | qualquer um |
+| **Status** | Em andamento (iniciado em 03/11/2026) |
+| **Depende de** | — |
+| **Autonomia** | **manual (NÃO loop-safe)** — autenticação/trilha de acesso. |
+
+**O defeito.** A trilha da DEC-027 (`_registrar_acesso`/`_trilha_acesso`) grava cada requisição relevante com `usuario = acesso.login_da_requisicao(Remote-User/Remote-Email)`. O `POST /api/login` é **pré-autenticação** — fica fora do `@protegido`, sem `Remote-User` — e NÃO está em `_ROTAS_IGNORADAS` (`acesso_log.py`, que só exclui `/api/health` e `/api/verify`). Então todo login, inclusive o bem-sucedido, era gravado como **"desconhecido"** (`montar_evento` cai no `or "desconhecido"`), mesmo o sistema sabendo quem logou. Os EVENTOS do banco já estavam certos (`usuario.login` com `autor=id`); a lacuna era só a TRILHA.
+
+**O fix (2 linhas).** O handler de `login`, **só no sucesso** (depois do `raise negado` das recusas), carimba `request.state.login_na_trilha = acesso.login_da_requisicao(body.login)`. O `_registrar_acesso` passa a priorizar `getattr(request.state, "login_na_trilha", None)` sobre o header. Login recusado/inexistente não carimba e segue "desconhecido" (correto); requisição normal (gateada, com `Remote-User`) fica intocada.
+
+READ-ONLY sobre o M1. Não toca o gate de país, o apex, nem o contrato de eventos.
+
+
+---
+
+### BLK-BANCO-13 — A trilha (DEC-027) mostra QUEM acessou a página pública, em vez de "desconhecido"
+
+| Campo | Valor |
+|---|---|
+| **Criticidade** | **Alta** — mexe no `_portao_de_sessao` (middleware que roda em TODA requisição) e lê a sessão; READ-ONLY sobre o M1. Toca só `web/server/app.py` → **governança** no guard (`aprovado-humano`), não Crítica. |
+| **Prioridade** | Média — auditoria; o funil/produto não dependem. |
+| **Esteira** | código (`web/server/app.py` + teste em `tests/unit/test_piloto_web_portao_sessao.py`) → PR próprio (conferência do Vinicius) |
+| **Quem** | qualquer um |
+| **Status** | Em andamento (iniciado em 04/11/2026) |
+| **Depende de** | BLK-BANCO-12 (mesmo tema de trilha; já em produção) |
+| **Autonomia** | **manual (NÃO loop-safe)** — autenticação/trilha de acesso. |
+
+**O defeito.** Follow-up do BLK-BANCO-12. A *página* do piloto (`GET /`, `/entrar.html`) é **pública** — não exige sessão, senão o navegador não baixaria o formulário de login. O `_portao_de_sessao` só carimba o `Remote-User` (identidade da sessão) nas rotas **gateadas** (`/api/*` não-públicas); nas públicas retornava antes de carimbar. Então a trilha registrava o acesso à página como **"desconhecido"** — até para quem já estava logado. As ações `/api/*` já saíam com o nome certo; a lacuna era o carregamento da página.
+
+**O fix.** No ramo de rota pública do portão, **só nas rotas que a trilha audita** (`acesso_log.relevante` — assets/estáticos não entram, não pagam a consulta), se houver cookie e sessão válida, carimba o `Remote-User` da sessão. **Best-effort:** rota pública NUNCA barra nem vira 500/503 por isto (banco fora, fila cheia e cookie inválido/expirado seguem como visitante "desconhecido", que é o correto). Decisão do Vinicius (04/11): **opção B** (mostrar o nome) sobre a opção A (tirar o boot da trilha).
+
+READ-ONLY sobre o M1. Não toca o gate de país, o apex, nem o contrato de eventos.

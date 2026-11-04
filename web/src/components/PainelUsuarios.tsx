@@ -23,6 +23,7 @@ import {
   recadoDaRedefinicao,
 } from '../lib/senha-temporaria'
 import type {
+  AdminPais,
   AdminPerfil,
   AdminUsuario,
   AdminUsuarioNovo,
@@ -104,7 +105,7 @@ function comArquivo(texto: string) {
 
 /** Campos vazios do formulário de criação. Fica fora do componente para o
  *  `Cancelar` e o `criar` bem-sucedido zerarem pelo MESMO objeto. */
-const NOVO_VAZIO: AdminUsuarioNovo = { login: '', nome: '', email: '', perfil: '' }
+const NOVO_VAZIO: AdminUsuarioNovo = { login: '', nome: '', email: '', perfil: '', paises: [] }
 
 const ESTILO_CAMPO: CSSProperties = {
   padding: '6px 9px',
@@ -130,6 +131,7 @@ const ESTILO_ROTULO: CSSProperties = {
 type Pendente =
   | { tipo: 'trocar-perfil'; id_usuario: number; para: string }
   | { tipo: 'definir-ativo'; id_usuario: number; ativo: boolean }
+  | { tipo: 'editar-paises'; id_usuario: number; paises: string[] }
   | { tipo: 'redefinir-senha'; id_usuario: number }
   | { tipo: 'exigir-troca'; id_usuario: number }
   | { tipo: 'criar' }
@@ -170,6 +172,11 @@ export default function PainelUsuarios() {
    * alguém que não está mais ali — o PATCH não tem trava de versão para nos defender.
    */
   const [pendente, setPendente] = useState<Pendente | null>(null)
+  /** Linha em edição de países (checkboxes locais, antes de confirmar). `null` = nenhuma. */
+  const [editandoPaises, setEditandoPaises] = useState<{
+    id_usuario: number
+    paises: string[]
+  } | null>(null)
 
   const carregar = useCallback(() => {
     setCarregando(true)
@@ -198,7 +205,7 @@ export default function PainelUsuarios() {
    * meio segundo — alguém sairia daqui achando que desativou quem continua entrando.
    */
   const aplicar = useCallback(
-    async (alvo: AdminUsuario, mudanca: { perfil?: string; ativo?: boolean }) => {
+    async (alvo: AdminUsuario, mudanca: { perfil?: string; ativo?: boolean; paises?: string[] }) => {
       setSalvando(alvo.id_usuario)
       setRecado(null)
       // `criar` ja' limpava; aqui nao limpava, e um erro velho ficava na tela POR CIMA
@@ -209,12 +216,15 @@ export default function PainelUsuarios() {
         await carregar()
         const trocou = r.perfil?.mudou
         const mudouStatus = r.status?.mudou
+        const mudouPaises = r.paises?.mudou
         if (trocou) {
           setRecado(
             `${alvo.login}: ${rotuloPerfil(r.perfil!.de)} → ${rotuloPerfil(r.perfil!.para)}.`,
           )
         } else if (mudouStatus) {
           setRecado(`${alvo.login} foi ${r.status!.ativo ? 'reativado' : 'desativado'}.`)
+        } else if (mudouPaises) {
+          setRecado(`${alvo.login}: países agora ${r.paises!.para.join(', ')}.`)
         } else {
           // `mudou: false` = já estava assim. Sucesso sem evento gravado, e a tela
           // não pode chamar isso de alteração.
@@ -293,6 +303,7 @@ export default function PainelUsuarios() {
         nome: novo.nome.trim(),
         email: novo.email.trim(),
         perfil: novo.perfil,
+        paises: novo.paises,
       })
       await carregar()
       setNovo(null)
@@ -326,6 +337,8 @@ export default function PainelUsuarios() {
       await aplicar(linha, { perfil: pendente.para })
     } else if (pendente.tipo === 'definir-ativo') {
       await aplicar(linha, { ativo: pendente.ativo })
+    } else if (pendente.tipo === 'editar-paises') {
+      await aplicar(linha, { paises: pendente.paises })
     } else {
       await aplicarSenha(linha, pendente.tipo)
     }
@@ -369,6 +382,10 @@ export default function PainelUsuarios() {
      conservador: esconde gestos que o servidor recusaria e mostra o recado de quem ainda
      depende do Authelia. */
   const loginProprio = loginProprioDoPayload(dados)
+  /* Catálogo de países para o seletor (DEC-081), e qual vem marcado por padrão (o país deste
+     processo). Ausentes num deploy antigo: o seletor some e a criação herda o padrão do backend. */
+  const paisesDisponiveis = dados.paises_disponiveis ?? []
+  const paisPadrao = dados.pais_padrao ?? ''
   const recadoCriado = criado ? recadoDaCriacao(criado.login, criado.loginProprio) : null
 
   /* A ação em texto, montada AGORA a partir de `dados` — nunca congelada quando o
@@ -388,6 +405,9 @@ export default function PainelUsuarios() {
       perfil: novo.perfil,
       capacidades: capacidadesDe(novo.perfil),
       loginProprio,
+      paises: novo.paises.map(
+        (s) => paisesDisponiveis.find((p) => p.sigla === s)?.nome ?? s,
+      ),
     }
   } else if (pendente && pendente.tipo !== 'criar') {
     const alvo = usuarios.find((u) => u.id_usuario === pendente.id_usuario)
@@ -418,6 +438,15 @@ export default function PainelUsuarios() {
       }
     } else if (alvo && pendente.tipo === 'exigir-troca') {
       acao = { tipo: 'exigir-troca', nome: alvo.nome, login: alvo.login }
+    } else if (alvo && pendente.tipo === 'editar-paises') {
+      const nome = (s: string) => paisesDisponiveis.find((p) => p.sigla === s)?.nome ?? s
+      acao = {
+        tipo: 'editar-paises',
+        nome: alvo.nome,
+        login: alvo.login,
+        de: alvo.paises.map(nome),
+        para: pendente.paises.map(nome),
+      }
     }
   }
 
@@ -586,7 +615,7 @@ export default function PainelUsuarios() {
 
       {novo === null ? (
         <div>
-          <Botao variante="ghost" onClick={() => setNovo({ ...NOVO_VAZIO })}>
+          <Botao variante="ghost" onClick={() => setNovo({ ...NOVO_VAZIO, paises: paisPadrao ? [paisPadrao] : [] })}>
             + Novo usuário
           </Botao>
         </div>
@@ -669,6 +698,43 @@ export default function PainelUsuarios() {
             </div>
           </div>
 
+          {paisesDisponiveis.length > 0 && (
+            <div>
+              <span style={ESTILO_ROTULO}>Países com acesso</span>
+              <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', marginTop: 4 }}>
+                {paisesDisponiveis.map((p: AdminPais) => {
+                  const marcado = novo.paises.includes(p.sigla)
+                  return (
+                    <label
+                      key={p.sigla}
+                      style={{
+                        display: 'flex',
+                        gap: 6,
+                        alignItems: 'center',
+                        cursor: 'pointer',
+                        font: '400 12.5px/1.4 var(--f-ui)',
+                      }}
+                    >
+                      <input
+                        type="checkbox"
+                        checked={marcado}
+                        onChange={() =>
+                          setNovo({
+                            ...novo,
+                            paises: marcado
+                              ? novo.paises.filter((s) => s !== p.sigla)
+                              : [...novo.paises, p.sigla],
+                          })
+                        }
+                      />
+                      {p.nome}
+                    </label>
+                  )
+                })}
+              </div>
+            </div>
+          )}
+
           <div
             style={{
               display: 'flex',
@@ -684,7 +750,8 @@ export default function PainelUsuarios() {
                 !novo.nome.trim() ||
                 !novo.login.trim() ||
                 !novo.email.trim() ||
-                !novo.perfil
+                !novo.perfil ||
+                novo.paises.length === 0
               }
               title={tituloDoBotaoCriar(loginProprio)}
             >
@@ -704,7 +771,7 @@ export default function PainelUsuarios() {
         <table style={{ width: '100%', borderCollapse: 'collapse', minWidth: 880 }}>
           <thead>
             <tr>
-              {['Pessoa', 'Login', 'Perfil', 'Situação', COLUNA_SENHA, ''].map((h) => (
+              {['Pessoa', 'Login', 'Perfil', 'Situação', 'Países', COLUNA_SENHA, ''].map((h) => (
                 <th
                   key={h}
                   style={{
@@ -819,6 +886,69 @@ export default function PainelUsuarios() {
                       {u.ativo ? 'ativo' : 'inativo'}
                     </Chip>
                   </td>
+                  <td style={{ padding: '9px 10px' }}>
+                    {editandoPaises?.id_usuario === u.id_usuario ? (
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                        <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
+                          {paisesDisponiveis.map((p: AdminPais) => {
+                            const marcado = editandoPaises.paises.includes(p.sigla)
+                            return (
+                              <label
+                                key={p.sigla}
+                                style={{
+                                  display: 'flex',
+                                  gap: 5,
+                                  alignItems: 'center',
+                                  cursor: 'pointer',
+                                  font: '400 11px/1.3 var(--f-ui)',
+                                }}
+                              >
+                                <input
+                                  type="checkbox"
+                                  checked={marcado}
+                                  onChange={() =>
+                                    setEditandoPaises({
+                                      id_usuario: u.id_usuario,
+                                      paises: marcado
+                                        ? editandoPaises.paises.filter((s) => s !== p.sigla)
+                                        : [...editandoPaises.paises, p.sigla],
+                                    })
+                                  }
+                                />
+                                {p.nome}
+                              </label>
+                            )
+                          })}
+                        </div>
+                        <div style={{ display: 'flex', gap: 6 }}>
+                          <Botao
+                            disabled={editandoPaises.paises.length === 0}
+                            onClick={() => {
+                              setPendente({
+                                tipo: 'editar-paises',
+                                id_usuario: u.id_usuario,
+                                paises: editandoPaises.paises,
+                              })
+                              setEditandoPaises(null)
+                            }}
+                          >
+                            Salvar
+                          </Botao>
+                          <Botao variante="ghost" onClick={() => setEditandoPaises(null)}>
+                            Cancelar
+                          </Botao>
+                        </div>
+                      </div>
+                    ) : (
+                      <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
+                        {u.paises.map((s) => (
+                          <Chip key={s} tom="gray">
+                            {paisesDisponiveis.find((p) => p.sigla === s)?.nome ?? s}
+                          </Chip>
+                        ))}
+                      </div>
+                    )}
+                  </td>
                   <td style={{ padding: '9px 10px', whiteSpace: 'nowrap' }}>
                     {/* `senha_propria`, nunca hash: o payload não carrega `senha_hash`.
                         "inicial" é informação de operação — é quem ainda não saiu da
@@ -887,6 +1017,22 @@ export default function PainelUsuarios() {
                             Redefinir senha
                           </Botao>
                         </>
+                      )}
+                      {paisesDisponiveis.length > 0 && (
+                        <Botao
+                          variante="ghost"
+                          disabled={travado}
+                          title={
+                            souEu
+                              ? 'Você não pode alterar o seu próprio acesso por aqui.'
+                              : 'Concede ou retira o acesso aos sites de cada país.'
+                          }
+                          onClick={() =>
+                            setEditandoPaises({ id_usuario: u.id_usuario, paises: [...u.paises] })
+                          }
+                        >
+                          Editar países
+                        </Botao>
                       )}
                       <Botao
                         variante="ghost"

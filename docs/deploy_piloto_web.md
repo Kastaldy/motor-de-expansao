@@ -1,10 +1,14 @@
 # Deploy do Piloto Web (produção)
 
+> **Em poucas palavras**
+> - **Do que trata:** Como colocar o site no servidor e publicar versões novas, no Brasil e na Argentina: os arquivos de dados necessários, o login e a conferência final.
+> - **Quando ler:** Na hora de publicar uma versão nova do site, enviar um arquivo de dados ao servidor ou conferir se tudo voltou funcionando.
+> - **Atenção:** O modelo de configuração do login é anterior a 27/10/2026: copiá-lo desfaz, em silêncio, o login próprio do Motor no Brasil. Arquivo de dados novo exige reiniciar o site.
+
 Runbook do serviço **`web`** do `docker-compose.prod.yml` — o piloto (frontend Vite +
 backend FastAPI num único container, servindo o SPA e a API na porta interna `8899`),
-publicado em `piloto.ultra-expansao.tech`, atrás do Caddy + Authelia. Desde a **DEC-022
-(2026-08-03)** o piloto é **O app de produção** — o dashboard Streamlit foi aposentado, não
-há mais app paralelo.
+publicado em `piloto.ultra-expansao.tech`, atrás do Caddy, com o login próprio do piloto (DEC-067). O piloto é **O app de produção** (DEC-022); não
+há app paralelo.
 
 > **Guardrails.** Execução no VPS é **sempre passo humano, comando a comando** (CLAUDE.md §6).
 > Deploy é **por digest imutável**, nunca `:latest` cego. O piloto é **READ-ONLY sobre o M1**
@@ -106,7 +110,7 @@ Confira o que o piloto precisa (senão a feature degrada em silêncio):
 - `data/staging/{crescimento_municipal,crescimento_hex}.parquet` — passo 4 do funil
   ("Como a cidade está indo"). **OPCIONAIS**: sem eles o passo sobe, avisa que não há
   leitura e o resto do piloto segue igual — mas a feature fica morta. Gerados por
-  `data/reports/crescimento/` (ordem obrigatória no README de lá).
+  `scripts/crescimento/` (ordem obrigatória no README de lá).
 - `data/staging/{growth_api_historico,concorrentes_mapeados,unidades_ultra_performance_hex}.parquet`
   — Visão Executiva + pins.
 - `data/staging/{vulnerabilidade_ma_nomeadas,vulnerabilidade_ma_redes}.parquet` — **pins de
@@ -154,7 +158,7 @@ piloto.
 Ela mora **fora** do `MOTOR_DATA_DIR` de propósito: assim nenhum artefato do M1 fica sob
 um mount de escrita e o guardrail READ-ONLY do backend continua valendo sem exceção.
 
-> **DEC-027 (2026-08-17):** o cadastro deixou de ser o único `:rw` — o `web` ganhou um
+> **DEC-027:** além do cadastro, o `web` tem um
 > **segundo** mount de escrita, `/opt/motor-expansao/logs/acesso:/app/logs/acesso:rw`
 > (trilha de acesso), também fora do `MOTOR_DATA_DIR`. A lista exata dos DOIS é travada
 > por `test_compose_monta_somente_cadastro_e_trilha_como_volumes_de_escrita`. Preparo do
@@ -254,9 +258,9 @@ Regras de operação:
 - A SPA esconde as abas via `GET /api/me`; o bloqueio real é o middleware (403 nas
   rotas da aba vetada). Rota nova sem regra reprova em
   `tests/unit/test_piloto_web_acesso.py` (cobertura obrigatória).
-- Solução **temporária** até o banco de identidade (plano de 2026-08-07). **O banco já existe no código:** com
+- Com
   `MOTOR_DATABASE_URL` preenchida, o RBAC por capacidade do banco (`REGRAS_POR_CAPACIDADE`, `web/server/acesso.py`)
-  passa a mandar e este JSON deixa de ser consultado. É o estado da produção BR desde 23/10/2026; o JSON segue
+  manda e este JSON não é consultado. É o estado da produção BR desde 23/10/2026; o JSON segue
   valendo na AR (sem banco) e volta a valer no BR se a URL for esvaziada (§8 do `docs/banco_deploy.md`). Conferir
   com `grep -c '^MOTOR_DATABASE_URL=.' .env` — `1` é preenchida; o `-c` conta a linha sem imprimir a senha.
 
@@ -346,7 +350,7 @@ o artefato entrou no inventário de artefatos — hoje em `/api/acessos/saude-ar
 > Vazia ou ausente → o corte NÃO aconteceu, e esta seção vale. Com valor → **o corte aconteceu**,
 > e o bloco correto é o de `deploy/caddy/piloto-br.Caddyfile.template`.
 >
-> Para **fazer** o corte, não use esta seção: siga `docs/repasse_corte_p19.md`, que tem a ordem
+> Para **fazer** o corte, não use esta seção: siga `docs/archive/repasse_corte_p19.md`, que tem a ordem
 > (chave primeiro, Caddy depois — o inverso derruba o piloto inteiro) e os pré-requisitos.
 >
 > **A instância AR não acompanha o corte** e continua atrás do Authelia — o bloco dela é
@@ -388,7 +392,7 @@ docker compose -f docker-compose.prod.yml exec caddy caddy reload --config /etc/
 > autoriza o host brasileiro é o portão de sessão do motor, e a regra de `access_control` abaixo
 > deixa de ser consultada para ele. O serviço `authelia` **continua de pé** — a instância
 > argentina depende dele —, então a regra do `piloto-ar.` permanece necessária. Ver
-> `docs/repasse_corte_p19.md`.
+> `docs/archive/repasse_corte_p19.md`.
 
 Config **não versionada** (backup cifrado `secrets/authelia.configuration.enc.yaml`); vive em
 `/opt/motor-expansao/app/authelia/configuration.yml`. Adicionar a regra:
@@ -447,7 +451,7 @@ docker compose -f docker-compose.prod.yml exec web curl -fsS http://127.0.0.1:88
 # banco ligado: o web subiu com a URL do papel `app`? Conta sem imprimir a senha — tem de dar 1
 docker inspect -f '{{range .Config.Env}}{{println .}}{{end}}' motor_expansao_web | grep -c '^MOTOR_DATABASE_URL=postgresql://app:'
 ```
-Abrir `https://piloto.ultra-expansao.tech` → login Authelia → piloto.
+Abrir `https://piloto.ultra-expansao.tech` → login → piloto (desde o corte do P19, o login é o do próprio piloto).
 
 **Rollback**: apontar `WEB_IMAGE` para o digest anterior e repetir `unset` + `pull` + `up -d --no-deps web`. Migration
 aplicada não volta com a imagem (§8 do `docs/banco_deploy.md`).
@@ -465,9 +469,8 @@ aplicada não volta com a imagem (§8 do `docs/banco_deploy.md`).
 - [ ] `GET /api/health` responde `{"status":"ok"}` + `renda_fatores` (versão dos fatores de renda e `fixada_por_env`, E0) no container. **É só isso que ele
       responde** — foi emudecido pelo pentest Onda B #8, então ele fica verde com os
       artefatos faltando. Prova que o container está de pé, e nada além disso.
-- [ ] **`artefatos_faltando` vem vazio** — em `GET /api/acessos/saude-artefatos`, que é
-      para onde o inventário mudou (rota de admin: `Remote-User` em
-      `MOTOR_ACESSOS_ADMIN_USUARIOS`, senão 404). É o item que faltava aqui: os
+- [ ] **`artefatos_faltando` vem vazio** — em `GET /api/acessos/saude-artefatos` (rota de admin: `Remote-User` em
+      `MOTOR_ACESSOS_ADMIN_USUARIOS`, senão 404). Os
       parquets de crescimento (`crescimento_municipal`, `crescimento_hex`) não vêm no
       git nem na imagem — chegam só pelo bind mount `/opt/motor-expansao/data/staging`.
       Sem eles o piloto sobe normal e o **passo 4 sai vazio e sem cor, em silêncio**,
@@ -488,7 +491,7 @@ aplicada não volta com a imagem (§8 do `docs/banco_deploy.md`).
 - [ ] `https://piloto.ultra-expansao.tech` exige login e abre o SPA depois. **Qual login depende
       do estado do corte:** antes dele, a tela do Authelia; depois, a nossa tela de entrar
       (`/entrar.html`). Confira com `grep '^MOTOR_AUTENTICACAO_PROPRIA=' .env` qual esperar — ver
-      `docs/repasse_corte_p19.md`.
+      `docs/archive/repasse_corte_p19.md`.
 - [ ] Mapa Territorial carrega uma UF (a 1ª leitura carrega a partição inteira, demora).
 - [ ] Viabilidade calcula um ponto e mostra o **banner "preliminar"**.
 - [ ] Relatório Pontual (PDF) gera sem erro (basemap/contextily presentes).
@@ -560,7 +563,7 @@ ordem:
    mapa (a 1ª leitura chama `carregar_uf_completo`, `web/server/app.py:836` —
    `read_parquet` **sem projeção de colunas**, e o parquet AR carrega `geometry_wkb`
    por linha, coluna que o enriquecido BR não tem) e ler `docker stats
-   motor_expansao_web_ar`. O `2g/3g` do compose é **PROVISÓRIO E NÃO MEDIDO**
+   motor_expansao_web_ar`. Na AR isso já foi medido (Bloco E, 03/09/2026: 108 MiB depois de varrer as 24 partições, folga de ~20×) e o teto ficou mantido; o `2g/3g` do compose vale como ponto de partida para o próximo país
    (`perfil.operacao.mem_limit_alvo`); fixar o valor medido (regime < 70% do teto) no
    compose **e** no perfil, no mesmo commit.
 6. **Caddy + Authelia** *(na VPS, com aprovação do Felipe, comando a comando)*:
