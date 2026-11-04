@@ -5277,7 +5277,7 @@ são lugares onde um diagnóstico de rotina a imprime por acidente.
    `~/.bash_history`. Trocar pelo mecanismo da entrada padrão (moldes: o 0.c do roteiro do corte e o
    `estado_com` do kit do deploy3, na estação do Vinicius), começando pelo §9.0 do `banco_deploy.md`,
    que é o roteiro que a skill de deploy manda seguir quando a imagem traz migration; depois §5, §8 e
-   §9.0.1 e o `repasse_migracoes_p19.md`. O `-e PGPASSWORD` do `scripts/cron/run_expurgo_sessoes.sh`
+   §9.0.1 e o `docs/archive/repasse_migracoes_p19.md`. O `-e PGPASSWORD` do `scripts/cron/run_expurgo_sessoes.sh`
    fica: sem humano e sem impressão, dura segundos por dia, e o público é o mesmo.
 3. **O Passo 3 do `docs/archive/repasse_migracoes_p19.md` IMPRIME a senha do dono**
    (`grep -E '^POSTGRES_(DB|OWNER_USER|OWNER_PASSWORD)=' .env`). O documento não se aplica à produção
