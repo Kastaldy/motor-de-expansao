@@ -195,6 +195,59 @@ enriquecido por UF, o parquet de mercado, Growth e logos) e vários leitores mem
 de qualquer `scp`, **reiniciar é obrigatório** — `docker compose -f docker-compose.prod.yml restart web`
 (e `api telegram-bot` quando o arquivo também alimenta o PDF).
 
+### Incluir ou mover uma unidade Ultra (conta `deploy`, sem root)
+
+> **Em poucas palavras.** Os pins das unidades Ultra e a rede própria que o mercado desconta vêm de dois
+> arquivos na VPS, e a conta `deploy` atualiza os dois sozinha: baixa uma cópia, monta a versão nova na
+> estação com `scripts/incluir_unidade_ultra.py` e grava por cima, com backup e conferência. Foi assim que
+> Teresópolis entrou, em 04/11/2026.
+
+| Arquivo na VPS | O que é | Quem lê |
+|---|---|---|
+| `data/staging/unidades_ultra_mapeadas.parquet` | uma linha por unidade: nome, UF, cidade, coordenada e hexágono | os pins e a rede do site, o PDF da API e o mercado residual, no recálculo de domingo |
+| `data/ultra/Ultra.csv` | o registro das unidades, com 16 colunas | nenhum código em funcionamento; é a fonte da lista |
+
+Os dois são `root:motor-ops 664`: o `deploy` grava por cima com `cp`, sem root. Nenhum código do
+repositório gera o `mapeadas` hoje; ele é mantido assim. O M1 não muda. As 54 unidades com performance
+são exceção: o pin delas vem de `unidades_ultra_performance_hex.parquet`, e mover uma delas pede outra
+receita (o `Ultra.csv` e a cadeia de penetração).
+
+**Passo a passo** (na VPS, cada comando com confirmação, §6 do `CLAUDE.md`):
+
+1. **Baixar os dois arquivos atuais** para uma pasta nova da estação. Nunca partir de uma cópia velha: ela
+   desfaria as correções feitas depois dela.
+
+   ```bash
+   scp -i ~/.ssh/id_ultra_deploy deploy@2.25.137.241:/opt/motor-expansao/data/staging/unidades_ultra_mapeadas.parquet deploy@2.25.137.241:/opt/motor-expansao/data/ultra/Ultra.csv "<pasta>/"
+   ```
+
+2. **Montar a versão nova** na estação:
+
+   ```bash
+   python scripts/incluir_unidade_ultra.py incluir --pasta "<pasta>" --nome "Teresópolis" --uf RJ --cidade "Teresópolis" --lat -22.407291115271388 --lng -42.96576019198278
+   python scripts/incluir_unidade_ultra.py mover --pasta "<pasta>" --nome "<nome exato>" --lat <lat> --lng <lng>
+   ```
+
+   O script recusa nome repetido e unidade a menos de 200 m de outra (`--forcar-perto`, se não for a
+   mesma). Ele confere que nenhuma outra linha mudou e grava em `<pasta>/novo/` os dois arquivos, o
+   `verificar_unidade.py` e o `comandos.txt`. O endereço (`--endereco`) é opcional: o Motor não o usa.
+
+3. **Rodar, na ordem, os três comandos que ele imprime:**
+   - **envio:** manda os três arquivos para a casa do `deploy`;
+   - **gravação:** confere que a VPS ainda está igual à cópia e que o envio chegou inteiro; se não, para
+     sem gravar. Depois guarda os originais em `~/backup-unidade-ultra-<data>`, grava, reinicia o `web` e
+     a `api` (alguns segundos fora do ar) e lê o arquivo de dentro do site;
+   - **desfazer:** volta os originais e reinicia.
+
+**Cuidados:**
+- Só o `web` e a `api` montam a `staging`; o bot chama a API.
+- O `mapeadas` tem um segundo nome (hardlink) no rascunho do recálculo de domingo, em
+  `/opt/motor-expansao/regen_run`. O rascunho se refaz a partir da `staging` a cada rodada, então gravar
+  por cima não atrapalha.
+- Unidade ainda não inaugurada entra no mercado residual a partir do domingo seguinte, com a capacidade
+  padrão de 2.500 alunos (DEC-057).
+- Nunca subir o `Ultra.csv` de uma estação por cima do da VPS: a cópia da estação pode estar velha.
+
 ---
 
 ## Integração com gymscraping (repo separado)
