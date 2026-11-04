@@ -548,7 +548,7 @@ def _enviar(texto: str, stdout: bool) -> None:
 
 def main(argv: list[str] | None = None) -> int:
     try:
-        sys.stdout.reconfigure(encoding="utf-8")  # type: ignore[attr-defined]
+        sys.stdout.reconfigure(encoding="utf-8")  # type: ignore[union-attr]
     except (AttributeError, ValueError):
         pass
     parser = argparse.ArgumentParser(description=__doc__.split("\n", 1)[0])

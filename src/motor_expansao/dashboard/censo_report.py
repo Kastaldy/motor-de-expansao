@@ -1679,8 +1679,11 @@ def _viab_origem_do_pico(padrao: Any, mes: int) -> str:
     """
     if not isinstance(padrao, Mapping) or padrao.get("origem") not in ("estado", "rede"):
         return ""
+    bruto = padrao.get("meses")
+    if bruto is None:
+        return ""
     try:
-        meses = int(padrao.get("meses"))
+        meses = int(bruto)
     except (TypeError, ValueError):
         return ""
     uf = str(padrao.get("uf") or "").strip().upper()
