@@ -768,6 +768,28 @@ async def _portao_de_sessao(request: Request, call_next):  # type: ignore[no-unt
 
     caminho = request.url.path
     if acesso.rota_publica_sem_sessao(caminho):
+        # A pagina do piloto (GET /, /entrar.html) e' publica -- nao exige sessao, senao
+        # ninguem veria o formulario de login. Mas a trilha (DEC-027) registrava esse
+        # acesso como "desconhecido" ate' para quem JA' esta' logado (o portao so'
+        # carimbava o `Remote-User` nas rotas gateadas). BLK-BANCO-13: so' nas rotas que a
+        # trilha AUDITA (estaticos/assets caem no `relevante` e nao pagam a consulta), se
+        # houver sessao valida, carimba o nome. BEST-EFFORT: rota publica NUNCA barra nem
+        # vira 500 por isto -- banco fora, fila cheia e cookie invalido seguem visitante.
+        if acesso_log.relevante(caminho):
+            cookie_publico = _token_de_sessao(request)
+            if cookie_publico:
+                try:
+                    sessao_publica = await _no_banco(
+                        db_sessoes.validar, cookie_publico, prazo_na_fila_s=ESPERA_FILA_BANCO_S
+                    )
+                except Exception:  # noqa: BLE001 — a trilha nunca derruba rota publica
+                    sessao_publica = None
+                if sessao_publica is not None:
+                    login_publico = _valor_de_cabecalho(sessao_publica.identidade.login)
+                    request.scope["headers"] = [
+                        *request.scope["headers"],
+                        (b"remote-user", login_publico.encode("latin-1")),
+                    ]
         return await call_next(request)
 
     cookie = _token_de_sessao(request)

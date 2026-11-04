@@ -516,3 +516,78 @@ def test_rota_PAIS_NEUTRO_com_sessao_de_outro_pais_NAO_e_barrada(
     assert resposta.status_code == 200
     assert len(chegou) == 1, "o gate de pais barrou uma rota pais-neutra (/api/me)"
     assert acesso.rota_exige_pais("/api/me") is False
+
+
+# --------------------------------------------------------------------------------------
+# 7. BLK-BANCO-13: a pagina publica, COM sessao, mostra QUEM acessou na trilha (sem barrar)
+# --------------------------------------------------------------------------------------
+# A pagina (GET /, /entrar.html) e' publica -- nao exige sessao. Mas a trilha (DEC-027)
+# registrava esse acesso como "desconhecido" ate' para quem JA' estava logado, porque o
+# portao so' carimbava o `Remote-User` nas rotas gateadas. Agora, SO' nas rotas que a trilha
+# audita (`relevante`), se ha' sessao, carimba o nome -- best-effort, sem NUNCA barrar.
+
+
+def test_pagina_publica_com_sessao_carimba_o_nome_para_a_trilha(
+    _ligado: None, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """GET / publico + sessao valida: carimba o `Remote-User` (a trilha mostra o nome) e a
+    requisicao CHEGA ao handler (rota publica nao barra)."""
+    monkeypatch.setattr(db_sessoes, "validar", lambda _t: _sessao(login="vinicius"))
+    req = _Requisicao(caminho="/", cookies={acesso.COOKIE_SESSAO_DEV: "t"})
+    resposta, chegou = _rodar(req)
+    assert resposta.status_code == 200
+    assert len(chegou) == 1, "rota publica nao pode barrar"
+    assert req.valores_de("remote-user") == ["vinicius"]
+
+
+def test_pagina_publica_SEM_cookie_segue_desconhecido(
+    _ligado: None, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Visitante sem sessao: SEM cookie o portao nem vai ao banco, e segue sem nome --
+    "desconhecido" na trilha e' o certo para quem nao se identificou."""
+    monkeypatch.setattr(db_sessoes, "validar", lambda _t: pytest.fail("validou sem cookie"))
+    req = _Requisicao(caminho="/")
+    _resposta, chegou = _rodar(req)
+    assert len(chegou) == 1
+    assert req.valores_de("remote-user") == []
+
+
+def test_pagina_publica_com_cookie_invalido_nao_carimba_e_nao_barra(
+    _ligado: None, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Cookie presente mas sessao invalida (expirada/forjada): nao carimba, e a pagina publica
+    continua atendendo (nunca 401 numa rota publica)."""
+    monkeypatch.setattr(db_sessoes, "validar", lambda _t: None)
+    req = _Requisicao(caminho="/entrar.html", cookies={acesso.COOKIE_SESSAO_DEV: "t"})
+    resposta, chegou = _rodar(req)
+    assert resposta.status_code == 200
+    assert len(chegou) == 1
+    assert req.valores_de("remote-user") == []
+
+
+def test_pagina_publica_com_banco_fora_nao_derruba_o_acesso(
+    _ligado: None, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Se o banco cai na validacao best-effort, a pagina publica NAO vira 500/503 -- a trilha
+    nunca derruba o acesso. Segue sem nome."""
+    monkeypatch.setattr(
+        db_sessoes, "validar", lambda _t: (_ for _ in ()).throw(RuntimeError("banco fora"))
+    )
+    req = _Requisicao(caminho="/", cookies={acesso.COOKIE_SESSAO_DEV: "t"})
+    resposta, chegou = _rodar(req)
+    assert resposta.status_code == 200
+    assert len(chegou) == 1
+    assert req.valores_de("remote-user") == []
+
+
+def test_estatico_com_cookie_NAO_paga_a_consulta_de_sessao(
+    _ligado: None, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """O custo (opcao B) e' so' nas rotas que a trilha AUDITA. Um asset (ignorado por
+    `relevante`) nao valida sessao mesmo com cookie -- senao cada .js/.png pagaria uma ida ao
+    banco."""
+    monkeypatch.setattr(db_sessoes, "validar", lambda _t: pytest.fail("estatico validou sessao"))
+    req = _Requisicao(caminho="/assets/app-abc123.js", cookies={acesso.COOKIE_SESSAO_DEV: "t"})
+    _resposta, chegou = _rodar(req)
+    assert len(chegou) == 1
+    assert req.valores_de("remote-user") == []

@@ -5393,3 +5393,24 @@ Guardrails: READ-ONLY sobre o M1; conferência do Vinicius antes de abrir o PR; 
 **O fix (2 linhas).** O handler de `login`, **só no sucesso** (depois do `raise negado` das recusas), carimba `request.state.login_na_trilha = acesso.login_da_requisicao(body.login)`. O `_registrar_acesso` passa a priorizar `getattr(request.state, "login_na_trilha", None)` sobre o header. Login recusado/inexistente não carimba e segue "desconhecido" (correto); requisição normal (gateada, com `Remote-User`) fica intocada.
 
 READ-ONLY sobre o M1. Não toca o gate de país, o apex, nem o contrato de eventos.
+
+
+---
+
+### BLK-BANCO-13 — A trilha (DEC-027) mostra QUEM acessou a página pública, em vez de "desconhecido"
+
+| Campo | Valor |
+|---|---|
+| **Criticidade** | **Alta** — mexe no `_portao_de_sessao` (middleware que roda em TODA requisição) e lê a sessão; READ-ONLY sobre o M1. Toca só `web/server/app.py` → **governança** no guard (`aprovado-humano`), não Crítica. |
+| **Prioridade** | Média — auditoria; o funil/produto não dependem. |
+| **Esteira** | código (`web/server/app.py` + teste em `tests/unit/test_piloto_web_portao_sessao.py`) → PR próprio (conferência do Vinicius) |
+| **Quem** | qualquer um |
+| **Status** | Em andamento (iniciado em 04/11/2026) |
+| **Depende de** | BLK-BANCO-12 (mesmo tema de trilha; já em produção) |
+| **Autonomia** | **manual (NÃO loop-safe)** — autenticação/trilha de acesso. |
+
+**O defeito.** Follow-up do BLK-BANCO-12. A *página* do piloto (`GET /`, `/entrar.html`) é **pública** — não exige sessão, senão o navegador não baixaria o formulário de login. O `_portao_de_sessao` só carimba o `Remote-User` (identidade da sessão) nas rotas **gateadas** (`/api/*` não-públicas); nas públicas retornava antes de carimbar. Então a trilha registrava o acesso à página como **"desconhecido"** — até para quem já estava logado. As ações `/api/*` já saíam com o nome certo; a lacuna era o carregamento da página.
+
+**O fix.** No ramo de rota pública do portão, **só nas rotas que a trilha audita** (`acesso_log.relevante` — assets/estáticos não entram, não pagam a consulta), se houver cookie e sessão válida, carimba o `Remote-User` da sessão. **Best-effort:** rota pública NUNCA barra nem vira 500/503 por isto (banco fora, fila cheia e cookie inválido/expirado seguem como visitante "desconhecido", que é o correto). Decisão do Vinicius (04/11): **opção B** (mostrar o nome) sobre a opção A (tirar o boot da trilha).
+
+READ-ONLY sobre o M1. Não toca o gate de país, o apex, nem o contrato de eventos.
