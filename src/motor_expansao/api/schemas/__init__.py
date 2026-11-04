@@ -22,6 +22,7 @@ __all__ = [
     "AnalisarMunicipioRequest",
     "MunicipiosResponse",
     "FaixaAlunosResponse",
+    "AluguelReferenciaResponse",
 ]
 
 
@@ -197,4 +198,29 @@ class FaixaAlunosResponse(BaseModel):
             "fallback, entao viaja junto com os numeros."
         ),
         examples=["base_calibracao_maduras.parquet (oficial)"],
+    )
+
+
+class AluguelReferenciaResponse(BaseModel):
+    """Aluguel de referencia do mercado anunciado para o tipo de imovel (DEC-080, Emenda 1).
+
+    Os mesmos campos que a rota do site devolve (`Referencia.para_dict`). `nivel` e
+    `n_anuncios` nao sao acessorios: dizem de onde a mediana saiu (a cidade, o estado ou o
+    Brasil) e com quantos anuncios — e' o que o quadro da DEC-080 mostra como "Base: ...".
+    Sem selo de confianca, por decisao de Felipe (29/10/2026).
+    """
+
+    tipo: Literal["galpao", "comercial", "loja"] = Field(
+        description="Valor bruto do tipo (galpao; comercial = laje corporativa; loja = comercial).",
+        examples=["galpao"],
+    )
+    rs_m2: float = Field(description="Mediana do R$/m2 dos anuncios do recorte.", examples=[25.0])
+    n_anuncios: int = Field(description="Anuncios no recorte usado.", examples=[185])
+    nivel: Literal["municipio", "uf", "brasil"] = Field(
+        description="Recorte usado: o primeiro com pelo menos 5 anuncios.",
+        examples=["municipio"],
+    )
+    uf: str | None = Field(description="UF do recorte (None no nivel brasil).", examples=["SP"])
+    municipio: str | None = Field(
+        description="Municipio do recorte (so' no nivel municipio).", examples=["Campinas"]
     )
