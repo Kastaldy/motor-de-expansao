@@ -88,7 +88,7 @@ ENV_AUTENTICACAO_PROPRIA = "MOTOR_AUTENTICACAO_PROPRIA"
 #: Decisao 2 do P19 (17/09/2026) reproduzia o Authelia (`expiration: 8h`, `inactivity: 30m`).
 #: EMENDA da DEC-067 (D2), 14/10/2026, decidida por Vinicius: inatividade 30 min -> 2h; o teto
 #: de 8h e a trava de 5 min ficam. O Authelia da VPS tem de ir junto (`inactivity: 2h`, nunca
-#: `0`), e essa troca e' MANUAL -- runbook em `docs/repasse_logout_2h.md`.
+#: `0`), e essa troca e' MANUAL -- runbook em `docs/archive/repasse_logout_2h.md`.
 DURACAO_SESSAO_H = 8
 INATIVIDADE_MIN = 120
 

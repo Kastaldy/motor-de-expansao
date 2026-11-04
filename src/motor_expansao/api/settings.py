@@ -48,6 +48,10 @@ class Settings(BaseSettings):
     competitors_logos_dir: Path | None = None
     # Camada de mercado/SAM + concorrentes + unidades Ultra (opcional; enriquece o PDF).
     staging_dir: Path = _DATA_DIR / "staging"
+    # Base de anuncios da aba Oportunidades imobiliarias (`viaveis.parquet`, do coletor), so'
+    # para a regua de aluguel da DEC-080 (Emenda 1, `GET /aluguel-referencia`). None = rota
+    # responde 503. Em producao: API_OPORTUNIDADES_PATH=/app/data/oportunidades/viaveis.parquet
+    oportunidades_path: Path | None = None
 
     # --- Perfil do pais da instancia (Bloco A / DEC-047) ---
     # `None` = "quem construiu nao passou" -> o consumidor cai em `resolver_perfil()`.
@@ -130,7 +134,10 @@ class Settings(BaseSettings):
             "nem por dict (DEC-047: o pais da instancia e o arquivo montado no volume)"
         )
 
-    @field_validator("acesso_log_dir", "bot_allowlist_path", "bot_trilha_dir", mode="before")
+    @field_validator(
+        "acesso_log_dir", "bot_allowlist_path", "bot_trilha_dir", "oportunidades_path",
+        mode="before",
+    )
     @classmethod
     def _acesso_log_dir_vazio_e_none(cls, value: object) -> object:
         # Env vazia ("API_ACESSO_LOG_DIR=") viraria Path(".") — truthy, e o guard

@@ -3769,7 +3769,7 @@ def _big_numbers_page(
         ),
         (
             "Renda per capita média",
-            "R$ " + _format_number(result.get("renda_per_capita_media_raio"), 2),
+            _viab_brl(result.get("renda_per_capita_media_raio")),
             _cor_por_meta(result.get("renda_per_capita_media_raio"), m.renda_per_capita_media_raio),
         ),
         (
@@ -3779,7 +3779,7 @@ def _big_numbers_page(
         ),
         (
             "Renda média domiciliar",
-            "R$ " + _format_number(result.get("renda_domiciliar_total_raio"), 2),
+            _viab_brl(result.get("renda_domiciliar_total_raio")),
             _cor_por_meta(
                 result.get("renda_domiciliar_total_raio"), m.renda_domiciliar_total_raio
             ),

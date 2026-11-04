@@ -161,13 +161,17 @@ services:
       # comentario la'). Opcional, `:-`: vazia, o alcance de carro responde 503 em portugues
       # e o raio de 1 km e o de 2 km seguem iguais. Nunca cai em silencio para o raio de 1 km.
       MOTOR_ROTAS_URL: ${MOTOR_ROTAS_URL:-}
+      # Regua de aluguel da DEC-080 (Emenda 1): `GET /api/v1/aluguel-referencia` le o MESMO
+      # parquet de anuncios que o `web` usa na Viabilidade (mount :ro abaixo). Sem o arquivo
+      # no host, so' essa rota responde 503; o resto da API sobe e responde igual.
+      API_OPORTUNIDADES_PATH: "/app/data/oportunidades/viaveis.parquet"
     volumes:
       # O perfil do pais. Bind de ARQUIVO, e nao de diretorio, porque `/app/data` vem da
       # IMAGEM e so os subdiretorios abaixo sao montados — a RAIZ nao e mount, entao
       # `/app/data/perfil.json` nao teria origem nenhuma. **Pre-condicao de deploy:** o
       # arquivo tem de EXISTIR no host antes do `up`, senao o Docker cria um DIRETORIO
       # vazio no lugar e o container falha com "is a directory", mensagem que nao menciona
-      # perfil nenhum. Ver docs/deploy_piloto_web.md e docs/spec_bloco_a_perfil.md §6.1.
+      # perfil nenhum. Ver docs/deploy_piloto_web.md e docs/archive/spec_bloco_a_perfil.md §6.1.
       - /opt/motor-expansao/data/perfil.json:/app/data/perfil.json:ro
       - /opt/motor-expansao/data/outputs:/app/data/outputs:ro   # censo geo (obrigatorio)
       - /opt/motor-expansao/data/ibge:/app/data/ibge:ro          # malha municipal (obrigatorio)
@@ -177,10 +181,12 @@ services:
       # em silencio: `carregar_crescimento*()` devolve None quando o arquivo nao existe.
       # Eles nao vem na imagem (`.dockerignore` corta `data/`) nem no git
       # (`.gitignore`: `data/staging/*`); so chegam por este mount. Como sao gerados:
-      # `data/reports/crescimento/README.md`. Conferir no ar: `GET /api/health`.
+      # `scripts/crescimento/README.md`. Conferir no ar: `GET /api/health`.
       - /opt/motor-expansao/data/staging:/app/data/staging:ro    # mercado/SAM + concorrentes/Ultra + crescimento (passo 4)
       - /opt/motor-expansao/data/ultra:/app/data/ultra:ro        # branding do PDF (opcional)
       - /opt/motor-expansao/concorrentes:/app/concorrentes:ro    # logos de pins (logo_<rede>.png)
+      # Base de anuncios do coletor, a mesma do `web` (DEC-080, Emenda 1). So' leitura.
+      - /opt/motor-expansao/data/oportunidades:/app/data/oportunidades:ro
     networks:
       - app_net
     security_opt:

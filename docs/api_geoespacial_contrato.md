@@ -53,7 +53,7 @@ Fixadas por Felipe (2026-06-09) e reafirmadas na DEC-005 (2026-06-10):
 > Proposta de modulos de G1 (2026-06-10). **NENHUM arquivo e criado no BLK-API-01.** A pasta nasce
 > no BLK-API-02 junto do esqueleto real. A tabela fica como registro do PLANO: o pacote HOJE tem
 > tambem `errors.py` (handler `500`, §9), `geo.py`, `maps_geocoder.py`, `telegram_bot.py` e
-> `routes/analisar_municipio.py` (§6), `routes/faixa_alunos.py`, `relatorio_acessos.py` e `alerta_borda.py`, todos nascidos pos-contrato.
+> `routes/analisar_municipio.py` (§6), `routes/faixa_alunos.py`, `routes/aluguel_referencia.py` (DEC-080, Emenda 1), `relatorio_acessos.py` e `alerta_borda.py`, todos nascidos pos-contrato.
 
 | Modulo | Responsabilidade | Bloco de criacao |
 |---|---|---|

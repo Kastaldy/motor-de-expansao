@@ -3,7 +3,7 @@
 # COMPOSE NOVO, de proposito: o docker-compose.prod.yml (BR) fica INTACTO —
 # parametriza-lo quebraria o teste de mounts por igualdade exata
 # (tests/unit/test_piloto_web_rede.py:513-537) longe da causa. A parametrizacao do
-# compose BR segue como divida declarada (plano_multipais.md §5.0.6, item 3).
+# compose BR segue como divida declarada (docs/archive/plano_multipais.md §5.0.6, item 3).
 #
 # UM servico so (`web_ar`): sem api e sem bot (decisao do plano — a AR do dia 1 e'
 # mapa + viabilidade; o bot e o PDF por API sao superficies BR). Caddy e Authelia
@@ -46,7 +46,7 @@ services:
       # e por o valor so no `.env` da VPS nao chegaria ao container (falha muda).
       MOTOR_FATORES_RENDA_VERSAO: ${MOTOR_FATORES_RENDA_VERSAO:-}
       WEB_DIST_DIR: "/app/web/dist"
-      # ── Acesso (a "segunda armadilha" do plano_multipais.md, BLK-INTL-08) ──────
+      # ── Acesso (a "segunda armadilha" do docs/archive/plano_multipais.md, BLK-INTL-08) ──────
       # Sem MOTOR_CADASTRO_DIR e sem override, `abas_do_usuario`
       # (web/server/acesso.py:363-388) cai no ramo fail-OPEN e devolve ABAS_VALIDAS
       # INTEIRA (executiva/imobiliaria/viabilidade incluidas) para TODO autenticado.

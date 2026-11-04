@@ -264,6 +264,11 @@ def create_app() -> FastAPI:
 
     app.include_router(faixa_alunos.router, prefix=settings.api_prefix)
 
+    # GET /aluguel-referencia — a regua de aluguel da DEC-080 (Emenda 1), so' leitura.
+    from motor_expansao.api.routes import aluguel_referencia
+
+    app.include_router(aluguel_referencia.router, prefix=settings.api_prefix)
+
     return app
 
 
