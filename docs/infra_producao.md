@@ -712,6 +712,22 @@ cron de domingo escreve toda semana, então a série nunca *parece* velha e um c
 passaria despercebido para sempre. Limiar `MONITOR_AGREGADOR_MAX_DIAS` (default **16**). Partição que
 **nunca existiu** também dispara `FAIL` — que é o estado real enquanto o cron não for agendado.
 
+**Onde roda na produção (medido em 04/11/2026).** Até 04/11, este check não rodava em lugar nenhum. O
+`healthcheck.log` não tinha nenhuma linha dele, nenhum dos 27 arquivos de estado em
+`/var/lib/motor-monitoring` era `agregador_*`, e ele não estava no `/etc/crontab`, no `/etc/cron.d` nem
+no crontab do `deploy` (o do root só o Felipe lê). Por isso o `FAIL` que o limiar `9` daria toda quinta
+nunca chegou ao chat. Desde 04/11, ele roda no crontab do **`deploy`**, com cópia própria do script e
+com log e estado na pasta dele, como o backup e o expurgo do banco:
+
+```cron
+0 12 * * 4 MONITOR_LOG_FILE=/home/deploy/logs/healthcheck_agregadores.log MONITOR_STATE_DIR=/home/deploy/estado-monitor /home/deploy/bin/healthcheck_vps.sh agregadores
+```
+
+A cópia em `/home/deploy/bin/healthcheck_vps.sh` é a da `main` de 04/11 (sha256 `fedb637e…`), e a
+primeira rodada à mão deu `wellhub OK (9d)`. **Ao mexer em `scripts/healthcheck_vps.sh`, as duas cópias
+precisam ser trocadas:** a do root, em `/opt/motor-monitoring/`, e esta, que o próprio `deploy` troca por
+`scp` para a pasta dele.
+
 > **Por que quinta, e por que 16** (emenda 5 da DEC-039). A régua deriva a idade da **segunda-feira da semana
 > ISO** da partição, não do instante da coleta, e a foto sai no lote de domingo, o último dia da semana ISO.
 > Na quinta 12:00 UTC: com a foto do domingo anterior a idade mede **10** dias; com uma foto perdida, **17**.
@@ -1325,16 +1341,14 @@ O que é vigiado e a cadência (crontab do root):
 0 12 * * *  MONITOR_BANCO_BACKUP_DIR=/home/deploy/backups/banco MONITOR_BANCO_BACKUP_LOG=/home/deploy/logs/backup_banco.log MONITOR_BANCO_EXPURGO_LOG=/home/deploy/logs/expurgo_sessoes.log /opt/motor-monitoring/healthcheck_vps.sh banco  # diário 09h BRT: backup, expurgo e saúde interna do Postgres (A INSTALAR: aviso abaixo; ver "Monitor do banco")
 ```
 
-> **A cópia instalada hoje em `/opt/motor-monitoring/` (crontab do root) é antiga** (24/10/2026):
-> não vigia o `postgres` e não conhece o subcomando `banco`. Trocá-la pela versão do repo é passo
-> do Felipe (root), comando a comando (§6 do `CLAUDE.md`): levar o arquivo por `scp` (o checkout
-> da VPS está parado), rodar `healthcheck_vps.sh containers` e `healthcheck_vps.sh test` uma vez e
-> só então acrescentar a linha do `banco`. O `postgres` entra sozinho no `containers`, que já roda
-> a cada 5 min; o `banco` precisa da linha nova. A troca traz junto tudo o que a `main` acrescentou
-> depois daquela cópia — o levantamento de 23/10/2026 aponta ao menos o check `auth`, o `web_ar` e
-> o Valhalla condicional; a lista exata depende de quando ela foi copiada (`git hash-object` no
-> arquivo da VPS, comparado com o histórico de `scripts/healthcheck_vps.sh`) —, e esses monitores
-> podem começar em FAIL.
+> **A cópia instalada em `/opt/motor-monitoring/` (crontab do root) é a de 27/10/2026** (medido em
+> 04/11/2026 pelo hash, `13592348…`): a versão do commit `e3970a98` (#488), que já vigia o
+> `postgres` e tem o subcomando `banco`. Da `main`, falta só o #517 (limite de 16 dias e TotalPass
+> fora da lista), que vale apenas para o check `agregadores`, e esse roda no crontab do `deploy`, com
+> cópia própria (ver a seção dos agregadores). Trocar a cópia do root é passo do Felipe (root),
+> comando a comando (§6 do `CLAUDE.md`): levar o arquivo por `scp` (o checkout da VPS está parado) e
+> rodar uma vez cada check que mudou. Para saber de qual commit é a cópia, comparar o `sha256sum` do
+> arquivo da VPS com o das versões de `scripts/healthcheck_vps.sh` no histórico.
 
 > **Por que os pins têm monitor próprio.** A guarda de desenhabilidade do passo 4.5 do lote de
 > domingo faz o certo ao barrar artefato ruim, mas o efeito dela é **invisível**. Sem relógio, uma guarda que só bloqueia troca "pin errado" por "pin
