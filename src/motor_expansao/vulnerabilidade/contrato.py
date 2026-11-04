@@ -641,7 +641,7 @@ CONTRATO_COLUNAS_SCORE: dict[str, str] = {
     "score_vulnerabilidade_ordenavel": "float64",  # nulo enquanto `flag_score_provisorio` (G-D1)
     "flag_serie_imatura": "bool",  # propagada do churn
     "flag_staleness_interpretavel": "bool",  # propagada do churn; condiciona o S4
-    "flag_score_provisorio": "bool",  # S3 E S4 indisponíveis (contrato §8.4)
+    "flag_score_provisorio": "bool",  # S3, S4 E S6 indisponíveis (`score.py`; contrato §8.4)
     "n_agregadores_no_hex": "Int64",  # auditoria do v1; NULÁVEL (ver acima)
     "fontes_presentes_no_hex": "string",  # auditoria do v1; nulo sse a de cima for nula
     "semana_ultima_observacao": "string",  # relógio do PIPELINE (vem do churn)

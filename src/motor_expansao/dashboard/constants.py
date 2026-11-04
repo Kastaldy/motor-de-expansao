@@ -456,7 +456,7 @@ _DENSIDADE_POP_BANDS_BR: list[tuple[float, str, tuple[int, int, int, int]]] = [
 
 # Faixas absolutas de RENDA PER CAPITA (R$/pessoa/mes) — estilo GeoFusion adaptado a PER CAPITA
 # (NAO domiciliar). Cortes recalibrados p/ a escala per capita do projeto: 1000 / 2000 / 3500 /
-# 5000 / inf (R$/pessoa). per capita != domiciliar: a classe media urbana-alvo Ultra (18-45) tende
+# 5000 / inf (R$/pessoa). per capita != domiciliar: a classe media urbana que a Ultra atende tende
 # a R$2.000-5.000/pessoa; >R$5.000/pessoa marca bolsoes de alta renda. Os 4 cortes per capita NAO
 # equivalem ao teto domiciliar RENDA_MIN=4500 (escalas distintas; nao confundir).
 # Rampa (escolha de Vini 2026-06-17, BLK-UI-08): amarelo-claro (renda baixa) -> amarelo -> dourado
