@@ -706,19 +706,19 @@ Não é defeito, é fio de alarme — passar de ~27h põe o WellHub disputando a
 0 12 * * 4 /opt/motor-monitoring/healthcheck_vps.sh agregadores   # quinta 09h BRT
 ```
 
-O check olha a partição **por fonte** (`fonte=wellhub`, `fonte=totalpass`) e não a série inteira: o
+O check olha a partição **por fonte** (hoje só `fonte=wellhub`: o TotalPass, arquivado, saiu da lista pela
+emenda 5 da DEC-039 e volta junto com a coleta) e não a série inteira: o
 cron de domingo escreve toda semana, então a série nunca *parece* velha e um cron de agregador morto
-passaria despercebido para sempre. Limiar `MONITOR_AGREGADOR_MAX_DIAS` (default **9**). Partição que
+passaria despercebido para sempre. Limiar `MONITOR_AGREGADOR_MAX_DIAS` (default **16**). Partição que
 **nunca existiu** também dispara `FAIL` — que é o estado real enquanto o cron não for agendado.
 
-> **Por que quinta, e por que 9**. A régua deriva a idade da **segunda-feira da semana
-> ISO** da partição, não do instante da coleta. Na quinta 12:00 UTC: com a rodada da própria terça a
-> idade mede **3** dias; com uma rodada perdida, **10**. A faixa que separa os dois casos é `[3, 9]`
-> inteira, e `9` é o **teto** dela — o mais tolerante a uma rodada que legitimamente escorregue
-> dentro da semana.
-> Quinta alerta 2 dias depois da falha e deixa sexta livre para a retentativa dentro da semana ISO.
-
-> **Atenção: essa conta é da grade da terça (emenda 2 da DEC-039).** Com a grade da emenda 3, a foto do WellHub sai no domingo, último dia da semana ISO. Na quinta 12:00 UTC a partição mais nova é a da semana anterior: mede **10** dias com a rodada em dia e **17** com uma perdida, acima do limiar padrão `9` nos dois casos, e o check acusa falha toda semana. O TotalPass, arquivado, não grava partição nova e acusa sempre. Corrigir pede mudar o limiar (no `healthcheck_vps.sh`) ou o dia do check (na linha de cron).
+> **Por que quinta, e por que 16** (emenda 5 da DEC-039). A régua deriva a idade da **segunda-feira da semana
+> ISO** da partição, não do instante da coleta, e a foto sai no lote de domingo, o último dia da semana ISO.
+> Na quinta 12:00 UTC: com a foto do domingo anterior a idade mede **10** dias; com uma foto perdida, **17**.
+> A faixa que separa os dois casos é `[10, 16]` inteira, e `16` é o **teto** dela — o mais tolerante a uma
+> rodada que legitimamente escorregue.
+> Quinta acusa uma foto perdida 4 dias depois dela, antes da coleta do sábado seguinte. O `9` anterior era o
+> teto da grade da terça (`[3, 9]`) e, com a foto no domingo, acusava falha toda quinta.
 
 > **A idade sai da chave `semana=AAAA-SS`, não do mtime do diretório `fonte=`**. O check media `stat -c %Y` da folha, e o **passo 2 obrigatório da ordem de
 > aplicação** (hoje em `docs/archive/infra_producao_historico.md`) — `--migrar-layout` — **cria** a folha com mtime de agora. Medido sobre cópia da

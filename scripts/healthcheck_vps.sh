@@ -43,19 +43,21 @@ EDGE_URL="${MONITOR_EDGE_URL:-https://piloto.ultra-expansao.tech}"
 COOKIE_SONDA_AUTH="__Host-motor_sessao=sonda-do-healthcheck"
 GYM_REPORT_DIR="${MONITOR_GYM_REPORT_DIR:-/opt/gymscraping-infra}"
 GYM_LOG_HINT="/var/log/gymscraping/weekly_latest.log"
-# Série de snapshots de concorrentes (BLK-MA-21). O cron SEMANAL dos agregadores (terça 02:00
-# UTC) é o único produtor de `fonte=wellhub` / `fonte=totalpass`; se ele parar, nada mais
-# acusa — o score continua saindo, só que sobre uma série congelada, e o S4 lê a estagnação
-# como sinal.
+# Série de snapshots de concorrentes (BLK-MA-21). A foto do WellHub sai no lote de DOMINGO
+# (`run_weekly_90.sh`, passo 1.5, com o feed coletado no sábado 03:00 UTC — emenda 3 da DEC-039)
+# e é a única produtora de `fonte=wellhub`; se ela parar, nada mais acusa — o score continua
+# saindo, só que sobre uma série congelada, e o S4 lê a estagnação como sinal.
 SNAPSHOTS_DIR="${MONITOR_SNAPSHOTS_DIR:-/opt/motor-expansao/data/staging/snapshots_concorrentes}"
-# 9 dias, sob a cadência SEMANAL (terça 02:00 UTC) com o check na quinta 12:00 UTC: a rodada
-# da própria semana dá 3 dias de idade (a régua sai da SEGUNDA da semana ISO, não do instante
-# da coleta) e uma rodada perdida dá 10. A faixa que separa os dois casos é [3, 9] inteira —
-# 9 é o TETO dela, escolhido por ser o mais tolerante a uma rodada que escorregue dentro da
-# semana, não por unicidade. Com o `45` herdado da premissa mensal seriam até 6 rodadas
-# perdidas antes do primeiro FAIL.
-AGREGADOR_MAX_DIAS="${MONITOR_AGREGADOR_MAX_DIAS:-9}"
-AGREGADORES=(wellhub totalpass)
+# 16 dias, com a foto no DOMINGO e o check na quinta 12:00 UTC [emenda 5 da DEC-039, 2026-11-04]:
+# a régua sai da SEGUNDA da semana ISO da partição, não do instante da coleta, e o domingo é o
+# ÚLTIMO dia da semana ISO. A foto em dia (domingo anterior) dá 10 dias de idade e uma foto
+# perdida dá 17. A faixa que separa os dois casos é [10, 16] inteira — 16 é o TETO dela, o mais
+# tolerante a uma rodada que escorregue, não por unicidade. O `9` da emenda 2 era o teto da grade
+# da terça ([3, 9]) e, com a foto no domingo, acusava FAIL toda semana.
+AGREGADOR_MAX_DIAS="${MONITOR_AGREGADOR_MAX_DIAS:-16}"
+# Só o WellHub: o coletor do TotalPass está ARQUIVADO na VPS (emenda 3 da DEC-039) e não grava
+# partição nova, então o check acusaria FAIL sempre. Volta para a lista junto com a coleta.
+AGREGADORES=(wellhub)
 # Camada de crescimento municipal (DEC-052): cadencia TRIMESTRAL (dia 5 de
 # fev/mai/ago/nov). 100 = um trimestre (~92 dias) + folga para retentativa manual;
 # com o check SEMANAL (quinta), uma rodada perdida dispara na 1a quinta depois de
@@ -416,7 +418,7 @@ check_agregadores() {
         idade_seg=$(($(date +%s) - referencia))
         idade_dias=$((idade_seg / 86400))
         if ((idade_dias > AGREGADOR_MAX_DIAS)); then
-            report "agregador_$f" FAIL "Snapshot do agregador ${f} com ${idade_dias} dias (limiar ${AGREGADOR_MAX_DIAS}, régua ${regua}). Última partição: ${particao}. Ver /var/log/motor-snapshots/snapshot_agregadores_latest.log"
+            report "agregador_$f" FAIL "Snapshot do agregador ${f} com ${idade_dias} dias (limiar ${AGREGADOR_MAX_DIAS}, régua ${regua}). Última partição: ${particao}. Ver /var/log/motor-snapshots/snapshot_latest.log (foto de domingo)"
         else
             log "agregadores: ${f} OK (${idade_dias}d por ${regua}, ${particao})"
             report "agregador_$f" OK ""
