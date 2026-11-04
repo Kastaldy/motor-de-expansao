@@ -221,7 +221,9 @@ def test_a_limpeza_vale_ATE_nas_rotas_publicas(
 ) -> None:
     """A limpeza vem ANTES da decisao de rota publica, e e' deliberado: a propria tentativa
     de login nao deve carregar identidade sugerida pelo cliente para a trilha."""
-    monkeypatch.setattr(db_sessoes, "validar", lambda _t: pytest.fail("rota publica validou"))
+    monkeypatch.setattr(
+        db_sessoes, "dono_para_trilha", lambda _t: pytest.fail("rota publica consultou")
+    )
 
     req = _Requisicao(caminho="/api/login", headers={"Remote-User": "felipe"})
     _resposta, chegou = _rodar(req)
@@ -532,7 +534,7 @@ def test_pagina_publica_com_sessao_carimba_o_nome_para_a_trilha(
 ) -> None:
     """GET / publico + sessao valida: carimba o `Remote-User` (a trilha mostra o nome) e a
     requisicao CHEGA ao handler (rota publica nao barra)."""
-    monkeypatch.setattr(db_sessoes, "validar", lambda _t: _sessao(login="vinicius"))
+    monkeypatch.setattr(db_sessoes, "dono_para_trilha", lambda _t: "vinicius")
     req = _Requisicao(caminho="/", cookies={acesso.COOKIE_SESSAO_DEV: "t"})
     resposta, chegou = _rodar(req)
     assert resposta.status_code == 200
@@ -545,7 +547,9 @@ def test_pagina_publica_SEM_cookie_segue_desconhecido(
 ) -> None:
     """Visitante sem sessao: SEM cookie o portao nem vai ao banco, e segue sem nome --
     "desconhecido" na trilha e' o certo para quem nao se identificou."""
-    monkeypatch.setattr(db_sessoes, "validar", lambda _t: pytest.fail("validou sem cookie"))
+    monkeypatch.setattr(
+        db_sessoes, "dono_para_trilha", lambda _t: pytest.fail("consultou sem cookie")
+    )
     req = _Requisicao(caminho="/")
     _resposta, chegou = _rodar(req)
     assert len(chegou) == 1
@@ -555,9 +559,10 @@ def test_pagina_publica_SEM_cookie_segue_desconhecido(
 def test_pagina_publica_com_cookie_invalido_nao_carimba_e_nao_barra(
     _ligado: None, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Cookie presente mas sessao invalida (expirada/forjada): nao carimba, e a pagina publica
-    continua atendendo (nunca 401 numa rota publica)."""
-    monkeypatch.setattr(db_sessoes, "validar", lambda _t: None)
+    """Cookie presente mas SEM dono resolvivel (sessao revogada, registro expurgado ou cookie
+    forjado): nao carimba, e a pagina publica continua atendendo (nunca 401 numa rota publica).
+    Sessao so' vencida por TIMEOUT NAO cai aqui -- essa nomeia (secao 8, BANCO-14)."""
+    monkeypatch.setattr(db_sessoes, "dono_para_trilha", lambda _t: None)
     req = _Requisicao(caminho="/entrar.html", cookies={acesso.COOKIE_SESSAO_DEV: "t"})
     resposta, chegou = _rodar(req)
     assert resposta.status_code == 200
@@ -571,7 +576,9 @@ def test_pagina_publica_com_banco_fora_nao_derruba_o_acesso(
     """Se o banco cai na validacao best-effort, a pagina publica NAO vira 500/503 -- a trilha
     nunca derruba o acesso. Segue sem nome."""
     monkeypatch.setattr(
-        db_sessoes, "validar", lambda _t: (_ for _ in ()).throw(RuntimeError("banco fora"))
+        db_sessoes,
+        "dono_para_trilha",
+        lambda _t: (_ for _ in ()).throw(RuntimeError("banco fora")),
     )
     req = _Requisicao(caminho="/", cookies={acesso.COOKIE_SESSAO_DEV: "t"})
     resposta, chegou = _rodar(req)
@@ -586,8 +593,53 @@ def test_estatico_com_cookie_NAO_paga_a_consulta_de_sessao(
     """O custo (opcao B) e' so' nas rotas que a trilha AUDITA. Um asset (ignorado por
     `relevante`) nao valida sessao mesmo com cookie -- senao cada .js/.png pagaria uma ida ao
     banco."""
-    monkeypatch.setattr(db_sessoes, "validar", lambda _t: pytest.fail("estatico validou sessao"))
+    monkeypatch.setattr(
+        db_sessoes, "dono_para_trilha", lambda _t: pytest.fail("estatico consultou sessao")
+    )
     req = _Requisicao(caminho="/assets/app-abc123.js", cookies={acesso.COOKIE_SESSAO_DEV: "t"})
     _resposta, chegou = _rodar(req)
     assert len(chegou) == 1
     assert req.valores_de("remote-user") == []
+
+
+# --------------------------------------------------------------------------------------
+# 8. BLK-BANCO-14: a sessao vencida por TIMEOUT ainda nomeia na trilha (nao "desconhecido")
+# --------------------------------------------------------------------------------------
+# Follow-up do BANCO-13. Quando a sessao expira por timeout (teto de 8h ou inatividade), o
+# `validar` passa a devolver None e o acesso a' pagina caia em "desconhecido" ate' para quem
+# tinha acabado de deslogar por inatividade. O portao publico resolve o nome por
+# `dono_para_trilha`, que casa o token SEM as travas de tempo -- so' para o ROTULO, nunca
+# concede acesso. Sessao revogada (logout explicito/expulsao/troca de senha) segue sem nome.
+
+
+def test_pagina_publica_NOMEIA_sessao_vencida_por_timeout_via_dono_para_trilha(
+    _ligado: None, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """O coracao do BANCO-14: a rota publica NAO depende de `validar` para o rotulo. Aqui
+    `validar` FALHA se chamado (simula a sessao que ele negaria por timeout) e, ainda assim, o
+    nome e' carimbado -- porque o portao usa `dono_para_trilha`, que casa a sessao vencida."""
+    monkeypatch.setattr(
+        db_sessoes, "validar", lambda _t: pytest.fail("rota publica nao deve chamar validar")
+    )
+    monkeypatch.setattr(db_sessoes, "dono_para_trilha", lambda _t: "vinicius")
+    req = _Requisicao(caminho="/", cookies={acesso.COOKIE_SESSAO_DEV: "t"})
+    resposta, chegou = _rodar(req)
+    assert resposta.status_code == 200
+    assert len(chegou) == 1, "rota publica nao pode barrar"
+    assert req.valores_de("remote-user") == ["vinicius"]
+
+
+def test_rota_GATEADA_segue_usando_validar_e_nao_dono_para_trilha(
+    _ligado: None, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A rota protegida NAO afrouxa: ela continua exigindo sessao VALIDA (`validar`), e nunca
+    cai no `dono_para_trilha` -- senao uma sessao vencida por timeout concederia ACESSO, que e'
+    exatamente o que o BANCO-14 recusa. `dono_para_trilha` falha se chamado numa rota gateada."""
+    monkeypatch.setattr(
+        db_sessoes, "dono_para_trilha", lambda _t: pytest.fail("gateada nao pode usar dono_para_trilha")
+    )
+    monkeypatch.setattr(db_sessoes, "validar", lambda _t: None)
+    req = _Requisicao(caminho="/api/uf/SP", cookies={acesso.COOKIE_SESSAO_DEV: "t"})
+    resposta, chegou = _rodar(req)
+    assert resposta.status_code == 401, "sessao vencida nao pode entrar em rota protegida"
+    assert chegou == []
