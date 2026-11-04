@@ -13,6 +13,7 @@ import json
 import sys
 from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -339,6 +340,9 @@ class _Requisicao:
         self.headers = _Cabecalhos(headers or {})
         self.method = metodo
         self.client = _Cliente(host)
+        # Request real tem `.state`; o middleware le `request.state.login_na_trilha` (BLK-BANCO-12),
+        # que so' e' carimbado no login bem-sucedido -- aqui ausente, logo cai no header, como antes.
+        self.state = SimpleNamespace()
 
 
 class _Resposta:

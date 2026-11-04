@@ -1133,7 +1133,13 @@ def _registrar_acesso(request: Request, *, status: int, inicio: float, tamanho: 
             # maquina onde ela e' exercitada. Em producao nada muda -- o header sempre
             # existe e vence sempre; e a identidade de dev tem as travas do
             # `rbac.login_efetivo` (override explicito, e o sinal de producao mandando).
-            usuario=acesso.login_da_requisicao(
+            # O /api/login e' PRE-autenticacao: nao tem `Remote-User`, entao sem isto a trilha
+            # (DEC-027) gravava o login bem-sucedido como "desconhecido". O handler de login poe
+            # a identidade confirmada em `request.state.login_na_trilha` SO' no sucesso, e ela
+            # vence aqui. Recusa, inexistente e requisicao normal (sem o atributo) caem no header,
+            # exatamente como antes.
+            usuario=getattr(request.state, "login_na_trilha", None)
+            or acesso.login_da_requisicao(
                 request.headers.get("remote-user") or request.headers.get("remote-email")
             ),
             ip=_ip_real_do_xff(xff, cliente),
@@ -6166,6 +6172,11 @@ def login(body: LoginIn, request: Request) -> Response:
     except Exception:  # noqa: BLE001 — o rastro nunca impede a entrada
         _LOG_D17.exception("login do usuario %d SEM evento", credencial.id_usuario)
 
+    # Identidade confirmada para a TRILHA (DEC-027): sem isto, o middleware `_registrar_acesso`
+    # gravaria este POST /api/login como "desconhecido" -- a rota e' pre-autenticacao, sem
+    # `Remote-User`. So' aqui, no SUCESSO (recusa/inexistente ja' levantaram `negado` acima e
+    # seguem "desconhecido", que e' o certo). `login_da_requisicao` normaliza como o header.
+    request.state.login_na_trilha = acesso.login_da_requisicao(body.login)
     resposta = JSONResponse({"deve_trocar_senha": credencial.deve_trocar})
     _cookie_de_sessao(resposta, aberta.token, lembrar=body.lembrar)
     return resposta
