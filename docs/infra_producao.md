@@ -531,7 +531,7 @@ está errado; só agende depois de ver contagem plausível.
 ### Coleta semanal dos agregadores (BLK-MA-21 / DEC-039 — o relógio dos independentes)
 
 **Por que existe.** Os **independentes** — o universo-alvo do funil de M&A — vivem **só** no WellHub
-e no TotalPass. O snapshot semanal acima fotografa `--fontes unidades`, que é o feed de **cadeias**.
+e no TotalPass. O snapshot semanal acima fotografa `unidades`, que é o feed de **cadeias**, e o WellHub que esta coleta recolhe no sábado.
 Sem este cron, S3 (churn) e S4 (staleness) sobre independentes **nunca amadurecem**, e o score de
 vulnerabilidade fica preso no regime `{s1,s6}` — em que o `v1` é constante e o que se ordena é
 pressão competitiva renomeada, para sempre.
@@ -696,9 +696,9 @@ Não é defeito, é fio de alarme — passar de ~27h põe o WellHub disputando a
 (emenda 3 da DEC-039).
 
 > **Terça e domingo caem na MESMA semana ISO** (medido: `2026-08-25` e `2026-08-30` são ambos
-> `2026-35`), então as três fontes colidem numa partição **por construção** — é para isso que a
-> chave dupla `semana=/fonte=` existe. E `materializar` deriva a semana de `date.today()` no passo
-> 3, nunca de `data_coleta`, então nem a banda alta de 31h atravessa a fronteira ISO.
+> `2026-35`), e sábado e domingo também, então duas execuções de snapshot nesses dias colidiriam numa partição **por construção** — é para isso que a
+> chave dupla `semana=/fonte=` existe (hoje `unidades` e `wellhub` saem numa chamada só, no lote de domingo — emenda 3 da DEC-039). E `materializar` deriva a semana de `date.today()` no passo
+> 1.5 do `run_weekly_90.sh`, nunca de `data_coleta`, então nem a banda alta de 31h atravessa a fronteira ISO.
 
 **Alerta de idade** (a partir daqui a ausência do cron deixa de ser silenciosa):
 
@@ -717,6 +717,8 @@ passaria despercebido para sempre. Limiar `MONITOR_AGREGADOR_MAX_DIAS` (default 
 > inteira, e `9` é o **teto** dela — o mais tolerante a uma rodada que legitimamente escorregue
 > dentro da semana.
 > Quinta alerta 2 dias depois da falha e deixa sexta livre para a retentativa dentro da semana ISO.
+
+> **Atenção: essa conta é da grade da terça (emenda 2 da DEC-039).** Com a grade da emenda 3, a foto do WellHub sai no domingo, último dia da semana ISO. Na quinta 12:00 UTC a partição mais nova é a da semana anterior: mede **10** dias com a rodada em dia e **17** com uma perdida, acima do limiar padrão `9` nos dois casos, e o check acusa falha toda semana. O TotalPass, arquivado, não grava partição nova e acusa sempre. Corrigir pede mudar o limiar (no `healthcheck_vps.sh`) ou o dia do check (na linha de cron).
 
 > **A idade sai da chave `semana=AAAA-SS`, não do mtime do diretório `fonte=`**. O check media `stat -c %Y` da folha, e o **passo 2 obrigatório da ordem de
 > aplicação** (hoje em `docs/archive/infra_producao_historico.md`) — `--migrar-layout` — **cria** a folha com mtime de agora. Medido sobre cópia da
@@ -1075,7 +1077,7 @@ requisição seguinte, sem restart); mudanças no `Caddyfile` seguem pedindo
 5. **Banco (piloto BR, desde 23/10/2026):** criar a pessoa na tela de **Acessos** do piloto, com o
    perfil (`expansao`, `consultoria`, `lideres` ou `growth`). Quem cria é um admin da allowlist do
    painel (`MOTOR_ACESSOS_ADMIN_USUARIOS`) com perfil `growth`. A ordem dos dois cadastros não
-   importa; a pessoa só usa o piloto quando os dois existem.
+   importa. Desde o corte do P19 (27/10/2026), no BR o banco basta: a pessoa já entra com a senha inicial e é convidada a trocá-la no primeiro acesso; o cadastro no Authelia (passos 1 a 4) mantém o rollback possível durante a janela de observação do corte.
 
 ### Revogar usuário
 
