@@ -20,7 +20,7 @@ em float32 e divide em float64), então a penetração pode diferir só no arred
 Primeira medição (emenda de 2026-10-29 da DEC-011, base da produção regenerada em 2026-10-25): 313
 cidades, penetração 33,0 / 42,3 / 49,8% e residual 78 / 90 / 104 por mil habitantes.
 
-Uso local: `MOTOR_DATA_DIR=<dados> python scripts/medir_regua_sintese.py` (ou `--base <dir>`).
+Uso local: `MOTOR_DATA_DIR=<dados> python scripts/medicoes/medir_regua_sintese.py` (ou `--base <dir>`).
 
 Na VPS, a imagem não leva `scripts/`: o arquivo vai pelo stdin de um container AVULSO da imagem do
 site (`docker run --rm -i --network none --memory 1536m --cpus 1 ... python -`), com os mounts

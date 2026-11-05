@@ -540,7 +540,7 @@ def test_numeros_do_mapa_de_espaco_saem_como_texto_do_pdf_e_nao_no_png(monkeypat
 
 def test_regua_da_sintese_e_a_medida_na_producao():
     """A régua da Síntese é a da emenda de 2026-10-29 da DEC-011, medida com
-    `scripts/medir_regua_sintese.py` na base da produção de 2026-10-25 (313 cidades com 100 mil+).
+    `scripts/medicoes/medir_regua_sintese.py` na base da produção de 2026-10-25 (313 cidades com 100 mil+).
 
     A primeira, de uma base local e sem script, punha 247 das 313 cidades em "Mercado maduro" e 293
     em "Residual abaixo da maioria". Trocar estes números é remedir com o script e registrar na DEC,

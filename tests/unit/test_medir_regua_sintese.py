@@ -20,7 +20,7 @@ from .test_relatorio_municipal import _sample_df
 
 _REPO = Path(__file__).resolve().parents[2]
 _spec = importlib.util.spec_from_file_location(
-    "medir_regua_sintese", _REPO / "scripts" / "medir_regua_sintese.py"
+    "medir_regua_sintese", _REPO / "scripts" / "medicoes" / "medir_regua_sintese.py"
 )
 assert _spec and _spec.loader
 m = importlib.util.module_from_spec(_spec)

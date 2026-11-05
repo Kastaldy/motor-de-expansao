@@ -178,7 +178,8 @@ _SRC = _REPO / "web" / "src"
 #: de virar licença.
 _R_FORA_DE_LIB: dict[str, tuple[int, str | None, str]] = {
     "screens/ViabilityScreen.tsx": (
-        8, None, "decisão 0.6: a viabilidade sobe em REAIS fora do Brasil até o BLK-INTL-11",
+        9, None, "decisão 0.6: a viabilidade sobe em REAIS fora do Brasil até o BLK-INTL-11 "
+        "(9 desde 2026-11-05: o `title` do aluguel pedido, do #500 da DEC-080, é do mesmo tipo)",
     ),
     "components/ViabilityCharts.tsx": (1, None, "decisão 0.6, como a ViabilityScreen"),
     "components/ViabilityNotes.tsx": (
