@@ -1312,7 +1312,7 @@ export default function ViabilityScreen({
               style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline' }}
             >
               <span style={{ font: '500 11px/1 var(--f-ui)', color: 'var(--tx-label)' }}>
-                Ticket médio (blended)
+                Ticket médio
               </span>
               <span
                 className="num"

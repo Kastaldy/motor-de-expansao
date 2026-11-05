@@ -75,7 +75,7 @@ function montarSecoes(p: PremissasViabilidade, demandaPremissa: number | null): 
             'número de studios: cada studio tem o ticket dele.',
         },
         {
-          kpi: 'Ticket médio (blended)',
+          kpi: 'Ticket médio',
           como:
             `${brl(p.ticket_blended, false, 2)} por aluno total. ` +
             (temStudios
