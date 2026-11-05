@@ -1084,16 +1084,9 @@ export default function ViabilityScreen({
           }}
         >
           <Eyebrow>Cenário</Eyebrow>
-          <p
-            style={{
-              font: '400 11.5px/1.5 var(--f-ui)',
-              color: 'var(--tx-muted)',
-              margin: '9px 0 16px',
-            }}
-          >
-            Ajuste as premissas. A ferramenta testa o número que você assume — não
-            prevê a demanda.
-          </p>
+          {/* O subtítulo "não prevê a demanda" saiu (Felipe, 05/11/2026): desde a DEC-078 o
+              modelo de praça de 10 min sugere a demanda. */}
+          <div style={{ height: 12 }} />
           {moedaLocal && (
             <div style={{ marginBottom: 14 }}>
               <span
