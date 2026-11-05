@@ -818,3 +818,79 @@ def test_a_nossa_propria_sonda_curl_fica_fora_de_TUDO(tmp_path: Path) -> None:
 
     s = aa.resumo(tmp_path, dias=7, agora_utc=AGORA)["saude"]
     assert s["erros_5xx_fora_da_metrica"] == 1, "a sonda curl entrou na conta do painel"
+
+
+# --- enquadramento do acesso sem conta + ocultar conta de teste (DEC-027) ------
+
+
+def test_conta_de_teste_some_da_aba(tmp_path: Path) -> None:
+    """`zyx_teste` não aparece na tabela de usuários nem tem ficha (404)."""
+    _gravar(tmp_path, AGORA, usuario="felipe")
+    _gravar(tmp_path, AGORA, usuario="zyx_teste")
+
+    r = aa.resumo(tmp_path, dias=7, agora_utc=AGORA)
+    nomes = {u["nome"] for u in r["usuarios"]}
+    assert "felipe" in nomes
+    assert "zyx_teste" not in nomes
+    assert aa.ficha_usuario("zyx_teste", tmp_path, dias=7, agora_utc=AGORA) is None
+
+
+def test_acesso_sem_conta_fora_da_tabela_e_no_bloco(tmp_path: Path) -> None:
+    """`desconhecido` sai da tabela/contagem de usuários e entra no bloco sem_conta."""
+    _gravar(tmp_path, AGORA, usuario="felipe")
+    _gravar(tmp_path, AGORA, usuario="desconhecido", rota="/", metodo="GET", status=200)
+    _gravar(tmp_path, AGORA, usuario="desconhecido", rota="/", metodo="GET", status=200)
+
+    r = aa.resumo(tmp_path, dias=7, agora_utc=AGORA)
+    nomes = {u["nome"] for u in r["usuarios"]}
+    assert nomes == {"felipe"}
+    assert r["hoje"]["usuarios"] == 1  # só felipe conta como usuário
+    assert r["sem_conta"]["total"] == 2
+    features = {f["feature"]: f["n"] for f in r["sem_conta"]["por_feature"]}
+    assert features.get("Abriu o piloto") == 2
+
+
+def test_bloco_sem_conta_marca_atipico(tmp_path: Path) -> None:
+    """Sucesso sem conta em rota protegida é atípico; abrir a página pública, não."""
+    _gravar(tmp_path, AGORA, usuario="desconhecido", rota="/", metodo="GET", status=200)
+    _gravar(tmp_path, AGORA, usuario="desconhecido", rota="/api/uf/SP", metodo="GET", status=200)
+    _gravar(tmp_path, AGORA, usuario="desconhecido", rota="/api/login", metodo="POST", status=401)
+
+    r = aa.resumo(tmp_path, dias=7, agora_utc=AGORA)
+    rotas_atipicas = {a["rota"] for a in r["sem_conta"]["atipicos"]}
+    assert "/api/uf/SP" in rotas_atipicas  # sucesso sem sessão em rota protegida: furo
+    assert "/" not in rotas_atipicas  # abrir o piloto é esperado
+    assert "/api/login" not in rotas_atipicas  # pré-auth e 401, não é atípico
+
+
+
+def test_atipicos_tem_detalhe_por_evento(tmp_path: Path) -> None:
+    """O drill-down lista cada atipico com hora, rota, status, IP e agente."""
+    _gravar(tmp_path, AGORA, usuario="desconhecido", rota="/api/uf/SP", metodo="GET",
+            status=200, ip="198.51.100.7", agente="Mozilla/5.0 X")
+    _gravar(tmp_path, AGORA, usuario="desconhecido", rota="/", metodo="GET", status=200)
+
+    sc = aa.resumo(tmp_path, dias=7, agora_utc=AGORA)["sem_conta"]
+    assert sc["atipicos_total"] == 1
+    ev = sc["atipicos_eventos"]
+    assert len(ev) == 1
+    assert ev[0]["rota"] == "/api/uf/SP"
+    assert ev[0]["status"] == 200
+    assert ev[0]["ip"] == "198.51.100.7"
+    assert ev[0]["agente"] == "Mozilla/5.0 X"
+    assert ev[0]["hora"] is not None
+
+
+
+def test_rajada_de_ip_sem_conta(tmp_path: Path) -> None:
+    """IP sem conta com >=10 acessos em <=5 min vira rajada; IP lento, nao."""
+    for i in range(12):
+        _gravar(tmp_path, AGORA + timedelta(seconds=i * 10), usuario="desconhecido",
+                rota="/api/login", metodo="POST", status=401, ip="185.220.101.1")
+    for i in range(12):  # mesmo volume, mas espalhado (nao e rajada)
+        _gravar(tmp_path, AGORA + timedelta(minutes=i * 20), usuario="desconhecido",
+                rota="/", metodo="GET", status=200, ip="9.9.9.9")
+    sc = aa.resumo(tmp_path, dias=7, agora_utc=AGORA + timedelta(hours=5))["sem_conta"]
+    ips = {r["ip"]: r["pico"] for r in sc["rajadas"]}
+    assert "185.220.101.1" in ips and ips["185.220.101.1"] >= 10
+    assert "9.9.9.9" not in ips

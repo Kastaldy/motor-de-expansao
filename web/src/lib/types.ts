@@ -2597,6 +2597,42 @@ export interface AcessosRota5xxFora {
   n: number
 }
 
+export interface AcessosSemContaEvento {
+  dia: string | null
+  hora: string | null
+  metodo: string
+  rota: string
+  /** O que a rota faz (rótulo de feature) e por que é atípico. */
+  feature: string
+  motivo: string
+  status: number | null
+  /** IP e agente só no detalhe de ATÍPICOS (evento de segurança) — ver DEC-027. */
+  ip: string | null
+  pais: string | null
+  agente: string | null
+}
+
+export interface AcessosSemConta {
+  /** Total de acessos sem conta na janela (pré-login + robôs). */
+  total: number
+  por_feature: AcessosFeature[]
+  /** Padrões atípicos agregados — vazio = nada que mereça olhar. */
+  atipicos: { metodo: string; rota: string; status: number | null; n: number }[]
+  atipicos_total: number
+  /** Detalhe por evento dos atípicos (drill-down), mais recentes primeiro. */
+  atipicos_eventos: AcessosSemContaEvento[]
+  /** IPs com rajada de acesso sem conta (força-bruta/scraping). */
+  rajadas: {
+    ip: string
+    pais: string | null
+    acessos: number
+    pico: number
+    dia: string
+    de: string | null
+    ate: string | null
+  }[]
+}
+
 export interface AcessosResumo {
   gerado_em: string
   janela_dias: number
@@ -2611,6 +2647,7 @@ export interface AcessosResumo {
   heatmap: number[][]
   por_aba: AcessosPorAba[]
   usuarios: AcessosUsuarioLinha[]
+  sem_conta: AcessosSemConta
   saude: AcessosSaude
 }
 
