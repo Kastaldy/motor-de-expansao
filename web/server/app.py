@@ -85,6 +85,7 @@ import acesso  # noqa: E402  (controle TEMPORARIO de acesso por aba, por Remote-
 import cobertura_1km  # noqa: E402  (PROTOTIPO — area coberta pelo raio, para desenhar)
 import praca_indice  # noqa: E402  (indice conjuntivo da camada 5 — DEC-041)
 import pressao_1km  # noqa: E402  (PROTOTIPO — chave de raio 2 km / 1 km por area)
+import rate_limit_login  # noqa: E402  (rate-limit por IP de /api/login -- solidificacao do pentest)
 import rede_inteligencia  # noqa: E402  (territorio, retencao, rampa e sinais da rede Ultra)
 
 from motor_expansao import renda as _renda  # noqa: E402  (renda exibida: ponto unico, E0)
@@ -6065,8 +6066,9 @@ def db_sessoes_duracao_s() -> int:
 #: BLK-BANCO-07: teto de verificacoes Argon2id CONCORRENTES no /api/login. Medido: cada
 #: verificacao custa 64 MiB + ~60 ms, e o login INEXISTENTE paga o mesmo `ph.hash` (defesa
 #: de cronometro) sem trancar a conta (a trava de 5/15min e' por conta). Pos-corte o
-#: /api/login e' publico e sem limite por IP, entao uma rajada de ~32 logins concorrentes
-#: estoura o `mem_limit` de 2 GiB do web (OOM) e satura o threadpool compartilhado. O
+#: /api/login e' publico; o rate-limit por IP (`rate_limit_login`) corta a TAXA por origem
+#: e este semaforo corta o CUSTO concorrente. Sem o semaforo, uma rajada de ~32 logins
+#: concorrentes estoura o `mem_limit` do web (OOM) e satura o threadpool compartilhado. O
 #: semaforo e' NAO-BLOQUEANTE: cheio => 503 imediato (nao segura a thread do pool), por
 #: CARGA e independente de a conta existir (nao abre oraculo). Default 6 = pico ~384 MiB.
 LOGIN_MAX_CONCORRENTES = max(1, int(os.environ.get("MOTOR_LOGIN_MAX_CONCORRENTES", "6")))
@@ -6092,10 +6094,12 @@ def login(body: LoginIn, request: Request) -> Response:
     movel de proposito -- sem ela a tranca nunca drenaria e qualquer pessoa poderia deixar a
     conta de outra trancada para sempre.
 
-    O que esta rota continua NAO tendo, e fica declarado: trava por IP. `eventos` nao guarda
-    IP (P15 aberto), entao quem varre nomes INEXISTENTES nao tranca nada -- sem `id_usuario`
-    nao ha' o que contar. Tambem nao existe `rate limit` de rede em `web/server/` (medido), e
-    o `regulation:` do Authelia sai no corte.
+    TRAVA POR IP (solidificacao #1 do pentest): `rate_limit_login` limita a TAXA por origem
+    (default 20/60 s), chaveada pelo IP que a BORDA observou (ULTIMO X-Forwarded-For). NAO e'
+    a trava por CONTA de cima (que conta `login.recusado` por `id_usuario`) -- sao eixos
+    distintos. O IP real na borda depende de `trusted_proxies` no Caddy (furo #7, em aberto):
+    por isso a chave usa o ULTIMO elemento do XFF (o que o Caddy anexa), nunca o 1o que o
+    cliente dita. O `regulation:` do Authelia, que cobria isto, saiu no corte.
     """
     from motor_expansao.db import senhas as db_senhas
     from motor_expansao.db import sessoes as db_sessoes
@@ -6103,6 +6107,18 @@ def login(body: LoginIn, request: Request) -> Response:
 
     if not db_sessoes.ligada():
         raise HTTPException(404, "Not Found")
+
+    # SOLIDIFICACAO (#1 do pentest): rate-limit por IP ANTES do Argon2. Chaveado pelo IP que
+    # a BORDA observou (ULTIMO X-Forwarded-For), nao o 1o que o cliente dita -- senao XFF
+    # forjado evadiria o teto (furo #7). FORA do try de proposito: la o `_erro_de_usuarios`
+    # traduziria o 429. Nao abre oraculo: e por ORIGEM, pre-credencial.
+    _ip_edge = rate_limit_login.ip_observado_pelo_edge(
+        request.headers.get("x-forwarded-for"),
+        request.client.host if request.client else None,
+    )
+    if rate_limit_login.sob_limite(_ip_edge):
+        _LOG_D17.warning("login: teto de taxa por IP atingido (429)")
+        raise HTTPException(429, "Muitas tentativas. Aguarde um instante e tente novamente.")
 
     negado = HTTPException(401, "Login ou senha incorretos.")
     vencida = False

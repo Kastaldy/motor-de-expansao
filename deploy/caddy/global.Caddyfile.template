@@ -1,0 +1,26 @@
+# global.Caddyfile.template — OPCOES GLOBAIS do Caddy (solidificacao #7 do pentest)
+#
+# Material de copiar-e-colar, como os outros templates deste dir; NAO e' aplicado por
+# ninguem automaticamente. Vai no TOPO do `/opt/motor-expansao/app/Caddyfile` da VPS,
+# ANTES do snippet `(sec_headers)` e de qualquer host. O bloco de opcoes globais `{ ... }`
+# tem de ser a PRIMEIRA coisa do arquivo -- e' regra do Caddy; posto depois de um host, o
+# `caddy validate` reprova.
+#
+# POR QUE (furo #7). Sem `trusted_proxies`, o Caddy CONFIA no `X-Forwarded-For` que o
+# cliente envia e o repassa ao backend. Como o `web`/`api` leem o IP do cliente desse
+# cabecalho, um atacante manda `X-Forwarded-For: 1.2.3.4` e:
+#   * falseia o IP que a trilha (DEC-027) registra, e
+#   * cria um "balde" novo a cada requisicao, evadindo o rate-limit por IP de `/api/login`.
+# Com `static private_ranges`, o Caddy so' confia em upstream de rede PRIVADA. O cliente
+# publico e' NAO-confiavel, entao o Caddy deriva o IP real da CONEXAO e repassa um XFF
+# limpo (so' o IP verdadeiro) -- fechando o spoof na borda. Cobre TODOS os hosts de uma
+# vez (apex, piloto, piloto-ar, api), por ser opcao global.
+#
+# Caddy >= 2.8 para a palavra-chave `private_ranges` (VPS medida em 2.11.3, 2026-11-05).
+# Complementa, e nao substitui, o fix de codigo que le o ULTIMO elemento do XFF
+# (`_ip_real_do_xff` no web, `_ip_do_edge` na api) -- defesa em profundidade.
+{
+	servers {
+		trusted_proxies static private_ranges
+	}
+}

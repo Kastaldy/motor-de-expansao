@@ -68,8 +68,12 @@ class Settings(BaseSettings):
     # proibe. O perfil e o ARQUIVO, e so.
     perfil: Perfil | None = None
 
-    # CORS. Em producao, restringir via env API_CORS_ORIGINS.
-    cors_origins: list[str] = ["*"]
+    # CORS default RESTRITIVO (solidificacao #5 do pentest): vazio = nenhuma origem
+    # cross-origin. Os consumidores da API sao server-to-server (bot, parceiro), que nao
+    # passam por CORS, e nenhum front chama `api.ultra-expansao.tech` de um navegador
+    # (medido). Em producao, so' preencher via env `API_CORS_ORIGINS` SE um consumidor de
+    # navegador surgir. Era `["*"]` (aberto a qualquer origem).
+    cors_origins: list[str] = []
 
     # Mapa estatico token -> consumidor (Decisao 2). Rastreio do solicitante.
     # Em producao defina via env: API_TOKENS='{"tok-real":"bot-telegram"}'.
