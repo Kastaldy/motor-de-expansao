@@ -1295,10 +1295,9 @@ export default function ViabilityScreen({
             </div>
           )}
 
-          {/* Ticket médio (blended) — SOMENTE-LEITURA, vem do motor. O operador digita o
-              ticket de musculação (e o de cada studio); o que entra no caixa por aluno
-              TOTAL é este, com os studios, o mix balcão/agregador e o ticket do agregador
-              acoplado ao de musculação (P2-12). Tudo lido do payload: a tela só formata. */}
+          {/* Ticket médio — SOMENTE-LEITURA, vem do motor (`premissas.ticket_medio`: o mix de
+              mensalidades, sem churn nem inadimplência). O VALOR é o destaque e o subtítulo
+              diz só o mix, numa linha (Felipe, 05/11/2026). */}
           <div
             style={{
               marginTop: 10,
@@ -1306,56 +1305,31 @@ export default function ViabilityScreen({
               background: 'var(--surf-raised)',
               border: '1px solid var(--line-soft)',
               borderRadius: 'var(--r-md)',
+              display: 'grid',
+              gap: 4,
             }}
           >
-            <div
-              style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline' }}
+            <span style={{ font: '500 11px/1.2 var(--f-ui)', color: 'var(--tx-label)' }}>
+              Ticket médio
+            </span>
+            <span
+              className="num"
+              style={{ font: '700 22px/1.1 var(--f-num)', color: 'var(--tx-max)' }}
             >
-              <span style={{ font: '500 11px/1 var(--f-ui)', color: 'var(--tx-label)' }}>
-                Ticket médio
+              {premissas
+                ? brl(premissas.ticket_medio ?? premissas.ticket_blended, false, 2)
+                : TEXTO_SEM_DADO}
+            </span>
+            {premissas && (
+              <span style={{ font: '400 10.5px/1.35 var(--f-ui)', color: 'var(--tx-sub)' }}>
+                {pctFrac(premissas.share_balcao, 0)} balcão {brl(premissas.ticket_cheio, false, 0)}
+                {' · '}
+                {pctFrac(1 - premissas.share_balcao, 0)} agregador{' '}
+                {brl(premissas.ticket_agregador, false, 0)}
+                {temStudios &&
+                  ` · ${premissas.n_studios === 1 ? '1 studio' : `${premissas.n_studios} studios`}`}
               </span>
-              <span
-                className="num"
-                style={{ font: '700 14px/1 var(--f-num)', color: 'var(--tx-max)' }}
-              >
-                {premissas
-                  ? brl(premissas.ticket_medio ?? premissas.ticket_blended, false, 2)
-                  : TEXTO_SEM_DADO}
-              </span>
-            </div>
-            <div
-              style={{ font: '400 10px/1.45 var(--f-ui)', color: 'var(--tx-sub)', marginTop: 6 }}
-            >
-              {premissas ? (
-                <>
-                  {temStudios && (
-                    <>
-                      {premissas.n_studios === 1 ? '1 studio' : `${premissas.n_studios} studios`}
-                      {premissas.share_por_studio != null
-                        ? ` × ${pctFrac(premissas.share_por_studio, 0)} da demanda`
-                        : ''}{' '}
-                      ({(premissas.tickets_studios ?? []).map((t) => brl(t, false, 2)).join(' · ')}
-                      ).{' '}
-                    </>
-                  )}
-                  {temStudios && premissas.share_musculacao != null
-                    ? `Sobre os ${pctFrac(premissas.share_musculacao, 0)} restantes: `
-                    : 'Mix '}
-                  {pctFrac(premissas.share_balcao, 0)} balcão (
-                  {brl(premissas.ticket_cheio, false, 2)}, ticket de musculação) ·{' '}
-                  {pctFrac(1 - premissas.share_balcao, 0)} agregador (
-                  {brl(premissas.ticket_agregador, false, 2)}
-                  {premissas.ticket_agregador_fator != null
-                    ? `, ${pctFrac(premissas.ticket_agregador_fator, 0)} da musculação`
-                    : ''}
-                  ). Sem churn nem inadimplência.
-                  {/* Onde o mix é campo do operador, "a tela só exibe" seria falso. */}
-                  {!mixEditavel && ' Calculado pelo motor — a tela só exibe.'}
-                </>
-              ) : (
-                'Calcule o cenário para ver o ticket médio efetivo por aluno total.'
-              )}
-            </div>
+            )}
           </div>
 
           <span
