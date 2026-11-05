@@ -2371,7 +2371,10 @@ export interface ReguaTop10 {
     exige_residual_medido: boolean
   }
   premium: {
-    score_min: number
+    /** Critério de "bairro bom": renda domiciliar (régua 2026-11_v1, emenda 2 da DEC-077)
+     *  ou score censitário (até a 2026-10_v1). Exatamente um dos dois vem preenchido. */
+    renda_domiciliar_min?: number | null
+    score_min: number | null
     populacao_min: number | null
     exige_residual_medido: boolean
   }

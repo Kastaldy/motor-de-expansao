@@ -447,6 +447,25 @@ describe('cabecalhoTop10', () => {
 })
 
 describe('textoDaRegua — montado só com os números do payload', () => {
+  it('a régua BR 2026-11_v1 (Premium por renda) vira o texto esperado', () => {
+    const v2: ReguaTop10 = {
+      ...REGUA_BR_V1,
+      versao: '2026-11_v1',
+      premium: {
+        renda_domiciliar_min: 5000.0,
+        score_min: null,
+        populacao_min: 10000.0,
+        exige_residual_medido: true,
+      },
+    }
+    const t = textoDaRegua(v2, ROTULOS)
+    expect(t).toContain(
+      `Premium: renda domiciliar a partir de ${renda(5000)} e população a partir de ` +
+        `${num(10000)} habitantes, fora da Mata Virgem e com residual medido, na ordem da população.`,
+    )
+    expect(t).not.toContain('score censitário')
+  })
+
   it('a régua BR v1 vira o texto esperado', () => {
     expect(textoDaRegua(REGUA_BR_V1, ROTULOS)).toBe(
       `Mata Virgem: renda domiciliar a partir de ${renda(4500)} e residual medido a partir de ` +

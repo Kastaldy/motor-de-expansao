@@ -363,7 +363,11 @@ export function textoDaRegua(
     criteriosMv.push(`população a partir de ${num(m.populacao_min)} habitantes`)
   }
 
-  const criteriosPr = [`score censitário a partir de ${numScore(p.score_min)}`]
+  const criteriosPr = [
+    p.renda_domiciliar_min != null
+      ? `renda domiciliar a partir de ${renda(p.renda_domiciliar_min)}`
+      : `score censitário a partir de ${p.score_min != null ? numScore(p.score_min) : '—'}`,
+  ]
   if (p.populacao_min != null) {
     criteriosPr.push(`população a partir de ${num(p.populacao_min)} habitantes`)
   }

@@ -274,7 +274,7 @@ def test_subida_sem_k_em_dev_so_avisa(
     monkeypatch.delenv("MOTOR_DATA_DIR", raising=False)
     with caplog.at_level(logging.WARNING):
         r = subida_mod.validar_na_subida(tmp_path)
-    assert r is not None and r.versao == "2026-10_v1"
+    assert r is not None and r.versao == "2026-11_v1"
     assert "Top 10" in caplog.text
 
 
