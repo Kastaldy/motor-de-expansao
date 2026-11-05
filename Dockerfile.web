@@ -96,4 +96,4 @@ HEALTHCHECK --interval=30s --timeout=5s --start-period=40s --retries=3 \
     CMD curl -fsS http://127.0.0.1:8899/api/health || exit 1
 
 # Um processo serve o SPA (dist/, via StaticFiles) e a API na :8899.
-CMD ["uvicorn", "app:app", "--app-dir", "web/server", "--host", "0.0.0.0", "--port", "8899"]
+CMD ["uvicorn", "app:app", "--app-dir", "web/server", "--host", "0.0.0.0", "--port", "8899", "--limit-concurrency", "100"]

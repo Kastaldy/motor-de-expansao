@@ -83,6 +83,18 @@ def _sem_eventos(monkeypatch: pytest.MonkeyPatch) -> list[tuple[str, int]]:
     return vistos
 
 
+@pytest.fixture(autouse=True)
+def _reset_rate_limit_login() -> None:
+    """O rate-limit por IP de /api/login (`rate_limit_login`) guarda estado de MODULO; zera
+    entre testes, senao ~20 chamadas na mesma chave (origem 'desconhecido' no teste) fariam
+    os ultimos casos receberem 429 no lugar do 401/200/503 esperado."""
+    import rate_limit_login
+
+    rate_limit_login._resetar_para_teste()
+    yield
+    rate_limit_login._resetar_para_teste()
+
+
 class _RequisicaoDeLogin:
     """O que a rota de login usa do `Request`: cabecalhos e o peer TCP.
 
@@ -250,6 +262,33 @@ def test_com_quatro_recusas_ainda_passa(ligado: None, monkeypatch: pytest.Monkey
     with pytest.raises(pilot.HTTPException):
         pilot.login(pilot.LoginIn(login="vinicius", senha="errada"), _req())
     assert caras == ["argon2"], "com 4 recusas a senha ainda deve ser verificada"
+
+
+def test_excesso_de_tentativas_do_mesmo_IP_recebe_429(
+    ligado: None, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Rate-limit por IP (solidificacao #1): estourado o teto, /api/login devolve 429 ANTES
+    do Argon2 -- sem rodar `verificar`. A chave e' o ULTIMO elemento do X-Forwarded-For (o
+    que a borda anexa), entao variar o PREFIXO (o que o cliente dita) nao evade o teto."""
+    import rate_limit_login
+
+    from motor_expansao.db import usuarios as db_usuarios
+
+    monkeypatch.setattr(rate_limit_login, "MAX_TENTATIVAS", 2)
+    monkeypatch.setattr(db_usuarios, "credenciais_por_login", lambda _l: None)
+    caras = _travar(monkeypatch, recusas=0, confere=False)
+
+    corpo = pilot.LoginIn(login="x", senha="y")
+    # As 2 primeiras passam (401), com PREFIXO de XFF diferente mas o MESMO ultimo elemento
+    for i in range(2):
+        with pytest.raises(pilot.HTTPException) as e:
+            pilot.login(corpo, _req(xff=f"{i}.{i}.{i}.{i}, 203.0.113.5"))
+        assert e.value.status_code == 401
+    # A 3a estoura -> 429, e o Argon2 NAO roda nela
+    with pytest.raises(pilot.HTTPException) as barrada:
+        pilot.login(corpo, _req(xff="7.7.7.7, 203.0.113.5"))
+    assert barrada.value.status_code == 429
+    assert caras == ["argon2", "argon2"], "o Argon2 so roda nas 2 que passaram, nunca na barrada"
 
 
 def test_a_conta_barrada_NAO_paga_o_argon2(ligado: None, monkeypatch: pytest.MonkeyPatch) -> None:
