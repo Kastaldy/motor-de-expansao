@@ -321,3 +321,22 @@ def test_api_openapi_ligado_fora_de_producao(monkeypatch) -> None:
     app = main.create_app()
     assert app.openapi_url == "/openapi.json"
     assert app.docs_url == "/docs"
+
+
+def test_cors_default_e_restritivo(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Solidificacao #5: o default do CORS deixou de ser `["*"]`. Vazio = nenhuma origem
+    cross-origin; a API e' Bearer server-to-server e nenhum navegador a chama."""
+    monkeypatch.delenv("API_CORS_ORIGINS", raising=False)
+    from motor_expansao.api.settings import Settings
+
+    assert Settings().cors_origins == []
+
+
+def test_rate_limit_ip_sai_do_ULTIMO_xff_nao_do_primeiro() -> None:
+    """Solidificacao #7: o IP do rate-limit anonimo sai do ULTIMO token do X-Forwarded-For
+    (o que o Caddy anexa), nao do 1o (que o cliente forja); token nao-IP cai no peer TCP."""
+    from motor_expansao.api import main
+
+    assert main._ip_do_edge("1.2.3.4, 203.0.113.9", "10.0.0.1") == "203.0.113.9"
+    assert main._ip_do_edge("lixo-nao-ip", "10.0.0.1") == "10.0.0.1"
+    assert main._ip_do_edge("", "10.0.0.1") == "10.0.0.1"

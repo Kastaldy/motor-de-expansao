@@ -13,6 +13,7 @@ Rodar localmente:
 
 from __future__ import annotations
 
+import ipaddress
 import logging
 import time
 from pathlib import Path
@@ -97,6 +98,21 @@ def _rate_limit_ok(chave: str) -> bool:
     return cont <= _RATE_LIMIT_MAX
 
 
+def _ip_do_edge(xff: str, fallback: str) -> str:
+    """IP real atras do Caddy: ULTIMO token do X-Forwarded-For (o que o proxy anexa), nunca
+    o 1o (que o cliente forja). Valida o formato; nao sendo IP, cai no peer TCP (`fallback`).
+    Espelha o `_ip_real_do_xff` do piloto web (pentest 2026-08-19 / Onda B #4) -- sem isto o
+    rate-limit por IP do anonimo e' evadivel rotacionando o X-Forwarded-For (furo #7)."""
+    if xff:
+        cand = xff.split(",")[-1].strip()
+        try:
+            ipaddress.ip_address(cand)
+        except ValueError:
+            return fallback
+        return cand
+    return fallback
+
+
 def create_app() -> FastAPI:
     """Factory do app — facilita testes e overrides de settings."""
     settings = get_settings()
@@ -177,7 +193,7 @@ def create_app() -> FastAPI:
             auth = request.headers.get("Authorization", "")
             token = auth[7:].strip() if auth[:7].lower() == "bearer " else ""
             xff = request.headers.get("X-Forwarded-For", "")
-            ip = xff.split(",")[0].strip() if xff else (request.client.host if request.client else "")
+            ip = _ip_do_edge(xff, request.client.host if request.client else "")
             if not _rate_limit_ok(token or ip or "anon"):
                 return JSONResponse(
                     {"detail": "Muitas requisicoes. Tente novamente em instantes.", "codigo": "rate_limited"},
