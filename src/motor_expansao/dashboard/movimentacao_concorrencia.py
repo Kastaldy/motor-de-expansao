@@ -15,6 +15,10 @@ motor só começou em 06/09. O pacote traz três arquivos com coordenada, e só 
 "Saiu do site" nem sempre é fechamento (página removida, coletor que parou de achar a unidade)
 e "entrou no Wellhub" pode ser credenciamento, não inauguração — a tela diz as duas coisas.
 
+As UNIDADES do card "Crescimento da concorrência" não saem mais daqui (2026-11): vêm da contagem
+semanal do coletor (`saldo_rede.contagem_da_tela`), e este pacote responde só por aberturas,
+fechamentos, "Em breve" e Wellhub. `crescimento_por_rede` junta os dois, cada um com a sua data.
+
 Camada visual e READ-ONLY sobre o M1. Funções puras; o script de ingestão lê a pasta.
 """
 
@@ -30,7 +34,8 @@ import numpy as np
 import pandas as pd
 
 ARQUIVO_STAGING = "movimentacao_concorrencia.parquet"
-#: Total de unidades por rede na contagem oficial (o número do relatório do Telegram).
+#: Total de unidades por rede na contagem oficial de 06/09, congelada no pacote. Desde 2026-11 o card
+#: só a usa quando falta o histórico semanal (`contagem_origem = "pacote"`).
 ARQUIVO_CONTAGEM_STAGING = "contagem_redes_concorrencia.parquet"
 ARQUIVO_CONTAGEM = "contagem_oficial_por_rede_por_domingo.csv"
 
@@ -73,6 +78,22 @@ DIST_TROCA_NOME_AGREGADOR_M = 1_000.0
 
 COLUNAS = ("fonte", "tipo", "confianca", "rede", "nome", "lat", "lng", "de", "ate")
 RAIO_ENTORNO_M = 2_000.0
+
+#: Redes que o pacote de setembro deixou FORA de aberturas e fechamentos (`leitura = NAO_USAR_*`),
+#: com o motivo. A Smart Fit estava travada no teto de 1.000 do coletor. O conserto (GymScraping
+#: d83b216, 17/09: "o teto de paginacao escondia 59 unidades") é POSTERIOR ao pacote: a contagem
+#: semanal dela já vem inteira, e o cadastro de setembro continua sem leitura. Zerar as colunas dela
+#: diria "não abriu nem fechou nada", quando o fato é "o pacote não sabe".
+REDES_FORA_DO_CADASTRO: dict[str, str] = {"smart_fit": "teto_coletor"}
+
+#: Por que uma linha da tabela não tem leitura de aberturas e fechamentos (`sem_cadastro`):
+#: `teto_coletor` (acima) ou `fora_da_cobertura` (rede que o coletor ainda não cobria no pacote).
+#: A tela tem um ramo para cada um (`tests/unit/test_paridade_crescimento_concorrencia_web.py`).
+MOTIVOS_SEM_CADASTRO: tuple[str, ...] = ("teto_coletor", "fora_da_cobertura")
+
+#: Por que a contagem semanal não está no card (`contagem.erro`): o arquivo não está no staging,
+#: ou está e não deu para ler.
+ERROS_CONTAGEM: tuple[str, ...] = ("ausente", "ilegivel")
 
 
 def _texto(serie: pd.Series) -> pd.Series:
@@ -415,3 +436,144 @@ def fim_validado(eventos: pd.DataFrame) -> str | None:
     """Último dia do período VALIDADO do cadastro (confiança alta)."""
     alta = eventos[eventos["fonte"].eq("cadastro") & eventos["confianca"].eq("alta")]
     return _limpo(alta["ate"].max()) if len(alta) else None
+
+
+def _resumo_contagem(semanal: Mapping[str, Any] | None) -> dict[str, Any] | None:
+    """O laudo da contagem semanal SEM os dicionários por rede, que viajam nas linhas da tabela."""
+    if semanal is None:
+        return None
+    return {
+        "erro": semanal.get("erro"),
+        "data": semanal.get("data"),
+        "data_anterior": semanal.get("data_anterior"),
+        "execucao_mais_recente": semanal.get("execucao_mais_recente"),
+        "linhas_sem_data": int(semanal.get("linhas_sem_data") or 0),
+        "recusadas": list(semanal.get("recusadas") or []),
+        "sem_coleta_nova": list(semanal.get("sem_coleta_nova") or []),
+        "seguradas": list(semanal.get("seguradas") or []),
+        "confirmadas": list(semanal.get("confirmadas") or []),
+        "nao_recoletadas": list(semanal.get("nao_recoletadas") or []),
+        "ausentes": list(semanal.get("ausentes") or []),
+        "removidas": list(semanal.get("removidas") or []),
+        "total_confirmado": bool(semanal.get("total_confirmado")),
+    }
+
+
+def crescimento_por_rede(
+    eventos: pd.DataFrame | None,
+    contagem_pacote: pd.DataFrame | None,
+    semanal: Mapping[str, Any] | None,
+    *,
+    excluir: Iterable[str] = (),
+) -> dict[str, Any]:
+    """O card "Crescimento da concorrência" (Visão Executiva) inteiro, menos as logos.
+
+    DUAS fontes, cada uma com a sua data, e a tela diz as duas:
+
+    - UNIDADES e VARIAÇÃO vêm da contagem SEMANAL do coletor (`semanal`, saída de
+      `saldo_rede.contagem_da_tela`), a mesma do relatório de domingo no Telegram, julgada POR REDE:
+      cada rede mostra a sua última contagem boa, e a variação é contra a foto anterior. Rede
+      segurada, não recoletada ou ausente nesta semana fica com o número anterior e sem variação;
+    - ABERTURAS, FECHAMENTOS, SALDO e EM BREVE vêm do pacote de setembro (`eventos`), o único lugar
+      com a lista de QUEM abriu e fechou. O saldo continua sendo aberturas menos fechamentos
+      (decisão do Vinicius, 05/11/2026): a variação da contagem é outra coluna, não um saldo novo.
+
+    Sem a contagem semanal (`semanal` ausente, com `erro` ou sem nenhuma contagem boa), as unidades caem
+    para a contagem do pacote, e `contagem_origem = "pacote"` faz a tela dizer de que data elas são.
+    Sem nenhuma das duas fontes, `disponivel = False`. Sem o pacote, mas com a semanal, a tabela sai
+    só com unidades e variação (`tem_cadastro = False`): o pacote não se regenera, e perdê-lo não
+    pode apagar a contagem.
+
+    `excluir` são os estúdios boutique (DEC-056), fora da contagem E da movimentação; a própria
+    Ultra nunca entra. Nacional por construção: nada aqui depende do recorte da carteira.
+    """
+    fora = {str(r).lower() for r in excluir}
+
+    def conta(rede: str) -> bool:
+        return rede.lower() not in fora and rede.lower() != "ultra"
+
+    pacote_ok = contagem_pacote is not None and len(contagem_pacote) > 0
+    semanal_ok = bool(semanal and semanal.get("data") and not semanal.get("erro"))
+    origem: str | None
+    totais: dict[str, int]
+    data_contagem: str | None
+    if semanal_ok:
+        assert semanal is not None
+        origem = "semanal"
+        totais = {str(r): int(n) for r, n in dict(semanal.get("unidades") or {}).items()}
+        data_contagem = str(semanal["data"])
+    elif pacote_ok:
+        assert contagem_pacote is not None
+        origem = "pacote"
+        totais = {
+            str(r): int(n) for r, n in zip(contagem_pacote["rede"], contagem_pacote["unidades"], strict=True)
+        }
+        data_contagem = str(contagem_pacote["data"].iloc[0])
+    else:
+        origem, totais, data_contagem = None, {}, None
+    totais = {r: n for r, n in totais.items() if conta(r)}
+
+    tem_cadastro = eventos is not None
+    resumo = _resumo_contagem(semanal)
+    if not tem_cadastro and origem is None:
+        return {
+            "disponivel": False,
+            "tem_cadastro": False,
+            "periodos": [],
+            "data_contagem": None,
+            "contagem_origem": None,
+            "contagem": resumo,
+            "redes": [],
+            "redes_mapeadas": 0,
+            "unidades_mapeadas": 0,
+            "variacao_total": None,
+            "agregadores": [],
+        }
+
+    movimentaram = [linha for linha in resumo_por_rede(eventos) if conta(str(linha["rede"]))]
+    # Cobertura do cadastro: as redes que o pacote CONHECIA (a contagem dele e quem teve evento).
+    # Rede que o coletor passou a cobrir depois não tem leitura de setembro, e zero ali afirmaria
+    # que ela não abriu nem fechou nada.
+    cobertura = {str(linha["rede"]) for linha in movimentaram}
+    if pacote_ok:
+        assert contagem_pacote is not None
+        cobertura |= {str(r) for r in contagem_pacote["rede"]}
+    for linha in movimentaram:
+        linha["unidades"] = totais.get(str(linha["rede"]))
+    redes = incluir_redes_sem_movimentacao(movimentaram, totais, fora)
+
+    variacao: Mapping[str, Any] = {}
+    seguradas: dict[str, int] = {}
+    if semanal_ok and semanal is not None:
+        variacao = semanal.get("variacao") or {}
+        # O número que ficou de fora vai na linha, para a dica da célula dizer qual foi.
+        seguradas = {str(s["rede"]): int(s["agora"]) for s in semanal.get("seguradas") or []}
+    total_variacao = 0
+    for linha in redes:
+        rede = str(linha["rede"])
+        v = variacao.get(rede)
+        linha["variacao"] = v["delta"] if v else None
+        linha["variacao_status"] = v["status"] if v else None
+        linha["lido"] = seguradas.get(rede)
+        # Só entra na soma o que a tela mostra com número: variou, estável e salto confirmado.
+        if v and v["status"] in ("variou", "estavel", "confirmada") and v["delta"] is not None:
+            total_variacao += int(v["delta"])
+        motivo = REDES_FORA_DO_CADASTRO.get(rede)
+        # Sem a contagem do pacote não há como saber quem ele cobria: aí nada é marcado.
+        if motivo is None and pacote_ok and rede not in cobertura:
+            motivo = "fora_da_cobertura"
+        linha["sem_cadastro"] = motivo if tem_cadastro else None
+    tem_variacao = semanal_ok and bool(resumo and resumo["data_anterior"])
+    return {
+        "disponivel": True,
+        "tem_cadastro": tem_cadastro,
+        "periodos": periodos(eventos),
+        "data_contagem": data_contagem,
+        "contagem_origem": origem,
+        "contagem": resumo,
+        "redes": redes,
+        "redes_mapeadas": sum(1 for linha in redes if linha["unidades"] is not None),
+        "unidades_mapeadas": sum(int(linha["unidades"] or 0) for linha in redes),
+        "variacao_total": total_variacao if tem_variacao else None,
+        "agregadores": resumo_agregadores(eventos),
+    }

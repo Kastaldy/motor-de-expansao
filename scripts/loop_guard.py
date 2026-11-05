@@ -258,10 +258,14 @@ _DENY_GOVERNANCA: list[tuple[str, str]] = [
     # nasceram fora da lista e um PR "Media" que mexesse so' neles passaria limpo.
     # `alcance_ponto` (DEC-074: raio de 2 km, isocrona de 10 min e o FATOR que escala as
     # reguas absolutas) entrou no MESMO PR que o criou, pela mesma razao.
+    # `saldo_rede` e `movimentacao_concorrencia` entraram em 2026-11-05, no PR que ligou o card
+    # "Crescimento da concorrencia" da Visao Executiva a contagem semanal: o primeiro decide qual
+    # contagem e qual variacao de cada rede a tela mostra (a guarda de coleta quebrada), o segundo
+    # monta o card. Antes eles nao tinham consumidor de producao, e sairiam LIMPOS.
     (
         r"^src/motor_expansao/dashboard/"
         r"(data|utils|censo_point|censo_map|censo_report|mercado_raio|geometria_desenhada|"
-        r"alcance_ponto)\.py$",
+        r"alcance_ponto|saldo_rede|movimentacao_concorrencia)\.py$",
         "camada que calcula/exibe os numeros do dashboard",
     ),
     (r"^src/motor_expansao/api/", "API/bot servidos em producao"),

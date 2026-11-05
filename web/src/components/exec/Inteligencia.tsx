@@ -1,6 +1,22 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import type { ReactNode } from 'react'
 
+import {
+  AVISO_NACIONAL,
+  avisosDaContagem,
+  celulaCadastro,
+  celulaVariacao,
+  diaMes,
+  hojeLocal,
+  janela,
+  nomeRede,
+  rodapeCrescimento,
+  rotuloCadastro,
+  rotuloContagem,
+  temVariacao,
+  textoJanela,
+} from '../../lib/crescimento-concorrencia'
+import type { ColunaCadastro, TomVariacao } from '../../lib/crescimento-concorrencia'
 import { brl, brlCurto, num, pct, pctVar } from '../../lib/format'
 import type {
   RedeInteligencia,
@@ -94,16 +110,9 @@ export function Chip({
   )
 }
 
-/** "smart_fit" -> "Smart Fit". O slug da rede vem do coletor. */
-export function nomeRede(slug: string | null | undefined): string {
-  if (!slug) return '—'
-  return slug
-    .replace(/[_-]+/g, ' ')
-    .split(' ')
-    .filter(Boolean)
-    .map((p) => p.charAt(0).toUpperCase() + p.slice(1))
-    .join(' ')
-}
+// `nomeRede` ("smart_fit" -> "Smart Fit") mora em `lib/crescimento-concorrencia`, onde os textos do
+// card de crescimento a usam com teste; as fichas continuam importando daqui.
+export { nomeRede }
 
 export function metros(v: number | null | undefined): string {
   if (v === null || v === undefined || !Number.isFinite(v)) return '—'
@@ -894,14 +903,41 @@ function RiscoRetencao({ dados, onUnidade }: { dados: RedeInteligencia; onUnidad
   )
 }
 
-/* ======================= MOVIMENTAÇÃO DA CONCORRÊNCIA ======================= */
+/* ======================= CRESCIMENTO DA CONCORRÊNCIA ======================= */
 
+/** Cor da variação: crescimento da concorrente pesa contra a Ultra (coral), queda alivia (verde). */
+const COR_VARIACAO: Record<TomVariacao, string> = {
+  // Os tokens de TEXTO (`-tx`/`-text`): os de série ficam em 3,4:1 no tema claro.
+  mais: 'var(--gr-coral-tx)',
+  menos: 'var(--pos-text)',
+  zero: 'var(--tx-off)',
+  // "nova", "segurada", "sem coleta": rótulo com SIGNIFICADO, então nunca o token de de-ênfase.
+  info: 'var(--tx-muted)',
+  vazio: 'var(--tx-off)',
+}
+
+const COLUNAS_CADASTRO: ColunaCadastro[] = ['aberturas', 'fechamentos', 'saldo', 'em_breve']
+
+/* Duas fontes, cada uma com a sua data, e o cabeçalho diz qual é qual (diagnóstico de 04/11/2026:
+   o card lia só o pacote de setembro e ficou oito domingos parado em 06/09):
+   - "Contagem de DD/MM": unidades e variação da contagem semanal do coletor, a última contagem
+     boa de cada rede;
+   - "Cadastro de DD/MM a DD/MM": aberturas, fechamentos, saldo e "Em breve" do pacote fixo.
+   Nacional de propósito (decisão de 05/11/2026), e a tela diz isso. Os textos moram em
+   `lib/crescimento-concorrencia`, testados sem DOM. */
 function MovimentacaoConcorrencia({ dados }: { dados: RedeInteligencia }) {
   const m = dados.movimentacao
   const [todas, setTodas] = useState(false)
-  // Padrão = só as fotos VALIDADAS (02/08 a 06/09). A foto de 28/05 a 02/08 teve troca de
-  // coletor em várias redes: com ela, a SkyFit lia +207 com UMA abertura conferida.
+  // Padrão = só as fotos VALIDADAS do cadastro. A foto anterior teve troca de coletor em várias
+  // redes: com ela, a SkyFit lia +207 com UMA abertura conferida.
   const [comCautela, setComCautela] = useState(false)
+  const comCadastro = !!m?.tem_cadastro
+  const cautela = janela(m?.periodos, 'cadastro', 'cautela')
+  const comVariacao = temVariacao(m)
+  const dataAnterior = m?.contagem?.data_anterior ?? null
+  // A data de hoje liga o aviso de contagem velha: sem ela, um histórico que parou de chegar
+  // deixaria o card parado de novo sem denúncia nenhuma. No fuso local, e nunca em UTC.
+  const avisos = avisosDaContagem(m, hojeLocal())
   const redes = (m?.redes ?? [])
     .map((r) => {
       const aberturas = comCautela ? r.aberturas : r.aberturas_conferidas
@@ -922,20 +958,30 @@ function MovimentacaoConcorrencia({ dados }: { dados: RedeInteligencia }) {
     })
   const visiveis = todas ? redes : redes.slice(0, 12)
   const wellhub = (m?.agregadores ?? []).filter((a) => a.agregador === 'wellhub')
+  const janelaWellhub = textoJanela(janela(m?.periodos, 'wellhub'))
   const celula = { padding: '0 8px', borderBottom: '1px solid var(--line-soft)', textAlign: 'right' as const, whiteSpace: 'nowrap' as const }
   const titulo = { ...celula, padding: '0 8px 7px', font: '600 9.5px/1.2 var(--f-ui)', letterSpacing: '.05em', textTransform: 'uppercase' as const, color: 'var(--tx-muted)', borderBottom: '1px solid var(--line-mid)' }
+  // A linha de cima do cabeçalho diz de QUE DATA é cada grupo de colunas.
+  const grupo = { ...titulo, textAlign: 'center' as const, padding: '0 8px 5px', borderBottom: '1px solid var(--line-soft)' }
   const saldo = (v: number) => (
-    <span style={{ color: v > 0 ? 'var(--gr-coral)' : v < 0 ? 'var(--pos)' : 'var(--tx-off)', fontWeight: 700 }}>
+    <span style={{ color: v > 0 ? 'var(--gr-coral-tx)' : v < 0 ? 'var(--pos-text)' : 'var(--tx-off)', fontWeight: 700 }}>
       {v > 0 ? `+${num(v)}` : num(v)}
     </span>
+  )
+  const zero = <span style={{ color: 'var(--tx-off)' }}>0</span>
+  // "—" e não 0: a linha não tem leitura de cadastro, e zero afirmaria que a rede não se mexeu.
+  const semLeitura = (motivo: string | null) => (
+    <span title={motivo ?? undefined} style={{ color: 'var(--tx-off)', cursor: motivo ? 'help' : undefined }}>—</span>
   )
   return (
     <Glass style={CARD}>
       <Titulo
         extra={
-          <Chip ativo={comCautela} onClick={() => setComCautela(!comCautela)}>
-            Incluir 28/05 a 02/08 (não validado)
-          </Chip>
+          comCadastro && cautela ? (
+            <Chip ativo={comCautela} onClick={() => setComCautela(!comCautela)}>
+              Incluir {textoJanela(cautela)} (não validado)
+            </Chip>
+          ) : undefined
         }
       >
         Crescimento da concorrência
@@ -943,81 +989,138 @@ function MovimentacaoConcorrencia({ dados }: { dados: RedeInteligencia }) {
       {!m?.disponivel ? (
         <Lide>Histórico de movimentação da concorrência ausente neste ambiente.</Lide>
       ) : (
-        <div style={{ display: 'flex', gap: 22, flexWrap: 'wrap', alignItems: 'flex-start' }}>
-          <div style={{ flex: '3 1 520px', minWidth: 0, overflowX: 'auto' }}>
-            <table style={{ width: '100%', borderCollapse: 'collapse', font: '500 11.5px/1 var(--f-num)', color: 'var(--tx-sub)' }}>
-              <thead>
-                <tr>
-                  <th style={{ ...titulo, textAlign: 'left' }}>Rede</th>
-                  <th style={titulo}>Unidades</th>
-                  <th style={titulo}>Aberturas</th>
-                  <th style={titulo}>Fechamentos</th>
-                  <th style={titulo}>Saldo</th>
-                  <th style={titulo}>Em breve</th>
-                </tr>
-              </thead>
-              <tbody>
-                {visiveis.map((r) => (
-                  <tr key={r.rede} style={{ height: 30 }}>
-                    <td style={{ ...celula, textAlign: 'left' }}>
-                      <span style={{ display: 'inline-flex', alignItems: 'center', gap: 8, font: '500 12px/1 var(--f-ui)', color: 'var(--tx-strong)' }}>
-                        {r.logo ? (
-                          <img src={r.logo} alt="" width={18} height={18} style={{ display: 'block', flexShrink: 0 }} />
-                        ) : (
-                          <span style={{ width: 18, height: 18, borderRadius: 4, background: 'var(--ac-a12)', flexShrink: 0 }} />
-                        )}
-                        {nomeRede(r.rede)}
-                      </span>
-                    </td>
-                    <td className="num" style={{ ...celula, color: 'var(--tx-strong)' }}>{r.unidades != null ? num(r.unidades) : '—'}</td>
-                    <td className="num" style={celula}>{r.aberturas ? num(r.aberturas) : <span style={{ color: 'var(--tx-off)' }}>0</span>}</td>
-                    <td className="num" style={celula}>{r.fechamentos ? num(r.fechamentos) : <span style={{ color: 'var(--tx-off)' }}>0</span>}</td>
-                    <td className="num" style={celula}>{saldo(r.saldo)}</td>
-                    <td className="num" style={celula}>{r.em_breve ? num(r.em_breve) : <span style={{ color: 'var(--tx-off)' }}>0</span>}</td>
+        <>
+          <Lide>{AVISO_NACIONAL}</Lide>
+          {avisos.map((a) => (
+            <div
+              key={a.texto}
+              role={a.tom === 'alerta' ? 'status' : undefined}
+              style={{
+                margin: '-4px 0 10px',
+                padding: '2px 0 2px 9px',
+                borderLeft: `2px solid ${a.tom === 'alerta' ? 'var(--warn)' : 'var(--line-mid)'}`,
+                font: '400 11.5px/1.5 var(--f-ui)',
+                color: a.tom === 'alerta' ? 'var(--tx-strong)' : 'var(--tx-narrative)',
+              }}
+            >
+              {a.texto}
+            </div>
+          ))}
+          <div style={{ display: 'flex', gap: 22, flexWrap: 'wrap', alignItems: 'flex-start' }}>
+            <div style={{ flex: '3 1 520px', minWidth: 0, overflowX: 'auto' }}>
+              <table style={{ width: '100%', borderCollapse: 'collapse', font: '500 11.5px/1 var(--f-num)', color: 'var(--tx-sub)' }}>
+                {/* Sem <colgroup>, o scope="colgroup" do cabeçalho não liga o grupo às colunas. */}
+                <colgroup>
+                  <col />
+                </colgroup>
+                <colgroup span={comVariacao ? 2 : 1} />
+                {comCadastro && <colgroup span={4} />}
+                <thead>
+                  <tr>
+                    {/* Canto vazio como célula comum (e não `aria-hidden`): fora da árvore de
+                        acessibilidade, ele empurrava os grupos uma coluna para a esquerda. */}
+                    <td style={{ ...grupo, borderBottom: 'none' }} />
+                    <th scope="colgroup" colSpan={comVariacao ? 2 : 1} style={grupo}>{rotuloContagem(m)}</th>
+                    {comCadastro && (
+                      <th scope="colgroup" colSpan={4} style={grupo}>{rotuloCadastro(m, comCautela)}</th>
+                    )}
                   </tr>
+                  <tr>
+                    <th scope="col" style={{ ...titulo, textAlign: 'left' }}>Rede</th>
+                    <th scope="col" style={titulo}>Unidades</th>
+                    {comVariacao && (
+                      <th scope="col" style={titulo} title={`Variação da contagem desde ${diaMes(dataAnterior)}`}>
+                        Desde {diaMes(dataAnterior)}
+                      </th>
+                    )}
+                    {comCadastro && (
+                      <>
+                        <th scope="col" style={titulo}>Aberturas</th>
+                        <th scope="col" style={titulo}>Fechamentos</th>
+                        <th scope="col" style={titulo}>Saldo</th>
+                        <th scope="col" style={titulo}>Em breve</th>
+                      </>
+                    )}
+                  </tr>
+                </thead>
+                <tbody>
+                  {visiveis.map((r) => {
+                    const v = celulaVariacao(r, dataAnterior)
+                    return (
+                      <tr key={r.rede} style={{ height: 30 }}>
+                        <th scope="row" style={{ ...celula, textAlign: 'left', fontWeight: 'inherit' }}>
+                          <span style={{ display: 'inline-flex', alignItems: 'center', gap: 8, font: '500 12px/1 var(--f-ui)', color: 'var(--tx-strong)' }}>
+                            {r.logo ? (
+                              <img src={r.logo} alt="" width={18} height={18} style={{ display: 'block', flexShrink: 0 }} />
+                            ) : (
+                              <span style={{ width: 18, height: 18, borderRadius: 4, background: 'var(--ac-a12)', flexShrink: 0 }} />
+                            )}
+                            {nomeRede(r.rede)}
+                          </span>
+                        </th>
+                        <td className="num" style={{ ...celula, color: 'var(--tx-strong)' }}>{r.unidades != null ? num(r.unidades) : '—'}</td>
+                        {comVariacao && (
+                          <td className="num" style={celula} title={v.titulo}>
+                            <span style={{ color: COR_VARIACAO[v.tom], fontWeight: v.tom === 'mais' || v.tom === 'menos' ? 700 : 400 }}>
+                              {v.texto}
+                            </span>
+                          </td>
+                        )}
+                        {comCadastro &&
+                          COLUNAS_CADASTRO.map((coluna) => {
+                            // A decisão "número, 0 ou —" é da lib (`celulaCadastro`), testada.
+                            const c = celulaCadastro(r, coluna)
+                            return (
+                              <td key={coluna} className="num" style={celula}>
+                                {c.tipo === 'sem_leitura'
+                                  ? semLeitura(c.titulo ?? null)
+                                  : coluna === 'saldo'
+                                    ? saldo(c.valor)
+                                    : c.tipo === 'zero'
+                                      ? zero
+                                      : num(c.valor)}
+                              </td>
+                            )
+                          })}
+                      </tr>
+                    )
+                  })}
+                </tbody>
+              </table>
+              {redes.length > 12 && (
+                <div style={{ marginTop: 8 }}>
+                  <Chip ativo={todas} onClick={() => setTodas(!todas)}>
+                    {todas ? 'Mostrar menos' : `Ver as ${num(redes.length)} redes`}
+                  </Chip>
+                </div>
+              )}
+            </div>
+
+            {comCadastro && (
+              <div style={{ flex: '1 1 240px', minWidth: 0, display: 'flex', flexDirection: 'column', gap: 10 }}>
+                <div style={{ font: '600 9.5px/1.2 var(--f-ui)', letterSpacing: '.05em', textTransform: 'uppercase', color: 'var(--tx-muted)' }}>
+                  Agregadores{janelaWellhub ? ` · ${janelaWellhub}` : ''}
+                </div>
+                {wellhub.map((a) => (
+                  <div key={a.grupo} style={{ padding: '10px 12px', border: '1px solid var(--line-soft)', borderRadius: 'var(--r-md)' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 7, font: '600 12px/1.2 var(--f-ui)', color: 'var(--tx-strong)' }}>
+                      <img src="/logo-wellhub.png" alt="" width={16} height={16} style={{ display: 'block' }} />
+                      Wellhub · {a.grupo === 'independentes' ? 'independentes' : 'unidades de rede'}
+                    </div>
+                    <div className="num" style={{ marginTop: 6, font: '400 11.5px/1.5 var(--f-num)', color: 'var(--tx-sub)' }}>
+                      {num(a.entradas)} entraram · {num(a.saidas)} saíram · saldo {saldo(a.saldo)}
+                    </div>
+                  </div>
                 ))}
-              </tbody>
-            </table>
-            {redes.length > 12 && (
-              <div style={{ marginTop: 8 }}>
-                <Chip ativo={todas} onClick={() => setTodas(!todas)}>
-                  {todas ? 'Mostrar menos' : `Ver as ${num(redes.length)} redes`}
-                </Chip>
+                <div style={{ padding: '10px 12px', border: '1px dashed var(--line-soft)', borderRadius: 'var(--r-md)', font: '400 11.5px/1.5 var(--f-ui)', color: 'var(--tx-muted)' }}>
+                  TotalPass · sem histórico de entradas e saídas: o coletor do TotalPass não roda na coleta semanal.
+                </div>
               </div>
             )}
           </div>
-
-          <div style={{ flex: '1 1 240px', minWidth: 0, display: 'flex', flexDirection: 'column', gap: 10 }}>
-            <div style={{ font: '600 9.5px/1.2 var(--f-ui)', letterSpacing: '.05em', textTransform: 'uppercase', color: 'var(--tx-muted)' }}>
-              Agregadores
-            </div>
-            {wellhub.map((a) => (
-              <div key={a.grupo} style={{ padding: '10px 12px', border: '1px solid var(--line-soft)', borderRadius: 'var(--r-md)' }}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: 7, font: '600 12px/1.2 var(--f-ui)', color: 'var(--tx-strong)' }}>
-                  <img src="/logo-wellhub.png" alt="" width={16} height={16} style={{ display: 'block' }} />
-                  Wellhub · {a.grupo === 'independentes' ? 'independentes' : 'unidades de rede'}
-                </div>
-                <div className="num" style={{ marginTop: 6, font: '400 11.5px/1.5 var(--f-num)', color: 'var(--tx-sub)' }}>
-                  {num(a.entradas)} entraram · {num(a.saidas)} saíram · saldo {saldo(a.saldo)}
-                </div>
-              </div>
-            ))}
-            <div style={{ padding: '10px 12px', border: '1px dashed var(--line-soft)', borderRadius: 'var(--r-md)', font: '400 11.5px/1.5 var(--f-ui)', color: 'var(--tx-muted)' }}>
-              TotalPass · sem histórico de entradas e saídas ainda
-            </div>
-          </div>
-        </div>
+        </>
       )}
-      <Rodape>
-        {m?.unidades_mapeadas
-          ? `Mercado mapeado: ${num(m.unidades_mapeadas)} unidades em ${num(m.redes_mapeadas)} redes — rede sem movimentação no período aparece zerada. `
-          : ''}
-        Redes: fotos do cadastro de 02/08 a 06/09, validadas contra a contagem oficial (a foto anterior entra só pelo botão);
-        unidades = contagem oficial{m?.data_contagem ? ` de ${m.data_contagem.slice(8, 10)}/${m.data_contagem.slice(5, 7)}` : ''}.
-        &quot;Em breve&quot;: anúncios ainda não inaugurados. Wellhub: 31/08 a 12/09. A Smart Fit conta na coluna de unidades, mas está
-        travada no teto de 1.000 do coletor e fica fora da movimentação, então o total é PISO; estúdios boutique fora (DEC-056);
-        saída do site nem sempre é fechamento.
-      </Rodape>
+      {m?.disponivel && <Rodape>{rodapeCrescimento(m, comCautela)}</Rodape>}
     </Glass>
   )
 }
