@@ -60,8 +60,63 @@ def carregar_csv(arquivo: Path, rede: str) -> pd.DataFrame:
     return df
 
 
-def normalizar(dfs: list[pd.DataFrame]) -> pd.DataFrame:
+# Origem da coordenada de cada linha (coluna de auditoria `coord_origem`).
+COORD_DA_COLETA = "coleta"
+COORD_DA_SEMANA_ANTERIOR = "semana_anterior"
+COORD_AUSENTE = "sem_coordenada"
+
+
+def _chave_unidade(rede: pd.Series, nome: pd.Series) -> pd.Series:
+    """Chave `rede|nome` tolerante a caixa e espaco (o coletor alterna `POWER FIT X` / `Power Fit X`)."""
+    nome_norm = nome.fillna("").astype(str).str.strip().str.casefold().str.replace(r"\s+", " ", regex=True)
+    return rede.astype(str) + "|" + nome_norm
+
+
+def herdar_coordenadas_da_semana_anterior(
+    df: pd.DataFrame, anterior: pd.DataFrame | None
+) -> pd.DataFrame:
+    """Academia que veio SEM coordenada nesta coleta herda a da semana anterior.
+
+    A busca de localizacao do coletor falha de forma intermitente: em 2026-11-01, 10 academias
+    que continuavam no site da rede (26fit Capao da Canoa, Live Franceses, Cristal Guarulhos...)
+    vieram com latitude/longitude vazias, sairam do mapa e derrubaram a contagem de pins
+    desenhaveis -- o regen reprovou e o mercado da semana nao foi publicado.
+
+    A academia so' herda se continua LISTADA nesta coleta (fechou -> sai do CSV e nao volta) e
+    se a chave `rede|nome` aponta para UMA coordenada valida na semana anterior e UMA linha
+    nesta. Chave ambigua nao herda: escolher uma das coordenadas seria inventar endereco.
+    Coordenada que veio na coleta nunca e' sobrescrita (a academia pode ter mudado de lugar).
+
+    `anterior` e' o `concorrentes_mapeados.parquet` publicado; sem ele nada muda. Funcao pura.
+    """
+    out = df.copy()
+    valida = out.apply(lambda r: _coord_valida(r["lat"], r["lng"]), axis=1).astype(bool)
+    out["coord_origem"] = COORD_DA_COLETA
+    out.loc[~valida, "coord_origem"] = COORD_AUSENTE
+    if anterior is None or anterior.empty or valida.all():
+        return out
+    if not {"rede", "nome_unidade", "lat", "lng"} <= set(anterior.columns):
+        return out
+
+    ant = anterior[["rede", "nome_unidade", "lat", "lng"]].copy()
+    ant = ant[ant.apply(lambda r: _coord_valida(r["lat"], r["lng"]), axis=1).astype(bool)]
+    ant["_chave"] = _chave_unidade(ant["rede"], ant["nome_unidade"])
+    ant = ant.drop_duplicates(subset=["_chave", "lat", "lng"])
+    ant = ant[~ant["_chave"].duplicated(keep=False)].set_index("_chave")
+
+    chave = _chave_unidade(out["rede"], out["nome_unidade"])
+    unica_agora = ~chave.duplicated(keep=False)
+    herda = ~valida & unica_agora & chave.isin(ant.index)
+    if herda.any():
+        out.loc[herda, "lat"] = chave[herda].map(ant["lat"]).to_numpy(dtype="float64")
+        out.loc[herda, "lng"] = chave[herda].map(ant["lng"]).to_numpy(dtype="float64")
+        out.loc[herda, "coord_origem"] = COORD_DA_SEMANA_ANTERIOR
+    return out
+
+
+def normalizar(dfs: list[pd.DataFrame], anterior: pd.DataFrame | None = None) -> pd.DataFrame:
     df = pd.concat(dfs, ignore_index=True)
+    df = herdar_coordenadas_da_semana_anterior(df, anterior)
 
     df["flag_coord_valida"] = df.apply(
         lambda r: _coord_valida(r["lat"], r["lng"]), axis=1
@@ -107,7 +162,7 @@ def normalizar(dfs: list[pd.DataFrame]) -> pd.DataFrame:
         "concorrente_id", "rede", "nome_unidade", "lat", "lng",
         "data_coleta", "arquivo_origem",
         "flag_coord_valida", "flag_duplicado_rede_coord",
-        "status_registro", "hex_id_res7",
+        "status_registro", "hex_id_res7", "coord_origem",
     ]
     return df[cols]
 
@@ -120,6 +175,11 @@ def validar(df: pd.DataFrame) -> None:
     print(f"\nDescartados coord invalida: {(df['status_registro'] == 'descartado_coord').sum()}")
     print(f"Descartados duplicado: {(df['status_registro'] == 'descartado_duplicado').sum()}")
     print(f"Registros validos: {(df['status_registro'] == 'valido').sum()}")
+    if "coord_origem" in df.columns:
+        herdadas = df["coord_origem"] == COORD_DA_SEMANA_ANTERIOR
+        print(f"Coordenada herdada da semana anterior: {int(herdadas.sum())}")
+        for _, r in df.loc[herdadas, ["rede", "nome_unidade"]].iterrows():
+            print(f"  herdada: {r['rede']} | {r['nome_unidade']}")
     print(f"\nColunas: {list(df.columns)}")
     assert set(df.columns) >= {
         "concorrente_id", "rede", "nome_unidade", "lat", "lng",
@@ -152,7 +212,18 @@ def main():
         print("Nenhum arquivo encontrado. Abortando.")
         sys.exit(1)
 
-    df_final = normalizar(dfs)
+    # O parquet que esta' em OUT_PATH e' o da rodada anterior (no regen da DEC-059, a copia
+    # REAL do publicado): e' dele que sai a coordenada de quem veio sem nesta coleta.
+    anterior = None
+    if OUT_PATH.exists():
+        try:
+            anterior = pd.read_parquet(OUT_PATH, columns=["rede", "nome_unidade", "lat", "lng"])
+        except Exception as exc:  # noqa: BLE001 - sem a semana anterior, segue sem herdar
+            print(f"AVISO: semana anterior ilegivel ({type(exc).__name__}: {exc}); nenhuma coordenada herdada")
+    else:
+        print("AVISO: sem semana anterior em OUT_PATH; nenhuma coordenada herdada")
+
+    df_final = normalizar(dfs, anterior=anterior)
     validar(df_final)
 
     OUT_PATH.parent.mkdir(parents=True, exist_ok=True)
