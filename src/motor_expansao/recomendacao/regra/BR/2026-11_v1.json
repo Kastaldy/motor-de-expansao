@@ -1,0 +1,20 @@
+{
+  "versao": "2026-11_v1",
+  "pais": "BR",
+  "dec": "DEC-077",
+  "aprovado_por": "Felipe Silva (05/11/2026, emenda 2 da DEC-077: no Premium, o score censitario >= 50 sai e entra renda domiciliar >= R$ 5.000; populacao minima de 10.000 e demais cortes mantidos)",
+  "vagas_por_segmento": 5,
+  "mata_virgem": {
+    "renda_domiciliar_min": 4500.0,
+    "residual_min": 2000.0,
+    "populacao_min": null,
+    "exige_residual_medido": true
+  },
+  "premium": {
+    "renda_domiciliar_min": 5000.0,
+    "populacao_min": 10000.0,
+    "exige_residual_medido": true
+  },
+  "_unidades": "renda domiciliar em R$/mes por domicilio (conta do card, motor_expansao.renda.hex, com o k da malha), a MESMA nos dois segmentos; residual em alunos (oferta_efetiva_disponivel); populacao em habitantes do Censo 2022 (pop_total_setor_2022).",
+  "_nota": "Limites inclusivos no valor cheio. Independente do RENDA_MIN de config.py (ficha do ponto/M1), que nao muda. Mudar qualquer numero = versao nova + emenda da DEC-077."
+}

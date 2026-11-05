@@ -1,4 +1,8 @@
-"""Contrato da recomendacao unica (DEC-077): regua BR v1 ancorada, nucleo puro, empacotamento.
+"""Contrato da recomendacao unica (DEC-077): reguas BR ancoradas, nucleo puro, empacotamento.
+
+- VIGENTE = 2026-11_v1 (emenda 2 da DEC-077, 05/11/2026): no Premium o score censitario >= 50
+  sai e entra renda domiciliar >= R$ 5.000; o resto da v1 (inclusive a populacao minima de
+  10.000 do Premium) fica igual. A v1 segue no pacote, ancorada, para rollback.
 
 - A regua BR v1 e a aprovada no GATE 2 (21/10/2026): 5 vagas; renda domiciliar >= 4.500;
   residual >= 2.000 MEDIDO; score censitario >= 50; populacao >= 10.000; residual estimado
@@ -36,7 +40,28 @@ def _sem_fixacao(monkeypatch: pytest.MonkeyPatch):
     limpar_cache()
 
 
-def test_regua_br_v1_ancorada() -> None:
+def test_regua_br_vigente_ancorada() -> None:
+    r = carregar_regra("BR")
+    assert r is not None
+    assert r.versao == "2026-11_v1"
+    assert r.pais == "BR"
+    assert r.dec == "DEC-077"
+    assert r.vagas_por_segmento == 5
+    assert r.mata_virgem.renda_domiciliar_min == 4500.0
+    assert r.mata_virgem.residual_min == 2000.0
+    assert r.mata_virgem.populacao_min is None
+    assert r.mata_virgem.exige_residual_medido is True
+    assert r.premium.renda_domiciliar_min == 5000.0
+    assert r.premium.score_min is None
+    assert r.premium.populacao_min == 10000.0
+    assert r.premium.exige_residual_medido is True
+    assert r.fixada_por_env is False
+
+
+def test_regua_br_v1_ancorada(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A v1 (score censitario >= 50 no Premium) fica no pacote para rollback por env."""
+    monkeypatch.setenv(carregador_mod.ENV_VERSAO, "2026-10_v1")
+    limpar_cache()
     r = carregar_regra("BR")
     assert r is not None
     assert r.versao == "2026-10_v1"
@@ -48,14 +73,15 @@ def test_regua_br_v1_ancorada() -> None:
     assert r.mata_virgem.populacao_min is None
     assert r.mata_virgem.exige_residual_medido is True
     assert r.premium.score_min == 50.0
+    assert r.premium.renda_domiciliar_min is None
     assert r.premium.populacao_min == 10000.0
     assert r.premium.exige_residual_medido is True
-    assert r.fixada_por_env is False
+    assert r.fixada_por_env is True
 
 
-def test_vigente_br_aponta_a_v1() -> None:
+def test_vigente_br_aponta_a_2026_11_v1() -> None:
     vigente = (_PACOTE / "regra" / "BR" / "VIGENTE").read_text(encoding="utf-8").strip()
-    assert vigente == "2026-10_v1"
+    assert vigente == "2026-11_v1"
 
 
 def test_so_o_brasil_tem_regua() -> None:

@@ -44,7 +44,10 @@ def regra_teste(
     score_min: float = 50.0,
     premium_pop_min: float | None = 10000.0,
     premium_exige_medido: bool = True,
+    premium_renda_min: float | None = None,
 ) -> Regra:
+    """Regua de teste. Default = BR 2026-10_v1 (Premium por score); com `premium_renda_min`, o
+    Premium passa ao criterio de renda da BR 2026-11_v1 (emenda 2 da DEC-077) e o score sai."""
     return Regra(
         versao=versao,
         pais="BR",
@@ -58,14 +61,17 @@ def regra_teste(
             exige_residual_medido=mv_exige_medido,
         ),
         premium=ReguaPremium(
-            score_min=score_min,
+            score_min=None if premium_renda_min is not None else score_min,
             populacao_min=premium_pop_min,
             exige_residual_medido=premium_exige_medido,
+            renda_domiciliar_min=premium_renda_min,
         ),
     )
 
 
 REGRA_V1 = regra_teste()
+#: BR 2026-11_v1: Premium por renda domiciliar >= 5.000 (populacao minima mantida).
+REGRA_2026_11 = regra_teste(versao="2026-11_v1", premium_renda_min=5000.0)
 
 
 def com(regra: Regra, **mudancas: Any) -> Regra:

@@ -10,8 +10,10 @@ A regra (fechada pelo usuario nos GATES 1 e 2; DEC-077) -- numeros na regua, nun
 
     Mata Virgem: renda domiciliar >= R  E  residual >= S  E  residual MEDIDO
                  ordem: residual desc, populacao desc, hex_id asc
-    Premium:     NAO e Mata Virgem (PROVADAMENTE)  E  score censitario >= P  E  populacao >= Pm
+    Premium:     NAO e Mata Virgem (PROVADAMENTE)  E  renda domiciliar >= Rp  E  populacao >= Pm
                  ordem: populacao desc, score desc, hex_id asc
+                 (BR 2026-11_v1, emenda 2 da DEC-077; ate a 2026-10_v1 o criterio era
+                 score censitario >= P, e a versao antiga segue aplicavel para rollback)
 
 - Limites inclusivos no valor CHEIO (float64 exato; Float32 de origem e convertido sem
   arredondar). Empate e resolvido pela chave seguinte -- "vence o maior numero absoluto" -- e o
@@ -39,7 +41,7 @@ from typing import Any, Literal
 import numpy as np
 import pandas as pd
 
-from motor_expansao.recomendacao.carregador import Regra
+from motor_expansao.recomendacao.carregador import Regra, ReguaPremium
 
 # --------------------------------------------------------------------------------
 # Contrato de colunas (particao enriquecida `hexagonos_dashboard_enriquecido/uf=XX`)
@@ -106,6 +108,8 @@ CHAVES_SEM_DADO: dict[str, tuple[str, ...]] = {
         "indeterminado_mv",
         "residual_estimado",
         "sem_populacao",
+        # So um dos dois e alcancavel, conforme o criterio da regua (o outro sai zero).
+        "sem_renda",
         "sem_score",
     ),
 }
@@ -383,9 +387,29 @@ class _Mascaras:
     premium_candidato_por_valor: pd.Series
 
 
+def _criterio_premium(
+    e: _Entrada, pr: ReguaPremium, renda_ok: pd.Series, score_ok: pd.Series
+) -> pd.Series:
+    """"Bairro bom" do Premium pelo criterio que a regua declara (renda OU score, nunca os dois)."""
+    if pr.renda_domiciliar_min is not None:
+        return renda_ok & (e.renda >= pr.renda_domiciliar_min)
+    if pr.score_min is None:  # inalcancavel: o carregador exige exatamente um criterio
+        raise ValueError("regua do Premium sem criterio (renda_domiciliar_min ou score_min)")
+    return score_ok & (e.score >= pr.score_min)
+
+
+def _dado_do_criterio_premium(
+    pr: ReguaPremium, renda_ok: pd.Series, score_ok: pd.Series
+) -> tuple[str, pd.Series]:
+    """Contador de "faltou o dado do criterio" e a mascara de quem TEM esse dado."""
+    if pr.renda_domiciliar_min is not None:
+        return "sem_renda", renda_ok
+    return "sem_score", score_ok
+
+
 def _mascaras(e: _Entrada, regra: Regra, *, renda_disponivel: bool) -> _Mascaras:
     mv, pr = regra.mata_virgem, regra.premium
-    r_min, s_min, p_min = mv.renda_domiciliar_min, mv.residual_min, pr.score_min
+    r_min, s_min = mv.renda_domiciliar_min, mv.residual_min
     falso = pd.Series(False, index=e.renda.index, dtype=bool)
 
     renda_ok = e.renda.notna() if renda_disponivel else falso
@@ -422,7 +446,7 @@ def _mascaras(e: _Entrada, regra: Regra, *, renda_disponivel: bool) -> _Mascaras
     estimado_barrado_pr = ~e.medido if pr.exige_residual_medido else falso
     # Passaria no Premium pelos proprios numeros (sem olhar a exclusividade com o Mata Virgem).
     premium_candidato_por_valor = (
-        score_ok & (e.score >= p_min) & pop_pr_passa & ~estimado_barrado_pr
+        _criterio_premium(e, pr, renda_ok, score_ok) & pop_pr_passa & ~estimado_barrado_pr
     )
     premium_elegivel = prova_nao_mv & premium_candidato_por_valor
 
@@ -466,9 +490,10 @@ def classificar(hexes: pd.DataFrame, regra: Regra, *, renda_disponivel: bool) ->
 def linhas_que_precisam_de_renda(hexes: pd.DataFrame, regra: Regra) -> pd.Series:
     """Mascara das linhas em que a renda pode DECIDIR alguma coisa (o resto nao precisa dela).
 
-    Residual nulo ou >= S (pode ser Mata Virgem, ou so a renda prova que nao e), ou score >= P
-    com populacao >= minimo do Premium. No Brasil inteiro sao ~3,5 mil linhas (snapshot de
-    outubro/2026): a renda do card e uma conta por linha, e calcula-la para 1,5 milhao de
+    Residual nulo ou >= S (pode ser Mata Virgem, ou so a renda prova que nao e), ou candidato
+    ao Premium com populacao >= minimo: com o criterio de RENDA (BR 2026-11_v1) e a renda que
+    decide, entao toda linha no piso de populacao precisa dela; com o de score (2026-10_v1), so
+    as de score >= P. A renda do card e uma conta por linha, e calcula-la para 1,5 milhao de
     hexagonos seria trabalho jogado fora.
     """
     validar_colunas(hexes, renda_disponivel=False)
@@ -480,7 +505,10 @@ def linhas_que_precisam_de_renda(hexes: pd.DataFrame, regra: Regra) -> pd.Series
     if pr.populacao_min is not None:
         pop_pr = pop_pr & (populacao >= pr.populacao_min)
     mv_possivel = residual.isna() | (residual >= regra.mata_virgem.residual_min)
-    premium_possivel = score.notna() & (score >= pr.score_min) & pop_pr
+    if pr.renda_domiciliar_min is not None or pr.score_min is None:
+        premium_possivel = pop_pr
+    else:
+        premium_possivel = score.notna() & (score >= pr.score_min) & pop_pr
     return (mv_possivel | premium_possivel).astype(bool)
 
 
@@ -504,13 +532,14 @@ def _contadores(e: _Entrada, m: _Mascaras, regra: Regra) -> dict[str, dict[str, 
         Esse hexagono NAO e provadamente nao-MV (ver `_mascaras`): fica indeterminado.
     Premium (entre os que passariam pelos proprios numeros, salvo o contador):
       - `indeterminado_mv`: passaria no Premium, mas falta dado para provar que nao e Mata Virgem;
-      - `sem_score`: provadamente nao-Mata-Virgem, com populacao no piso do Premium, sem score.
-        Quem nao tem score NEM populacao (fora da malha censitaria: ~234 mil hexagonos no
+      - `sem_renda` (criterio de renda) / `sem_score` (criterio de score): provadamente
+        nao-Mata-Virgem, com populacao no piso do Premium, sem o dado do criterio; o outro sai
+        zero. Quem nao tem score NEM populacao (fora da malha censitaria: ~234 mil hexagonos no
         Brasil, todos sem `pop_total_setor_2022`) nao conta -- seria terra vazia exibida como
         "faltou o score";
-      - `sem_populacao` / `abaixo_da_populacao_minima`: provadamente nao-MV, score >= P, sem
-        populacao / abaixo do piso;
-      - `residual_estimado`: provadamente nao-MV, score e populacao ok, residual estimado e a
+      - `sem_populacao` / `abaixo_da_populacao_minima`: provadamente nao-MV, passa no criterio,
+        sem populacao / abaixo do piso;
+      - `residual_estimado`: provadamente nao-MV, criterio e populacao ok, residual estimado e a
         regua do Premium exige medido (BR v1 exige).
     """
     mv, pr = regra.mata_virgem, regra.premium
@@ -529,7 +558,9 @@ def _contadores(e: _Entrada, m: _Mascaras, regra: Regra) -> dict[str, dict[str, 
     mv_sem_pop = renda_alta & res_alto & ~estimado_barrado_mv & ~m.pop_ok
     mv_abaixo = renda_alta & res_alto & ~estimado_barrado_mv & m.pop_mv_falha
 
-    score_alto = m.score_ok & (e.score >= pr.score_min)
+    # "Bairro bom" pelo criterio da regua (renda na 2026-11_v1, score na 2026-10_v1).
+    score_alto = _criterio_premium(e, pr, m.renda_ok, m.score_ok)
+    chave_sem_criterio, tem_dado_criterio = _dado_do_criterio_premium(pr, m.renda_ok, m.score_ok)
     estimado_barrado_pr = estimado if pr.exige_residual_medido else falso
     if pr.populacao_min is None:
         pop_pr_passa = m.pop_ok
@@ -552,9 +583,11 @@ def _contadores(e: _Entrada, m: _Mascaras, regra: Regra) -> dict[str, dict[str, 
             "indeterminado_mv": m.mv_indeterminado & m.premium_candidato_por_valor,
             "residual_estimado": prova & score_alto & pop_pr_passa & estimado_barrado_pr,
             "sem_populacao": prova & score_alto & ~m.pop_ok,
-            "sem_score": prova & ~m.score_ok & pop_pr_passa,
+            "sem_renda": falso,
+            "sem_score": falso,
         },
     }
+    contagem["premium"][chave_sem_criterio] = prova & ~tem_dado_criterio & pop_pr_passa
     return {
         seg: {chave: int(mascara.sum()) for chave, mascara in por_chave.items()}
         for seg, por_chave in contagem.items()
@@ -775,6 +808,8 @@ def _regra_payload(regra: Regra) -> dict[str, Any]:
             "exige_residual_medido": mv.exige_residual_medido,
         },
         "premium": {
+            # Um dos dois e None: o criterio que a regua NAO usa (DEC-077, emenda 2).
+            "renda_domiciliar_min": pr.renda_domiciliar_min,
             "score_min": pr.score_min,
             "populacao_min": pr.populacao_min,
             "exige_residual_medido": pr.exige_residual_medido,

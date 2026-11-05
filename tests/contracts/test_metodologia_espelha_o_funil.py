@@ -468,7 +468,8 @@ def test_camada_5_publica_as_reguas_lidas_da_regua(metodologia_br, regra_br):
     mv, pr = regra_br.mata_virgem, regra_br.premium
     assert pilot._moeda_renda(mv.renda_domiciliar_min) in corte
     assert f"{pilot._mil(mv.residual_min)} alunos" in corte
-    assert f"score censitário ≥ {pr.score_min:.0f}" in corte
+    assert f"renda domiciliar ≥ {pilot._moeda_renda(pr.renda_domiciliar_min)}" in corte
+    assert "score censitário" not in corte, "o score nao decide o Premium desde a 2026-11_v1"
     assert f"{pilot._mil(pr.populacao_min)} habitantes" in corte
     assert "residual medido" in corte, "a regua BR v1 exige residual medido"
 
@@ -481,12 +482,15 @@ def test_trocar_a_regua_muda_o_texto(regra_br):
         mata_virgem=dataclasses.replace(
             regra_br.mata_virgem, residual_min=3000.0, renda_domiciliar_min=6000.0
         ),
-        premium=dataclasses.replace(regra_br.premium, score_min=55.0, populacao_min=12000.0),
+        premium=dataclasses.replace(
+            regra_br.premium, renda_domiciliar_min=7000.0, populacao_min=12000.0
+        ),
     )
     painel = pilot.montar_metodologia(regra=outra)
     c5 = _camada(painel, 5)
     assert c5["titulo"] == "Top 8: 4 Mata Virgem + 4 Premium"
-    assert "3.000 alunos" in c5["corte"] and "score censitário ≥ 55" in c5["corte"]
+    assert "3.000 alunos" in c5["corte"]
+    assert f"renda domiciliar ≥ {pilot._moeda_renda(7000.0)}" in c5["corte"]
     # Os quatro numeros da regua, nao so' dois: a renda da Mata Virgem e a populacao do
     # Premium tambem seguem a regua passada (um literal da v1 nesses campos coincidiria com a
     # regua vigente e passaria em todo teste que so' le a v1).
@@ -496,7 +500,8 @@ def test_trocar_a_regua_muda_o_texto(regra_br):
     assert parametros["Vagas por segmento"] == "4"
     assert parametros["Mata Virgem — residual medido mínimo"] == "3.000 alunos"
     assert parametros["Mata Virgem — renda domiciliar mínima"] == pilot._moeda_renda(6000.0)
-    assert parametros["Premium — score censitário mínimo"] == "55"
+    assert parametros["Premium — renda domiciliar mínima"] == pilot._moeda_renda(7000.0)
+    assert "Premium — score censitário mínimo" not in parametros
     assert parametros["Premium — população mínima"] == "12.000 habitantes"
     assert "Top 8" in painel["intro"]
     # A regua vigente nao vaza para o painel da outra -- em nenhum dos quatro numeros.

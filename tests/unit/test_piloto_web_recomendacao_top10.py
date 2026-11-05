@@ -74,9 +74,9 @@ SP = {
             "mv_f",  # residual 4.000 -> 6o candidato, fica fora das 5 vagas
             "estimado",  # renda e residual altissimos, residual ESTIMADO -> nunca aparece
             "pr_a",  # residual 0, score 80, pop 40.000 -> P1
-            "pr_b",  # renda baixa, residual 3.000, score 60, pop 35.000 -> P2
+            "pr_b",  # renda alta, residual 1.500 (prova de nao-MV), score 60, pop 35.000 -> P2
             "pr_c",  # residual 0, score 55, pop 20.000 -> P3
-            "neutro_score",  # score 40: nem MV nem Premium
+            "neutro_score",  # renda baixa (e score 40): nem MV nem Premium
             "neutro_pop",  # pop 5.000: abaixo do piso do Premium
         ]
     )
@@ -180,10 +180,9 @@ def _particao_sp(*, saturado: bool) -> pd.DataFrame:
             SP["pr_b"],
             "Sao Paulo",
             COD_SP,
-            residual=3000.0,
+            residual=1500.0,
             pop=35000.0,
             score=60.0,
-            calib=CALIB_BAIXA,
             conc=conc(0),
         ),
         _linha(
@@ -795,7 +794,9 @@ def _outra_regua():
         mata_virgem=dataclasses.replace(
             regra.mata_virgem, renda_domiciliar_min=6000.0, residual_min=3000.0
         ),
-        premium=dataclasses.replace(regra.premium, score_min=55.0, populacao_min=12000.0),
+        premium=dataclasses.replace(
+            regra.premium, renda_domiciliar_min=7000.0, populacao_min=12000.0
+        ),
     )
 
 
@@ -819,7 +820,8 @@ def test_narrativa_do_passo5_segue_a_regua(top10_data: Path) -> None:
         assert "até 4 regiões" in txt
         assert pilot._moeda_renda(6000.0) in txt and pilot._moeda_renda(4500.0) not in txt
         assert "3.000 alunos" in txt and "2.000 alunos" not in txt
-        assert "score censitário de 55 ou mais" in txt
+        assert f"renda domiciliar de {pilot._moeda_renda(7000.0)} ou mais" in txt
+        assert pilot._moeda_renda(5000.0) not in txt and "score censitário" not in txt
         assert "12.000 habitantes" in txt and "10.000 habitantes" not in txt
         assert "Top 10" not in txt
     narrativa_cres_uf = passos_uf[3]["narrativa"]
@@ -1220,7 +1222,7 @@ def test_subida_da_recomendacao(
     assert any(
         r.levelno == logging.WARNING and "k da malha" in r.getMessage() for r in caplog.records
     )
-    assert "regua versao=2026-10_v1" in caplog.text
+    assert "regua versao=2026-11_v1" in caplog.text
 
     # producao (`MOTOR_DATA_DIR`) sem o carimbo k: a SUBIDA cai.
     monkeypatch.setenv("MOTOR_DATA_DIR", str(tmp_path))
