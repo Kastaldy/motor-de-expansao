@@ -398,10 +398,12 @@ def _digest(p) -> str:
 def _sem_chave_nova(p):
     """O payload sem as chaves que as emendas acrescentaram: `premissas.mes_pico_rampa`
     (21/10/2026) e `premissas.pico_padrao` (29/10/2026, de onde veio o padrao do pico; sem
-    medicao publicada ele so' diz `padrao`). Todo o resto segue byte a byte."""
+    medicao publicada ele so' diz `padrao`) e `premissas.ticket_medio` (05/11/2026, o ticket
+    medio da tela sem churn nem inadimplencia; so' exibicao). Todo o resto segue byte a byte."""
     q = copy.deepcopy(p)
     q["premissas"].pop("mes_pico_rampa")
     q["premissas"].pop("pico_padrao")
+    q["premissas"].pop("ticket_medio")
     return q
 
 

@@ -64,7 +64,7 @@ _VIAB = {
     "flag_viavel": True,
     "flag_fora_envelope": False,
 }
-_INFO_IMOVEL = {"metragem_m2": 1500, "aluguel_pedido": 38_000.0, "valor_venda": 9_000_000.0}
+_INFO_IMOVEL = {"metragem_m2": 1500, "aluguel_pedido": 38_000.0, "pe_direito_m": 6.0}
 
 # Marcadores de DADO financeiro no texto do PDF. "aluguel" minusculo NAO entra: a nota da
 # Conclusao so-estudo diz, de proposito, que o imovel (metragem, aluguel) NAO foi avaliado.
@@ -73,7 +73,7 @@ _TERMOS_FINANCEIROS = (
     "EBITDA",
     "Aluguel-teto",
     "Aluguel pedido",
-    "Valor de venda",
+    "Faixa de aluguel da regi",
     "Faturamento",
     "DRE",
 )

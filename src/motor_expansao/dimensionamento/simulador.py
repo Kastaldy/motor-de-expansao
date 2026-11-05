@@ -425,6 +425,22 @@ class Premissas:
         return self.share_musculacao * musculacao + studios
 
     @property
+    def ticket_medio(self) -> float:
+        """Ticket medio por aluno TOTAL: o mix de mensalidades, SEM churn nem inadimplencia.
+
+        E' o numero que a tela mostra como "Ticket medio" (Felipe, 2026-11-05): cancelamento
+        e inadimplencia nao entram na conta do ticket. A RECEITA do motor nao muda e segue
+        usando `ticket_blended` (com os dois descontos). Mesma estrutura de mix de
+        `ticket_blended`: 69/31 com R$147 e R$88,20 da R$128,77.
+        """
+        s = self.share_balcao
+        musculacao = s * self.ticket_cheio + (1.0 - s) * self.ticket_agregador
+        if not self.tickets_studios:
+            return musculacao
+        studios = sum(self.share_demanda_por_studio * t for t in self.tickets_studios)
+        return self.share_musculacao * musculacao + studios
+
+    @property
     def impostos_receita_pct(self) -> float:
         return self.pis + self.cofins + self.iss
 

@@ -1159,6 +1159,69 @@ def _recorte_do_alcance(lat: float, lng: float, alcance: str | None) -> _Recorte
     )
 
 
+def _tabela_aluguel(caminho: str | None):
+    """Regua de aluguel da DEC-080. `None` sem a base montada.
+
+    O MESMO cache da rota `GET /aluguel-referencia` (Emenda 1): uma copia do parquet por
+    processo, nao duas.
+    """
+    if not caminho:
+        return None
+    from motor_expansao.api.routes.aluguel_referencia import _tabela
+
+    return _tabela(caminho)
+
+
+def _info_imovel_com_aluguel(
+    info_imovel: dict[str, Any] | None,
+    viabilidade_inputs: ViabilidadeInputs | None,
+    tipo_imovel: str | None,
+    uf: str | None,
+    result: dict[str, Any],
+    settings: Settings,
+) -> dict[str, Any] | None:
+    """`info_imovel` com o card "Aluguel de referencia" (DEC-080), a mesma montagem do piloto.
+
+    O tipo vem do campo `tipo_imovel` (valor bruto); o municipio e' o do ponto. O aluguel
+    comparado e' o que quem chamou informou (`aluguel_pedido` ou `viabilidade.aluguel`). Um
+    `aluguel_referencia` mandado no JSON e' SEMPRE descartado: o card e' so' do servidor.
+    Sem `info_imovel` nem `viabilidade`, a pagina do imovel nao existe e nada muda.
+    """
+    if info_imovel is None and viabilidade_inputs is None:
+        return None
+    from motor_expansao.dimensionamento.aluguel_referencia import ROTULO_TIPO, bloco_do_pdf
+
+    info = dict(info_imovel or {})
+    info.pop("aluguel_referencia", None)
+    if tipo_imovel:
+        info["tipo_imovel"] = ROTULO_TIPO.get(tipo_imovel, tipo_imovel)
+    m2 = info.get("metragem_m2") or (viabilidade_inputs.m2 if viabilidade_inputs else None)
+    aluguel = info.get("aluguel_pedido")
+    if aluguel is None and viabilidade_inputs is not None:
+        aluguel = viabilidade_inputs.aluguel
+    try:
+        m2_num = float(m2) if m2 is not None else None
+        aluguel_num = float(aluguel) if aluguel is not None else None
+    except (TypeError, ValueError):
+        m2_num, aluguel_num = None, None
+    caminho = settings.oportunidades_path
+    bloco = bloco_do_pdf(
+        _tabela_aluguel(str(caminho) if caminho else None),
+        tipo_imovel,
+        uf,
+        result.get("nome_municipio"),
+        m2_num,
+        aluguel_num,
+    )
+    if bloco is not None:
+        info["aluguel_referencia"] = bloco
+    # So' com o cenario financeiro e sem `info_imovel`: a pagina do imovel nao existia, e o
+    # card sozinho nao justifica cria-la (o tipo sem a regua tambem nao).
+    if info_imovel is None and bloco is None:
+        return None
+    return info
+
+
 def gerar_pdf_ponto(
     lat: float,
     lng: float,
@@ -1168,6 +1231,7 @@ def gerar_pdf_ponto(
     rotulo: str | None = None,
     viabilidade_inputs: ViabilidadeInputs | None = None,
     info_imovel: dict[str, Any] | None = None,
+    tipo_imovel: str | None = None,
     solicitante: str | None = None,
     alcance: str | None = None,
 ) -> bytes:
@@ -1384,6 +1448,10 @@ def gerar_pdf_ponto(
             area_km2=area_exata,
             versao_rotas=recorte.versao_rotas,
         )
+
+    info_imovel = _info_imovel_com_aluguel(
+        info_imovel, viabilidade_inputs, tipo_imovel, uf, result, settings
+    )
 
     return gerar_pdf_relatorio_pontual_classico(
         result, mapas, residual=residual, perfil_bairro=perfil_bairro, ultra_dir=ultra_dir,

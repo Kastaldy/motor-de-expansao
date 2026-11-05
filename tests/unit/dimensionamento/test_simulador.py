@@ -529,3 +529,16 @@ def test_serie_mensal_com_financiamento_alivia_inicio_custa_juros() -> None:
     assert serie_com[-1]["fcf_acumulado"] < serie_sem[-1]["fcf_acumulado"], (
         "ao final, financiar custa os juros (FCF acumulado do mes 60 menor que a vista)"
     )
+
+
+def test_ticket_medio_da_tela_nao_desconta_churn_nem_inadimplencia():
+    """O "Ticket medio" da tela e' o mix de mensalidades (Felipe, 2026-11-05); a receita
+    do motor continua com os dois descontos em `ticket_blended`."""
+    from motor_expansao.dimensionamento.simulador import Premissas
+
+    p = Premissas(ticket_cheio=147.0)
+    assert round(p.ticket_medio, 2) == round(
+        p.share_balcao * 147.0 + (1 - p.share_balcao) * p.ticket_agregador, 2
+    )
+    assert p.ticket_medio > p.ticket_blended
+    assert Premissas(ticket_cheio=147.0, churn=0.2, inadimplencia=0.1).ticket_medio == p.ticket_medio

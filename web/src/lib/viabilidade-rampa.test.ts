@@ -110,9 +110,9 @@ describe('pico de maturação (emenda de 21/10/2026 da DEC-078)', () => {
 })
 
 describe('ajuda do controle', () => {
-  it('é curta (uma linha) e diz que é preciso recalcular', () => {
+  it('é curta (uma linha) e não pede para recalcular (a tela recalcula sozinha)', () => {
     for (const p of [null, CURVA, CURVA_PICO_6, LINEAR]) {
-      expect(ajudaDaRampa(p).toLowerCase()).toContain('recalcule para atualizar o payback')
+      expect(ajudaDaRampa(p).toLowerCase()).not.toContain('recalcule')
       // pedido de 22/10/2026: o detalhe vai para as notas metodológicas
       expect(ajudaDaRampa(p).length).toBeLessThanOrEqual(95)
     }
@@ -464,10 +464,10 @@ describe('padrão do pico por estado (emenda de 29/10/2026 da DEC-078)', () => {
 
   it('a ajuda diz de onde veio o padrão, em uma linha', () => {
     expect(ajudaDaRampa({ ...CURVA, mes_pico_rampa: 11, pico_padrao: SP })).toBe(
-      'Padrão de SP: 11 meses, de 17 unidades maduras. Recalcule para atualizar o payback.',
+      'Padrão de SP: 11 meses, de 17 unidades maduras.',
     )
     expect(ajudaDaRampa({ ...CURVA, pico_padrao: GO })).toBe(
-      'Padrão da rede: 10 meses (GO tem menos de 5 maduras). Recalcule para atualizar o payback.',
+      'Padrão da rede: 10 meses (GO tem menos de 5 maduras).',
     )
     for (const pp of [SP, GO, SEM]) {
       // pedido de 22/10/2026: a ajuda é UMA linha

@@ -78,7 +78,6 @@ export function picoParaEnviar(escolhido: MesPicoRampa | null): MesPicoRampa | u
   return escolhido ?? undefined
 }
 
-const RECALCULE = 'Recalcule para atualizar o payback.'
 
 /**
  * Ajuda sob o contador: UMA linha (pedido de 22/10/2026 — o texto longo ocupava a barra
@@ -87,10 +86,11 @@ const RECALCULE = 'Recalcule para atualizar o payback.'
  */
 export function ajudaDaRampa(p: PremissasRampa | null | undefined): string {
   if (p && formaDoPayload(p) !== 'curva_uni03') {
-    return `O servidor usou a rampa linear de ${p.maturacao_meses} meses. ${RECALCULE}`
+    return `O servidor usou a rampa linear de ${p.maturacao_meses} meses.`
   }
   const origem = origemDoPadrao(p?.pico_padrao)
-  return `${origem ?? 'Meses desde a inauguração até a demanda madura.'} ${RECALCULE}`
+  // Sem o "Recalcule para atualizar o payback": a tela recalcula sozinha (05/11/2026).
+  return origem ?? 'Meses desde a inauguração até a demanda madura.'
 }
 
 /**

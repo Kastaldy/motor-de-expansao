@@ -79,6 +79,7 @@ async def analisar(
             rotulo=payload.rotulo,
             viabilidade_inputs=payload.viabilidade,
             info_imovel=payload.info_imovel,
+            tipo_imovel=payload.tipo_imovel,
             solicitante=payload.solicitante,
             alcance=payload.alcance,
         )
