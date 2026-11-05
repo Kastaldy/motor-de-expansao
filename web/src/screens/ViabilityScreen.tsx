@@ -66,7 +66,6 @@ import {
   avisosV2,
   camposDeV2,
   corpoSugestaoV2,
-  motivoV2,
   sementeDaDemandaV2,
   sugestaoValePara,
   v2Disponivel,
@@ -427,7 +426,9 @@ export default function ViabilityScreen({
   // com erro -> o modo densidade de sempre, com o motivo discreto.
   const [estadoV2, setEstadoV2] = useState<EstadoDemandaV2 | null>(null)
   const [sugestaoV2, setSugestaoV2] = useState<DemandaV2Out | null>(null)
-  const [erroV2, setErroV2] = useState<string | null>(null)
+  // O motivo de a v2 nao responder deixou de aparecer no quadro da demanda (texto enxugado,
+  // 05/11/2026); o estado segue gravado para quem precisar dele.
+  const [, setErroV2] = useState<string | null>(null)
   // Rampa de maturação (DEC-078, emendas de 21 e 22/10/2026): só a curva observada, com o PICO
   // DE MATURAÇÃO escolhido pelo operador; `null` = sem escolha, e então o pedido vai sem
   // `mes_pico_rampa` e vale o pico observado (padrão do SERVIDOR). A forma não é mais
@@ -807,7 +808,6 @@ export default function ViabilityScreen({
   const v2Vigente = sugestaoValePara(sugestaoV2, { lat: alvoLat, lng: alvoLng, m2, nStudios })
     ? sugestaoV2
     : null
-  const motivoDaV2 = motivoV2(estadoV2, erroV2)
 
   async function gerarPdf() {
     if (!ponto) return
@@ -1314,7 +1314,7 @@ export default function ViabilityScreen({
             </span>
             <span
               className="num"
-              style={{ font: '700 18px/1.1 var(--f-num)', color: 'var(--tx-max)' }}
+              style={{ font: '700 20px/1.1 var(--f-num)', color: 'var(--tx-max)' }}
             >
               {premissas
                 ? brl(premissas.ticket_medio ?? premissas.ticket_blended, false, 2)
@@ -1500,9 +1500,8 @@ export default function ViabilityScreen({
             >
               {v2Vigente ? (
                 <>
-                  Sugestão do modelo de praça (10 min de carro, metragem e estúdios),
-                  editável. Faixa: {alunos(v2Vigente.alunos.p10)}–
-                  {alunos(v2Vigente.alunos.p90)} alunos (p10–p90).
+                  Faixa do modelo: {alunos(v2Vigente.alunos.p10)}–
+                  {alunos(v2Vigente.alunos.p90)} alunos.
                   {avisosV2(v2Vigente).map((a) => (
                     <span key={a} style={{ display: 'block', color: 'var(--warn-text)' }}>
                       {a}
@@ -1532,13 +1531,7 @@ export default function ViabilityScreen({
                 </>
               ) : faixa && faixa.p50 != null ? (
                 <>
-                  {motivoDaV2 && (
-                    <span style={{ display: 'block', color: 'var(--tx-muted)' }}>
-                      {motivoDaV2}
-                    </span>
-                  )}
-                  Padrão = p50 da curva tamanho→densidade para {num(m2)} m² (
-                  {alunos(faixa.p10)}–{alunos(faixa.p90)}, {faixa.n_comparaveis} comparáveis).
+                  Faixa de comparáveis: {alunos(faixa.p10)}–{alunos(faixa.p90)} alunos.
                   {demandaTocada && (
                     <>
                       {' '}
@@ -1561,28 +1554,8 @@ export default function ViabilityScreen({
                   )}
                 </>
               ) : demanda == null ? (
-                'Não há faixa de comparáveis nesta base. A demanda é premissa do operador: informe o número de alunos totais e calcule.'
-              ) : premissas ? (
-                temStudios && premissas.share_por_studio != null ? (
-                  `Premissa explícita do operador, em alunos TOTAIS. Mix: ${
-                    premissas.n_studios
-                  } × ${pctFrac(premissas.share_por_studio, 0)} em studios; ${pctFrac(
-                    premissas.share_balcao,
-                    0,
-                  )} balcão + ${pctFrac(1 - premissas.share_balcao, 0)} agregadores${
-                    premissas.share_musculacao != null
-                      ? ` sobre os ${pctFrac(premissas.share_musculacao, 0)} restantes`
-                      : ' sobre o restante'
-                  }.`
-                ) : (
-                  `Premissa explícita do operador, em alunos TOTAIS. Mix: ${pctFrac(
-                    premissas.share_balcao,
-                    0,
-                  )} balcão + ${pctFrac(1 - premissas.share_balcao, 0)} agregadores.`
-                )
-              ) : (
-                'Premissa explícita do operador, em alunos TOTAIS (balcão + agregadores + studios).'
-              )}
+                'Sem comparáveis nesta base: informe os alunos totais.'
+              ) : null}
             </div>
           </div>
 
