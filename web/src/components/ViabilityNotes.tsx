@@ -54,11 +54,12 @@ function montarSecoes(p: PremissasViabilidade, demandaPremissa: number | null): 
                 ? ` (${pctFrac(p.share_musculacao, 0)} aqui). `
                 : '. ') +
               'O aluno de studio é tratado como o de balcão: churn, inadimplência, ' +
-              'reajuste anual do ticket e anuidade. A receita dos studios entra no ' +
-              'faturamento maduro que dimensiona a folha' +
+              'reajuste anual do ticket e anuidade. A folha da academia não muda com os ' +
+              'studios' +
               (p.custo_studio_mes != null
-                ? `, e cada studio soma ${brl(p.custo_studio_mes)}/mês de custo fixo.`
-                : ', e cada studio soma um custo fixo mensal.'),
+                ? `: cada studio soma só ${brl(p.custo_studio_mes)}/mês de custo fixo, que ` +
+                  'já paga a equipe dele.'
+                : ': cada studio soma só um custo fixo mensal, que já paga a equipe dele.'),
           },
         ]
 
@@ -151,6 +152,7 @@ function montarSecoes(p: PremissasViabilidade, demandaPremissa: number | null): 
           como:
             `${brl(p.folha_fixa_mes, false, 2)} por mês, FIXOS desde o mês 1. O valor é ` +
             `dimensionado uma vez — ${pctFrac(p.folha_pct)} do faturamento MADURO ` +
+            (temStudios ? 'de uma unidade igual sem studios ' : '') +
             `(${brl(p.folha_base_faturamento_maduro, true)}, a casa cheia) — e é pago ` +
             'integralmente já no primeiro mês, porque a equipe é contratada ANTES dos ' +
             `alunos chegarem. Não acompanha a rampa: no mês 1, ${casaNoMes1(p)}, a ` +

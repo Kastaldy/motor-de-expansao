@@ -13,9 +13,12 @@ SIM_CUSTO_STUDIO ao custo fixo. Agora:
   (579,6 balcao / 260,4 agregador).
 
 Decisoes do dono travadas aqui: o aluno de studio tem o tratamento do BALCAO (fator
-(1 - churn), inadimplencia, reajuste anual do ticket e PAGA anuidade); a receita de
-studio entra na base da folha (17% do faturamento maduro); o custo fixo por studio
-(SIM_CUSTO_STUDIO) continua e reajusta como os demais fixos.
+(1 - churn), inadimplencia, reajuste anual do ticket e PAGA anuidade); o custo fixo por
+studio (SIM_CUSTO_STUDIO) continua e reajusta como os demais fixos. A folha NAO muda com
+os studios (Emenda 1 da DEC-068, leitura C, decidida por Vinicius em 2026-11-05): ela e'
+a da mesma unidade sem studios, porque os R$ 6.000 de cada studio ja pagam a equipe dele.
+Antes a mensalidade do studio tambem entrava na base dos 17%, e a mesma equipe era
+cobrada duas vezes.
 
 Contraprova central: sem studio o motor e' IDENTICO ao anterior (comparacao `==`, nao
 `approx`). Os numeros do golden (`tests/contracts/test_viabilidade_golden.py`) seguem
@@ -34,6 +37,11 @@ from motor_expansao.dimensionamento.simulador import (
     break_even_alunos,
     gerar_serie_mensal_completa,
     simular,
+)
+from tests.contracts.test_viabilidade_golden import (
+    GOLDEN_DEMANDA,
+    GOLDEN_INVESTIMENTO,
+    GOLDEN_PREMISSAS,
 )
 
 TICKET_MUSCULACAO = 147.0
@@ -215,18 +223,55 @@ def test_faturamento_steady_bate_com_a_formula_manual() -> None:
     assert r.custo_studios_mensal == pytest.approx(2 * cfg.SIM_CUSTO_STUDIO, abs=1e-9)
 
 
-def test_receita_de_studio_entra_na_base_da_folha() -> None:
-    """Folha = 17% do faturamento MADURO, e o maduro inclui os studios."""
-    p = _p(tickets_studios=(157.0, 167.0))
-    maduro = p.faturamento_maduro(DEMANDA)
-    assert p.folha_fixa_mes(DEMANDA) == pytest.approx(cfg.SIM_FOLHA_PCT * maduro, abs=1e-9)
-    bal, agr, studios = p.split_alunos(DEMANDA)
-    assert maduro == pytest.approx(
-        p.faturamento_por_fonte(bal, agr, alunos_studios=studios, com_anuidade=True), abs=1e-9
+@pytest.mark.parametrize("n", [1, 2, 3])
+def test_folha_nao_muda_com_os_studios(n: int) -> None:
+    """Emenda 1 da DEC-068 (leitura C): a folha e' a da mesma unidade SEM studios.
+
+    O maduro de verdade inclui os studios (e e' ele o faturamento do steady); so a BASE
+    da folha deixa de inclui-los.
+    """
+    com = _p(tickets_studios=cfg.SIM_TICKETS_STUDIO_PADRAO[:n])
+    sem = _p()
+    assert com.folha_fixa_mes(DEMANDA) == sem.folha_fixa_mes(DEMANDA)
+    assert com.base_folha(DEMANDA) == sem.faturamento_maduro(DEMANDA)
+    bal, agr, studios = com.split_alunos(DEMANDA)
+    assert com.faturamento_maduro(DEMANDA) == pytest.approx(
+        com.faturamento_por_fonte(bal, agr, alunos_studios=studios, com_anuidade=True),
+        abs=1e-9,
     )
-    assert p.receita_studios(studios) > 0
-    sem_receita_studio = maduro - p.receita_studios(studios)
-    assert p.folha_fixa_mes(DEMANDA) > cfg.SIM_FOLHA_PCT * sem_receita_studio
+    # A base NAO e' o faturamento de hoje menos o dos studios (essa era a leitura A): na
+    # unidade sem studios a demanda inteira vai para a musculacao.
+    assert com.base_folha(DEMANDA) != pytest.approx(
+        com.faturamento_maduro(DEMANDA) - com.receita_studios(studios), abs=1.0
+    )
+    # O custo de cada studio continua por fora da folha.
+    assert com.custo_fixo_total_mes(DEMANDA) == pytest.approx(
+        sem.custo_fixo_total_mes(DEMANDA) + n * cfg.SIM_CUSTO_STUDIO, abs=1e-9
+    )
+
+
+def test_ticket_do_studio_nao_mexe_na_folha() -> None:
+    base = _p(tickets_studios=(157.0, 167.0))
+    maior = _p(tickets_studios=(257.0, 267.0))
+    assert maior.faturamento_maduro(DEMANDA) > base.faturamento_maduro(DEMANDA)
+    assert maior.folha_fixa_mes(DEMANDA) == base.folha_fixa_mes(DEMANDA)
+
+
+@pytest.mark.parametrize(
+    "over",
+    [{}, {"anuidade_valor": 0.0}, {"anuidade_apenas_balcao": False}],
+    ids=["golden", "sem_anuidade", "anuidade_todos"],
+)
+def test_sem_studio_a_folha_e_a_de_antes_da_emenda(over: dict[str, object]) -> None:
+    """Sem studio, a folha e' a de antes da Emenda 1, ao bit: folha_pct x maduro."""
+    p = _p(**over)
+    assert p.base_folha(DEMANDA) == p.faturamento_maduro(DEMANDA)
+    assert p.folha_fixa_mes(DEMANDA) == p.folha_pct * p.faturamento_maduro(DEMANDA)
+
+
+def test_override_de_pessoal_vence_tambem_com_studio() -> None:
+    p = _p(tickets_studios=(157.0,), pessoal_mes_override=40_000.0)
+    assert p.folha_fixa_mes(DEMANDA) == 40_000.0
 
 
 def test_ticket_blended_e_faturamento_sao_a_mesma_regua() -> None:
@@ -359,7 +404,7 @@ def test_subir_ticket_de_studio_nao_reduz_faturamento(indice: int) -> None:
     assert r_maior.receita_studios_mensal > r_base.receita_studios_mensal
     # O split nao depende do ticket: so a receita se move.
     assert r_maior.alunos_studios_steady == r_base.alunos_studios_steady
-    # A folha e' 17% do faturamento maduro, mas k (~0,80) > folha_pct: o EBITDA sobe.
+    # A folha nao muda com o ticket do studio (Emenda 1 da DEC-068): o EBITDA sobe.
     assert r_maior.ebitda_mensal > r_base.ebitda_mensal
 
 
@@ -391,44 +436,53 @@ def test_pdf_linha_receita_cita_studio_quando_ha_studio() -> None:
     assert aninhado.get("n_studios") == 2
 
 
+def test_pdf_linha_custos_diz_sem_os_studios_quando_ha_studio() -> None:
+    """Emenda 1 da DEC-068: com studio, a base da folha e' o maduro SEM os studios."""
+    from motor_expansao.dashboard.censo_report import _viab_linha_custos
+
+    base = {
+        "folha": 49_003.79,
+        "folha_pct": 0.17,
+        "custos_variaveis": 50_000.0,
+        "custos_fixos": 80_000.0,
+    }
+    com = _viab_linha_custos({**base, "n_studios": 2})
+    sem = _viab_linha_custos({**base, "n_studios": 0})
+    legado = _viab_linha_custos(base)  # payload sem `n_studios`: frase de antes
+    assert com is not None and "do faturamento maduro sem os studios." in com
+    for linha in (sem, legado):
+        assert linha is not None and "do faturamento maduro." in linha
+        assert "sem os studios" not in linha
+
+
 # ---------------------------------------------------------------------------
 # A tabela "Efeito medido" da DEC-068 e' reproduzivel pelo motor
 # ---------------------------------------------------------------------------
 # Em 05/10/2026 a coluna de payback da DEC saiu de um investimento ARBITRARIO (e nao o do
-# caso de referencia) e ficou divergindo do golden em silencio. Este teste trava a linha da
-# regra NOVA com o MESMO investimento do golden: se o motor mudar, ou a DEC for refeita com
-# outro cenario, um dos dois fica vermelho.
+# caso de referencia) e ficou divergindo do golden em silencio. Este teste trava a tabela
+# VIGENTE (a da Emenda 1, leitura C, de 2026-11-05) com o caso do golden IMPORTADO do
+# proprio golden: se o motor mudar, ou a DEC for refeita com outro cenario, um dos dois
+# fica vermelho.
 
-_INV_GOLDEN = {
-    "obra": 600_000.0,
-    "parcelas_obra": 4,
-    "equipamentos": 1_400_000.0,
-    "prazo_equipamentos": 60,
-    "juros_equipamentos_am": 0.018,
-    "taxa_franquia": 160_000.0,
-}
-
-# n_studios -> (faturamento, EBITDA, payback, break-even), como na tabela da DEC-068.
+# n_studios -> (folha, faturamento, EBITDA, payback, break-even, VPL), como na tabela da
+# Emenda 1 da DEC-068 (coluna "Leitura C"; sem studio, a linha e' a do golden).
 _TABELA_DEC_068 = {
-    0: (288_258, 113_160, 31.0, 1_152),
-    1: (292_979, 110_129, 33.0, 1_201),
-    2: (299_398, 108_167, 36.0, 1_244),
-    3: (307_514, 107_272, 38.0, 1_281),
+    0: (49_004, 288_258, 113_160, 31.0, 1_152, 276_103),
+    1: (49_004, 292_979, 110_932, 33.0, 1_193, 171_742),
+    2: (49_004, 299_398, 110_060, 34.0, 1_226, 105_166),
+    3: (49_004, 307_514, 110_546, 35.0, 1_250, 76_374),
 }
 
 
 @pytest.mark.parametrize("n", sorted(_TABELA_DEC_068))
 def test_tabela_da_dec_068_bate_com_o_motor(n: int) -> None:
-    p = Premissas(
-        ticket_cheio=147.0,
-        aluguel_mes=30_000.0,
-        maturacao_meses=8,
-        tickets_studios=cfg.SIM_TICKETS_STUDIO_PADRAO[:n],
-    )
-    r = simular(2_304, p, **_INV_GOLDEN)
-    fat, ebitda, payback, be = _TABELA_DEC_068[n]
+    p = Premissas(**GOLDEN_PREMISSAS, tickets_studios=cfg.SIM_TICKETS_STUDIO_PADRAO[:n])  # type: ignore[arg-type]
+    r = simular(GOLDEN_DEMANDA, p, **GOLDEN_INVESTIMENTO)  # type: ignore[arg-type]
+    folha, fat, ebitda, payback, be, vpl = _TABELA_DEC_068[n]
+    assert round(p.folha_fixa_mes(GOLDEN_DEMANDA)) == folha
     assert round(r.faturamento_mensal_steady) == fat
     assert round(r.ebitda_mensal) == ebitda
     assert r.payback_meses == payback
     assert round(r.alunos_break_even_total) == be
+    assert r.vpl is not None and round(r.vpl) == vpl
 

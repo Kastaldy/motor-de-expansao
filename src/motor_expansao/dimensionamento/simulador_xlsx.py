@@ -911,6 +911,10 @@ def _bloco_custo_variavel(p: Premissas) -> list[dict[str, Any]]:
 def _bloco_folha(p: Premissas) -> list[dict[str, Any]]:
     """Folha FIXA no tempo, dimensionada pelo faturamento MADURO.
 
+    Com studios, a base e' a da mesma unidade SEM studios (`base_folha`, Emenda 1 da
+    DEC-068): a equipe da academia nao muda com eles. Sem studio, `base_folha` e
+    `fat_maduro` dao o mesmo numero.
+
     As duas celulas novas (`fat_maduro` e `folha_fixa`) existem para a DRE referenciar
     UMA celula em todos os 64 meses, em vez de recalcular a folha coluna por coluna a
     partir do faturamento daquele mes — que era exatamente o defeito reportado ("a
@@ -931,15 +935,27 @@ def _bloco_folha(p: Premissas) -> list[dict[str, Any]]:
            formula=f"={ABA_FOLHA}!$E${_FOLHA_TOTAL_ROW}", unidade="R$/mês",
            fonte=f"Aba {ABA_FOLHA} (soma do quadro editável)", quem=_QUEM_DERIVADO,
            kind=_DERIV, fmt=_FMT_CONTABIL),
-        _e("fat_maduro", "Faturamento MADURO (base de dimensionamento da folha)",
+        _e("fat_maduro", "Faturamento MADURO (regime pleno, a preços do ano 1)",
            formula="={demanda}*{receita_por_aluno}+{personal_mes}", unidade="R$/mês",
            fonte="Derivado: regime pleno a preços do ano 1 (casa cheia, anuidade em cobrança)",
            quem=_QUEM_DERIVADO, kind=_DERIV, fmt=_FMT_CONTABIL,
            nota="A PREÇOS DO ANO 1, de propósito: o reajuste anual de custos entra uma única "
                 "vez, na linha da DRE, e não duas vezes (aqui e lá)."),
+        _e("base_folha", "Base da folha: faturamento MADURO da mesma unidade sem studios",
+           formula="={demanda}*({share}*(1-{churn})*{ticket_cheio}*(1-{inadimplencia})"
+                   "+(1-{share})*{ticket_agregador}*(1-{inadimplencia})"
+                   '+{anuidade_por_aluno}*IF({anuidade_apenas_balcao}="Sim",{share},1))'
+                   "+{personal_mes}",
+           unidade="R$/mês",
+           fonte="Derivado: Emenda 1 da DEC-068 (a equipe da academia não muda com os studios)",
+           quem=_QUEM_DERIVADO, kind=_DERIV, fmt=_FMT_CONTABIL,
+           nota="Sem studio, é igual ao faturamento maduro acima. Com studio, é o de uma "
+                "unidade igual sem studios e com a mesma demanda: cada studio já paga a "
+                "equipe dele no custo fixo próprio, então a mensalidade do studio não entra "
+                "aqui."),
         _e("folha_fixa", "Folha mensal FIXA (vale desde o mês 1)",
            formula='=IF({modo_folha}="quadro de pessoal",{folha_quadro_total},'
-                   "{folha_pct}*{fat_maduro})",
+                   "{folha_pct}*{base_folha})",
            unidade="R$/mês",
            fonte="Derivado: os DOIS modos do interruptor são fixos no tempo",
            quem=_QUEM_DERIVADO, kind=_DERIV, fmt=_FMT_CONTABIL,
@@ -1534,13 +1550,13 @@ def _write_aba_folha(wb: openpyxl.Workbook, p: Premissas, refs: dict[str, str],
             "Depende do interruptor acima",
         ),
         (
-            "Folha FIXA da régua do motor: % x faturamento MADURO",
+            "Folha FIXA da régua do motor: % x base da folha",
             f"={refs['folha_fixa']}",
             "Vale desde o mês 1",
         ),
         (
-            "Aferido vs a régua (TOTAL do quadro - % x faturamento maduro)",
-            f"=E{r_tot}-{refs['folha_pct']}*{refs['fat_maduro']}",
+            "Aferido vs a régua (TOTAL do quadro - % x base da folha)",
+            f"=E{r_tot}-{refs['folha_pct']}*{refs['base_folha']}",
             "Quanto o quadro estimado se afasta da régua",
         ),
     ]
@@ -2471,9 +2487,11 @@ def _pares_afericao(
         ("Receita pós-impostos", r.receita_pos_impostos, rrefs["receita_pos_impostos"], brl),
         ("Custo variável", r.custos_variaveis_mensal, d("cvar_total"), brl),
         ("Folha", r.folha_mensal, d("folha"), brl),
-        ("Faturamento MADURO (base de dimensionamento da folha)",
+        ("Faturamento MADURO (regime pleno, a preços do ano 1)",
          p.faturamento_maduro(float(demanda_total)), refs["fat_maduro"], brl),
-        ("Folha FIXA dimensionada pelo faturamento maduro",
+        ("Base da folha: faturamento maduro da mesma unidade sem studios",
+         p.base_folha(float(demanda_total)), refs["base_folha"], brl),
+        ("Folha FIXA dimensionada pela base da folha",
          p.folha_fixa_mes(float(demanda_total)), refs["folha_fixa"], brl),
         ("Folha no mês 1 (a folha NÃO acompanha a rampa)", m1.get("folha", 0.0),
          dre_mes("folha", 1), brl),
@@ -2742,7 +2760,8 @@ def _carimbar_rastreio(
 
 _NOMES_DEFINIDOS = (
     "demanda", "ticket_cheio", "ticket_agregador", "ticket_blended", "share", "churn",
-    "inadimplencia", "aluguel", "folha_pct", "fat_maduro", "folha_fixa", "outros_total",
+    "inadimplencia", "aluguel", "folha_pct", "fat_maduro", "base_folha", "folha_fixa",
+    "outros_total",
     "k_ebitda", "custo_fixo_total",
     "receita_por_aluno", "personal_mes", "obra", "equip", "taxa_franquia",
     "parcelas_franquia", "franquia_parcela", "pmt",

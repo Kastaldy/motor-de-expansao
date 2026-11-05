@@ -1797,10 +1797,15 @@ def _viab_linha_custos(viabilidade: dict[str, Any]) -> str | None:
         return None
 
     pct = viabilidade.get("folha_pct")
+    # Com studio, a base e' o maduro da mesma unidade SEM studios (Emenda 1 da DEC-068):
+    # a equipe da academia nao muda com eles. Frase curta de proposito (ver acima).
+    sem_studios = (
+        " sem os studios" if (_viab_inteiro(viabilidade.get("n_studios")) or 0) > 0 else ""
+    )
     base = (
-        f"por {_viab_pct(pct)} do faturamento maduro"
+        f"por {_viab_pct(pct)} do faturamento maduro{sem_studios}"
         if _viab_tem(pct)
-        else "pelo faturamento maduro"
+        else f"pelo faturamento maduro{sem_studios}"
     )
     linha = f"Folha {_viab_brl(folha)}/mês FIXA desde o mês 1, dimensionada {base}."
 
