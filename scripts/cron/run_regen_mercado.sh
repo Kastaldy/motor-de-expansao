@@ -403,18 +403,12 @@ falhas: list[str] = []
 resumo: dict[str, object] = {}
 
 
-def _validos(df: pd.DataFrame) -> pd.DataFrame:
-    """Concorrentes DESENHAVEIS: status valido E coordenada presente.
-
-    As duas condicoes deveriam ser a mesma coisa (`status_registro` DERIVA da
-    validade da coordenada em `normalizar_concorrentes`), e e' justamente por isso
-    que a coordenada e' checada de novo: a guarda de 2026-08-30 falhou por confiar
-    numa propriedade que "obviamente" valia.
-    """
-    ok = df["status_registro"].astype(str) == "valido"
-    ok &= pd.to_numeric(df["lat"], errors="coerce").notna()
-    ok &= pd.to_numeric(df["lng"], errors="coerce").notna()
-    return df.loc[ok]
+# A regua de DESENHAVEL e a de queda moram no pacote (testadas), nao neste heredoc:
+# `motor_expansao.pipelines.guarda_desenhabilidade`.
+from motor_expansao.pipelines.guarda_desenhabilidade import (  # noqa: E402
+    desenhaveis as _validos,
+    quedas_de_desenhaveis,
+)
 
 
 novo = pd.read_parquet(RASCUNHO / MERCADO)
@@ -491,7 +485,10 @@ elif (VIVO / ENRIQUECIDO).is_dir():
 #
 # Licao do incidente de 2026-08-30, em que o refresh semanal APAGOU os pins do mapa:
 # a guarda da epoca olhava BYTES, e um artefato gordo e sem coordenada passou. Aqui
-# a regua e' a contagem de concorrentes DESENHAVEIS, e ela nao pode CAIR.
+# a regua e' a contagem de concorrentes DESENHAVEIS. Ate' 2026-11-05 ela nao podia
+# cair NADA, e a rotacao normal de uma semana (4.736 -> 4.734 em 01/11) congelou o
+# mercado; agora reprova o colapso POR REDE ou a queda grande do total, com a regua
+# da DEC-061 (ver o modulo importado acima).
 resumo["concorrentes_desenhaveis"] = len(conc_novo)
 resumo["redes"] = int(conc_novo["rede"].nunique())
 vivo_conc = VIVO / CONCORRENTES
@@ -499,11 +496,7 @@ if vivo_conc.exists():
     conc_vivo = _validos(pd.read_parquet(vivo_conc))
     resumo["concorrentes_desenhaveis_publicado"] = len(conc_vivo)
     resumo["redes_publicado"] = int(conc_vivo["rede"].nunique())
-    if len(conc_novo) < len(conc_vivo):
-        falhas.append(
-            "concorrentes DESENHAVEIS cairam: "
-            f"{len(conc_vivo):,} -> {len(conc_novo):,} (coleta parcial? pins sumiriam do mapa)"
-        )
+    falhas.extend(quedas_de_desenhaveis(conc_vivo, conc_novo))
 
 # (e) COERENCIA da auditoria: o carimbo do mercado bate com o cadastro que o gerou.
 #

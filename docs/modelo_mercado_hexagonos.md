@@ -113,14 +113,15 @@ Arquivo proposto: `data/staging/concorrentes_mapeados.parquet`
 | `concorrente_id` | string | `sha1(f"{rede}|{nome_unidade}|{lat:.6f}|{lng:.6f}")` |
 | `rede` | string | derivado automaticamente do nome do arquivo: `unidades_<rede>.csv -> <rede>` via `p.stem.removeprefix("unidades_")`; cobre todos os `unidades_*.csv` de `concorrentes/` |
 | `nome_unidade` | string | valor original de `nome_unidade` com `strip()` |
-| `lat` | float | `to_numeric(latitude)` |
-| `lng` | float | `to_numeric(longitude)` |
+| `lat` | float | `to_numeric(latitude)`; se vier sem coordenada valida, herda a da semana anterior (ver `coord_origem`) |
+| `lng` | float | `to_numeric(longitude)`; mesma heranca de `lat` |
 | `data_coleta` | datetime/string | valor original do CSV |
 | `arquivo_origem` | string | nome do arquivo de origem |
 | `flag_coord_valida` | bool | `lat.notna() and lng.notna() and -34 <= lat <= 6 and -75 <= lng <= -28` |
 | `flag_duplicado_rede_coord` | bool | duplicado por `['rede', 'lat', 'lng']`, mantendo a primeira linha |
 | `status_registro` | string | `descartado_coord` se `flag_coord_valida=False`; `descartado_duplicado` se `flag_duplicado_rede_coord=True`; senao `valido` |
 | `hex_id_res7` | string | `h3.latlng_to_cell(lat, lng, 7)` quando `status_registro='valido'` |
+| `coord_origem` | string | `coleta` (veio no CSV), `semana_anterior` (veio sem coordenada e herdou a do `concorrentes_mapeados.parquet` anterior pela chave `rede` + `nome_unidade` sem caixa/espacos extras; so' se a chave e' unica nos dois lados e a academia continua listada) ou `sem_coordenada`. Desde 2026-11-05 (emenda 1 da DEC-059): a busca de localizacao do coletor falha de forma intermitente e tirava academias do mapa |
 
 ### 3.2 Regras de limpeza
 

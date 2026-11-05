@@ -290,12 +290,14 @@ def test_validacao_tem_guarda_de_desenhabilidade() -> None:
     """Lição do incidente de 2026-08-30: o refresh semanal APAGOU os pins do mapa.
 
     A guarda da época olhava BYTES, e um artefato gordo e sem coordenada passou. A régua aqui é a
-    contagem de concorrentes DESENHÁVEIS (status válido E coordenada presente), e ela não pode CAIR.
+    contagem de concorrentes DESENHÁVEIS (status válido E coordenada presente). Desde 2026-11-05
+    ela reprova o colapso por rede ou a queda grande do total, não qualquer queda (a régua mora em
+    `guarda_desenhabilidade`, testada em `test_guarda_desenhabilidade_e_coord_herdada.py`).
     """
     texto = WRAPPER.read_text(encoding="utf-8")
     assert "DESENHAVEIS" in texto or "DESENHÁVEIS" in texto
     assert "concorrentes_desenhaveis" in texto
-    assert "conc_novo) < len(conc_vivo)" in texto, (
+    assert "quedas_de_desenhaveis(conc_vivo, conc_novo)" in texto, (
         "a guarda não compara a contagem desenhável do rascunho contra a publicada"
     )
 
