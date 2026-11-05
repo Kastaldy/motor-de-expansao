@@ -381,9 +381,14 @@ def _payload(body):
 # "studios" eram o corpo SEM forma, que caia na reta; "curva" era a curva escolhida.
 DIGEST_ANTES_DA_EMENDA = {
     "reta": "c3b87e104db972a9cbf4f627ea8d5c56e42e160a9142eceffcf7dec3549d67d2",
-    "studios_reta": "d6006dcc5503855d550f13c006b485976acc8ab39a60291e74231da38ae80e5b",
+    "studios_reta": "d6006dcc5503855d550f13c006b485976acc8ab39a60291e74231da38ae80e5b",  # historico
     "curva": "16c84f0715c73486bdb9108d2ebe84948106cfffc27241c633e737229b7c3785",
 }
+# O payload COM studios mudou de proposito em 2026-11-05, na Emenda 1 da DEC-068 (leitura
+# C: a folha nao muda com os studios). O de antes (`studios_reta` acima) fica como registro;
+# so mudam a folha e o que depende dela (DRE, break-even, retorno, serie, grade e cheque),
+# conferido campo a campo contra o payload da main 937c8792. Faturamento e alunos, iguais.
+DIGEST_STUDIOS_RETA = "740c970d4fda04ecc425769e712e1bc7c70ad61bfe4ec132d681eeb21bd959ec"
 
 
 def _digest(p) -> str:
@@ -412,7 +417,7 @@ def test_modo_densidade_e_byte_a_byte_o_de_antes(modelo):
     assert _digest(_sem_chave_nova(reta)) == DIGEST_ANTES_DA_EMENDA["reta"]
     studios = {"n_studios": 2, "tickets_studios": [210, 190], "forma_rampa": "reta"}
     assert _digest(_sem_chave_nova(_payload(ViabilidadeIn(**GOLDEN, **studios, **extra)))) == (
-        DIGEST_ANTES_DA_EMENDA["studios_reta"]
+        DIGEST_STUDIOS_RETA
     )
     padrao = _payload(ViabilidadeIn(**GOLDEN, **extra))
     assert padrao["premissas"]["mes_pico_rampa"] == 10
