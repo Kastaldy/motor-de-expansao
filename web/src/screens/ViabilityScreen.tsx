@@ -33,7 +33,6 @@ import {
   faixaDoAluguel,
   ROTULO_SELETOR_TIPO_IMOVEL,
   ROTULO_TIPO_IMOVEL,
-  textoDaBase,
   textoDaDiferenca,
   textoDaDiferencaMediana,
   tomDaComparacao,
@@ -259,7 +258,14 @@ function SeletorTipoImovel({
               role="radio"
               aria-checked={marcado}
               onClick={() => onTrocar(t)}
-              style={estiloDaOpcaoAlcance(marcado)}
+              // Largura pelo conteúdo e quebra permitida: "Laje Corporativa" era cortada com
+              // reticências no trilho de largura igual do seletor de alcance.
+              style={{
+                ...estiloDaOpcaoAlcance(marcado),
+                flex: '1 1 auto',
+                padding: '6px 8px',
+                whiteSpace: 'normal',
+              }}
             >
               {ROTULO_TIPO_IMOVEL[t]}
             </button>
@@ -311,25 +317,22 @@ function QuadroAluguelReferencia({
       <span style={{ font: '600 11px/1.3 var(--f-ui)', color: 'var(--tx-sub)' }}>
         Faixa de aluguel da região
       </span>
-      <span style={{ font: '700 14px/1.3 var(--f-ui)', color: 'var(--tx-strong)' }}>
-        {brl(faixa.min)} a {brl(faixa.max)}/mês
+      <span style={{ font: '700 15px/1.25 var(--f-ui)', color: 'var(--tx-strong)' }}>
+        {brl(faixa.min)} a {brl(faixa.max)}
       </span>
-      <span style={{ font: '400 11px/1.4 var(--f-ui)', color: 'var(--tx-sub)' }}>
-        {brl(referencia.rs_m2_p25, false, 2)} a {brl(referencia.rs_m2_p75, false, 2)}/m² para{' '}
-        {num(m2)} m²
-      </span>
-      <span style={{ font: '400 11px/1.4 var(--f-ui)', color: 'var(--tx-sub)' }}>
+      {/* O mesmo enxugamento do PDF (Felipe, 05/11/2026): mediana + quantos anúncios, e a
+          comparação curta e colorida; sem R$/m² e sem a frase longa da base. */}
+      <span style={{ font: '400 11px/1.35 var(--f-ui)', color: 'var(--tx-sub)' }}>
         {mediana != null && `Mediana ${brl(mediana)} · `}
-        {textoDaBase(referencia)}
+        {num(referencia.n_anuncios)} {referencia.n_anuncios === 1 ? 'anúncio ativo' : 'anúncios ativos'}
       </span>
       {pct != null && aluguelDigitado != null && (
         <span
           style={{
-            font: `${pct > 0 ? 700 : 600} 12.5px/1.4 var(--f-ui)`,
+            font: '700 11.5px/1.35 var(--f-ui)',
             color: COR_DO_TOM[tomDaComparacao(pct, pctMediana)],
           }}
         >
-          Seu aluguel:{' '}
           {pctMediana != null && `${textoDaDiferencaMediana(pctMediana)} · `}
           {textoDaDiferenca(pct)}
         </span>
@@ -479,6 +482,9 @@ export default function ViabilityScreen({
   const [erro, setErro] = useState<string | null>(null)
 
   const inputFoto = useRef<HTMLInputElement>(null)
+  /** O último cenário mandado ao motor (JSON do pedido) e o número do pedido mais novo. */
+  const ultimoPayloadCalculado = useRef<string | null>(null)
+  const seqDoCalculo = useRef(0)
 
   // Coordenada do estudo: a EXATA quando o ponto veio da busca; o centroide do hexágono
   // só quando ele veio do clique no ranking (aí é a única que existe). Ver PontoEscolhido.
@@ -621,15 +627,22 @@ export default function ViabilityScreen({
       setErro(erroStudios)
       return
     }
+    const payload = montarPayload(demandaUsar, sug)
+    ultimoPayloadCalculado.current = JSON.stringify(payload)
+    // Só a resposta do pedido MAIS NOVO vale: com o recálculo automático, dois pedidos
+    // podem estar no ar e o mais lento não pode pintar a tela com o cenário velho.
+    const seq = ++seqDoCalculo.current
     setCalculando(true)
     setErro(null)
     try {
-      const r = await api.viabilidade(montarPayload(demandaUsar, sug))
-      setRes(r)
+      const r = await api.viabilidade(payload)
+      if (seq === seqDoCalculo.current) setRes(r)
     } catch (e) {
-      setErro(e instanceof ApiError ? e.message : 'Falha ao calcular a viabilidade.')
+      if (seq === seqDoCalculo.current) {
+        setErro(e instanceof ApiError ? e.message : 'Falha ao calcular a viabilidade.')
+      }
     } finally {
-      setCalculando(false)
+      if (seq === seqDoCalculo.current) setCalculando(false)
     }
   }
 
@@ -774,6 +787,21 @@ export default function ViabilityScreen({
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [chaveSugestaoV2, estadoV2])
+
+  // RECÁLCULO AUTOMÁTICO (Felipe, 05/11/2026): qualquer número do cenário que muda
+  // recalcula sozinho, 600 ms depois da última tecla, sem precisar do botão. A chave é o
+  // PRÓPRIO pedido ao motor: o que não muda o pedido (endereço, observações, fotos) não
+  // recalcula, e o pedido que acabou de ir (pela chegada ao ponto ou pelo botão) não vai
+  // de novo. Antes da chegada ao ponto terminar (`faixaBuscada`), quem calcula é ela.
+  const pedidoAtual =
+    ponto && demanda != null && !faltaTicket ? JSON.stringify(montarPayload(demanda)) : null
+  useEffect(() => {
+    if (pedidoAtual == null || !faixaBuscada) return
+    if (pedidoAtual === ultimoPayloadCalculado.current) return
+    const t = setTimeout(() => void calcular(), 600)
+    return () => clearTimeout(t)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pedidoAtual, faixaBuscada])
 
   /** Sugestão da v2 que vale para o cenário de agora (`null` = modo densidade). */
   const v2Vigente = sugestaoValePara(sugestaoV2, { lat: alvoLat, lng: alvoLng, m2, nStudios })
