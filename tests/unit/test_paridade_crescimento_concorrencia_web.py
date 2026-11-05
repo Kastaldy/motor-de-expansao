@@ -29,8 +29,10 @@ _REPO = Path(__file__).resolve().parents[2]
 _TYPES = _REPO / "web" / "src" / "lib" / "types.ts"
 _LIB = _REPO / "web" / "src" / "lib" / "crescimento-concorrencia.ts"
 
+# Pula só sem o piloto inteiro (como `test_paridade_classe_crescimento_web.py`). Se a lib for movida
+# ou renomeada, o teste FALHA ao lê-la, em vez de virar um SKIP calado que desliga o contrato.
 pytestmark = pytest.mark.skipif(
-    not _LIB.is_file(), reason="piloto web (web/src) ausente nesta árvore — nada a comparar"
+    not (_REPO / "web" / "src").is_dir(), reason="piloto web (web/src) ausente nesta árvore — nada a comparar"
 )
 
 

@@ -1790,7 +1790,7 @@ export interface RedeCrescimento {
   /** o pacote de setembro (aberturas, fechamentos, "Em breve", Wellhub) está presente */
   tem_cadastro?: boolean
   periodos: RedeMovimentoPeriodo[]
-  /** data da coluna de unidades: a última contagem semanal aceita ou, sem ela, a do pacote */
+  /** data da coluna de unidades: a última contagem boa de cada rede (execução não recusada) ou, sem ela, a do pacote */
   data_contagem?: string | null
   contagem_origem?: 'semanal' | 'pacote' | null
   contagem?: RedeContagemSemanal | null
@@ -1810,10 +1810,12 @@ export interface RedeContagemSemanal {
   data: string | null
   data_anterior: string | null
   execucao_mais_recente: string | null
-  /** linhas do histórico sem data válida, que ficaram de fora */
+  /** linhas do histórico fora do formato (sem data válida ou com campos a mais), que ficaram de fora */
   linhas_sem_data?: number
   /** execuções INTEIRAS de fora depois da anterior: queda difusa do total ou dia duplicado */
   recusadas: RedeContagemRecusada[]
+  /** execuções depois da contagem exibida em que nenhuma rede foi recoletada: o card segue na anterior */
+  sem_coleta_nova?: string[]
   /** redes com salto brusco nesta contagem, ainda não confirmado: ficam na contagem anterior */
   seguradas: RedeSaltoContagem[]
   /** saltos que se mantiveram numa coleta mais nova e entraram nesta contagem */

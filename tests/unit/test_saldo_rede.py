@@ -303,8 +303,8 @@ def test_o_total_que_reprova_por_si_fica_marcado_e_a_rede_sozinha_nao(tmp_path: 
 
 def test_guarda_conta_a_rede_ausente_como_zero(tmp_path: Path) -> None:
     """A régua da DEC-061 (`snapshots.py`, `c_agora.get(rede, 0)`): perder a rede inteira é o caso
-    extremo de coleta parcial. Até 2026-11 ela ficava fora como `sumiu`, e uma execução com metade
-    das redes passava na guarda (achado da revisão de 05/11)."""
+    extremo de coleta parcial. Vale para o laudo de diagnóstico `avaliar_queda_da_execucao`, que o
+    card não chama: no card a rede ausente fica uma semana e sai (`test_rede_ausente_fica_uma_semana_e_depois_sai`)."""
     linhas = [(d, f"rede_{i}", 40, d) for d in ("2026-10-25",) for i in range(30)]
     linhas += [(d, f"rede_{i}", 40, d) for d in ("2026-11-01",) for i in range(15)]
     laudo = s.avaliar_queda_da_execucao(
@@ -573,3 +573,250 @@ def test_leitura_tolerante_tira_a_execucao_duplicada_INTEIRA_e_conta_a_linha_sem
     assert tela["execucao_mais_recente"] == "2026-11-01"
     assert tela["linhas_sem_data"] == 1, "a linha sem data também vira aviso na tela"
     assert tela["recusadas"] == [{"execucao": "2026-11-01", "motivo": "duplicada", "queda_total_pct": None}]
+
+
+# --------------------------------------------------------------------------- #
+# Revisão de 05/11 (2ª rodada): regras de várias semanas, a guarda do total e as datas
+# --------------------------------------------------------------------------- #
+def test_queda_em_dois_degraus_confirma_no_patamar_novo_e_guarda_o_desde(tmp_path: Path) -> None:
+    """231 -> 119 -> 60 -> 60: a segunda queda continua segurada (não confirma a primeira), e o
+    patamar novo entra quando se repete. O `desde` é o da PRIMEIRA semana segurada. Sem o
+    `pendente` andando, a rede ficaria presa em 231 para sempre."""
+    datas = ["2026-10-04", "2026-10-11", "2026-10-18", "2026-10-25"]
+    linhas = _enchimento(datas) + [(d, "selfit", n, d) for d, n in zip(datas, [231, 119, 60, 60], strict=True)]
+    hist = _hist(tmp_path, linhas)
+    assert _situacoes(hist, "selfit") == ["estreia", "segurada", "segurada", "confirmada"]
+
+    no_meio = s.contagem_da_tela(_ate(hist, "2026-10-18"))
+    assert no_meio["unidades"]["selfit"] == 231
+    assert no_meio["seguradas"] == [
+        {"rede": "selfit", "antes": 231, "agora": 60, "direcao": "queda", "desde": "2026-10-11"}
+    ]
+    tela = s.contagem_da_tela(hist)
+    assert tela["unidades"]["selfit"] == 60
+    assert tela["variacao"]["selfit"] == {"delta": -171, "status": "confirmada"}
+    assert tela["confirmadas"] == [
+        {"rede": "selfit", "antes": 231, "agora": 60, "direcao": "queda", "desde": "2026-10-11"}
+    ]
+
+
+def test_rede_que_volta_e_some_de_novo_fica_mais_uma_semana(tmp_path: Path) -> None:
+    """A volta da rede (mesmo sem coleta nova, ou com salto segurado) zera a ausência: ela só sai
+    depois de faltar DUAS execuções seguidas."""
+    datas = ["2026-10-04", "2026-10-11", "2026-10-18", "2026-10-25", "2026-11-01"]
+    linhas = _enchimento(datas) + [
+        ("2026-10-04", "volta", 12, "2026-10-04"),
+        ("2026-10-18", "volta", 12, "2026-10-04"),  # volta sem coleta nova
+        ("2026-10-04", "salta", 40, "2026-10-04"),
+        ("2026-10-18", "salta", 100, "2026-10-18"),  # volta com salto brusco
+    ]
+    hist = _hist(tmp_path, linhas)
+    assert _situacoes(hist, "volta") == ["estreia", "ausente", "nao_recoletada", "ausente", "removida"]
+    assert _situacoes(hist, "salta") == ["estreia", "ausente", "segurada", "ausente", "removida"]
+
+
+def test_total_que_continua_caindo_nao_e_confirmado(tmp_path: Path) -> None:
+    """20 -> 17 -> 15 -> 15: a segunda recusa caiu MAIS que a primeira, então não a confirma; só o
+    patamar que se repete (15 e 15) entra."""
+    datas = ["2026-10-25", "2026-11-01", "2026-11-08", "2026-11-15"]
+    linhas = [(d, f"rede_{i}", n, d) for d, n in zip(datas, [20, 17, 15, 15], strict=True) for i in range(10)]
+    hist = _hist(tmp_path, linhas)
+
+    no_meio = s.contagem_da_tela(_ate(hist, "2026-11-08"))
+    assert no_meio["data"] == "2026-10-25"
+    assert no_meio["recusadas"] == [
+        {"execucao": "2026-11-01", "motivo": "total", "queda_total_pct": 15.0},
+        {"execucao": "2026-11-08", "motivo": "total", "queda_total_pct": 25.0},
+    ]
+    tela = s.contagem_da_tela(hist)
+    assert (tela["data"], tela["data_anterior"], tela["total_confirmado"]) == ("2026-11-15", "2026-10-25", True)
+    assert tela["variacao"]["rede_0"] == {"delta": -5, "status": "variou"}
+
+
+def test_reprovacao_antiga_nao_confirma_queda_nova(tmp_path: Path) -> None:
+    """20, 17, 20, 20, 17: a recuperação apaga a recusa pendente, e a queda nova de 15/11 é julgada
+    do zero (fica de fora), em vez de "confirmar" contra a recusa de 25/10."""
+    datas = ["2026-10-18", "2026-10-25", "2026-11-01", "2026-11-08", "2026-11-15"]
+    linhas = [(d, f"rede_{i}", n, d) for d, n in zip(datas, [20, 17, 20, 20, 17], strict=True) for i in range(10)]
+    tela = s.contagem_da_tela(_hist(tmp_path, linhas))
+    assert (tela["data"], tela["total_confirmado"]) == ("2026-11-08", False)
+    assert tela["recusadas"] == [{"execucao": "2026-11-15", "motivo": "total", "queda_total_pct": 15.0}]
+
+
+def test_guarda_do_total_ignora_rede_sem_coleta(tmp_path: Path) -> None:
+    """~10,8% das linhas de toda semana não são recoletadas. Somá-las à base diluiria a guarda: aqui
+    a rede de 500 parada faria a queda de 15% virar 4,3% e entrar."""
+    linhas = [(d, f"rede_{i}", n, d) for d, n in (("2026-10-25", 20), ("2026-11-01", 17)) for i in range(10)]
+    linhas += [("2026-10-25", "grande", 500, "2026-10-25"), ("2026-11-01", "grande", 500, "2026-10-25")]
+    tela = s.contagem_da_tela(_hist(tmp_path, linhas))
+    assert tela["data"] == "2026-10-25"
+    assert tela["recusadas"] == [{"execucao": "2026-11-01", "motivo": "total", "queda_total_pct": 15.0}]
+
+
+def test_guarda_do_total_ignora_o_salto_que_se_confirma(tmp_path: Path) -> None:
+    """A rede cujo salto se confirma na mesma execução não entra na soma: o +100 dela esconderia a
+    queda difusa das outras."""
+    datas = ["2026-10-18", "2026-10-25", "2026-11-01"]
+    linhas = [(d, f"rede_{i}", n, d) for d, n in zip(datas, [20, 20, 17], strict=True) for i in range(10)]
+    linhas += [(d, "grande", n, d) for d, n in zip(datas, [100, 200, 200], strict=True)]
+    tela = s.contagem_da_tela(_hist(tmp_path, linhas))
+    assert tela["data"] == "2026-10-25"
+    assert tela["recusadas"] == [{"execucao": "2026-11-01", "motivo": "total", "queda_total_pct": 15.0}]
+
+
+def test_recusada_antiga_nao_reaparece(tmp_path: Path) -> None:
+    """A recusa de antes da contagem anterior já não explica nada na tela."""
+    datas = ["2026-10-25", "2026-11-01", "2026-11-08", "2026-11-15"]
+    linhas = [(d, f"rede_{i}", n, d) for d, n in zip(datas, [20, 15, 20, 20], strict=True) for i in range(10)]
+    tela = s.contagem_da_tela(_hist(tmp_path, linhas))
+    assert (tela["data"], tela["data_anterior"], tela["recusadas"]) == ("2026-11-15", "2026-11-08", [])
+
+
+def test_mesma_coleta_da_execucao_recusada_nao_confirma_o_total(tmp_path: Path) -> None:
+    """O relatório rodado de novo repete as linhas da execução recusada, com a MESMA data de coleta:
+    isso não é recoleta e não confirma a queda. A recoleta de verdade, no domingo, confirma."""
+    linhas = [(d, f"rede_{i}", n, c) for d, n, c in (
+        ("2026-10-25", 20, "2026-10-25"),
+        ("2026-11-01", 15, "2026-11-01"),
+        ("2026-11-04", 15, "2026-11-01"),  # o relatório de novo, sem recoletar
+        ("2026-11-08", 15, "2026-11-08"),
+    ) for i in range(10)]
+    hist = _hist(tmp_path, linhas)
+
+    na_quarta = s.contagem_da_tela(_ate(hist, "2026-11-04"))
+    assert (na_quarta["data"], na_quarta["total_confirmado"]) == ("2026-10-25", False)
+    assert na_quarta["unidades"]["rede_0"] == 20
+    assert na_quarta["sem_coleta_nova"] == ["2026-11-04"]
+    assert na_quarta["execucao_mais_recente"] == "2026-11-04"
+
+    no_domingo = s.contagem_da_tela(hist)
+    assert (no_domingo["data"], no_domingo["data_anterior"], no_domingo["total_confirmado"]) == (
+        "2026-11-08",
+        "2026-10-25",
+        True,
+    )
+    assert no_domingo["variacao"]["rede_0"] == {"delta": -5, "status": "variou"}
+
+
+def test_safra_da_execucao_recusada_nao_entra_como_coleta_nova(tmp_path: Path) -> None:
+    """O passo 2.5 devolve a quem falhou o CSV do lote anterior, que é o RECUSADO: as 3 redes que
+    não recoletaram leem 29 com a data dele. Elas ficam "sem coleta" na última contagem boa (40),
+    e não entram como -11 sem aviso nenhum."""
+    linhas = [(d, f"rede_{i}", n, d) for d, n in (("2026-10-25", 40), ("2026-11-01", 29)) for i in range(30)]
+    linhas += [("2026-11-08", f"rede_{i}", 40, "2026-11-08") for i in range(27)]
+    linhas += [("2026-11-08", f"rede_{i}", 29, "2026-11-01") for i in range(27, 30)]
+    tela = s.contagem_da_tela(_hist(tmp_path, linhas))
+    assert (tela["data"], tela["data_anterior"]) == ("2026-11-08", "2026-10-25")
+    assert tela["unidades"]["rede_27"] == 40
+    assert tela["variacao"]["rede_27"] == {"delta": None, "status": "nao_recoletada"}
+    assert tela["nao_recoletadas"] == ["rede_27", "rede_28", "rede_29"]
+    assert tela["variacao"]["rede_0"] == {"delta": 0, "status": "estavel"}
+
+
+def test_execucao_sem_coleta_nova_nao_vira_a_foto(tmp_path: Path) -> None:
+    """O relatório rodado de novo numa quarta, sem recoletar: o card segue no domingo, com a
+    variação dele, em vez de trocar a data e mostrar "sem coleta" em todas as redes."""
+    linhas = _enchimento(["2026-10-25", "2026-11-01"]) + [
+        ("2026-10-25", "selfit", 231, "2026-10-25"),
+        ("2026-11-01", "selfit", 233, "2026-11-01"),
+    ]
+    linhas += [("2026-11-04", f"rede_{i}", 40, "2026-11-01") for i in range(30)]
+    linhas += [("2026-11-04", "selfit", 233, "2026-11-01")]
+    tela = s.contagem_da_tela(_hist(tmp_path, linhas))
+    assert (tela["data"], tela["data_anterior"]) == ("2026-11-01", "2026-10-25")
+    assert tela["variacao"]["selfit"] == {"delta": 2, "status": "variou"}
+    assert tela["nao_recoletadas"] == []
+    assert (tela["sem_coleta_nova"], tela["execucao_mais_recente"]) == (["2026-11-04"], "2026-11-04")
+
+
+def test_lote_em_que_todos_os_coletores_falham_nao_avanca_a_data(tmp_path: Path) -> None:
+    """Dois domingos sem nenhuma recoleta (o passo 2.5 devolve a safra a todos): a data do card não
+    anda, e por isso o aviso de contagem velha volta a valer. A rede que saiu nesse meio aparece
+    como saída quando a coleta volta."""
+    linhas = _enchimento(["2026-10-25", "2026-11-01", "2026-11-22"])
+    linhas += [(d, f"rede_{i}", 40, "2026-11-01") for d in ("2026-11-08", "2026-11-15") for i in range(30)]
+    linhas += [("2026-10-25", "extinta", 12, "2026-10-25"), ("2026-11-01", "extinta", 12, "2026-11-01")]
+    hist = _hist(tmp_path, linhas)
+
+    parado = s.contagem_da_tela(_ate(hist, "2026-11-15"))
+    assert (parado["data"], parado["data_anterior"]) == ("2026-11-01", "2026-10-25")
+    assert parado["sem_coleta_nova"] == ["2026-11-08", "2026-11-15"]
+    assert parado["unidades"]["extinta"] == 12
+
+    voltou = s.contagem_da_tela(hist)
+    assert (voltou["data"], voltou["data_anterior"], voltou["sem_coleta_nova"]) == ("2026-11-22", "2026-11-01", [])
+    assert "extinta" not in voltou["unidades"]
+    assert voltou["variacao"]["extinta"] == {"delta": None, "status": "sumiu"}
+    assert voltou["removidas"] == ["extinta"]
+
+
+def test_data_de_coleta_futura_ou_fora_do_iso_nao_congela_a_rede(tmp_path: Path) -> None:
+    """Uma data futura (ou fora do ISO) gravada uma vez virava o piso da rede, e nenhuma coleta
+    depois passava dela. Agora ela não conta como coleta; com hora junto, vale o dia."""
+    datas = ["2026-10-11", "2026-10-18", "2026-10-25"]
+    linhas = _enchimento(datas) + [
+        ("2026-10-11", "panobianco", 180, "2026-10-11"),
+        ("2026-10-18", "panobianco", 181, "2027-10-11"),
+        ("2026-10-25", "panobianco", 185, "2026-10-25"),
+        ("2026-10-11", "outra", 50, "2026-10-11"),
+        ("2026-10-18", "outra", 51, "26/10/2026"),
+        ("2026-10-25", "outra", 52, "2026-10-25"),
+        ("2026-10-11", "com_hora", 60, "2026-10-11 08:00"),
+        ("2026-10-18", "com_hora", 61, "2026-10-18 09:00"),
+        ("2026-10-25", "com_hora", 61, "2026-10-25 07:30"),
+    ]
+    hist = _hist(tmp_path, linhas)
+    assert _situacoes(hist, "panobianco") == ["estreia", "nao_recoletada", "aceita"]
+    assert _situacoes(hist, "outra") == ["estreia", "nao_recoletada", "aceita"]
+    assert _situacoes(hist, "com_hora") == ["estreia", "aceita", "aceita"]
+    tela = s.contagem_da_tela(hist)
+    assert tela["variacao"]["panobianco"] == {"delta": 5, "status": "variou"}
+    assert tela["variacao"]["outra"] == {"delta": 2, "status": "variou"}
+
+
+def test_coletor_vazio_nao_serve_de_base_e_a_primeira_coleta_e_estreia(tmp_path: Path) -> None:
+    """(0, data vazia) é coletor que não devolveu nada. A primeira leitura com dado é cobertura
+    nova ("nova"), não "+14" de crescimento."""
+    datas = ["2026-10-18", "2026-10-25", "2026-11-01"]
+    linhas = _enchimento(datas) + [
+        ("2026-10-18", "vazia", 0, ""),
+        ("2026-10-25", "vazia", 0, ""),
+        ("2026-11-01", "vazia", 14, "2026-11-01"),
+    ]
+    hist = _hist(tmp_path, linhas)
+    assert _situacoes(hist, "vazia") == ["estreia", "nao_recoletada", "estreia"]
+    tela = s.contagem_da_tela(hist)
+    assert (tela["unidades"]["vazia"], tela["variacao"]["vazia"]) == (14, {"delta": None, "status": "novo"})
+
+
+def test_coleta_vazia_depois_de_contagem_boa_fica_sem_coleta(tmp_path: Path) -> None:
+    """O coletor que voltou vazio (12 linhas assim em produção) não zera a rede, grande ou pequena."""
+    linhas = _enchimento(["2026-10-25", "2026-11-01"]) + [
+        ("2026-10-25", "selfit", 233, "2026-10-25"),
+        ("2026-11-01", "selfit", 0, ""),
+        ("2026-10-25", "mini", 3, "2026-10-25"),
+        ("2026-11-01", "mini", 0, ""),
+    ]
+    tela = s.contagem_da_tela(_hist(tmp_path, linhas))
+    assert (tela["unidades"]["selfit"], tela["unidades"]["mini"]) == (233, 3)
+    assert tela["variacao"]["selfit"] == {"delta": None, "status": "nao_recoletada"}
+    assert tela["variacao"]["mini"] == {"delta": None, "status": "nao_recoletada"}
+
+
+def test_leitura_tolerante_pula_linha_com_campo_a_mais(tmp_path: Path) -> None:
+    """Uma linha com campo a mais derrubava a leitura inteira (e o card voltava ao pacote)."""
+    caminho = _escrever_historico(
+        tmp_path / "hist.csv",
+        [
+            ("2026-10-25", "selfit", 231, "2026-10-25"),
+            ("2026-10-25", "panobianco", 150, "2026-10-25"),
+            ("2026-11-01", "selfit", 233, "2026-11-01;x"),
+            ("2026-11-01", "panobianco", 151, "2026-11-01"),
+        ],
+    )
+    with pytest.raises(pd.errors.ParserError):
+        s.ler_historico_contagem(caminho)
+    hist, descartes = s.ler_historico_tolerante(caminho)
+    assert descartes == {"execucoes_duplicadas": [], "linhas_sem_data": 1}
+    assert len(hist) == 3
+    assert "selfit" not in set(hist[hist["data_execucao"] == "2026-11-01"]["rede"].astype(str))

@@ -27,6 +27,13 @@ export const AVISO_NACIONAL = 'Visão nacional das redes concorrentes: este card
 /** Com a contagem mais velha que isto (em dias), a tela avisa que o histórico pode ter parado. */
 export const DIAS_CONTAGEM_VELHA = 9
 
+/** A data de HOJE no fuso de quem abre a página, em ISO ("2026-11-10"). Nunca `toISOString()`:
+ *  ele dá a data em UTC, que em Brasília já vira o dia seguinte às 21h. */
+export function hojeLocal(agora: Date = new Date()): string {
+  const dois = (n: number) => String(n).padStart(2, '0')
+  return `${agora.getFullYear()}-${dois(agora.getMonth() + 1)}-${dois(agora.getDate())}`
+}
+
 /** "smart_fit" -> "Smart Fit". O slug da rede vem do coletor. */
 export function nomeRede(slug: string | null | undefined): string {
   if (!slug) return '—'
@@ -36,6 +43,12 @@ export function nomeRede(slug: string | null | undefined): string {
     .filter(Boolean)
     .map((p) => p.charAt(0).toUpperCase() + p.slice(1))
     .join(' ')
+}
+
+/** "A Selfit"; o nome que já começa por "A " fica como está ("A Fitness", nunca "A A Fitness"). */
+export function comArtigo(slug: string | null | undefined): string {
+  const nome = nomeRede(slug)
+  return /^A\s/.test(nome) ? nome : `A ${nome}`
 }
 
 const ISO = /^\d{4}-\d{2}-\d{2}/
@@ -229,7 +242,7 @@ function listaNomes(redes: string[], max = 3): string {
 
 /** Sujeito da frase: "A Selfit" com uma rede só, a lista de nomes com várias. */
 function quem(redes: string[]): string {
-  return redes.length === 1 ? `A ${nomeRede(redes[0])}` : listaNomes(redes)
+  return redes.length === 1 ? comArtigo(redes[0]) : listaNomes(redes)
 }
 
 function listaDatas(itens: { execucao: string }[]): string {
@@ -239,7 +252,9 @@ function listaDatas(itens: { execucao: string }[]): string {
 
 function motivoDaRecusa(r: RedeContagemRecusada): string {
   if (r.motivo === 'duplicada') return 'ela aparece duas vezes no histórico'
-  if (r.queda_total_pct != null) return `o total caiu ${pct(r.queda_total_pct)}, sinal de coleta incompleta`
+  if (r.queda_total_pct != null) {
+    return `a soma das redes recoletadas caiu ${pct(r.queda_total_pct)}, sinal de coleta incompleta`
+  }
   return 'ela veio incompleta'
 }
 
@@ -258,7 +273,7 @@ function avisoSeguradas(seguradas: RedeSaltoContagem[], data: string): AvisoCres
     const desde = s.desde && s.desde < data ? ` (segurada desde ${diaMes(s.desde)})` : ''
     return {
       tom: 'alerta',
-      texto: `A ${nomeRede(s.rede)} ${verbo} ${deAte(s)} unidades na contagem de ${diaMes(data)}${desde}, ${leitura}: ela ${fim}`,
+      texto: `${comArtigo(s.rede)} ${verbo} ${deAte(s)} unidades na contagem de ${diaMes(data)}${desde}, ${leitura}: ela ${fim}`,
     }
   }
   const exemplos = seguradas.slice(0, 3).map((s) => `${nomeRede(s.rede)} (${deAte(s)})`)
@@ -317,11 +332,21 @@ export function avisosDaContagem(m: RedeCrescimento | undefined, hoje?: string):
 
 function avisosDaSemana(c: RedeContagemSemanal, data: string, hoje?: string): AvisoCrescimento[] {
   const avisos: AvisoCrescimento[] = []
-  const idade = diasEntre(data, hoje)
-  if (idade != null && idade > DIAS_CONTAGEM_VELHA) {
+  // Duas idades diferentes: a do histórico (a última execução que CHEGOU) e a do card (a última
+  // contagem que ENTROU). Medir só a do card mandaria procurar uma falha de cópia quando o
+  // histórico chegou e a execução é que ficou de fora.
+  const ultimaExecucao = c.execucao_mais_recente && c.execucao_mais_recente > data ? c.execucao_mais_recente : data
+  const idadeHistorico = diasEntre(ultimaExecucao, hoje)
+  const idadeCard = diasEntre(data, hoje)
+  if (idadeHistorico != null && idadeHistorico > DIAS_CONTAGEM_VELHA) {
     avisos.push({
       tom: 'alerta',
-      texto: `A contagem mais recente é de ${diaMesAno(data)}, de ${num(idade)} dias atrás: o histórico semanal pode ter parado de chegar ao site.`,
+      texto: `A execução mais recente do histórico semanal é de ${diaMesAno(ultimaExecucao)}, de ${num(idadeHistorico)} dias atrás: o histórico pode ter parado de chegar ao site.`,
+    })
+  } else if (idadeCard != null && idadeCard > DIAS_CONTAGEM_VELHA) {
+    avisos.push({
+      tom: 'alerta',
+      texto: `Nenhuma contagem nova entra no card desde ${diaMesAno(data)}, há ${num(idadeCard)} dias: o histórico chega, mas as execuções seguintes ficaram de fora.`,
     })
   }
   const depois = c.recusadas.filter((r) => r.execucao > data)
@@ -334,6 +359,17 @@ function avisosDaSemana(c: RedeContagemSemanal, data: string, hoje?: string): Av
         : `As contagens de ${listaDatas(depois)} ficaram de fora (na de ${diaMes(ultima.execucao)}, ${motivoDaRecusa(ultima)}).`
     avisos.push({ tom: 'alerta', texto: `${abre} O card segue na de ${diaMes(data)}.` })
   }
+  const semColeta = (c.sem_coleta_nova ?? []).filter((e) => e > data)
+  if (semColeta.length) {
+    const abre =
+      semColeta.length === 1
+        ? `A execução de ${diaMes(semColeta[0])} não trouxe coleta nova`
+        : `As execuções de ${listaDatas(semColeta.map((execucao) => ({ execucao })))} não trouxeram coleta nova`
+    avisos.push({
+      tom: 'alerta',
+      texto: `${abre}: nenhuma rede foi recoletada. O card segue na contagem de ${diaMes(data)}.`,
+    })
+  }
   if (c.seguradas.length) avisos.push(avisoSeguradas(c.seguradas, data))
   if (c.confirmadas.length) avisos.push(avisoConfirmadas(c.confirmadas))
   if (c.total_confirmado) {
@@ -345,7 +381,7 @@ function avisosDaSemana(c: RedeContagemSemanal, data: string, hoje?: string): Av
       tom: 'info',
       texto:
         n === 1
-          ? `A ${nomeRede(c.nao_recoletadas[0])} não foi recoletada nesta semana: fica com a última contagem, sem variação.`
+          ? `${comArtigo(c.nao_recoletadas[0])} não foi recoletada nesta semana: fica com a última contagem, sem variação.`
           : `${num(n)} redes não foram recoletadas nesta semana e ficam com a última contagem, sem variação: ${listaNomes(c.nao_recoletadas)}.`,
     })
   }
@@ -377,7 +413,7 @@ function avisosDaSemana(c: RedeContagemSemanal, data: string, hoje?: string): Av
   if (c.linhas_sem_data) {
     avisos.push({
       tom: 'info',
-      texto: `${num(c.linhas_sem_data)} ${plural(c.linhas_sem_data, 'linha do histórico veio', 'linhas do histórico vieram')} sem data e ${plural(c.linhas_sem_data, 'ficou', 'ficaram')} de fora.`,
+      texto: `${num(c.linhas_sem_data)} ${plural(c.linhas_sem_data, 'linha do histórico veio', 'linhas do histórico vieram')} fora do formato (sem data ou com campos a mais) e ${plural(c.linhas_sem_data, 'ficou', 'ficaram')} de fora.`,
     })
   }
   return avisos
@@ -424,7 +460,7 @@ export function rodapeCrescimento(m: RedeCrescimento, comCautela: boolean): stri
     const teto = m.redes.find((r) => r.sem_cadastro === 'teto_coletor')
     if (teto) {
       partes.push(
-        `A ${nomeRede(teto.rede)} fica fora de aberturas e fechamentos: no cadastro, ela estava travada no teto ` +
+        `${comArtigo(teto.rede)} fica fora de aberturas e fechamentos: no cadastro, ela estava travada no teto ` +
           'de 1.000 unidades do coletor.',
       )
     }

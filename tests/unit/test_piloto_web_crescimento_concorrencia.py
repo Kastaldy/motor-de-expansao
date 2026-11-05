@@ -136,3 +136,20 @@ def test_a_rota_tira_os_estudios_antes_da_guarda(rede: Path) -> None:  # noqa: F
     m = pilot.rede_inteligencia_recorte()["movimentacao"]
     assert m["data_contagem"] == "2026-11-08"
     assert m["contagem"]["seguradas"] == [], "o estúdio não entra na guarda do card"
+
+
+def test_rota_com_domingo_duplicado_e_linha_cortada(rede: Path) -> None:  # noqa: F811
+    """O lote que rodou duas vezes no domingo, mais uma linha cortada no meio da cópia: a rota lê
+    pela leitura TOLERANTE (a estrita levantaria e o card voltaria ao pacote de setembro) e passa os
+    dois descartes para a tela avisar."""
+    _pacote(pilot.STAGING_DIR)
+    linhas = _semanas("2026-10-25") + _semanas("2026-11-01") + _semanas("2026-11-01")
+    corpo = "data_execucao;rede;unidades;data_coleta\r\n" + "".join(f"{d};{r};{n};{d}\r\n" for d, r, n in linhas)
+    corpo += "2026-11-0;rede_1;4\r\n"
+    (pilot.STAGING_DIR / saldo_rede.ARQUIVO_STAGING).write_bytes(corpo.encode("utf-8"))
+
+    m = pilot.rede_inteligencia_recorte()["movimentacao"]
+    assert (m["contagem_origem"], m["data_contagem"]) == ("semanal", "2026-10-25")
+    assert m["contagem"]["linhas_sem_data"] == 1
+    assert m["contagem"]["recusadas"] == [{"execucao": "2026-11-01", "motivo": "duplicada", "queda_total_pct": None}]
+    assert m["contagem"]["execucao_mais_recente"] == "2026-11-01"

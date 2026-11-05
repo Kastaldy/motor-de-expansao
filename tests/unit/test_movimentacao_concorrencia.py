@@ -282,7 +282,7 @@ def test_card_sem_nenhuma_fonte_nao_esta_disponivel():
     assert card["contagem"]["erro"] == "ilegivel", "a tela diz POR QUE está vazia"
 
 
-def test_semanal_sem_execucao_aceita_nao_conta_como_contagem():
+def test_semanal_sem_contagem_boa_nao_conta_como_contagem():
     vazia = {**_semanal(), "data": None, "data_anterior": None, "unidades": {}, "variacao": {}}
     card = mov.crescimento_por_rede(_eventos_do_pacote(), _contagem_do_pacote(), vazia)
     assert (card["contagem_origem"], card["data_contagem"]) == ("pacote", "2026-09-06")

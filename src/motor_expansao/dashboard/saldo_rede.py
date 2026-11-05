@@ -11,9 +11,11 @@ mesmo lote o copia para o staging do motor (`ARQUIVO_STAGING`).
 corrente com a ANTERIOR (`contagem_anterior.csv`) e chama de `novo` a rede sem contagem prévia.
 Este módulo preserva as duas coisas: comparar execuções (não "domingos") e distinguir *novo* de
 *delta*. Inventar aqui uma terceira semântica faria a tela e o chat de ops discordarem sobre o mesmo
-fato — e quem olha os dois é a mesma pessoa. A ÚNICA exceção é a semana de coleta quebrada: ali o
-card segura a última contagem boa da rede e diz isso, enquanto o Telegram mostra o número cru
-(decisão do Vinicius, 05/11/2026; ver `acompanhar_redes`).
+fato — e quem olha os dois é a mesma pessoa. As exceções são as leituras em que o card segura a
+última contagem boa da rede e diz isso, enquanto o Telegram mostra o número cru (decisão do
+Vinicius, 05/11/2026; ver `acompanhar_redes`): rede sem coleta nova, rede ausente, salto brusco
+ainda não confirmado e execução recusada pela queda difusa do total. A primeira acontece toda
+semana (~10,8% das linhas), as outras em semana de coleta quebrada.
 
 QUATRO PROPRIEDADES DO INSUMO, TODAS MEDIDAS EM 2026-09-22, que o código honra:
 
@@ -25,8 +27,11 @@ QUATRO PROPRIEDADES DO INSUMO, TODAS MEDIDAS EM 2026-09-22, que o código honra:
    embutida.
 3. **Defasagem de `data_coleta` é o estado NORMAL de parte das redes** — 154 linhas (10,8%) já
    nascem com data anterior à execução, desde a primeira safra. Logo, data velha **não reprova
-   nada sozinha**: ela é AGRAVANTE da régua percentual e sinal de diagnóstico. A primeira versão
-   deste módulo ia usá-la como gatilho, e teria reprovado ~11% de toda semana.
+   a execução sozinha**: na guarda da DEC-061 (`avaliar_queda_da_execucao`) ela é AGRAVANTE da
+   régua percentual e sinal de diagnóstico; a primeira versão deste módulo ia usá-la como
+   gatilho, e teria reprovado ~11% de toda semana. No card ela diz outra coisa, sobre UMA rede:
+   se a data não avançou, a rede não foi recoletada e fica com a última contagem boa
+   (`acompanhar_redes`), sem prender as outras.
 4. **`data_coleta` pode vir VAZIA** (12 linhas): é coletor que não devolveu nada, estado diferente
    de "coletado hoje" e diferente de "coletado há meses".
 
@@ -38,6 +43,7 @@ como defasadas, quando são 154.
 
 from __future__ import annotations
 
+import re
 from collections.abc import Iterable, Mapping, Sequence
 from pathlib import Path
 from typing import Any
@@ -69,8 +75,9 @@ STATUS_SALDO_VALIDOS: tuple[str, ...] = ("novo", "sumiu", "variou", "estavel")
 #: de `/opt/gymscraping-infra/historico_contagem.csv` logo depois de o relatório anexar a semana.
 ARQUIVO_STAGING = "historico_contagem.csv"
 
-#: Situação da leitura de UMA rede numa execução (`acompanhar_redes`). Só `estreia`, `aceita` e
-#: `confirmada` mudam o número que o card mostra; as outras seguram a última contagem boa da rede.
+#: Situação da leitura de UMA rede numa execução (`acompanhar_redes`). `estreia`, `aceita` e
+#: `confirmada` mudam o número que o card mostra; `segurada`, `nao_recoletada` e `ausente` seguram
+#: a última contagem boa da rede; `removida` tira a rede da contagem.
 SITUACOES_LEITURA: tuple[str, ...] = (
     "estreia",
     "aceita",
@@ -82,7 +89,8 @@ SITUACOES_LEITURA: tuple[str, ...] = (
 )
 
 #: Estado da variação de uma rede no card: o vocabulário do Telegram (`STATUS_SALDO_VALIDOS`) mais
-#: os estados em que o card segura a última contagem boa. A tela tem um ramo para cada um
+#: os estados próprios do card: `confirmada` (salto que se manteve e entrou) e os três em que ele
+#: segura a última contagem boa. A tela tem um ramo para cada um
 #: (`tests/unit/test_paridade_crescimento_concorrencia_web.py`).
 STATUS_VARIACAO_TELA: tuple[str, ...] = (
     *STATUS_SALDO_VALIDOS,
@@ -100,6 +108,10 @@ MOTIVOS_RECUSA: tuple[str, ...] = ("total", "duplicada")
 
 #: `data_execucao` válida. Linha sem ela é arquivo cortado no meio da cópia ou linha suja.
 _DATA_ISO = r"\d{4}-\d{2}-\d{2}"
+
+#: Situações em que a rede foi RECOLETADA nesta execução (a `data_coleta` avançou). Execução sem
+#: nenhuma delas não traz contagem nova e não vira a foto da tela (`contagem_da_tela`).
+_SITUACOES_COM_COLETA: tuple[str, ...] = ("estreia", "aceita", "confirmada", "segurada")
 
 
 def ler_historico_contagem(caminho: Path) -> pd.DataFrame:
@@ -125,11 +137,13 @@ def ler_historico_tolerante(caminho: Path) -> tuple[pd.DataFrame, dict[str, Any]
     porém, levantar devolveria o card inteiro ao pacote de setembro por causa de um único domingo.
     Aqui a execução repetida sai INTEIRA (todas as redes daquele dia; nunca uma das cópias
     escolhida) e volta nomeada em `execucoes_duplicadas`, para a tela dizer que ela ficou de fora.
-    Linha sem `data_execucao` ISO também sai, e é contada em `linhas_sem_data`.
+    Linha fora do formato também sai e é contada em `linhas_sem_data`: sem `data_execucao` ISO
+    (arquivo cortado no meio da cópia) ou com campos a mais, que derrubaria a leitura inteira.
     """
-    out = _ler_e_tipar(caminho)
+    ruins: list[list[str]] = []
+    out = _ler_e_tipar(caminho, ruins=ruins)
     com_data = out["data_execucao"].astype(str).str.fullmatch(_DATA_ISO).astype(bool)
-    n_sem_data = int((~com_data).sum())
+    n_sem_data = int((~com_data).sum()) + len(ruins)
     out = out[com_data.to_numpy(dtype=bool)]
     repetidas = out.loc[out.duplicated(subset=["data_execucao", "rede"], keep=False), "data_execucao"]
     duplicadas = sorted({str(d) for d in repetidas})
@@ -139,14 +153,30 @@ def ler_historico_tolerante(caminho: Path) -> tuple[pd.DataFrame, dict[str, Any]
     return out, {"execucoes_duplicadas": duplicadas, "linhas_sem_data": n_sem_data}
 
 
-def _ler_e_tipar(caminho: Path) -> pd.DataFrame:
-    """CSV do coletor -> frame LONGO tipado, SEM julgar duplicata (cada leitor decide o que fazer)."""
+def _ler_e_tipar(caminho: Path, *, ruins: list[list[str]] | None = None) -> pd.DataFrame:
+    """CSV do coletor -> frame LONGO tipado, SEM julgar duplicata (cada leitor decide o que fazer).
+
+    Com `ruins`, a linha com campos a mais é pulada e guardada ali, em vez de derrubar o arquivo.
+    """
     # `utf-8-sig`, nunca `utf-8` puro: é o padrão de CSV do projeto (CLAUDE.md §2) e o que os
     # módulos irmãos que leem feed de coletor já aplicam (`snapshots.py`, `curadoria_agregadores.py`).
     # Com BOM e `utf-8` puro, o header sai como `﻿data_execucao`, a coluna "não existe" e o
     # erro acusa o CONTRATO — apontando para o lugar errado, longe da causa. Achado da revisão
     # automática no PR #393.
-    bruto = pd.read_csv(caminho, sep=";", dtype=str, keep_default_na=False, encoding="utf-8-sig")
+    if ruins is None:
+        bruto = pd.read_csv(caminho, sep=";", dtype=str, keep_default_na=False, encoding="utf-8-sig")
+    else:
+        # O descarte linha a linha só existe no motor `python`; o arquivo tem milhares de linhas,
+        # então o custo não pesa.
+        bruto = pd.read_csv(
+            caminho,
+            sep=";",
+            dtype=str,
+            keep_default_na=False,
+            encoding="utf-8-sig",
+            engine="python",
+            on_bad_lines=ruins.append,
+        )
     faltando = [c for c in CONTRATO_COLUNAS_HISTORICO if c not in bruto.columns]
     if faltando:
         raise ValueError(f"historico de contagem fora do contrato; colunas ausentes: {faltando}")
@@ -267,6 +297,10 @@ def avaliar_queda_da_execucao(
     tolerancia_total_pct: float = TOLERANCIA_QUEDA_TOTAL_PCT,
 ) -> dict[str, object]:
     """Esta execução veio de uma coleta COMPLETA? Mesma régua da guarda do snapshot `[DEC-061]`.
+
+    Laudo de DIAGNÓSTICO, sem consumidor no card: a tela julga cada rede em `acompanhar_redes`, e lá
+    a rede ausente fica FORA da soma do total (fica uma execução com a última contagem e depois
+    sai, com aviso). Aqui ela conta como zero, como na DEC-061.
 
     **Por REDE, não no total**, e isso saiu de medição no mesmo incidente: em 2026-09-13 o lote
     morreu no coletor #28 de 90, a Selfit caiu de 231 para 119 (**-48,5%**) e o TOTAL mal se moveu,
@@ -399,11 +433,17 @@ def _julgar_leitura(
     if lida is None:
         return {"situacao": "removida" if aceita["ausente_desde"] else "ausente", "lido": None, "coleta": None}
     n, coleta = lida
+    if coleta and not aceita["coleta"]:
+        # A última contagem "boa" era o coletor vazio (sem data): não há base de comparação, e a
+        # primeira leitura com dado é cobertura nova, não `+n`.
+        return {"situacao": "estreia", "lido": n, "coleta": coleta}
     # `data_coleta` é o dia em que o coletor raspou o site (`date.today()` no GymScraping). Se ela
     # não avançou, a linha repete uma coleta velha: é a safra anterior que o lote devolve à rede
     # que falhou (BLK-COLETA-01), ou o baseline do repositório (o tombo de 13/09). Não é contagem
-    # desta semana, e o card não a usa nem para confirmar nada.
-    if not (coleta and coleta > aceita["coleta"]):
+    # desta semana, e o card não a usa nem para confirmar nada. O piso também conta a coleta que
+    # veio numa execução RECUSADA (`coleta_vista`): repeti-la não a transforma em coleta nova.
+    piso = max(str(aceita["coleta"]), str(aceita.get("coleta_vista") or ""))
+    if not (coleta and coleta > piso):
         return {"situacao": "nao_recoletada", "lido": n, "coleta": coleta}
     direcao = _salto_brusco(int(aceita["valor"]), n, tolerancia_pct)
     if direcao is None:
@@ -476,8 +516,15 @@ def acompanhar_redes(
     - `removida`: não veio duas vezes seguidas. Sai da contagem (cobertura).
 
     A guarda do TOTAL da DEC-061 (queda difusa acima de `tolerancia_total_pct`) segue valendo
-    sobre as leituras `aceita`: se ela reprova, a execução INTEIRA fica de fora (`recusada`), e a
-    seguinte só entra se a soma dela confirmar a queda.
+    sobre as leituras `aceita`: se ela reprova, a execução INTEIRA fica de fora (`recusada`). A
+    seguinte entra se voltar ao patamar (sem queda contra a última contagem boa) ou se, nas mesmas
+    redes, repetir a soma da recusada dentro da mesma tolerância (`confirmou_total`). Repetir a
+    MESMA coleta não confirma: a data de coleta da recusada vira o piso de cada rede
+    (`coleta_vista`), e a rede que a repete (relatório rodado de novo, ou a safra que o passo 2.5
+    devolve a quem falhou) fica `nao_recoletada`. A rede ausente fica fora dessa soma.
+
+    `data_coleta` fora do ISO, ou depois da própria execução, conta como vazia: não avança a rede.
+    Uma data futura escrita uma vez congelaria a rede para sempre, porque nada passaria dela.
     """
     por_execucao: dict[str, dict[str, tuple[int, str]]] = {}
     for data, rede, n, coleta in zip(
@@ -487,10 +534,12 @@ def acompanhar_redes(
         historico["data_coleta"].astype(str),
         strict=True,
     ):
-        por_execucao.setdefault(data, {})[rede] = (int(n), coleta)
+        dia = coleta[:10] if re.match(_DATA_ISO, coleta) else ""
+        por_execucao.setdefault(data, {})[rede] = (int(n), dia if dia <= data else "")
 
     estado: dict[str, dict[str, Any]] = {}
-    total_pendente: int | None = None
+    # A soma de cada rede na última execução recusada pelo total, para a seguinte confirmar.
+    total_pendente: dict[str, int] | None = None
     fotos: list[dict[str, Any]] = []
     for data in sorted(por_execucao):
         lidas = por_execucao[data]
@@ -498,22 +547,26 @@ def acompanhar_redes(
             rede: _julgar_leitura(estado.get(rede), lidas.get(rede), tolerancia_rede_pct, data)
             for rede in sorted(set(estado) | set(lidas))
         }
-        base = [rede for rede, j in julgadas.items() if j["situacao"] == "aceita"]
+        coleta_nova = any(j["situacao"] in _SITUACOES_COM_COLETA for j in julgadas.values())
+        base = {rede: int(j["lido"]) for rede, j in julgadas.items() if j["situacao"] == "aceita"}
         antes = sum(int(estado[rede]["valor"]) for rede in base)
-        agora = sum(int(julgadas[rede]["lido"]) for rede in base)
+        agora = sum(base.values())
         queda_total = 100.0 * (antes - agora) / antes if antes else 0.0
         reprova = antes >= MIN_UNIDADES_GUARDA_TOTAL and queda_total > tolerancia_total_pct
         confirmou_total = bool(
-            reprova
-            and total_pendente is not None
-            and _salto_brusco(total_pendente, agora, tolerancia_total_pct) is None
+            reprova and total_pendente is not None and _total_confirma(total_pendente, base, tolerancia_total_pct)
         )
         if reprova and not confirmou_total:
-            total_pendente = agora
+            total_pendente = base
+            for rede, julgada in julgadas.items():
+                if rede in estado and julgada["situacao"] in _SITUACOES_COM_COLETA:
+                    vista = str(estado[rede].get("coleta_vista") or "")
+                    estado[rede]["coleta_vista"] = max(vista, str(julgada["coleta"]))
             fotos.append(
                 {
                     "execucao": data,
                     "recusada": True,
+                    "coleta_nova": coleta_nova,
                     "queda_total_pct": round(queda_total, 2),
                     "confirmou_total": False,
                     "valores": {rede: int(s["valor"]) for rede, s in estado.items()},
@@ -521,13 +574,17 @@ def acompanhar_redes(
                 }
             )
             continue
-        total_pendente = None
+        if antes >= MIN_UNIDADES_GUARDA_TOTAL:
+            # Só a execução que a guarda chegou a JULGAR apaga a recusa pendente. A que não trouxe
+            # coleta (base vazia) não aprovou nada: a recoleta seguinte ainda confirma contra ela.
+            total_pendente = None
         for rede, julgada in julgadas.items():
             _aplicar_leitura(estado, rede, julgada, data)
         fotos.append(
             {
                 "execucao": data,
                 "recusada": False,
+                "coleta_nova": coleta_nova,
                 "queda_total_pct": round(queda_total, 2),
                 "confirmou_total": confirmou_total,
                 "valores": {rede: int(s["valor"]) for rede, s in estado.items()},
@@ -535,6 +592,19 @@ def acompanhar_redes(
             }
         )
     return fotos
+
+
+def _total_confirma(pendente: Mapping[str, int], base: Mapping[str, int], tolerancia_pct: float) -> bool:
+    """A queda do total se repetiu? Compara as MESMAS redes da recusada, e só com base que pese.
+
+    Comparar a soma inteira com a da recusada misturaria redes diferentes: as que não foram
+    recoletadas mudam de semana para semana.
+    """
+    comuns = [rede for rede in base if rede in pendente]
+    antes = sum(int(pendente[rede]) for rede in comuns)
+    if antes < MIN_UNIDADES_GUARDA_TOTAL:
+        return False
+    return _salto_brusco(antes, sum(int(base[rede]) for rede in comuns), tolerancia_pct) is None
 
 
 def contagem_da_tela(
@@ -547,28 +617,40 @@ def contagem_da_tela(
     """O que o card "Crescimento da concorrência" mostra: a foto da última execução que entrou
     (`acompanhar_redes`) e a variação por rede contra a foto da anterior.
 
-    **A tela e o Telegram discordam em semana de coleta quebrada, de propósito** (decisão do
+    **A tela e o Telegram discordam onde o card segura a contagem, de propósito** (decisão do
     Vinicius, 05/11/2026): o relatório do coletor compara a execução com a anterior, crua; o card
-    compara a contagem boa de cada rede com a contagem boa anterior, e diz o que segurou. Fora
-    dessas semanas os dois números coincidem, com a mesma semântica de `novo`.
+    compara a contagem boa de cada rede com a contagem boa anterior, e diz o que segurou (rede
+    sem coleta nova, ausente, com salto segurado ou confirmado; execução recusada). No resto os
+    dois números coincidem, com a mesma semântica de `novo`.
+
+    Execução sem NENHUMA coleta nova (todas as redes repetem a data: o relatório rodado de novo,
+    ou um lote em que todos os coletores falharam) não vira a foto da tela. Ela sai em
+    `sem_coleta_nova`, e o card segue na anterior em vez de trocar a data e esvaziar a variação.
 
     `excluir` tira as redes ANTES da guarda: a guarda olha só as redes que a tela mostra. Sem
     isso, um estúdio boutique (que o card não exibe, DEC-056) entraria na conta do total.
 
     Os avisos saem prontos para a tela: `recusadas` (execuções inteiras de fora, pelo total ou por
-    duplicidade), `seguradas` e `confirmadas` (redes com salto brusco), `nao_recoletadas`,
-    `ausentes` e `removidas`.
+    duplicidade), `sem_coleta_nova`, `seguradas` e `confirmadas` (redes com salto brusco),
+    `nao_recoletadas`, `ausentes` e `removidas`.
     """
     fora = {str(r).lower() for r in excluir}
     if fora:
         historico = historico[~historico["rede"].astype(str).str.lower().isin(fora).to_numpy(dtype=bool)]
     fotos = acompanhar_redes(historico)
-    validas = [foto for foto in fotos if not foto["recusada"]]
-    atual = validas[-1] if validas else None
-    anterior = validas[-2] if len(validas) >= 2 else None
+    validas = [i for i, foto in enumerate(fotos) if not foto["recusada"] and foto["coleta_nova"]]
+    i_atual = validas[-1] if validas else None
+    i_anterior = validas[-2] if len(validas) >= 2 else None
+    atual = fotos[i_atual] if i_atual is not None else None
+    anterior = fotos[i_anterior] if i_anterior is not None else None
     data = str(atual["execucao"]) if atual else None
     data_anterior = str(anterior["execucao"]) if anterior else None
     piso = data_anterior or ""
+    sem_coleta_nova = [
+        str(foto["execucao"])
+        for foto in fotos
+        if not foto["recusada"] and not foto["coleta_nova"] and str(foto["execucao"]) > (data or "")
+    ]
 
     recusadas: list[dict[str, Any]] = [
         {"execucao": str(foto["execucao"]), "motivo": "total", "queda_total_pct": foto["queda_total_pct"]}
@@ -618,6 +700,14 @@ def contagem_da_tela(
             ausentes.append(rede)
         elif situacao == "removida":
             removidas.append(rede)
+    # Rede que saiu numa execução sem coleta nova, entre a foto anterior e a atual: ela não está na
+    # foto atual, mas saiu da contagem e a tela precisa dizer.
+    if atual is not None and i_anterior is not None and i_atual is not None:
+        for foto in fotos[i_anterior + 1 : i_atual]:
+            for rede, julgada in foto["redes"].items():
+                if julgada["situacao"] == "removida" and rede not in atual["redes"]:
+                    variacao[rede] = {"delta": None, "status": "sumiu"}
+                    removidas.append(rede)
 
     def _maior_primeiro(saltos: list[dict[str, Any]]) -> list[dict[str, Any]]:
         return sorted(saltos, key=lambda s: (-int(s["antes"] or 0), str(s["rede"])))
@@ -630,6 +720,7 @@ def contagem_da_tela(
         "unidades": unidades,
         "variacao": variacao,
         "recusadas": recusadas,
+        "sem_coleta_nova": sem_coleta_nova,
         "seguradas": _maior_primeiro(seguradas),
         "confirmadas": _maior_primeiro(confirmadas),
         "nao_recoletadas": sorted(nao_recoletadas),

@@ -7,6 +7,7 @@ import {
   celulaCadastro,
   celulaVariacao,
   diaMes,
+  hojeLocal,
   janela,
   nomeRede,
   rodapeCrescimento,
@@ -906,8 +907,9 @@ function RiscoRetencao({ dados, onUnidade }: { dados: RedeInteligencia; onUnidad
 
 /** Cor da variação: crescimento da concorrente pesa contra a Ultra (coral), queda alivia (verde). */
 const COR_VARIACAO: Record<TomVariacao, string> = {
-  mais: 'var(--gr-coral)',
-  menos: 'var(--pos)',
+  // Os tokens de TEXTO (`-tx`/`-text`): os de série ficam em 3,4:1 no tema claro.
+  mais: 'var(--gr-coral-tx)',
+  menos: 'var(--pos-text)',
   zero: 'var(--tx-off)',
   // "nova", "segurada", "sem coleta": rótulo com SIGNIFICADO, então nunca o token de de-ênfase.
   info: 'var(--tx-muted)',
@@ -934,8 +936,8 @@ function MovimentacaoConcorrencia({ dados }: { dados: RedeInteligencia }) {
   const comVariacao = temVariacao(m)
   const dataAnterior = m?.contagem?.data_anterior ?? null
   // A data de hoje liga o aviso de contagem velha: sem ela, um histórico que parou de chegar
-  // deixaria o card parado de novo sem denúncia nenhuma.
-  const avisos = avisosDaContagem(m, new Date().toISOString().slice(0, 10))
+  // deixaria o card parado de novo sem denúncia nenhuma. No fuso local, e nunca em UTC.
+  const avisos = avisosDaContagem(m, hojeLocal())
   const redes = (m?.redes ?? [])
     .map((r) => {
       const aberturas = comCautela ? r.aberturas : r.aberturas_conferidas
@@ -962,7 +964,7 @@ function MovimentacaoConcorrencia({ dados }: { dados: RedeInteligencia }) {
   // A linha de cima do cabeçalho diz de QUE DATA é cada grupo de colunas.
   const grupo = { ...titulo, textAlign: 'center' as const, padding: '0 8px 5px', borderBottom: '1px solid var(--line-soft)' }
   const saldo = (v: number) => (
-    <span style={{ color: v > 0 ? 'var(--gr-coral)' : v < 0 ? 'var(--pos)' : 'var(--tx-off)', fontWeight: 700 }}>
+    <span style={{ color: v > 0 ? 'var(--gr-coral-tx)' : v < 0 ? 'var(--pos-text)' : 'var(--tx-off)', fontWeight: 700 }}>
       {v > 0 ? `+${num(v)}` : num(v)}
     </span>
   )
@@ -1007,6 +1009,12 @@ function MovimentacaoConcorrencia({ dados }: { dados: RedeInteligencia }) {
           <div style={{ display: 'flex', gap: 22, flexWrap: 'wrap', alignItems: 'flex-start' }}>
             <div style={{ flex: '3 1 520px', minWidth: 0, overflowX: 'auto' }}>
               <table style={{ width: '100%', borderCollapse: 'collapse', font: '500 11.5px/1 var(--f-num)', color: 'var(--tx-sub)' }}>
+                {/* Sem <colgroup>, o scope="colgroup" do cabeçalho não liga o grupo às colunas. */}
+                <colgroup>
+                  <col />
+                </colgroup>
+                <colgroup span={comVariacao ? 2 : 1} />
+                {comCadastro && <colgroup span={4} />}
                 <thead>
                   <tr>
                     {/* Canto vazio como célula comum (e não `aria-hidden`): fora da árvore de
@@ -1040,7 +1048,7 @@ function MovimentacaoConcorrencia({ dados }: { dados: RedeInteligencia }) {
                     const v = celulaVariacao(r, dataAnterior)
                     return (
                       <tr key={r.rede} style={{ height: 30 }}>
-                        <td style={{ ...celula, textAlign: 'left' }}>
+                        <th scope="row" style={{ ...celula, textAlign: 'left', fontWeight: 'inherit' }}>
                           <span style={{ display: 'inline-flex', alignItems: 'center', gap: 8, font: '500 12px/1 var(--f-ui)', color: 'var(--tx-strong)' }}>
                             {r.logo ? (
                               <img src={r.logo} alt="" width={18} height={18} style={{ display: 'block', flexShrink: 0 }} />
@@ -1049,7 +1057,7 @@ function MovimentacaoConcorrencia({ dados }: { dados: RedeInteligencia }) {
                             )}
                             {nomeRede(r.rede)}
                           </span>
-                        </td>
+                        </th>
                         <td className="num" style={{ ...celula, color: 'var(--tx-strong)' }}>{r.unidades != null ? num(r.unidades) : '—'}</td>
                         {comVariacao && (
                           <td className="num" style={celula} title={v.titulo}>

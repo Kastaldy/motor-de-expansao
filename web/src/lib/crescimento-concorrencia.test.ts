@@ -8,8 +8,10 @@ import {
   avisosDaContagem,
   celulaCadastro,
   celulaVariacao,
+  comArtigo,
   diaMes,
   diasEntre,
+  hojeLocal,
   janela,
   janelaDoCadastro,
   legendaDoEntorno,
@@ -235,7 +237,8 @@ describe('avisos da contagem', () => {
   it('execução inteira de fora: pelo total ou por duplicidade, depois e antes da contagem atual', () => {
     const total = avisosDaContagem(card({}, { recusadas: [{ execucao: '2026-11-08', motivo: 'total', queda_total_pct: 12.5 }] }), HOJE)
     expect(total[0].texto).toBe(
-      'A contagem de 08/11 ficou de fora: o total caiu 12,5%, sinal de coleta incompleta. O card segue na de 01/11.',
+      'A contagem de 08/11 ficou de fora: a soma das redes recoletadas caiu 12,5%, sinal de coleta incompleta. ' +
+        'O card segue na de 01/11.',
     )
     const duplicada = avisosDaContagem(card({}, { recusadas: [{ execucao: '2026-11-08', motivo: 'duplicada', queda_total_pct: null }] }), HOJE)
     expect(duplicada[0].texto).toBe(
@@ -252,7 +255,7 @@ describe('avisos da contagem', () => {
     const avisos = avisosDaContagem(card(), '2026-11-20')
     expect(avisos[0]).toEqual({
       tom: 'alerta',
-      texto: 'A contagem mais recente é de 01/11/2026, de 19 dias atrás: o histórico semanal pode ter parado de chegar ao site.',
+      texto: 'A execução mais recente do histórico semanal é de 01/11/2026, de 19 dias atrás: o histórico pode ter parado de chegar ao site.',
     })
     expect(avisosDaContagem(card(), '2026-11-08')).toEqual([])
   })
@@ -285,7 +288,7 @@ describe('avisos da contagem', () => {
       { tom: 'info', texto: 'A variação aparece a partir da segunda contagem semanal.' },
     ])
     expect(avisosDaContagem(card({}, { linhas_sem_data: 3 }), HOJE)[0].texto).toBe(
-      '3 linhas do histórico vieram sem data e ficaram de fora.',
+      '3 linhas do histórico vieram fora do formato (sem data ou com campos a mais) e ficaram de fora.',
     )
   })
 })
@@ -367,16 +370,118 @@ describe('o card na tela', () => {
     for (const uso of ['{AVISO_NACIONAL}', 'rotuloContagem(m)', 'rotuloCadastro(m, comCautela)', 'celulaCadastro(r, coluna)', 'celulaVariacao(r, dataAnterior)', 'rodapeCrescimento(m, comCautela)']) {
       expect(fonteCard).toContain(uso)
     }
-    expect(fonteCard).toMatch(/avisosDaContagem\(m, new Date\(\)/)
+    // A expressão EXATA: um `new Date().toLocaleDateString()` compilaria, passaria num regex frouxo e
+    // desligaria o aviso de contagem velha (`diasEntre` só lê ISO). E `toISOString` daria o dia em UTC.
+    expect(fonteCard).toContain('avisosDaContagem(m, hojeLocal())')
+    expect(fonteCard).not.toContain('toISOString')
   })
 
   it('o cabeçalho de duas linhas associa cada grupo às suas colunas', () => {
     expect(fonteCard).not.toContain('aria-hidden')
     expect(fonteCard.match(/scope="colgroup"/g)?.length).toBe(2)
+    // sem <colgroup>, o scope="colgroup" não liga o grupo às colunas; e cada linha tem cabeçalho
+    expect(fonteCard.match(/<colgroup/g)?.length).toBe(3)
+    expect(fonteCard).toContain('<th scope="row"')
   })
 
   it('a ficha tira as datas da movimentação do dado', () => {
     expect(ficha).toContain('legendaDoEntorno(mov.periodos)')
     expect(ficha).not.toContain('Foto não validada (28/05 a 02/08)')
+  })
+})
+
+// --------------------------------------------------------------------------- //
+// Revisão de 05/11 (2ª rodada): a idade do histórico, a execução sem coleta nova, plurais
+// --------------------------------------------------------------------------- //
+describe('avisos: a idade do histórico e a execução sem coleta nova', () => {
+  it('o histórico que chegou e foi recusado não é "parou de chegar"', () => {
+    const avisos = avisosDaContagem(
+      card({}, { execucao_mais_recente: '2026-11-08', recusadas: [{ execucao: '2026-11-08', motivo: 'total', queda_total_pct: 14.9 }] }),
+      '2026-11-12',
+    )
+    expect(avisos).toEqual([
+      {
+        tom: 'alerta',
+        texto: 'Nenhuma contagem nova entra no card desde 01/11/2026, há 11 dias: o histórico chega, mas as execuções seguintes ficaram de fora.',
+      },
+      {
+        tom: 'alerta',
+        texto: 'A contagem de 08/11 ficou de fora: a soma das redes recoletadas caiu 14,9%, sinal de coleta incompleta. O card segue na de 01/11.',
+      },
+    ])
+  })
+
+  it('a fronteira da contagem velha é de 9 dias: no 10º, alerta', () => {
+    expect(avisosDaContagem(card(), '2026-11-10')).toEqual([])
+    const [aviso] = avisosDaContagem(card(), '2026-11-11')
+    expect(aviso.texto).toContain('de 10 dias atrás: o histórico pode ter parado de chegar ao site.')
+  })
+
+  it('a execução sem coleta nova não troca a data do card e é dita', () => {
+    const uma = avisosDaContagem(card({}, { execucao_mais_recente: '2026-11-04', sem_coleta_nova: ['2026-11-04'] }), HOJE)
+    expect(uma).toEqual([
+      {
+        tom: 'alerta',
+        texto: 'A execução de 04/11 não trouxe coleta nova: nenhuma rede foi recoletada. O card segue na contagem de 01/11.',
+      },
+    ])
+    const duas = avisosDaContagem(
+      card({}, { execucao_mais_recente: '2026-11-15', sem_coleta_nova: ['2026-11-08', '2026-11-15'] }),
+      '2026-11-16',
+    )
+    expect(duas.map((a) => a.texto)).toEqual([
+      'Nenhuma contagem nova entra no card desde 01/11/2026, há 15 dias: o histórico chega, mas as execuções seguintes ficaram de fora.',
+      'As execuções de 08/11 e 15/11 não trouxeram coleta nova: nenhuma rede foi recoletada. O card segue na contagem de 01/11.',
+    ])
+  })
+
+  it('a queda do total que se repetiu e entrou', () => {
+    expect(avisosDaContagem(card({}, { total_confirmado: true }), HOJE)).toEqual([
+      { tom: 'info', texto: 'A queda do total se manteve por duas contagens seguidas, e esta entrou.' },
+    ])
+  })
+
+  it('plurais: várias confirmadas e várias recusadas depois da contagem', () => {
+    const confirmadas = avisosDaContagem(
+      card(
+        {},
+        {
+          confirmadas: [
+            { rede: 'selfit', antes: 233, agora: 119, direcao: 'queda', desde: '2026-10-25' },
+            { rede: 'bluefit', antes: 100, agora: 160, direcao: 'subida', desde: '2026-10-25' },
+          ],
+        },
+      ),
+      HOJE,
+    )
+    expect(confirmadas[0].texto).toBe('2 saltos bruscos se mantiveram numa coleta mais nova e entraram nesta contagem: Selfit e Bluefit.')
+    const recusadas = avisosDaContagem(
+      card(
+        {},
+        {
+          execucao_mais_recente: '2026-11-15',
+          recusadas: [
+            { execucao: '2026-11-08', motivo: 'total', queda_total_pct: 12 },
+            { execucao: '2026-11-15', motivo: 'duplicada', queda_total_pct: null },
+          ],
+        },
+      ),
+      '2026-11-16',
+    )
+    expect(recusadas.map((a) => a.texto)).toContain(
+      'As contagens de 08/11 e 15/11 ficaram de fora (na de 15/11, ela aparece duas vezes no histórico). O card segue na de 01/11.',
+    )
+  })
+
+  it('o nome que já começa por "A " não ganha outro artigo', () => {
+    expect(comArtigo('selfit')).toBe('A Selfit')
+    expect(comArtigo('a_fitness')).toBe('A Fitness')
+    const [aviso] = avisosDaContagem(card({}, { nao_recoletadas: ['a_melhor_academia'] }), HOJE)
+    expect(aviso.texto).toBe('A Melhor Academia não foi recoletada nesta semana: fica com a última contagem, sem variação.')
+  })
+
+  it('"hoje" é a data local de quem abre a página, não a de UTC', () => {
+    expect(hojeLocal(new Date(2026, 10, 10, 21, 30))).toBe('2026-11-10')
+    expect(hojeLocal(new Date(2026, 0, 5, 0, 5))).toBe('2026-01-05')
   })
 })

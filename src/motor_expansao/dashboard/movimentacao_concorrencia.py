@@ -449,6 +449,7 @@ def _resumo_contagem(semanal: Mapping[str, Any] | None) -> dict[str, Any] | None
         "execucao_mais_recente": semanal.get("execucao_mais_recente"),
         "linhas_sem_data": int(semanal.get("linhas_sem_data") or 0),
         "recusadas": list(semanal.get("recusadas") or []),
+        "sem_coleta_nova": list(semanal.get("sem_coleta_nova") or []),
         "seguradas": list(semanal.get("seguradas") or []),
         "confirmadas": list(semanal.get("confirmadas") or []),
         "nao_recoletadas": list(semanal.get("nao_recoletadas") or []),
@@ -477,7 +478,7 @@ def crescimento_por_rede(
       com a lista de QUEM abriu e fechou. O saldo continua sendo aberturas menos fechamentos
       (decisão do Vinicius, 05/11/2026): a variação da contagem é outra coluna, não um saldo novo.
 
-    Sem a contagem semanal (`semanal` ausente, com `erro` ou sem execução aceita), as unidades caem
+    Sem a contagem semanal (`semanal` ausente, com `erro` ou sem nenhuma contagem boa), as unidades caem
     para a contagem do pacote, e `contagem_origem = "pacote"` faz a tela dizer de que data elas são.
     Sem nenhuma das duas fontes, `disponivel = False`. Sem o pacote, mas com a semanal, a tabela sai
     só com unidades e variação (`tem_cadastro = False`): o pacote não se regenera, e perdê-lo não
