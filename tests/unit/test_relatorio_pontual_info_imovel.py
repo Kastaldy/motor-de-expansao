@@ -7,6 +7,8 @@ geradores (default None -> PDF inalterado). Usa um `result` minimo + `mapas=None
 
 from __future__ import annotations
 
+import pytest
+
 from motor_expansao.dashboard.censo_report import (
     _info_valor,
     gerar_pdf_relatorio_pontual_censitario,
@@ -46,6 +48,12 @@ def test_info_valor_brl():
 def test_info_valor_num_e_num2():
     assert _info_valor(1500, "num") == "1.500"
     assert _info_valor(4.2, "num2") == "4,20"
+
+
+def test_info_valor_com_unidade_depois_do_numero():
+    assert _info_valor(1500, "m2") == "1.500 m²"
+    assert _info_valor(4.5, "metros") == "4,50 m"
+    assert _info_valor(None, "m2") == TEXTO_SEM_DADO
 
 
 def test_info_valor_texto():
@@ -112,3 +120,96 @@ def test_fotos_e_info_juntas_somam_duas_paginas():
         _MIN_RESULT, None, fotos=[foto, foto], info_imovel=_INFO_OK
     )
     assert b"/Count 9" in pdf_bytes  # capa + fotos + info + 5 conteudo + credito
+
+
+# --------------------------------------------------------------------------- #
+# DEC-080: o card de aluguel de referência no lugar do valor de venda          #
+# --------------------------------------------------------------------------- #
+def test_card_do_valor_de_venda_deu_lugar_ao_aluguel_de_referencia():
+    from motor_expansao.dashboard.censo_report import _INFO_IMOVEL_CAMPOS
+
+    chaves = [chave for chave, _, _ in _INFO_IMOVEL_CAMPOS]
+    assert "valor_venda" not in chaves
+    assert "aluguel_referencia" in chaves
+
+
+def test_card_de_aluguel_imprime_o_bloco_ou_nd(monkeypatch):
+    from motor_expansao.dashboard import censo_report
+
+    chamadas = []
+    original = censo_report._info_card_aluguel_referencia
+
+    def _espiao(pdf, bloco, *args, **kwargs):
+        chamadas.append(bloco)
+        return original(pdf, bloco, *args, **kwargs)
+
+    monkeypatch.setattr(censo_report, "_info_card_aluguel_referencia", _espiao)
+    bloco = {
+        "faixa_min": 27600,
+        "faixa_max": 43700,
+        "rs_m2_p25": 18.4,
+        "rs_m2_p75": 29.1,
+        "base": "Base: 12 anúncios de comercial em São José dos Campos/SP",
+        "mediana": 33800,
+        "diferenca_pct": 10,
+        "comparacao": "42% acima da mediana · 10% acima da faixa",
+    }
+    gerar_pdf_relatorio_pontual_classico(
+        _MIN_RESULT, None, info_imovel={**_INFO_OK, "aluguel_referencia": bloco}
+    )
+    gerar_pdf_relatorio_pontual_classico(_MIN_RESULT, None, info_imovel=_INFO_OK)
+    assert chamadas == [bloco, None]
+
+
+def test_card_de_aluguel_com_bloco_malformado_cai_em_nd_sem_quebrar():
+    bloco = {"faixa_min": "abc", "diferenca_pct": "5", "comparacao": "x"}
+    pdf_bytes = gerar_pdf_relatorio_pontual_classico(
+        _MIN_RESULT, None, info_imovel={**_INFO_OK, "aluguel_referencia": bloco}
+    )
+    assert _TITULO in pdf_bytes
+
+
+def test_comparacao_vai_no_card_do_aluguel_pedido(monkeypatch):
+    """A comparacao e' do aluguel PEDIDO: sai debaixo do valor dele, nao no card da regiao."""
+    from motor_expansao.dashboard import censo_report
+
+    chamadas = []
+    monkeypatch.setattr(
+        censo_report,
+        "_info_card_comparacao_aluguel",
+        lambda pdf, bloco, x, y, largura: chamadas.append((bloco, x)),
+    )
+    bloco = {"faixa_min": 27600, "faixa_max": 43700, "diferenca_pct": 10, "comparacao": "x"}
+    gerar_pdf_relatorio_pontual_classico(
+        _MIN_RESULT, None, info_imovel={**_INFO_OK, "aluguel_referencia": bloco}
+    )
+    assert len(chamadas) == 1 and chamadas[0][0] is bloco
+
+
+@pytest.mark.parametrize(
+    ("pct_faixa", "pct_mediana", "cor"),
+    [
+        (10, 42, "_INFO_ALUGUEL_ACIMA_RGB"),
+        (0, 18, "_INFO_ALUGUEL_MEDIANA_RGB"),
+        (0, 0, "_INFO_ALUGUEL_DENTRO_RGB"),
+        (0, -11, "_INFO_ALUGUEL_DENTRO_RGB"),
+        (-9, -26, "_INFO_ALUGUEL_DENTRO_RGB"),
+    ],
+)
+def test_cor_da_comparacao(monkeypatch, pct_faixa, pct_mediana, cor):
+    """Vermelho acima da faixa, ambar acima da mediana, verde no resto (Felipe, 05/11/2026)."""
+    from motor_expansao.dashboard import censo_report
+
+    cores = []
+
+    class _Pdf:
+        def set_text_color(self, *rgb):
+            cores.append(rgb)
+
+        def __getattr__(self, _nome):
+            return lambda *a, **k: None
+
+    bloco = {"comparacao": "x", "diferenca_pct": pct_faixa, "diferenca_mediana_pct": pct_mediana}
+    monkeypatch.setattr(censo_report, "_ajustar_fonte_para_largura", lambda *a, **k: None)
+    censo_report._info_card_comparacao_aluguel(_Pdf(), bloco, 0, 0, 200)
+    assert cores == [getattr(censo_report, cor)]

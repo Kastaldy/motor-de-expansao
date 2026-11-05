@@ -8,7 +8,7 @@ from dataclasses import dataclass, replace
 from datetime import datetime
 from io import BytesIO
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 import pandas as pd
 from fpdf import FPDF
@@ -1272,10 +1272,14 @@ def _foto_satelite_page(
 _INFO_IMOVEL_PAGE_TITLE = "Imóvel - Informações"
 # (chave no dict, rotulo exibido, tipo de formatacao).
 _INFO_IMOVEL_CAMPOS: tuple[tuple[str, str, str], ...] = (
-    ("metragem_m2", "Metragem (m2)", "num"),
-    ("aluguel_pedido", "Aluguel pedido (mês)", "brl"),
-    ("valor_venda", "Valor de venda", "brl"),
-    ("pe_direito_m", "Pé-direito (m)", "num2"),
+    # A unidade vai DEPOIS do número, não no título (Felipe, 05/11/2026): "1.500 m²", "4,50 m".
+    ("metragem_m2", "Metragem", "m2"),
+    ("aluguel_pedido", "Aluguel pedido", "brl"),
+    # DEC-080 (Felipe, 04/11/2026): o card de "Valor de venda" deu lugar ao aluguel de
+    # referência -- a faixa p25-p75 da região para a metragem e, com o aluguel digitado, a
+    # comparação. O bloco chega pronto (`aluguel_referencia.bloco_do_pdf`); aqui só imprime.
+    ("aluguel_referencia", "Faixa de aluguel da região", "aluguel_ref"),
+    ("pe_direito_m", "Pé-direito", "metros"),
     ("vagas", "Vagas", "num"),
     ("tipo_imovel", "Tipo do imóvel", "texto"),
 )
@@ -1292,6 +1296,10 @@ def _info_valor(value: Any, kind: str) -> str:
             return _format_number(value, 0)
         if kind == "num2":
             return _format_number(value, 2)
+        if kind == "m2":
+            return _format_number(value, 0) + " m²"
+        if kind == "metros":
+            return _format_number(value, 2) + " m"
     except (TypeError, ValueError):
         return str(value)
     return str(value)
@@ -1303,6 +1311,88 @@ _INFO_IMOVEL_ALERTA_H = 40.0
 _INFO_IMOVEL_ALERTA_ACENTO_H = 4.0
 # Folga ate o rodape, para a faixa nao encostar na assinatura da pagina.
 _INFO_IMOVEL_ALERTA_MARGEM_INFERIOR = 58.0
+
+
+# Cor do texto da comparação no card de aluguel de referência: o vermelho e o verde SÓLIDOS
+# da Conclusão (`_CONCLUSAO_OBS_CORES`), o mesmo par da tela (`--neg-forte` / `--pos-text`).
+_INFO_ALUGUEL_ACIMA_RGB = (198, 57, 57)
+_INFO_ALUGUEL_DENTRO_RGB = (26, 170, 85)
+#: Acima da mediana sem passar da faixa: o âmbar da "ressalva" da Conclusão (Felipe, 05/11/2026).
+_INFO_ALUGUEL_MEDIANA_RGB = (198, 146, 44)
+#: Subtítulo dos cards de aluguel: a mesma linha e corpo nos dois (pedido e faixa da região).
+_INFO_SUBTITULO_Y = 94.0
+_INFO_SUBTITULO_PT = 10.0
+
+
+def _info_card_aluguel_referencia(
+    pdf: _UltraPDF, bloco: Any, x: float, y_card: float, largura: float
+) -> None:
+    """Corpo do card "Faixa de aluguel da região" (DEC-080). A faixa do mês é o número
+    principal, na MESMA linha e corpo dos cards vizinhos; a mediana vai abaixo como
+    subtítulo menor, na mesma altura do subtítulo do card "Aluguel pedido" (onde mora a
+    comparação, `_info_card_comparacao_aluguel`), cada um numa linha (encolhe em
+    vez de quebrar, para não vazar o card). Sem bloco válido -> "n/d" (a API pública repassa
+    `info_imovel` sem passar pelo servidor do piloto).
+    """
+    numeros = ("faixa_min", "faixa_max")
+    pdf.set_text_color(40, 40, 40)
+    if not isinstance(bloco, Mapping) or not all(
+        isinstance(bloco.get(k), (int, float)) and not isinstance(bloco.get(k), bool)
+        for k in numeros
+    ):
+        pdf.set_font("Helvetica", "B", 22)
+        pdf.set_xy(x, y_card + 66)
+        pdf.multi_cell(largura, 24, _ascii(TEXTO_SEM_DADO))
+        return
+    faixa = _ascii(
+        f"R$ {_format_number(bloco.get('faixa_min'), 0)} a "
+        f"R$ {_format_number(bloco.get('faixa_max'), 0)}"
+    )
+    _ajustar_fonte_para_largura(pdf, faixa, largura, tamanho=22.0)
+    pdf.set_xy(x, y_card + 66)
+    pdf.cell(largura, 24, faixa)
+    pdf.set_text_color(*_CINZA_TEXTO)
+    mediana = bloco.get("mediana")
+    if isinstance(mediana, (int, float)) and not isinstance(mediana, bool) and mediana > 0:
+        texto = f"Mediana R$ {_format_number(mediana, 0)}"
+        n = bloco.get("n_anuncios")
+        if isinstance(n, int) and not isinstance(n, bool) and n > 0:
+            texto += f" · Base: {_format_number(n, 0)} {'anúncio ativo' if n == 1 else 'anúncios ativos'}"
+        texto = _ascii(texto)
+        _ajustar_fonte_para_largura(pdf, texto, largura, tamanho=_INFO_SUBTITULO_PT, minimo=7.0)
+        pdf.set_xy(x, y_card + _INFO_SUBTITULO_Y)
+        pdf.cell(largura, 12, texto)
+    # A frase longa da base ("Base: N anúncios de ... em ...") fica SÓ na tela; no PDF a
+    # quantidade vai ao lado da mediana (Felipe, 05/11/2026). A chave `base` segue no bloco.
+
+
+def _info_card_comparacao_aluguel(
+    pdf: _UltraPDF, bloco: Any, x: float, y_card: float, largura: float
+) -> None:
+    """Subtítulo do card "Aluguel pedido": o aluguel contra a mediana e a faixa (DEC-080).
+
+    Só com o aluguel digitado (o bloco traz `comparacao`). Mesma altura e corpo do subtítulo
+    "Mediana" do card vizinho. Cor (Felipe, 05/11/2026): vermelho acima da faixa, âmbar acima
+    da mediana sem passar da faixa, verde no resto. Espelho de `corDaComparacao` no front.
+    """
+    if not isinstance(bloco, Mapping):
+        return
+    comparacao = bloco.get("comparacao")
+    pct = bloco.get("diferenca_pct")
+    if not comparacao or not isinstance(pct, (int, float)) or isinstance(pct, bool):
+        return
+    pct_mediana = bloco.get("diferenca_mediana_pct")
+    if pct > 0:
+        cor = _INFO_ALUGUEL_ACIMA_RGB
+    elif isinstance(pct_mediana, (int, float)) and not isinstance(pct_mediana, bool) and pct_mediana > 0:
+        cor = _INFO_ALUGUEL_MEDIANA_RGB
+    else:
+        cor = _INFO_ALUGUEL_DENTRO_RGB
+    pdf.set_text_color(*cor)
+    texto = _ascii(str(comparacao))
+    _ajustar_fonte_para_largura(pdf, texto, largura, tamanho=_INFO_SUBTITULO_PT, minimo=7.0)
+    pdf.set_xy(x, y_card + _INFO_SUBTITULO_Y)
+    pdf.cell(largura, 12, texto)
 
 
 def _info_imovel_page(
@@ -1327,17 +1417,38 @@ def _info_imovel_page(
     _draw_title_band(pdf, _INFO_IMOVEL_PAGE_TITLE, rgb=primary)
 
     endereco = str(info_imovel.get("endereco") or info_imovel.get("rotulo") or "").strip()
-    y_cards = 72.0
-    if endereco:
-        pdf.set_text_color(45, 45, 45)
-        pdf.set_font("Helvetica", "B", 13)
-        pdf.set_xy(36, 66)
-        pdf.multi_cell(_PAGE_W - 72, 18, _ascii(endereco[:110]))
-        y_cards = 100.0
-
+    observacoes = str(info_imovel.get("observacoes") or "").strip()
     margin_x, gap, cols = 36.0, 12.0, 3
     card_w = (_PAGE_W - 2 * margin_x - (cols - 1) * gap) / cols
     card_h = 120.0
+
+    # O bloco (endereco + 6 cards + observacoes) fica CENTRADO na vertical entre a faixa do
+    # titulo e o pe da pagina (ou o alerta, quando ha'), e nao colado no topo (Felipe,
+    # 05/11/2026). Nunca sobe acima da posicao antiga (66): com observacao longa, e' o topo.
+    altura_endereco = 28.0 if endereco else 0.0
+    altura_obs = 0.0
+    if observacoes:
+        pdf.set_font("Helvetica", "", 10)
+        linhas = pdf.multi_cell(
+            _PAGE_W - 2 * margin_x, 13, _ascii(observacoes[:600]), dry_run=True, output="LINES"
+        )
+        altura_obs = 6 + 16 + 13 * len(cast(list[str], linhas))
+    altura_bloco = altura_endereco + 2 * card_h + gap + altura_obs
+    topo_util = 60.0
+    fundo_util = (
+        _PAGE_H - _INFO_IMOVEL_ALERTA_MARGEM_INFERIOR - _INFO_IMOVEL_ALERTA_H - 12
+        if alerta_canibalizacao
+        else _PAGE_H - 40
+    )
+    # 40% da folga em cima e 60% embaixo: o centro geométrico exato parecia baixo demais
+    # (Felipe, 05/11/2026), por causa do peso da faixa do título.
+    y_bloco = max(66.0, topo_util + (fundo_util - topo_util - altura_bloco) * 0.4)
+    y_cards = y_bloco + altura_endereco
+    if endereco:
+        pdf.set_text_color(45, 45, 45)
+        pdf.set_font("Helvetica", "B", 13)
+        pdf.set_xy(36, y_bloco)
+        pdf.multi_cell(_PAGE_W - 72, 18, _ascii(endereco[:110]))
     accents = [primary, secondary]
     for index, (chave, rotulo, kind) in enumerate(_INFO_IMOVEL_CAMPOS):
         col, row = index % cols, index // cols
@@ -1353,12 +1464,18 @@ def _info_imovel_page(
         pdf.set_font("Helvetica", "", 11)
         pdf.set_xy(x + 14, y + 20)
         pdf.multi_cell(card_w - 28, 14, _ascii(rotulo))
+        if kind == "aluguel_ref":
+            _info_card_aluguel_referencia(pdf, info_imovel.get(chave), x + 14, y, card_w - 28)
+            continue
         pdf.set_text_color(40, 40, 40)
         pdf.set_font("Helvetica", "B", 22)
         pdf.set_xy(x + 14, y + 66)
         pdf.multi_cell(card_w - 28, 24, _ascii(_info_valor(info_imovel.get(chave), kind)))
+        if chave == "aluguel_pedido":
+            _info_card_comparacao_aluguel(
+                pdf, info_imovel.get("aluguel_referencia"), x + 14, y, card_w - 28
+            )
 
-    observacoes = str(info_imovel.get("observacoes") or "").strip()
     if observacoes:
         y_obs = y_cards + 2 * (card_h + gap) + 6
         pdf.set_text_color(45, 45, 45)
@@ -1972,7 +2089,7 @@ def _viabilidade_page(
     # continua no payload e na tela de Viabilidade, o PDF so' deixou de o imprimir aqui.
     cards = [
         (rotulo_be, _viab_breakeven(dados.get("alunos_breakeven"))),
-        ("Aluguel-teto (mês)", _viab_brl(dados.get("aluguel_teto"))),
+        ("Aluguel-teto", _viab_brl(dados.get("aluguel_teto"))),
         ("Margem EBITDA", _viab_pct(dados.get("margem_ebitda_pct"))),
         ("Payback", _viab_payback(dados.get("payback_meses"))),
         ("Capex total", _viab_brl(dados.get("capex_total"))),
@@ -3199,9 +3316,9 @@ def _conclusao_cards_aluguel(
     aluguel = info.get("aluguel_pedido")
 
     cards = (
-        ("Aluguel-teto (mês)", _viab_brl(teto), _CARD_NEUTRO_RGB),
+        ("Aluguel-teto", _viab_brl(teto), _CARD_NEUTRO_RGB),
         (
-            "Aluguel pedido (mês)",
+            "Aluguel pedido",
             _viab_brl(aluguel),
             _cor_aluguel_pedido(aluguel, teto, excecao),
         ),

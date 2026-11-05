@@ -9593,6 +9593,43 @@ def _tabela_aluguel():
         return None
 
 
+def _info_imovel_do_pdf(info_imovel: str | None) -> dict[str, Any] | None:
+    """`info_imovel` do PDF com o card "Aluguel de referência" (DEC-080) já montado.
+
+    A tela manda o tipo BRUTO, a UF e o município que usou na própria consulta
+    (`aluguel_tipo`/`aluguel_uf`/`aluguel_municipio`) e `aluguel_informado` quando o operador
+    digitou o aluguel; o servidor refaz a consulta pela mesma tabela. Sem régua, o card
+    simplesmente não entra.
+    """
+    if not info_imovel:
+        return None
+    info = json.loads(info_imovel)
+    if not isinstance(info, dict):
+        return info
+    from motor_expansao.dimensionamento.aluguel_referencia import bloco_do_pdf
+
+    def _num(v: Any) -> float | None:
+        try:
+            return float(v) if v is not None else None
+        except (TypeError, ValueError):
+            return None
+
+    # O card é SÓ do servidor: um `aluguel_referencia` vindo no JSON do cliente seria impresso
+    # como régua (ou derrubaria o render com tipo errado).
+    info.pop("aluguel_referencia", None)
+    bloco = bloco_do_pdf(
+        _tabela_aluguel(),
+        info.get("aluguel_tipo"),
+        info.get("aluguel_uf"),
+        info.get("aluguel_municipio"),
+        _num(info.get("metragem_m2")),
+        _num(info.get("aluguel_pedido")) if info.get("aluguel_informado") else None,
+    )
+    if bloco is not None:
+        info["aluguel_referencia"] = bloco
+    return info
+
+
 @app.get("/api/aluguel-referencia")
 def aluguel_referencia(
     tipo: str, uf: str | None = None, municipio: str | None = None
@@ -14029,7 +14066,7 @@ def _gerar_relatorio_pontual_pdf(
         report_id=report_id,
         rotulo=rotulo,
         fotos=fotos_bytes[:2] or None,
-        info_imovel=json.loads(info_imovel) if info_imovel else None,
+        info_imovel=_info_imovel_do_pdf(info_imovel),
         viabilidade=viab_pdf,
         foto_satelite=foto_satelite,
         # Marcador EXPLICITO de origem (parametro proprio, nunca embutido no `rotulo`).

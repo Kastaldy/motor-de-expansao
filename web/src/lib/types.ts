@@ -843,6 +843,8 @@ export interface PremissasViabilidade {
   ticket_agregador: number
   /** Ticket medio por aluno TOTAL, liquido de churn/inadimplencia (somente-leitura). */
   ticket_blended: number
+  /** "Ticket médio" da tela: mix de mensalidades SEM churn nem inadimplência (05/11/2026). */
+  ticket_medio?: number
   /** Fração do mix no balcão (0.69 = 69%) — vale sobre a demanda de MUSCULAÇÃO
    *  (total menos studios); sem studio, é a demanda total. */
   share_balcao: number
@@ -1250,10 +1252,8 @@ export interface ExecutivaPayload {
 /** Campos opcionais do imovel que enriquecem o PDF do Relatorio Pontual. */
 export interface InfoImovel {
   nome?: string
-  valor_venda?: string
   pe_direito?: string
   vagas?: string
-  tipo?: string
   observacoes?: string
 }
 

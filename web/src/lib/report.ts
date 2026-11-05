@@ -12,6 +12,7 @@
    feita aqui.
    --------------------------------------------------------------------------- */
 import type { Alcance } from './alcance'
+import { ROTULO_TIPO_IMOVEL, type TipoImovelAluguel } from './aluguel-referencia'
 import { coordenadaDoEstudo, ehCentroideDoHex } from './coord'
 import { MINUTOS_DO_CARRO, rotuloDaIsocrona, rotuloDoRaio } from './recorte'
 import type { InfoImovel, ViabilidadeOut } from './types'
@@ -27,7 +28,7 @@ export function viabilidadeParaPdf(res: ViabilidadeOut): Record<string, unknown>
 
 /**
  * Mapeia os inputs do imóvel para o CONTRATO de `censo_report._info_imovel_page`, que
- * lê CHAVES ESPECÍFICAS: `metragem_m2`, `aluguel_pedido`, `valor_venda`, `pe_direito_m`,
+ * lê CHAVES ESPECÍFICAS: `metragem_m2`, `aluguel_pedido`, `pe_direito_m`,
  * `vagas`, `tipo_imovel`, além de `endereco` e `observacoes`.
  *
  * BUG que isto corrige: a metragem e o aluguel vivem no **Cenário** (não em "Dados para o
@@ -38,10 +39,23 @@ export function viabilidadeParaPdf(res: ViabilidadeOut): Record<string, unknown>
  * `metragem_m2`/`aluguel_pedido` vêm como número (formatação `num`/`brl` do gerador); os
  * campos de texto são convertidos para número no formato pt-BR (ponto=milhar, vírgula=decimal)
  * quando possível, senão seguem como texto (o gerador degrada gracioso). Chaves vazias saem.
+ *
+ * Aluguel de referência (DEC-080): o tipo do imóvel é o do SELETOR do Cenário (não mais texto
+ * livre) e sai com o rótulo de exibição em `tipo_imovel`. Junto vão o tipo BRUTO, a UF e o
+ * município da consulta da tela (`aluguel_tipo`/`aluguel_uf`/`aluguel_municipio`), para o
+ * servidor refazer a MESMA consulta e montar o card, e `aluguel_informado` quando o operador
+ * digitou o aluguel (só então o PDF compara com a faixa).
  */
 export function infoImovelParaPdf(
   info: InfoImovel,
-  cenario: { m2: number; aluguel: number },
+  cenario: {
+    m2: number
+    aluguel: number
+    tipo?: TipoImovelAluguel
+    aluguelInformado?: boolean
+    uf?: string
+    municipio?: string
+  },
 ): Record<string, unknown> {
   const numOpt = (s?: string): number | string | undefined => {
     const t = (s ?? '').trim()
@@ -58,10 +72,13 @@ export function infoImovelParaPdf(
   const out: Record<string, unknown> = {
     metragem_m2: cenario.m2,
     aluguel_pedido: cenario.aluguel,
-    valor_venda: numOpt(info.valor_venda),
     pe_direito_m: numOpt(info.pe_direito),
     vagas: numOpt(info.vagas),
-    tipo_imovel: info.tipo?.trim() || undefined,
+    tipo_imovel: cenario.tipo ? ROTULO_TIPO_IMOVEL[cenario.tipo] : undefined,
+    aluguel_tipo: cenario.tipo,
+    aluguel_uf: cenario.uf || undefined,
+    aluguel_municipio: cenario.municipio || undefined,
+    aluguel_informado: cenario.aluguelInformado || undefined,
     endereco: info.nome?.trim() || undefined,
     observacoes: info.observacoes?.trim() || undefined,
   }

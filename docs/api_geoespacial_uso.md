@@ -311,12 +311,15 @@ curl -s "https://api.ultra-expansao.tech/api/v1/aluguel-referencia?tipo=galpao&l
   "n_anuncios": 185,
   "nivel": "municipio",
   "uf": "SP",
-  "municipio": "Campinas"
+  "municipio": "Campinas",
+  "rs_m2_p25": 20.0,
+  "rs_m2_p75": 31.5
 }
 ```
 
 O aluguel de referência de um imóvel é `rs_m2 × metragem`, arredondado à centena (a conta da
-tela). Quando o recorte não é a cidade, `nivel` diz `uf` ou `brasil` e `municipio` vem `null`.
+tela). A faixa da região é `rs_m2_p25 × metragem` a `rs_m2_p75 × metragem`, também na centena:
+é o número principal do card "Faixa de aluguel da região" no estudo. Quando o recorte não é a cidade, `nivel` diz `uf` ou `brasil` e `municipio` vem `null`.
 Sem selo de confiança, por decisão de Felipe (29/10/2026): `nivel` e `n_anuncios` são o fato que
 acompanha o número.
 

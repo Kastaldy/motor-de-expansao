@@ -28,15 +28,19 @@ import {
 } from '../lib/format'
 import {
   aluguelDeReferencia,
-  diferencaPct,
+  diferencaDaFaixaPct,
+  diferencaDaMedianaPct,
+  faixaDoAluguel,
   ROTULO_SELETOR_TIPO_IMOVEL,
   ROTULO_TIPO_IMOVEL,
-  textoDaBase,
   textoDaDiferenca,
+  textoDaDiferencaMediana,
+  tomDaComparacao,
   TIPO_IMOVEL_PADRAO,
   TIPOS_IMOVEL_ALUGUEL,
   type AluguelReferencia,
   type TipoImovelAluguel,
+  type TomDaComparacao,
 } from '../lib/aluguel-referencia'
 import { formatarNumero } from '../lib/mascara'
 import {
@@ -62,7 +66,6 @@ import {
   avisosV2,
   camposDeV2,
   corpoSugestaoV2,
-  motivoV2,
   sementeDaDemandaV2,
   sugestaoValePara,
   v2Disponivel,
@@ -254,7 +257,14 @@ function SeletorTipoImovel({
               role="radio"
               aria-checked={marcado}
               onClick={() => onTrocar(t)}
-              style={estiloDaOpcaoAlcance(marcado)}
+              // Largura pelo conteúdo e quebra permitida: "Laje Corporativa" era cortada com
+              // reticências no trilho de largura igual do seletor de alcance.
+              style={{
+                ...estiloDaOpcaoAlcance(marcado),
+                flex: '1 1 auto',
+                padding: '6px 8px',
+                whiteSpace: 'normal',
+              }}
             >
               {ROTULO_TIPO_IMOVEL[t]}
             </button>
@@ -266,9 +276,17 @@ function SeletorTipoImovel({
 }
 
 /**
- * O QUADRO DO ALUGUEL DE REFERÊNCIA (DEC-080): o R$/m² e o aluguel para a metragem, a base
- * em fato neutro (sem selo, sem fonte, sem data) e, com o aluguel digitado, a comparação.
+ * O QUADRO DO ALUGUEL DE REFERÊNCIA (DEC-080): a FAIXA p25–p75 do aluguel para a metragem e do
+ * R$/m², a base em fato neutro (sem selo, sem fonte, sem data) e, com o aluguel digitado, a
+ * comparação contra a faixa.
  */
+/** Vermelho acima da faixa, amarelo acima da mediana, verde no resto (Felipe, 05/11/2026). */
+const COR_DO_TOM: Readonly<Record<TomDaComparacao, string>> = {
+  faixa: 'var(--neg-forte)',
+  mediana: 'var(--warn-text)',
+  ok: 'var(--pos-text)',
+}
+
 function QuadroAluguelReferencia({
   referencia,
   m2,
@@ -278,9 +296,11 @@ function QuadroAluguelReferencia({
   m2: number
   aluguelDigitado: number | null
 }) {
-  const valor = aluguelDeReferencia(referencia, m2)
-  if (!referencia || valor == null) return null
-  const pct = diferencaPct(aluguelDigitado, valor)
+  const faixa = faixaDoAluguel(referencia, m2)
+  if (!referencia || faixa == null) return null
+  const pct = diferencaDaFaixaPct(aluguelDigitado, faixa)
+  const mediana = aluguelDeReferencia(referencia, m2)
+  const pctMediana = diferencaDaMedianaPct(aluguelDigitado, mediana)
   return (
     <div
       style={{
@@ -294,23 +314,26 @@ function QuadroAluguelReferencia({
       }}
     >
       <span style={{ font: '600 11px/1.3 var(--f-ui)', color: 'var(--tx-sub)' }}>
-        Aluguel de referência
+        Faixa de aluguel da região
       </span>
-      <span style={{ font: '700 14px/1.3 var(--f-ui)', color: 'var(--tx-strong)' }}>
-        {brl(referencia.rs_m2, false, 2)}/m² · {brl(valor)}/mês para {num(m2)} m²
+      <span style={{ font: '700 15px/1.25 var(--f-ui)', color: 'var(--tx-strong)' }}>
+        {brl(faixa.min)} a {brl(faixa.max)}
       </span>
-      <span style={{ font: '400 11px/1.4 var(--f-ui)', color: 'var(--tx-sub)' }}>
-        {textoDaBase(referencia)}
+      {/* O mesmo enxugamento do PDF (Felipe, 05/11/2026): mediana + quantos anúncios, e a
+          comparação curta e colorida; sem R$/m² e sem a frase longa da base. */}
+      <span style={{ font: '400 11px/1.35 var(--f-ui)', color: 'var(--tx-sub)' }}>
+        {mediana != null && `Mediana ${brl(mediana)} · `}
+        {num(referencia.n_anuncios)} {referencia.n_anuncios === 1 ? 'anúncio ativo' : 'anúncios ativos'}
       </span>
       {pct != null && aluguelDigitado != null && (
         <span
           style={{
-            font: `${pct > 0 ? 700 : 600} 12.5px/1.4 var(--f-ui)`,
-            color: pct > 0 ? 'var(--neg-forte)' : 'var(--pos-text)',
-            whiteSpace: 'nowrap',
+            font: '700 11.5px/1.35 var(--f-ui)',
+            color: COR_DO_TOM[tomDaComparacao(pct, pctMediana)],
           }}
         >
-          Seu aluguel: {textoDaDiferenca(pct)}
+          {pctMediana != null && `${textoDaDiferencaMediana(pctMediana)} · `}
+          {textoDaDiferenca(pct)}
         </span>
       )}
     </div>
@@ -403,7 +426,9 @@ export default function ViabilityScreen({
   // com erro -> o modo densidade de sempre, com o motivo discreto.
   const [estadoV2, setEstadoV2] = useState<EstadoDemandaV2 | null>(null)
   const [sugestaoV2, setSugestaoV2] = useState<DemandaV2Out | null>(null)
-  const [erroV2, setErroV2] = useState<string | null>(null)
+  // O motivo de a v2 nao responder deixou de aparecer no quadro da demanda (texto enxugado,
+  // 05/11/2026); o estado segue gravado para quem precisar dele.
+  const [, setErroV2] = useState<string | null>(null)
   // Rampa de maturação (DEC-078, emendas de 21 e 22/10/2026): só a curva observada, com o PICO
   // DE MATURAÇÃO escolhido pelo operador; `null` = sem escolha, e então o pedido vai sem
   // `mes_pico_rampa` e vale o pico observado (padrão do SERVIDOR). A forma não é mais
@@ -458,6 +483,9 @@ export default function ViabilityScreen({
   const [erro, setErro] = useState<string | null>(null)
 
   const inputFoto = useRef<HTMLInputElement>(null)
+  /** O último cenário mandado ao motor (JSON do pedido) e o número do pedido mais novo. */
+  const ultimoPayloadCalculado = useRef<string | null>(null)
+  const seqDoCalculo = useRef(0)
 
   // Coordenada do estudo: a EXATA quando o ponto veio da busca; o centroide do hexágono
   // só quando ele veio do clique no ranking (aí é a única que existe). Ver PontoEscolhido.
@@ -502,6 +530,8 @@ export default function ViabilityScreen({
   /** Troca o tipo do imóvel: troca a régua e, com o aluguel vazio, o aluguel da conta. */
   async function trocarTipoImovel(tipo: TipoImovelAluguel) {
     setTipoImovel(tipo)
+    // Fora do Brasil não há régua: o seletor só registra o tipo para o PDF.
+    if (moedaLocal) return
     const r = await buscarReferencia(tipo)
     refAluguelAgora.current = r
     setRefAluguel(r)
@@ -598,15 +628,22 @@ export default function ViabilityScreen({
       setErro(erroStudios)
       return
     }
+    const payload = montarPayload(demandaUsar, sug)
+    ultimoPayloadCalculado.current = JSON.stringify(payload)
+    // Só a resposta do pedido MAIS NOVO vale: com o recálculo automático, dois pedidos
+    // podem estar no ar e o mais lento não pode pintar a tela com o cenário velho.
+    const seq = ++seqDoCalculo.current
     setCalculando(true)
     setErro(null)
     try {
-      const r = await api.viabilidade(montarPayload(demandaUsar, sug))
-      setRes(r)
+      const r = await api.viabilidade(payload)
+      if (seq === seqDoCalculo.current) setRes(r)
     } catch (e) {
-      setErro(e instanceof ApiError ? e.message : 'Falha ao calcular a viabilidade.')
+      if (seq === seqDoCalculo.current) {
+        setErro(e instanceof ApiError ? e.message : 'Falha ao calcular a viabilidade.')
+      }
     } finally {
-      setCalculando(false)
+      if (seq === seqDoCalculo.current) setCalculando(false)
     }
   }
 
@@ -752,11 +789,25 @@ export default function ViabilityScreen({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [chaveSugestaoV2, estadoV2])
 
+  // RECÁLCULO AUTOMÁTICO (Felipe, 05/11/2026): qualquer número do cenário que muda
+  // recalcula sozinho, 600 ms depois da última tecla, sem precisar do botão. A chave é o
+  // PRÓPRIO pedido ao motor: o que não muda o pedido (endereço, observações, fotos) não
+  // recalcula, e o pedido que acabou de ir (pela chegada ao ponto ou pelo botão) não vai
+  // de novo. Antes da chegada ao ponto terminar (`faixaBuscada`), quem calcula é ela.
+  const pedidoAtual =
+    ponto && demanda != null && !faltaTicket ? JSON.stringify(montarPayload(demanda)) : null
+  useEffect(() => {
+    if (pedidoAtual == null || !faixaBuscada) return
+    if (pedidoAtual === ultimoPayloadCalculado.current) return
+    const t = setTimeout(() => void calcular(), 600)
+    return () => clearTimeout(t)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pedidoAtual, faixaBuscada])
+
   /** Sugestão da v2 que vale para o cenário de agora (`null` = modo densidade). */
   const v2Vigente = sugestaoValePara(sugestaoV2, { lat: alvoLat, lng: alvoLng, m2, nStudios })
     ? sugestaoV2
     : null
-  const motivoDaV2 = motivoV2(estadoV2, erroV2)
 
   async function gerarPdf() {
     if (!ponto) return
@@ -782,7 +833,14 @@ export default function ViabilityScreen({
         ...parametrosRelatorioPontual(ponto, { rotuloManual: info.nome }),
         // Metragem/aluguel vêm do Cenário e as chaves são remapeadas para o contrato
         // do PDF (senão o imóvel saía "n/d" mesmo preenchido — lib/report.ts).
-        infoImovel: infoImovelParaPdf(info, { m2, aluguel: aluguelReais ?? 0 }),
+        infoImovel: infoImovelParaPdf(info, {
+          m2,
+          aluguel: aluguelReais ?? 0,
+          tipo: tipoImovel,
+          aluguelInformado: aluguelDigitadoReais != null,
+          uf: ponto.uf,
+          municipio: ponto.municipio,
+        }),
         // SÓ os inputs do cenário: o backend roda o motor UMA vez e monta o payload
         // inteiro (números + gráficos) por conta própria. Não reenviamos o payload
         // calculado — ele tem 70 KB (série de 64 meses + grade) e estourava a query
@@ -1026,16 +1084,9 @@ export default function ViabilityScreen({
           }}
         >
           <Eyebrow>Cenário</Eyebrow>
-          <p
-            style={{
-              font: '400 11.5px/1.5 var(--f-ui)',
-              color: 'var(--tx-muted)',
-              margin: '9px 0 16px',
-            }}
-          >
-            Ajuste as premissas. A ferramenta testa o número que você assume — não
-            prevê a demanda.
-          </p>
+          {/* O subtítulo "não prevê a demanda" saiu (Felipe, 05/11/2026): desde a DEC-078 o
+              modelo de praça de 10 min sugere a demanda. */}
+          <div style={{ height: 12 }} />
           {moedaLocal && (
             <div style={{ marginBottom: 14 }}>
               <span
@@ -1112,9 +1163,10 @@ export default function ViabilityScreen({
               STUDIOS FICA COMO ESTA': 0..3, um digito, nunca tem separador de milhar
               para exibir e a faixa ja' esta' no rotulo. Mascarar so' custaria o clamp
               e as setas nativas, sem entregar nada. */}
-          {!moedaLocal && (
-            <SeletorTipoImovel atual={tipoImovel} onTrocar={(t) => void trocarTipoImovel(t)} />
-          )}
+          {/* O tipo do imóvel é SÓ este seletor (Felipe, 04/11/2026): o campo de texto livre de
+              "Dados para o relatório" saiu, e o PDF imprime o rótulo daqui. Fora do Brasil
+              ele aparece sem a régua de aluguel. */}
+          <SeletorTipoImovel atual={tipoImovel} onTrocar={(t) => void trocarTipoImovel(t)} />
 
           <div style={{ display: 'flex', gap: 10 }}>
             <Campo label="Metragem">
@@ -1236,10 +1288,9 @@ export default function ViabilityScreen({
             </div>
           )}
 
-          {/* Ticket médio (blended) — SOMENTE-LEITURA, vem do motor. O operador digita o
-              ticket de musculação (e o de cada studio); o que entra no caixa por aluno
-              TOTAL é este, com os studios, o mix balcão/agregador e o ticket do agregador
-              acoplado ao de musculação (P2-12). Tudo lido do payload: a tela só formata. */}
+          {/* Ticket médio — SOMENTE-LEITURA, vem do motor (`premissas.ticket_medio`: o mix de
+              mensalidades, sem churn nem inadimplência). O VALOR é o destaque e o subtítulo
+              diz só o mix, numa linha (Felipe, 05/11/2026). */}
           <div
             style={{
               marginTop: 10,
@@ -1247,54 +1298,31 @@ export default function ViabilityScreen({
               background: 'var(--surf-raised)',
               border: '1px solid var(--line-soft)',
               borderRadius: 'var(--r-md)',
+              display: 'grid',
+              gap: 4,
             }}
           >
-            <div
-              style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline' }}
+            <span style={{ font: '500 11px/1.2 var(--f-ui)', color: 'var(--tx-label)' }}>
+              Ticket médio
+            </span>
+            <span
+              className="num"
+              style={{ font: '700 20px/1.1 var(--f-num)', color: 'var(--tx-max)' }}
             >
-              <span style={{ font: '500 11px/1 var(--f-ui)', color: 'var(--tx-label)' }}>
-                Ticket médio (blended)
+              {premissas
+                ? brl(premissas.ticket_medio ?? premissas.ticket_blended, false, 2)
+                : TEXTO_SEM_DADO}
+            </span>
+            {premissas && (
+              <span style={{ font: '400 10.5px/1.35 var(--f-ui)', color: 'var(--tx-sub)' }}>
+                {pctFrac(premissas.share_balcao, 0)} balcão {brl(premissas.ticket_cheio, false, 0)}
+                {' · '}
+                {pctFrac(1 - premissas.share_balcao, 0)} agregador{' '}
+                {brl(premissas.ticket_agregador, false, 0)}
+                {temStudios &&
+                  ` · ${premissas.n_studios === 1 ? '1 studio' : `${premissas.n_studios} studios`}`}
               </span>
-              <span
-                className="num"
-                style={{ font: '700 14px/1 var(--f-num)', color: 'var(--tx-max)' }}
-              >
-                {premissas ? brl(premissas.ticket_blended, false, 2) : TEXTO_SEM_DADO}
-              </span>
-            </div>
-            <div
-              style={{ font: '400 10px/1.45 var(--f-ui)', color: 'var(--tx-sub)', marginTop: 6 }}
-            >
-              {premissas ? (
-                <>
-                  {temStudios && (
-                    <>
-                      {premissas.n_studios === 1 ? '1 studio' : `${premissas.n_studios} studios`}
-                      {premissas.share_por_studio != null
-                        ? ` × ${pctFrac(premissas.share_por_studio, 0)} da demanda`
-                        : ''}{' '}
-                      ({(premissas.tickets_studios ?? []).map((t) => brl(t, false, 2)).join(' · ')}
-                      ).{' '}
-                    </>
-                  )}
-                  {temStudios && premissas.share_musculacao != null
-                    ? `Sobre os ${pctFrac(premissas.share_musculacao, 0)} restantes: `
-                    : 'Mix '}
-                  {pctFrac(premissas.share_balcao, 0)} balcão (
-                  {brl(premissas.ticket_cheio, false, 2)}, ticket de musculação) ·{' '}
-                  {pctFrac(1 - premissas.share_balcao, 0)} agregador (
-                  {brl(premissas.ticket_agregador, false, 2)}
-                  {premissas.ticket_agregador_fator != null
-                    ? `, ${pctFrac(premissas.ticket_agregador_fator, 0)} da musculação`
-                    : ''}
-                  ). Já líquido de churn e inadimplência.
-                  {/* Onde o mix é campo do operador, "a tela só exibe" seria falso. */}
-                  {!mixEditavel && ' Calculado pelo motor — a tela só exibe.'}
-                </>
-              ) : (
-                'Calcule o cenário para ver o ticket médio efetivo por aluno total.'
-              )}
-            </div>
+            )}
           </div>
 
           <span
@@ -1465,9 +1493,8 @@ export default function ViabilityScreen({
             >
               {v2Vigente ? (
                 <>
-                  Sugestão do modelo de praça (10 min de carro, metragem e estúdios),
-                  editável. Faixa: {alunos(v2Vigente.alunos.p10)}–
-                  {alunos(v2Vigente.alunos.p90)} alunos (p10–p90).
+                  Faixa do modelo: {alunos(v2Vigente.alunos.p10)}–
+                  {alunos(v2Vigente.alunos.p90)} alunos.
                   {avisosV2(v2Vigente).map((a) => (
                     <span key={a} style={{ display: 'block', color: 'var(--warn-text)' }}>
                       {a}
@@ -1497,13 +1524,7 @@ export default function ViabilityScreen({
                 </>
               ) : faixa && faixa.p50 != null ? (
                 <>
-                  {motivoDaV2 && (
-                    <span style={{ display: 'block', color: 'var(--tx-muted)' }}>
-                      {motivoDaV2}
-                    </span>
-                  )}
-                  Padrão = p50 da curva tamanho→densidade para {num(m2)} m² (
-                  {alunos(faixa.p10)}–{alunos(faixa.p90)}, {faixa.n_comparaveis} comparáveis).
+                  Faixa de comparáveis: {alunos(faixa.p10)}–{alunos(faixa.p90)} alunos.
                   {demandaTocada && (
                     <>
                       {' '}
@@ -1526,28 +1547,8 @@ export default function ViabilityScreen({
                   )}
                 </>
               ) : demanda == null ? (
-                'Não há faixa de comparáveis nesta base. A demanda é premissa do operador: informe o número de alunos totais e calcule.'
-              ) : premissas ? (
-                temStudios && premissas.share_por_studio != null ? (
-                  `Premissa explícita do operador, em alunos TOTAIS. Mix: ${
-                    premissas.n_studios
-                  } × ${pctFrac(premissas.share_por_studio, 0)} em studios; ${pctFrac(
-                    premissas.share_balcao,
-                    0,
-                  )} balcão + ${pctFrac(1 - premissas.share_balcao, 0)} agregadores${
-                    premissas.share_musculacao != null
-                      ? ` sobre os ${pctFrac(premissas.share_musculacao, 0)} restantes`
-                      : ' sobre o restante'
-                  }.`
-                ) : (
-                  `Premissa explícita do operador, em alunos TOTAIS. Mix: ${pctFrac(
-                    premissas.share_balcao,
-                    0,
-                  )} balcão + ${pctFrac(1 - premissas.share_balcao, 0)} agregadores.`
-                )
-              ) : (
-                'Premissa explícita do operador, em alunos TOTAIS (balcão + agregadores + studios).'
-              )}
+                'Sem comparáveis nesta base: informe os alunos totais.'
+              ) : null}
             </div>
           </div>
 
@@ -2016,11 +2017,6 @@ export default function ViabilityScreen({
             />
             <div style={{ display: 'flex', gap: 8 }}>
               <input
-                placeholder="Valor de venda"
-                value={info.valor_venda ?? ''}
-                onChange={(e) => setInfo({ ...info, valor_venda: e.target.value })}
-              />
-              <input
                 placeholder="Pé-direito"
                 style={{ maxWidth: 92 }}
                 value={info.pe_direito ?? ''}
@@ -2033,11 +2029,6 @@ export default function ViabilityScreen({
                 onChange={(e) => setInfo({ ...info, vagas: e.target.value })}
               />
             </div>
-            <input
-              placeholder="Tipo do imóvel (loja, galpão…)"
-              value={info.tipo ?? ''}
-              onChange={(e) => setInfo({ ...info, tipo: e.target.value })}
-            />
             <textarea
               placeholder="Observações"
               rows={2}

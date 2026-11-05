@@ -117,7 +117,7 @@ def test_ponto_resolve_o_municipio_e_usa_a_mediana_da_cidade(client: TestClient)
     assert resp.status_code == 200, resp.text
     assert resp.json() == {
         "tipo": "galpao", "rs_m2": 30.0, "n_anuncios": 5, "nivel": "municipio",
-        "uf": "ES", "municipio": "Vitória",
+        "uf": "ES", "municipio": "Vitória", "rs_m2_p25": 20.0, "rs_m2_p75": 40.0,
     }
 
 
