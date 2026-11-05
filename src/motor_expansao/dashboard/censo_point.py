@@ -335,7 +335,7 @@ def analisar_ponto_censitario_setores(
     de intersecao dos setores IBGE com o circulo -- o IBGE nao cobre agua/vazio). Difere de
     `densidade_pop_raio_hab_km2`, que divide por `pi*raio_km**2` FIXO (inclui agua/vazio
     dentro do circulo, subestimando a densidade em pontos com rio/mar no raio). Guarda de
-    divisao por zero: fica `None` ("n/d" no display) quando nao ha setores intersectados
+    divisao por zero: fica `None` ("Não disponível" no display) quando nao ha setores intersectados
     (o bloco inteiro e pulado) ou quando `area_intersecao_total_m2` e 0/None. Os 5 campos
     `*_setor_ponto` acima PERMANECEM no `result` para CSV/auditoria; so deixam de alimentar
     a faixa superior do mapa (`censo_map.py`).
@@ -709,7 +709,7 @@ def analisar_ponto_censitario_setores(
         result["densidade_pop_raio_hab_km2"] = round(pop_total / area_km2, 2)
         # BLK-RELPON-06 (D1): denominador = area de INTERSECAO VALIDA (soma das areas dos
         # setores IBGE intersectados ao circulo), nao pi*raio^2 fixo -- exclui agua/vazio
-        # (o IBGE nao cobre agua). Guarda de divisao por zero: "n/d" (None) quando nao ha
+        # (o IBGE nao cobre agua). Guarda de divisao por zero: "Não disponível" (None) quando nao ha
         # area valida (sem setores intersectados ou area_intersecao_total_m2 <= 0).
         area_valida_m2 = result["area_intersecao_total_m2"]
         if area_valida_m2 and area_valida_m2 > 0:
@@ -827,7 +827,7 @@ def agregar_perfil_bairro_distrito(
       Media" -- distinta da renda per capita usada em outras 2 paginas do PDF). Exclusao
       SIMETRICA: um setor so entra no numerador E no denominador se renda E domicilios forem
       nao-nulos E domicilios > 0; setor que falha qualquer condicao fica fora dos DOIS lados
-      da fracao (nunca vira zero disfarcado). Sem nenhum setor valido -> `None` ("n/d").
+      da fracao (nunca vira zero disfarcado). Sem nenhum setor valido -> `None` ("Não disponível").
 
     Funcao pura: nao muta `setores_df`, nao recalcula geometria/raio/M1. Em qualquer cenario
     sem dado suficiente (DataFrame vazio/`None`, identificador ausente, colunas ausentes,

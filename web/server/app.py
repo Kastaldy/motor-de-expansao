@@ -771,24 +771,29 @@ async def _portao_de_sessao(request: Request, call_next):  # type: ignore[no-unt
         # A pagina do piloto (GET /, /entrar.html) e' publica -- nao exige sessao, senao
         # ninguem veria o formulario de login. Mas a trilha (DEC-027) registrava esse
         # acesso como "desconhecido" ate' para quem JA' esta' logado (o portao so'
-        # carimbava o `Remote-User` nas rotas gateadas). BLK-BANCO-13: so' nas rotas que a
-        # trilha AUDITA (estaticos/assets caem no `relevante` e nao pagam a consulta), se
-        # houver sessao valida, carimba o nome. BEST-EFFORT: rota publica NUNCA barra nem
-        # vira 500 por isto -- banco fora, fila cheia e cookie invalido seguem visitante.
+        # carimbava o `Remote-User` nas rotas gateadas). BLK-BANCO-13/14: so' nas rotas que a
+        # trilha AUDITA (estaticos/assets caem no `relevante` e nao pagam a consulta), se o
+        # cookie tiver DONO conhecido, carimba o nome -- `dono_para_trilha` casa ate' a sessao
+        # vencida por TIMEOUT (BANCO-14), nao so' a valida. BEST-EFFORT: rota publica NUNCA
+        # barra nem vira 500 -- banco fora, fila cheia e cookie sem dono seguem visitante.
         if acesso_log.relevante(caminho):
             cookie_publico = _token_de_sessao(request)
             if cookie_publico:
                 try:
-                    sessao_publica = await _no_banco(
-                        db_sessoes.validar, cookie_publico, prazo_na_fila_s=ESPERA_FILA_BANCO_S
+                    # BANCO-14: `dono_para_trilha`, nao `validar` -- nomeia tambem a sessao
+                    # vencida por timeout. So' RÓTULO; a rota publica nunca barra.
+                    login_publico = await _no_banco(
+                        db_sessoes.dono_para_trilha,
+                        cookie_publico,
+                        prazo_na_fila_s=ESPERA_FILA_BANCO_S,
                     )
                 except Exception:  # noqa: BLE001 — a trilha nunca derruba rota publica
-                    sessao_publica = None
-                if sessao_publica is not None:
-                    login_publico = _valor_de_cabecalho(sessao_publica.identidade.login)
+                    login_publico = None
+                if login_publico:
+                    valor = _valor_de_cabecalho(login_publico)
                     request.scope["headers"] = [
                         *request.scope["headers"],
-                        (b"remote-user", login_publico.encode("latin-1")),
+                        (b"remote-user", valor.encode("latin-1")),
                     ]
         return await call_next(request)
 
@@ -8727,7 +8732,7 @@ def _payload_ponto(
 
     hex_id = h3.latlng_to_cell(lat, lng, 7)  # 7 = H3_RESOLUTION do M1, LIDO
 
-    # Vizinhança para o mini-mapa. k=2 (19 células) e não o k=5 do PDF: aqui é
+    # Vizinhança para o mini-mapa. k=2 (19 células) e não o k=5/7 do PDF: aqui é
     # enquadramento de tela, não choropleth de relatório.
     vizinhos: list[dict[str, Any]] = []
     hexes_df = _hexes_vizinhos_do_ponto(lat, lng, cfg, k=2)
@@ -9754,6 +9759,31 @@ def _setores_para_catchment(lat: Any, lng: Any) -> pd.DataFrame | None:
         return None
 
 
+def _uf_do_ponto(lat: Any, lng: Any) -> str | None:
+    """UF da coordenada pela malha municipal -- para o padrao do pico por estado da
+    Viabilidade (emenda de 2026-10-29 da DEC-078).
+
+    A malha e' a MESMA do catchment e do `/api/ponto` (`_carregar_malha`, cacheada por
+    processo), e a resolucao nao depende de o municipio ter particao de setores: o estado
+    sai mesmo onde o catchment cai. NUNCA LEVANTA: sem UF, a Viabilidade usa os 10 do
+    motor, como antes da emenda.
+    """
+    from motor_expansao.api.service import _carregar_malha
+
+    try:
+        resolvido = _carregar_malha(str(IBGE_DIR)).resolver(float(lat), float(lng))
+    except Exception:  # noqa: BLE001 — o padrao do pico e' CONTEXTO, nunca erro
+        return None
+    return str(resolvido[0]).strip().upper() if resolvido else None
+
+
+def _pico_padrao_do_ponto(lat: Any, lng: Any) -> int:
+    """Os meses do padrao do pico para o estado do ponto (o mesmo que o payload usa)."""
+    from motor_expansao.dimensionamento.pico_por_uf import pico_padrao
+
+    return pico_padrao(_uf_do_ponto(lat, lng), STAGING_DIR).meses
+
+
 
 
 def _base_calibracao() -> tuple[pd.DataFrame | None, str]:
@@ -9782,6 +9812,7 @@ def _payload_viabilidade(body: ViabilidadeIn) -> dict[str, Any]:
             body,
             staging_dir=STAGING_DIR,
             setores_df=_setores_para_catchment(body.lat, body.lng),
+            uf=_uf_do_ponto(body.lat, body.lng),
         )
     except _viab_v2.V2Indisponivel as exc:  # so' no modo v2 (DEC-078 ampliada)
         _LOG_FALHA.warning("viabilidade: demanda sugerida indisponivel", exc_info=True)
@@ -13255,6 +13286,7 @@ def _viabilidade_pdf_payload(body: ViabilidadeIn) -> dict[str, Any] | None:
         body,
         staging_dir=STAGING_DIR,
         setores_df=_setores_para_catchment(body.lat, body.lng),
+        uf=_uf_do_ponto(body.lat, body.lng),
     )
 
 
@@ -13794,7 +13826,8 @@ def _gerar_relatorio_pontual_pdf(
     )
 
     ultra_dir = ULTRA_DIR if ULTRA_DIR.is_dir() else None
-    # Disco de hexes p/ o choropleth Residual Fitness do slide-hero (grid_disk k=5).
+    # Disco de hexes p/ o choropleth Residual Fitness do slide-hero (grid_disk k=7, que o
+    # mapa recorta para k=5 ou 7 conforme o enquadramento).
     # None -> a camada residual cai no fallback textual (nao derruba o PDF).
     hexes_residual = _residual_hexes_do_ponto(lat, lng, STAGING_DIR)
 
@@ -14062,7 +14095,9 @@ def _gerar_simulador_xlsx_response(
     durante a geracao.
     """
     gerar = _gerador_simulador_xlsx()
-    premissas = _premissas_do_body(body)
+    # O MESMO padrao de pico do payload (emenda de 2026-10-29 da DEC-078): sem isto a
+    # planilha sairia nos 10 do motor e a tela, no padrao do estado.
+    premissas = _premissas_do_body(body, pico_padrao=_pico_padrao_do_ponto(body.lat, body.lng))
     inv = _investimento(body)
     # Modo v2 (DEC-078 ampliada): o bloco "Origem da demanda" da planilha, conferido pelo
     # MESMO token da Viabilidade. Modo densidade: nada, e a planilha e' a de antes.

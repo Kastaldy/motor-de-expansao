@@ -268,12 +268,16 @@ def forma_rampa_do_body(body: Any) -> str:
     return forma_rampa_padrao()
 
 
-def mes_pico_do_body(body: Any) -> int:
-    """Pico de maturacao do corpo: a escolha, senao o observado (mes 10)."""
+def mes_pico_do_body(body: Any, padrao: int | None = None) -> int:
+    """Pico de maturacao do corpo: a escolha do operador; sem escolha, o PADRAO do estado
+    do ponto (`padrao`, de `pico_por_uf.pico_padrao` -- emenda de 2026-10-29 da DEC-078);
+    sem padrao, o observado da rede (mes 10)."""
     from motor_expansao.dimensionamento.config import SIM_MES_PICO_RAMPA_PADRAO
 
     pico = getattr(body, "mes_pico_rampa", None)
-    return int(SIM_MES_PICO_RAMPA_PADRAO if pico is None else pico)
+    if pico is not None:
+        return int(pico)
+    return int(SIM_MES_PICO_RAMPA_PADRAO if padrao is None else padrao)
 
 
 def investimento_do_body(body: ViabilidadeIn) -> dict[str, Any]:
@@ -367,11 +371,15 @@ def forma_rampa_padrao() -> str:
     return str(config.SIM_FORMA_RAMPA_PADRAO)
 
 
-def premissas_do_body(body: ViabilidadeIn):  # -> simulador.Premissas
+def premissas_do_body(
+    body: ViabilidadeIn, *, pico_padrao: int | None = None
+):  # -> simulador.Premissas
     """Traduz o corpo da requisicao em `Premissas` — a fonte unica de coeficientes.
 
     Tudo que o operador NAO informa fica com o default do `config.py`. Nenhum
-    coeficiente financeiro nasce aqui.
+    coeficiente financeiro nasce aqui. A excecao e' o pico da rampa sem escolha:
+    `pico_padrao` traz o padrao do ESTADO do ponto (emenda de 2026-10-29 da DEC-078), e
+    `None` mantem o observado da rede (mes 10).
 
     Studios (2026-10-05): cada um tem TICKET PROPRIO (`tickets_studios`), atende 8% da
     demanda e custa SIM_CUSTO_STUDIO por mes. O custo agora mora em
@@ -388,7 +396,7 @@ def premissas_do_body(body: ViabilidadeIn):  # -> simulador.Premissas
     # Na curva, a forma observada reescalada para o PICO escolhido (pico 10 = a curva
     # observada intacta, e as Premissas sao as de antes da emenda). Na reta nada entra.
     curva: dict[str, Any] = (
-        {"curva_rampa": curva_rampa_com_pico(mes_pico_do_body(body))}
+        {"curva_rampa": curva_rampa_com_pico(mes_pico_do_body(body, pico_padrao))}
         if forma == SIM_FORMA_RAMPA_CURVA_UNI03
         else {}
     )
@@ -509,6 +517,7 @@ def montar_payload_viabilidade(
     *,
     staging_dir: Path | str,
     setores_df: pd.DataFrame | None = None,
+    uf: str | None = None,
 ) -> dict[str, Any]:
     """Monta o `viabilidade_payload_v1` a partir de UMA rodada do nucleo.
 
@@ -525,11 +534,15 @@ def montar_payload_viabilidade(
         SIM_MARGEM_VIAVEL_MIN,
         SIM_PAYBACK_VIAVEL_MAX,
     )
+    from motor_expansao.dimensionamento.pico_por_uf import pico_padrao as _pico_padrao
     from motor_expansao.dimensionamento.viabilidade_ponto import (
         analisar_viabilidade_ponto,
     )
 
-    premissas = premissas_do_body(body)
+    # Padrao do pico pelo ESTADO do ponto (emenda de 2026-10-29 da DEC-078): o arquivo
+    # mensal `pico_rampa_por_uf.json` do staging; sem ele, os 10 do motor, como antes.
+    padrao_pico = _pico_padrao(uf, staging_dir)
+    premissas = premissas_do_body(body, pico_padrao=padrao_pico.meses)
     inv = investimento_do_body(body)
     # Modo v2: confere o token ANTES de rodar o motor (falha cedo: `V2Indisponivel` sem
     # coeficientes, `TokenV2Invalido` com sugestao velha). No modo densidade nada disto
@@ -643,9 +656,16 @@ def montar_payload_viabilidade(
             # (depois, 1,0). Na reta `curva_rampa` vai null: a forma e' a do parametro acima.
             "forma_rampa": str(premissas.forma_rampa),
             "mes_maturidade_rampa": int(premissas.mes_maturidade_rampa),
-            # Pico de maturacao pedido (emenda da DEC-078): o observado (10) sem escolha.
-            # Na reta vai null — o fim da rampa la' e' `maturacao_meses`.
-            "mes_pico_rampa": mes_pico_do_body(body) if premissas.usa_curva else None,
+            # Pico de maturacao pedido (emenda da DEC-078): sem escolha, o padrao do estado
+            # do ponto (emenda de 2026-10-29) ou o observado (10). Na reta vai null — o fim
+            # da rampa la' e' `maturacao_meses`.
+            "mes_pico_rampa": (
+                mes_pico_do_body(body, padrao_pico.meses) if premissas.usa_curva else None
+            ),
+            # De onde veio o padrao, para a tela e o PDF dizerem: `estado` (o estado tem
+            # padrao proprio), `rede` (ficou nos 10) ou `padrao` (sem medicao publicada).
+            # E' o PADRAO, nao o pico usado: com escolha do operador os dois diferem.
+            "pico_padrao": padrao_pico.para_payload() if premissas.usa_curva else None,
             "curva_rampa": (
                 [num_json_safe(f, 4) for f in premissas.curva_rampa]
                 if premissas.usa_curva
@@ -937,6 +957,7 @@ def montar_payload_para_pdf(
     *,
     staging_dir: Path | str,
     setores_df: pd.DataFrame | None = None,
+    uf: str | None = None,
 ) -> dict[str, Any] | None:
     """Payload do slide de viabilidade do PDF — o MESMO `viabilidade_payload_v1` da tela.
 
@@ -974,7 +995,7 @@ def montar_payload_para_pdf(
     aviso_v2: str | None = None
     try:
         payload = montar_payload_viabilidade(
-            body, staging_dir=staging_dir, setores_df=setores_df
+            body, staging_dir=staging_dir, setores_df=setores_df, uf=uf
         )
     except (TokenV2Invalido, V2Indisponivel) as exc:
         aviso_v2 = (
@@ -985,7 +1006,7 @@ def montar_payload_para_pdf(
         try:
             densidade = body.model_copy(update={"modelo_demanda": None, "demanda_v2": None})
             payload = montar_payload_viabilidade(
-                densidade, staging_dir=staging_dir, setores_df=setores_df
+                densidade, staging_dir=staging_dir, setores_df=setores_df, uf=uf
             )
         except Exception:  # noqa: BLE001 — o PDF nunca cai por causa da viabilidade
             return None

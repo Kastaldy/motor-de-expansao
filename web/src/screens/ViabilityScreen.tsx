@@ -2179,31 +2179,6 @@ export default function ViabilityScreen({
             </div>
           )}
 
-          {/* Rótulo do modelo em calibração vs planilha. Some onde o perfil do país já
-              carrega o próprio aviso de premissas provisórias (a AR): lá esta nota,
-              escrita para a calibração brasileira, só disputava espaço com ele. */}
-          {!avisoPerfil && (
-          <div
-            style={{
-              padding: '9px 13px',
-              borderRadius: 'var(--r-md)',
-              background: 'rgba(255,193,7,.10)',
-              border: '1px solid rgba(255,193,7,.35)',
-              font: '400 11px/1.45 var(--f-ui)',
-              color: 'var(--warn-text)',
-            }}
-          >
-            <strong style={{ fontWeight: 600 }}>Premissas em calibração.</strong> Tela, gráficos
-            e PDF passaram a ler o MESMO motor — não há mais número recalculado fora dele. Seguem
-            pendentes de gate o NÍVEL da folha
-            {premissas ? ` (${pctFrac(premissas.folha_pct)} do faturamento maduro,` : ' ('}{' '}
-            revisão no BLK-VIAB-11) e a taxa de desconto do VPL/TIR
-            {premissas ? ` (${pctFrac(premissas.taxa_desconto_aa)} a.a.,` : ' ('} provisória). A
-            ESTRUTURA da folha já está decidida: valor FIXO desde o mês 1, dimensionado pelo
-            faturamento maduro — não escala com a rampa.
-          </div>
-          )}
-
           {/* O perfil do país declara, a tela obedece (DEC-047): na AR é a ressalva de
               que a conta usa premissas BRASILEIRAS. O texto é dado do perfil. */}
           {avisoPerfil && (

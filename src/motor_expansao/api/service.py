@@ -931,7 +931,7 @@ def _hexes_vizinhos_do_ponto(lat: float, lng: float, settings: Settings, k: int 
     """Hexes H3 (res 7) do disco de raio `k` em torno do ponto, com o valor de cada camada hex.
 
     Espelha `_linha_mercado_do_hex`: filtra direto no parquet de mercado por um conjunto pequeno de
-    chaves (91 hexes em k=5) e poucas colunas -> leitura barata, NAO carrega a base de 1,5 M.
+    chaves (169 hexes em k=7) e poucas colunas -> leitura barata, NAO carrega a base de 1,5 M.
     Insumo dos choropleths POR HEXAGONO do slide-hero: Residual Fitness (`oferta_efetiva_disponivel`,
     BLK-RELPON-10) e Socioeconomia (`score_setor_2022_calibrado`, BLK-RELPON-13). READ-ONLY; nao
     recalcula nada do M1. Devolve `None` (fallback gracioso -> camada ausente no PDF) em qualquer falha.
@@ -1269,7 +1269,7 @@ def gerar_pdf_ponto(
     )
 
     # BLK-RELPON-10: insumo do choropleth de Residual Fitness (slide-hero). Na API nao ha `df`
-    # em escopo como no dashboard -> le so o disco de 91 hexes do parquet de mercado. None ->
+    # em escopo como no dashboard -> le so o disco de 169 hexes do parquet de mercado. None ->
     # camada `residual` ausente -> fallback textual no slide (offline-safe). READ-ONLY.
     hexes_df = _hexes_vizinhos_do_ponto(lat, lng, settings)
 
@@ -1366,8 +1366,10 @@ def gerar_pdf_ponto(
         )
 
         cenario = ViabilidadeIn(lat=lat, lng=lng, **viabilidade_inputs.model_dump(exclude_none=True))
+        # `uf` e' o do `_resolver_e_carregar` acima: o padrao do pico por estado (emenda de
+        # 2026-10-29 da DEC-078) sai igual ao do piloto para o mesmo ponto.
         viabilidade_pdf = montar_payload_para_pdf(
-            cenario, staging_dir=settings.staging_dir, setores_df=setores_df
+            cenario, staging_dir=settings.staging_dir, setores_df=setores_df, uf=uf
         )
 
     # DEC-074: com recorte, o gerador recebe `recorte` (rotulos do recorte e o fator que

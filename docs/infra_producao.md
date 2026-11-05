@@ -195,6 +195,59 @@ enriquecido por UF, o parquet de mercado, Growth e logos) e vários leitores mem
 de qualquer `scp`, **reiniciar é obrigatório** — `docker compose -f docker-compose.prod.yml restart web`
 (e `api telegram-bot` quando o arquivo também alimenta o PDF).
 
+### Incluir ou mover uma unidade Ultra (conta `deploy`, sem root)
+
+> **Em poucas palavras.** Os pins das unidades Ultra e a rede própria que o mercado desconta vêm de dois
+> arquivos na VPS, e a conta `deploy` atualiza os dois sozinha: baixa uma cópia, monta a versão nova na
+> estação com `scripts/incluir_unidade_ultra.py` e grava por cima, com backup e conferência. Foi assim que
+> Teresópolis entrou, em 04/11/2026.
+
+| Arquivo na VPS | O que é | Quem lê |
+|---|---|---|
+| `data/staging/unidades_ultra_mapeadas.parquet` | uma linha por unidade: nome, UF, cidade, coordenada e hexágono | os pins e a rede do site, o PDF da API e o mercado residual, no recálculo de domingo |
+| `data/ultra/Ultra.csv` | o registro das unidades, com 16 colunas | nenhum código em funcionamento; é a fonte da lista |
+
+Os dois são `root:motor-ops 664`: o `deploy` grava por cima com `cp`, sem root. Nenhum código do
+repositório gera o `mapeadas` hoje; ele é mantido assim. O M1 não muda. As 54 unidades com performance
+são exceção: o pin delas vem de `unidades_ultra_performance_hex.parquet`, e mover uma delas pede outra
+receita (o `Ultra.csv` e a cadeia de penetração).
+
+**Passo a passo** (na VPS, cada comando com confirmação, §6 do `CLAUDE.md`):
+
+1. **Baixar os dois arquivos atuais** para uma pasta nova da estação. Nunca partir de uma cópia velha: ela
+   desfaria as correções feitas depois dela.
+
+   ```bash
+   scp -i ~/.ssh/id_ultra_deploy deploy@2.25.137.241:/opt/motor-expansao/data/staging/unidades_ultra_mapeadas.parquet deploy@2.25.137.241:/opt/motor-expansao/data/ultra/Ultra.csv "<pasta>/"
+   ```
+
+2. **Montar a versão nova** na estação:
+
+   ```bash
+   python scripts/incluir_unidade_ultra.py incluir --pasta "<pasta>" --nome "Teresópolis" --uf RJ --cidade "Teresópolis" --lat -22.407291115271388 --lng -42.96576019198278
+   python scripts/incluir_unidade_ultra.py mover --pasta "<pasta>" --nome "<nome exato>" --lat <lat> --lng <lng>
+   ```
+
+   O script recusa nome repetido e unidade a menos de 200 m de outra (`--forcar-perto`, se não for a
+   mesma). Ele confere que nenhuma outra linha mudou e grava em `<pasta>/novo/` os dois arquivos, o
+   `verificar_unidade.py` e o `comandos.txt`. O endereço (`--endereco`) é opcional: o Motor não o usa.
+
+3. **Rodar, na ordem, os três comandos que ele imprime:**
+   - **envio:** manda os três arquivos para a casa do `deploy`;
+   - **gravação:** confere que a VPS ainda está igual à cópia e que o envio chegou inteiro; se não, para
+     sem gravar. Depois guarda os originais em `~/backup-unidade-ultra-<data>`, grava, reinicia o `web` e
+     a `api` (alguns segundos fora do ar) e lê o arquivo de dentro do site;
+   - **desfazer:** volta os originais e reinicia.
+
+**Cuidados:**
+- Só o `web` e a `api` montam a `staging`; o bot chama a API.
+- O `mapeadas` tem um segundo nome (hardlink) no rascunho do recálculo de domingo, em
+  `/opt/motor-expansao/regen_run`. O rascunho se refaz a partir da `staging` a cada rodada, então gravar
+  por cima não atrapalha.
+- Unidade ainda não inaugurada entra no mercado residual a partir do domingo seguinte, com a capacidade
+  padrão de 2.500 alunos (DEC-057).
+- Nunca subir o `Ultra.csv` de uma estação por cima do da VPS: a cópia da estação pode estar velha.
+
 ---
 
 ## Integração com gymscraping (repo separado)
@@ -712,6 +765,22 @@ cron de domingo escreve toda semana, então a série nunca *parece* velha e um c
 passaria despercebido para sempre. Limiar `MONITOR_AGREGADOR_MAX_DIAS` (default **16**). Partição que
 **nunca existiu** também dispara `FAIL` — que é o estado real enquanto o cron não for agendado.
 
+**Onde roda na produção (medido em 04/11/2026).** Até 04/11, este check não rodava em lugar nenhum. O
+`healthcheck.log` não tinha nenhuma linha dele, nenhum dos 27 arquivos de estado em
+`/var/lib/motor-monitoring` era `agregador_*`, e ele não estava no `/etc/crontab`, no `/etc/cron.d` nem
+no crontab do `deploy` (o do root só o Felipe lê). Por isso o `FAIL` que o limiar `9` daria toda quinta
+nunca chegou ao chat. Desde 04/11, ele roda no crontab do **`deploy`**, com cópia própria do script e
+com log e estado na pasta dele, como o backup e o expurgo do banco:
+
+```cron
+0 12 * * 4 MONITOR_LOG_FILE=/home/deploy/logs/healthcheck_agregadores.log MONITOR_STATE_DIR=/home/deploy/estado-monitor /home/deploy/bin/healthcheck_vps.sh agregadores
+```
+
+A cópia em `/home/deploy/bin/healthcheck_vps.sh` é a da `main` de 04/11 (sha256 `fedb637e…`), e a
+primeira rodada à mão deu `wellhub OK (9d)`. **Ao mexer em `scripts/healthcheck_vps.sh`, as duas cópias
+precisam ser trocadas:** a do root, em `/opt/motor-monitoring/`, e esta, que o próprio `deploy` troca por
+`scp` para a pasta dele.
+
 > **Por que quinta, e por que 16** (emenda 5 da DEC-039). A régua deriva a idade da **segunda-feira da semana
 > ISO** da partição, não do instante da coleta, e a foto sai no lote de domingo, o último dia da semana ISO.
 > Na quinta 12:00 UTC: com a foto do domingo anterior a idade mede **10** dias; com uma foto perdida, **17**.
@@ -971,6 +1040,50 @@ falha no chat, `exit != 0` no log (`/var/log/motor-snapshots/atualizacao_crescim
 `MONITOR_CRESCIMENTO_MAX_DIAS=100`; arquivo que nunca existiu também é FAIL — é o
 estado real enquanto o repasse não acontecer). A linha de cron dele está no bloco da
 seção "Alertas automáticos (BLK-SEC-05)", mais abaixo.
+
+## Atualização mensal do pico padrão por estado (DEC-078, emenda de 29/10/2026)
+
+> Decisão e regra em `docs/decisions/DEC-078.md` (emenda de 29/10/2026). O cabeçalho do
+> script é o runbook detalhado.
+
+Todo dia 3, a rotina mede o pico de maturação de cada estado na base da Growth (o mesmo
+fechamento mensal da Visão Executiva), aplica o corte de 5 unidades maduras, o peso
+n/(n + 10) e o freio de 1 mês, e publica `data/staging/pico_rampa_por_uf.json` por troca
+atômica. A Viabilidade (tela, planilha, PDF e API) usa esse padrão quando o operador não
+escolhe o pico. Os 10 meses nacionais não mudam.
+
+**Script versionado:** `scripts/cron/run_pico_por_uf.sh` (molde da rotina do crescimento:
+log antes do lock, `flock`, credenciais por `-e NOME` sem valor, container avulso da imagem
+da API com `MOTOR_DATA_DIR` e o bind do `perfil.json` de produção). Antes de agendar, o modo
+seco é obrigatório: `DRY_RUN=1 /opt/motor-expansao-infra/run_pico_por_uf.sh` mede e imprime
+sem gravar (staging `:ro`) e sem Telegram.
+
+**Instalação (uma vez, manual, comando a comando — §6):**
+
+```bash
+install -d -m 0755 /opt/motor-expansao-infra
+cp /opt/motor-expansao/app/scripts/cron/run_pico_por_uf.sh /opt/motor-expansao-infra/
+chmod +x /opt/motor-expansao-infra/run_pico_por_uf.sh
+DRY_RUN=1 /opt/motor-expansao-infra/run_pico_por_uf.sh   # conferir o resumo antes de agendar
+```
+
+**Linha de crontab (dia 3 de cada mês, 04:00 UTC = 01:00 BRT):**
+
+```cron
+0 4 3 * * /opt/motor-expansao-infra/run_pico_por_uf.sh
+```
+
+**Requisito de imagem:** a imagem da api/bot precisa ter `motor_expansao.dimensionamento.pico_por_uf`
+(o wrapper checa e recusa imagem antiga). O web também precisa da imagem com a emenda para
+LER o arquivo. Deploy manual por digest, como sempre, ANTES de agendar.
+
+**Sem restart:** a leitura confere o mtime do arquivo a cada consulta; publicar já muda a
+tela e a API. **Desfazer:** apagar `data/staging/pico_rampa_por_uf.json` devolve todo o
+produto aos 10 meses na consulta seguinte.
+
+**O que o job NUNCA faz:** escrever fora de `staging/pico_rampa_por_uf.json`, mexer no M1,
+reiniciar container ou fazer deploy. Portão reprovado (`rc=2`): nada publicado, arquivo
+anterior intacto, aviso no chat. Log em `/var/log/motor-snapshots/pico_por_uf_*.log`.
 
 ## Serviço de rotas (Valhalla, DEC-074) — isócronas de "5 min" e "10 min de carro"
 
@@ -1281,16 +1394,14 @@ O que é vigiado e a cadência (crontab do root):
 0 12 * * *  MONITOR_BANCO_BACKUP_DIR=/home/deploy/backups/banco MONITOR_BANCO_BACKUP_LOG=/home/deploy/logs/backup_banco.log MONITOR_BANCO_EXPURGO_LOG=/home/deploy/logs/expurgo_sessoes.log /opt/motor-monitoring/healthcheck_vps.sh banco  # diário 09h BRT: backup, expurgo e saúde interna do Postgres (A INSTALAR: aviso abaixo; ver "Monitor do banco")
 ```
 
-> **A cópia instalada hoje em `/opt/motor-monitoring/` (crontab do root) é antiga** (24/10/2026):
-> não vigia o `postgres` e não conhece o subcomando `banco`. Trocá-la pela versão do repo é passo
-> do Felipe (root), comando a comando (§6 do `CLAUDE.md`): levar o arquivo por `scp` (o checkout
-> da VPS está parado), rodar `healthcheck_vps.sh containers` e `healthcheck_vps.sh test` uma vez e
-> só então acrescentar a linha do `banco`. O `postgres` entra sozinho no `containers`, que já roda
-> a cada 5 min; o `banco` precisa da linha nova. A troca traz junto tudo o que a `main` acrescentou
-> depois daquela cópia — o levantamento de 23/10/2026 aponta ao menos o check `auth`, o `web_ar` e
-> o Valhalla condicional; a lista exata depende de quando ela foi copiada (`git hash-object` no
-> arquivo da VPS, comparado com o histórico de `scripts/healthcheck_vps.sh`) —, e esses monitores
-> podem começar em FAIL.
+> **A cópia instalada em `/opt/motor-monitoring/` (crontab do root) é a de 27/10/2026** (medido em
+> 04/11/2026 pelo hash, `13592348…`): a versão do commit `e3970a98` (#488), que já vigia o
+> `postgres` e tem o subcomando `banco`. Da `main`, falta só o #517 (limite de 16 dias e TotalPass
+> fora da lista), que vale apenas para o check `agregadores`, e esse roda no crontab do `deploy`, com
+> cópia própria (ver a seção dos agregadores). Trocar a cópia do root é passo do Felipe (root),
+> comando a comando (§6 do `CLAUDE.md`): levar o arquivo por `scp` (o checkout da VPS está parado) e
+> rodar uma vez cada check que mudou. Para saber de qual commit é a cópia, comparar o `sha256sum` do
+> arquivo da VPS com o das versões de `scripts/healthcheck_vps.sh` no histórico.
 
 > **Por que os pins têm monitor próprio.** A guarda de desenhabilidade do passo 4.5 do lote de
 > domingo faz o certo ao barrar artefato ruim, mas o efeito dela é **invisível**. Sem relógio, uma guarda que só bloqueia troca "pin errado" por "pin

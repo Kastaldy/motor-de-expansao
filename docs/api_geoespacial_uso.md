@@ -19,7 +19,7 @@ bot Telegram "Paulo".
 
 | Serviço | O que é | Porta |
 |---|---|---|
-| **API** | FastAPI/uvicorn — `GET /health`, `POST /api/v1/analisar` (JSON/PDF), `GET /api/v1/faixa-alunos` e as rotas do Relatório Municipal (`GET /api/v1/ufs`, `GET /api/v1/municipios/{uf}`, `POST /api/v1/analisar-municipio`) | 8077 (interna) |
+| **API** | FastAPI/uvicorn — `GET /health`, `POST /api/v1/analisar` (JSON/PDF), `GET /api/v1/faixa-alunos`, `GET /api/v1/aluguel-referencia` e as rotas do Relatório Municipal (`GET /api/v1/ufs`, `GET /api/v1/municipios/{uf}`, `POST /api/v1/analisar-municipio`) | 8077 (interna) |
 | **Bot** | Long-polling Telegram 24/7 que consome a API | — |
 
 **Diagrama simplificado:**
@@ -281,6 +281,53 @@ motor cai num fallback, e a mesma faixa passa a descrever **outra** população 
 
 Sem base nenhuma, a resposta é `200` com os percentis `null`, `n_comparaveis: 0` e a `fonte`
 dizendo que está indisponível — ausência de base é resposta prevista pelo contrato, não erro.
+
+---
+
+### 3bc. `GET /api/v1/aluguel-referencia`
+
+Aluguel de referência do mercado anunciado para o tipo de imóvel, no município do ponto
+(DEC-080, Emenda 1). É a mesma régua da aba Viabilidade do site: mediana do R$/m² dos anúncios
+da base imobiliária (imóveis de 1.200 a 3.000 m²), por município × tipo, com pelo menos 5
+anúncios; abaixo disso a mediana vem da UF e, depois, do Brasil.
+
+Não mexe no `POST /api/v1/analisar`: o aluguel informado no cenário continua sendo o que entra
+na conta. Esta rota só devolve a régua para quem quiser comparar.
+
+| Parâmetro | Tipo | Obrigatório | Descrição |
+|---|---|---|---|
+| `tipo` | `galpao` / `comercial` / `loja` | Sim | Valor bruto. Na tela: `galpao` = Galpão, `loja` = Comercial (salão, ponto de rua), `comercial` = Laje Corporativa (prédio, conjunto, laje) |
+| `lat` | `float` | Sim | Latitude do ponto |
+| `lng` | `float` | Sim | Longitude do ponto |
+
+```bash
+curl -s "https://api.ultra-expansao.tech/api/v1/aluguel-referencia?tipo=galpao&lat=-22.9056&lng=-47.0608"   -H "Authorization: Bearer $TOKEN"
+```
+
+```json
+{
+  "tipo": "galpao",
+  "rs_m2": 24.8,
+  "n_anuncios": 185,
+  "nivel": "municipio",
+  "uf": "SP",
+  "municipio": "Campinas"
+}
+```
+
+O aluguel de referência de um imóvel é `rs_m2 × metragem`, arredondado à centena (a conta da
+tela). Quando o recorte não é a cidade, `nivel` diz `uf` ou `brasil` e `municipio` vem `null`.
+Sem selo de confiança, por decisão de Felipe (29/10/2026): `nivel` e `n_anuncios` são o fato que
+acompanha o número.
+
+| Status | `codigo` | Quando |
+|---|---|---|
+| `400` | `coordenada_invalida` | Ponto fora do país ou da malha municipal (o mesmo do `/analisar`) |
+| `404` | `sem_referencia` | Nenhum recorte com 5 anúncios para o tipo, nem no Brasil |
+| `422` | — | `tipo` fora dos três, ou `lat`/`lng` ausente |
+| `503` | `aluguel_referencia_indisponivel` | Instância sem a base de anúncios (`API_OPORTUNIDADES_PATH`) |
+
+O preço é o **anunciado**, não o de contrato; o aluguel fechado costuma sair abaixo.
 
 ---
 
