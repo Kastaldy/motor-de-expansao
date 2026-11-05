@@ -5160,6 +5160,13 @@ def _onde_crescer_recomendacao(pdf: _UltraPDF, rec: Any, rotulos: dict[str, str]
     y = _tabela(y + 14.0, rec.premium, f"{ROTULO_SEGMENTO['premium']} (ordem: população)", _COR_LISTA_2)
     mv, pr = rec.regra.mata_virgem, rec.regra.premium
 
+    def _criterio_premium(regua: Any) -> str:
+        # O criterio de "bairro bom" e o da versao da regua (renda na 2026-11_v1, emenda 2 da
+        # DEC-077; score censitario ate a 2026-10_v1).
+        if regua.renda_domiciliar_min is not None:
+            return f"renda domiciliar a partir de {_renda(regua.renda_domiciliar_min)}"
+        return f"score censitário a partir de {_format_number(regua.score_min, 0)}"
+
     def _piso(populacao_min: float | None) -> str:
         return f" e {_format_number(populacao_min, 0)} habitantes ou mais" if populacao_min is not None else ""
 
@@ -5177,8 +5184,7 @@ def _onde_crescer_recomendacao(pdf: _UltraPDF, rec: Any, rotulos: dict[str, str]
         f"Mata Virgem = renda domiciliar a partir de {_renda(mv.renda_domiciliar_min)} e "
         f"{'residual medido' if mv.exige_residual_medido else 'residual'} a partir de "
         f"{_format_number(mv.residual_min, 0)} alunos{_piso(mv.populacao_min)}, em ordem de residual. "
-        f"Premium = região que não é Mata Virgem, com score censitário a partir de "
-        f"{_format_number(pr.score_min, 0)}{_piso(pr.populacao_min)}"
+        f"Premium = região que não é Mata Virgem, com {_criterio_premium(pr)}{_piso(pr.populacao_min)}"
         f"{' e residual medido' if pr.exige_residual_medido else ''}, em ordem de população. Região = "
         "hexágono de ~5 km², com o nome do bairro de mais moradores"
         + (" (sem bairro mapeado, o do município)" if sem_bairro else "")

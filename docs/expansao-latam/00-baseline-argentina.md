@@ -97,7 +97,7 @@
 
 ### 2.5 Camada 5 — Fila de prioridade
 
-Desde a DEC-077, esta é a fila da instância SEM régua da recomendação única (`_passo5_legado` em `web/server/app.py`, travado para a AR por `tests/unit/test_piloto_web_recomendacao_legado_ar.py`). Com régua (`src/motor_expansao/recomendacao/regra/<PAIS>/`, hoje só o BR), o passo 5 é o Top 10 único (5 Mata Virgem + 5 Premium), com réguas próprias na escala BR (renda domiciliar ≥ R$ 4.500, residual ≥ 2.000 alunos, score ≥ 50, população ≥ 10 mil).
+Desde a DEC-077, esta é a fila da instância SEM régua da recomendação única (`_passo5_legado` em `web/server/app.py`, travado para a AR por `tests/unit/test_piloto_web_recomendacao_legado_ar.py`). Com régua (`src/motor_expansao/recomendacao/regra/<PAIS>/`, hoje só o BR), o passo 5 é o Top 10 único (5 Mata Virgem + 5 Premium), com réguas próprias na escala BR (Mata Virgem: renda domiciliar ≥ R$ 4.500 e residual ≥ 2.000 alunos; Premium: renda domiciliar ≥ R$ 5.000 e população ≥ 10 mil).
 
 | Insumo | Fórmula | Mínimo aceitável | Se faltar ou vier fora de escala |
 |---|---|---|---|

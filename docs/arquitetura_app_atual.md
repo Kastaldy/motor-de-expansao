@@ -39,7 +39,7 @@ O app abre na tela de **Início** (menu de modos: análise de ponto, explorar um
   concorrentes cujo disco de influência de 1 km alcança o hexágono — `n_concorrentes_influencia_1km`, DEC-057) — ter concorrente por perto não desqualifica, porque
   a oferta instalada já foi descontada na camada 2. No Brasil, a camada 5 ("Para onde crescer")
   é o **Top 10 único da DEC-077** — 5 Mata Virgem (renda domiciliar ≥ R$ 4.500 e residual ≥ 2.000 alunos,
-  ordem por residual) + 5 Premium (score censitário ≥ 50 e população ≥ 10 mil, ordem por população),
+  ordem por residual) + 5 Premium (renda domiciliar ≥ R$ 5.000 e população ≥ 10 mil, ordem por população; era score censitário ≥ 50 até a emenda 2),
   via `montar_recomendacao`; a fila por `indice_praca` da DEC-041 só sobrevive sem régua (AR).
 - **Visão Executiva** — a rede Ultra REAL (Growth API, `growth_api_historico.parquet`,
   ingestão **diária** — `scripts/cron/run_growth_daily.sh`); desde a DEC-023 é um dashboard

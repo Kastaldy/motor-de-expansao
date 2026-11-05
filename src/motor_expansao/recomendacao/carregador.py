@@ -56,7 +56,11 @@ _CHAVES_MATA_VIRGEM = (
     "populacao_min",
     "exige_residual_medido",
 )
-_CHAVES_PREMIUM = ("score_min", "populacao_min", "exige_residual_medido")
+_CHAVES_PREMIUM = ("populacao_min", "exige_residual_medido")
+#: O criterio de "bairro bom" do Premium: EXATAMENTE um dos dois. `score_min` (score censitario,
+#: BR 2026-10_v1) foi trocado por `renda_domiciliar_min` (BR 2026-11_v1, emenda 2 da DEC-077);
+#: a versao antiga segue carregavel para rollback por `MOTOR_REGRA_RECOMENDACAO_VERSAO`.
+_CRITERIOS_PREMIUM = ("score_min", "renda_domiciliar_min")
 
 # Nome de versao e de pais viram caminho: so caracteres que nao escapam do diretorio.
 _RE_VERSAO = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]*$")
@@ -82,16 +86,21 @@ class ReguaMataVirgem:
 
 @dataclass(frozen=True)
 class ReguaPremium:
-    """Corte do segmento Premium: bairro bom (score censitario) e populoso, que NAO e Mata Virgem.
+    """Corte do segmento Premium: bairro bom e populoso, que NAO e Mata Virgem.
+
+    "Bairro bom" e UM criterio, conforme a versao: `renda_domiciliar_min` (BR 2026-11_v1, mesma
+    renda do card que o Mata Virgem usa) ou `score_min` (score censitario, BR 2026-10_v1). O
+    outro fica None.
 
     `exige_residual_medido` decide se um hexagono com residual ESTIMADO (populacao media da
     cidade) pode ser Premium. BR v1 sai com `true` (decisao do usuario em 21/10/2026: nada
     estimado e recomendado, nem no Premium).
     """
 
-    score_min: float
+    score_min: float | None
     populacao_min: float | None
     exige_residual_medido: bool
+    renda_domiciliar_min: float | None = None
 
 
 @dataclass(frozen=True)
@@ -156,7 +165,13 @@ def _texto(valor: Any, caminho: Path, campo: str) -> str:
     return valor
 
 
-def _objeto(bruto: Any, caminho: Path, campo: str, chaves: tuple[str, ...]) -> dict[str, Any]:
+def _objeto(
+    bruto: Any,
+    caminho: Path,
+    campo: str,
+    chaves: tuple[str, ...],
+    opcionais: tuple[str, ...] = (),
+) -> dict[str, Any]:
     """Objeto com EXATAMENTE `chaves` (fora as de comentario, prefixadas por `_`).
 
     Chave desconhecida tambem e erro: `residual_mini` no lugar de `residual_min` cairia como
@@ -169,7 +184,9 @@ def _objeto(bruto: Any, caminho: Path, campo: str, chaves: tuple[str, ...]) -> d
     if faltando:
         nomes = ", ".join(f"{campo}.{c}" for c in faltando)
         raise _erro(caminho, f"chave(s) obrigatoria(s) ausente(s): {nomes}")
-    sobrando = [c for c in bruto if c not in chaves and not str(c).startswith("_")]
+    sobrando = [
+        c for c in bruto if c not in chaves and c not in opcionais and not str(c).startswith("_")
+    ]
     if sobrando:
         nomes = ", ".join(f"{campo}.{c}" for c in sobrando)
         raise _erro(caminho, f"chave(s) desconhecida(s): {nomes}")
@@ -204,13 +221,27 @@ def validar_regra(dados: Any, caminho: Path, *, pais: str, versao: str) -> dict[
         raise _erro(caminho, f"`vagas_por_segmento` = {vagas} fora da faixa [{lo}, {hi}]")
 
     mv = _objeto(dados["mata_virgem"], caminho, "mata_virgem", _CHAVES_MATA_VIRGEM)
-    pr = _objeto(dados["premium"], caminho, "premium", _CHAVES_PREMIUM)
+    pr = _objeto(dados["premium"], caminho, "premium", _CHAVES_PREMIUM, _CRITERIOS_PREMIUM)
 
-    score_min = _numero(pr["score_min"], caminho, "premium.score_min")
-    # Escala absoluta 0-100 do score censitario (DEC-040): 0 deixaria todo hexagono com score
-    # passar, e acima de 100 nenhum passaria -- os dois sao regua quebrada, nao decisao.
-    if not 0 < score_min <= 100:
-        raise _erro(caminho, f"`premium.score_min` = {score_min} fora da faixa (0, 100]")
+    criterios = [c for c in _CRITERIOS_PREMIUM if c in pr]
+    if len(criterios) != 1:
+        nomes = " ou ".join(f"premium.{c}" for c in _CRITERIOS_PREMIUM)
+        raise _erro(
+            caminho,
+            f"o Premium precisa de EXATAMENTE um criterio ({nomes}); veio {len(criterios)}",
+        )
+    score_min: float | None = None
+    renda_pr_min: float | None = None
+    if criterios[0] == "score_min":
+        score_min = _numero(pr["score_min"], caminho, "premium.score_min")
+        # Escala absoluta 0-100 do score censitario (DEC-040): 0 deixaria todo hexagono com score
+        # passar, e acima de 100 nenhum passaria -- os dois sao regua quebrada, nao decisao.
+        if not 0 < score_min <= 100:
+            raise _erro(caminho, f"`premium.score_min` = {score_min} fora da faixa (0, 100]")
+    else:
+        renda_pr_min = _positivo(
+            pr["renda_domiciliar_min"], caminho, "premium.renda_domiciliar_min"
+        )
 
     return {
         "versao": versao,
@@ -230,6 +261,7 @@ def validar_regra(dados: Any, caminho: Path, *, pais: str, versao: str) -> dict[
         ),
         "premium": ReguaPremium(
             score_min=score_min,
+            renda_domiciliar_min=renda_pr_min,
             populacao_min=_populacao(pr["populacao_min"], caminho, "premium.populacao_min"),
             exige_residual_medido=_booleano(
                 pr["exige_residual_medido"], caminho, "premium.exige_residual_medido"

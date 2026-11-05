@@ -4631,12 +4631,16 @@ def _narrativa_top10(
         else ""
     )
     medido_pr = " e com residual medido" if r_pr["exige_residual_medido"] else ""
+    # "Bairro bom" do Premium: renda (regua 2026-11_v1, emenda 2 da DEC-077) ou score (2026-10_v1).
+    if r_pr.get("renda_domiciliar_min") is not None:
+        criterio_pr = f"renda domiciliar de {_moeda_renda(r_pr['renda_domiciliar_min'])} ou mais"
+    else:
+        criterio_pr = f"score censitário de {_numero_da_regua(r_pr['score_min'])} ou mais"
     regua = (
         f"Top {total} de {nome}: até {vagas} {regioes} {mv} — renda domiciliar de "
         f"{_moeda_renda(r_mv['renda_domiciliar_min'])} ou mais e residual{medido_mv} de "
         f"{_mil(r_mv['residual_min'])} alunos ou mais{pop_mv}, na ordem do residual — e até "
-        f"{vagas} {regioes} {pr} — score censitário de "
-        f"{_numero_da_regua(r_pr['score_min'])} ou mais{pop_pr}, fora da {mv}{medido_pr}, na "
+        f"{vagas} {regioes} {pr} — {criterio_pr}{pop_pr}, fora da {mv}{medido_pr}, na "
         "ordem da população."
     )
     preenchidas = {
@@ -7294,7 +7298,15 @@ def _metodologia_top10(regra: Regra) -> dict[str, Any]:
     mv, pr = regra.mata_virgem, regra.premium
     renda_min = _moeda_renda(mv.renda_domiciliar_min)
     residual_min = _mil(mv.residual_min)
-    score_min = _numero_da_regua(pr.score_min)
+    # "Bairro bom" do Premium: renda domiciliar na regua 2026-11_v1 (emenda 2 da DEC-077),
+    # score censitario ate a 2026-10_v1. Um dos dois e None.
+    premium_por_renda = pr.renda_domiciliar_min is not None
+    if premium_por_renda:
+        renda_pr_min = _moeda_renda(pr.renda_domiciliar_min)
+        criterio_pr = f"renda domiciliar ≥ {renda_pr_min}"
+    else:
+        score_min = _numero_da_regua(pr.score_min)
+        criterio_pr = f"score censitário ≥ {score_min}"
     medido_mv = " medido" if mv.exige_residual_medido else ""
     pop_mv = (
         f" e população ≥ {_mil(mv.populacao_min)} habitantes"
@@ -7328,7 +7340,7 @@ def _metodologia_top10(regra: Regra) -> dict[str, Any]:
             "estimado não aparece na lista."
         )
 
-    condicoes_pr = [f"fora da {MV}", f"score censitário ≥ {score_min}"]
+    condicoes_pr = [f"fora da {MV}", criterio_pr]
     if pr.populacao_min is not None:
         condicoes_pr.append(f"população ≥ {_mil(pr.populacao_min)} habitantes")
     if pr.exige_residual_medido:
@@ -7398,7 +7410,10 @@ def _metodologia_top10(regra: Regra) -> dict[str, Any]:
         parametros.append(
             {"nome": f"{MV} — população mínima", "valor": f"{_mil(mv.populacao_min)} habitantes"}
         )
-    parametros.append({"nome": f"{PR} — score censitário mínimo", "valor": score_min})
+    if premium_por_renda:
+        parametros.append({"nome": f"{PR} — renda domiciliar mínima", "valor": renda_pr_min})
+    else:
+        parametros.append({"nome": f"{PR} — score censitário mínimo", "valor": score_min})
     if pr.populacao_min is not None:
         parametros.append(
             {"nome": f"{PR} — população mínima", "valor": f"{_mil(pr.populacao_min)} habitantes"}
@@ -7511,7 +7526,7 @@ def _metodologia_top10(regra: Regra) -> dict[str, Any]:
                 "pergunta": f"Quais regiões do recorte entram no Top {total}?",
                 "corte": (
                     f"{MV}: renda domiciliar ≥ {renda_min} e residual{medido_mv} ≥ "
-                    f"{residual_min} alunos{pop_mv} · {PR}: score censitário ≥ {score_min}"
+                    f"{residual_min} alunos{pop_mv} · {PR}: {criterio_pr}"
                     f"{pop_pr}, fora da {MV}{medido_pr}"
                 ),
                 "metricas": [
@@ -7528,6 +7543,11 @@ def _metodologia_top10(regra: Regra) -> dict[str, Any]:
                             "hexágono convertida em renda por domicílio e atualizada pelos "
                             "fatores versionados, com o fator de calibração da renda da base "
                             f"de setores. Decide a {MV}: entra quem tem {renda_min} ou mais."
+                            + (
+                                f" Decide também o {PR}: entra quem tem {renda_pr_min} ou mais."
+                                if premium_por_renda
+                                else ""
+                            )
                         ),
                         "ressalva": (
                             "Sem o fator de calibração da renda gravado na base de setores, a "
@@ -7556,8 +7576,11 @@ def _metodologia_top10(regra: Regra) -> dict[str, Any]:
                         "fonte": F_CENSO,
                         "resumo": "A nota socioeconômica de 0 a 100 da camada 1.",
                         "regra": (
-                            f"Só o {PR} usa: entra quem tem {score_min} ou mais. Desempata o "
-                            f"{PR} entre regiões de mesma população."
+                            f"Não decide quem entra: só desempata o {PR} entre regiões de mesma "
+                            "população."
+                            if premium_por_renda
+                            else f"Só o {PR} usa: entra quem tem {score_min} ou mais. Desempata "
+                            f"o {PR} entre regiões de mesma população."
                         ),
                     },
                     {

@@ -221,8 +221,9 @@ def test_nota_le_numeros_e_criterios_da_regua():
     v1 = _nota(_onde_crescer(_praca(_df_cidade(2), recomendacao=_rec(), rotulos_recomendacao=_ROTULOS)))
     assert ("Mata Virgem = renda domiciliar a partir de R$ 4.500 e residual medido a partir de 2.000 "
             "alunos, em ordem de residual.") in v1
-    assert ("Premium = região que não é Mata Virgem, com score censitário a partir de 50 e 10.000 "
-            "habitantes ou mais e residual medido, em ordem de população.") in v1
+    assert ("Premium = região que não é Mata Virgem, com renda domiciliar a partir de R$ 5.000 e "
+            "10.000 habitantes ou mais e residual medido, em ordem de população.") in v1
+    assert "score censitário" not in v1
 
     outra = regra_teste(versao="2099-01_v9", renda_min=5_123.0, residual_min=2_345.0, mv_pop_min=12_000.0,
                         score_min=61.0, premium_pop_min=None, premium_exige_medido=False)
