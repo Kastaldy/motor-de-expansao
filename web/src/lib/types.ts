@@ -1250,10 +1250,8 @@ export interface ExecutivaPayload {
 /** Campos opcionais do imovel que enriquecem o PDF do Relatorio Pontual. */
 export interface InfoImovel {
   nome?: string
-  valor_venda?: string
   pe_direito?: string
   vagas?: string
-  tipo?: string
   observacoes?: string
 }
 

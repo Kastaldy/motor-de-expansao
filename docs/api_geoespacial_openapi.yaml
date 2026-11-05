@@ -469,7 +469,7 @@ components:
       description: >
         Regua de aluguel da DEC-080. Os mesmos campos da rota do site. Sem selo de confianca:
         `nivel` e `n_anuncios` dizem de onde a mediana saiu, como fato.
-      required: [tipo, rs_m2, n_anuncios, nivel, uf, municipio]
+      required: [tipo, rs_m2, n_anuncios, nivel, uf, municipio, rs_m2_p25, rs_m2_p75]
       properties:
         tipo:
           type: string
@@ -496,6 +496,16 @@ components:
           type: [string, "null"]
           description: Municipio do recorte (so no nivel municipio).
           example: Campinas
+        rs_m2_p25:
+          type: number
+          format: double
+          description: p25 do R$/m2 no mesmo recorte (ponta de baixo da faixa do estudo).
+          example: 20.0
+        rs_m2_p75:
+          type: number
+          format: double
+          description: p75 do R$/m2 no mesmo recorte (ponta de cima da faixa do estudo).
+          example: 31.5
 
     AnalisarResponseJSON:
       type: object

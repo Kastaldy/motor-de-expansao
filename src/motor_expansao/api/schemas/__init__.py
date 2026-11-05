@@ -79,9 +79,22 @@ class AnalisarRequest(BaseModel):
         default=None,
         description=(
             "Dados do imovel para a pagina 'Imovel - Informacoes' "
-            "(metragem_m2, aluguel_pedido, valor_venda, pe_direito_m, vagas, "
-            "tipo_imovel, endereco, observacoes)."
+            "(metragem_m2, aluguel_pedido, pe_direito_m, vagas, endereco, observacoes). "
+            "O tipo do imovel vem do campo `tipo_imovel`."
         ),
+    )
+    # Aluguel de referencia (DEC-080): o card da pagina do imovel mostra a faixa p25-p75 do
+    # R$/m2 dos anuncios do municipio para o tipo e, com aluguel informado, a comparacao.
+    # Valores BRUTOS (os mesmos do seletor do piloto); o rotulo de exibicao sai do servidor.
+    tipo_imovel: Literal["galpao", "loja", "comercial"] | None = Field(
+        default=None,
+        description=(
+            "Tipo do imovel para o aluguel de referencia: galpao (Galpao), loja (Comercial) "
+            "ou comercial (Laje Corporativa). Com `viabilidade` ou `info_imovel`, o card "
+            "'Aluguel de referencia' mostra a faixa do municipio e, havendo aluguel, a "
+            "comparacao com ela."
+        ),
+        examples=["loja"],
     )
     solicitante: str | None = Field(
         default=None,
@@ -223,4 +236,12 @@ class AluguelReferenciaResponse(BaseModel):
     uf: str | None = Field(description="UF do recorte (None no nivel brasil).", examples=["SP"])
     municipio: str | None = Field(
         description="Municipio do recorte (so' no nivel municipio).", examples=["Campinas"]
+    )
+    rs_m2_p25: float = Field(
+        description="p25 do R$/m2 no mesmo recorte: a ponta de baixo da faixa do estudo.",
+        examples=[20.0],
+    )
+    rs_m2_p75: float = Field(
+        description="p75 do R$/m2 no mesmo recorte: a ponta de cima da faixa do estudo.",
+        examples=[31.5],
     )

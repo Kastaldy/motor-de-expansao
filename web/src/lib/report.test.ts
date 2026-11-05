@@ -271,12 +271,12 @@ describe('infoImovelParaPdf', () => {
 
   it('remapeia as chaves do front para o contrato do gerador (pe_direito_m, tipo_imovel, endereco)', () => {
     const d = infoImovelParaPdf(
-      { nome: 'Loja Centro', pe_direito: '4,5', tipo: 'galpão', vagas: '10' },
-      cenario,
+      { nome: 'Loja Centro', pe_direito: '4,5', vagas: '10' },
+      { ...cenario, tipo: 'galpao' },
     )
     expect(d.endereco).toBe('Loja Centro')
     expect(d.pe_direito_m).toBe(4.5)
-    expect(d.tipo_imovel).toBe('galpão')
+    expect(d.tipo_imovel).toBe('Galpão')
     expect(d.vagas).toBe(10)
     // Nunca emite as chaves ERRADAS que o front usava antes.
     expect(d).not.toHaveProperty('pe_direito')
@@ -284,23 +284,39 @@ describe('infoImovelParaPdf', () => {
     expect(d).not.toHaveProperty('nome')
   })
 
-  it('valor de venda pt-BR (ponto=milhar, vírgula=decimal) vira número', () => {
-    expect(infoImovelParaPdf({ valor_venda: 'R$ 1.200.000,00' }, cenario).valor_venda).toBe(
-      1200000,
+  it('o tipo vem do SELETOR, com o rótulo de exibição e a consulta da régua (DEC-080)', () => {
+    const d = infoImovelParaPdf(
+      {},
+      { ...cenario, tipo: 'loja', aluguelInformado: true, uf: 'ES', municipio: 'Vitória' },
     )
+    expect(d.tipo_imovel).toBe('Comercial')
+    expect(d.aluguel_tipo).toBe('loja')
+    expect(d.aluguel_uf).toBe('ES')
+    expect(d.aluguel_municipio).toBe('Vitória')
+    expect(d.aluguel_informado).toBe(true)
+    // Aluguel vazio (a conta usa a referência): o PDF não compara.
+    expect(infoImovelParaPdf({}, { ...cenario, tipo: 'loja' })).not.toHaveProperty(
+      'aluguel_informado',
+    )
+  })
+
+  it('número pt-BR (ponto=milhar, vírgula=decimal) vira número', () => {
+    expect(infoImovelParaPdf({ vagas: '1.200' }, cenario).vagas).toBe(1200)
     // "4.5" NÃO é milhar (só 1 dígito depois do ponto) -> preserva 4.5
     expect(infoImovelParaPdf({ pe_direito: '4.5' }, cenario).pe_direito_m).toBe(4.5)
   })
 
   it('campos opcionais vazios são omitidos (sem chaves undefined no payload)', () => {
-    const d = infoImovelParaPdf({ nome: '  ', valor_venda: '' }, cenario)
+    const d = infoImovelParaPdf({ nome: '  ', vagas: '' }, cenario)
     expect(Object.keys(d).sort()).toEqual(['aluguel_pedido', 'metragem_m2'])
   })
 
   it('texto não numérico em campo numérico segue como texto (degrada gracioso, não vira n/d)', () => {
-    expect(infoImovelParaPdf({ valor_venda: 'a combinar' }, cenario).valor_venda).toBe(
-      'a combinar',
-    )
+    expect(infoImovelParaPdf({ vagas: 'a combinar' }, cenario).vagas).toBe('a combinar')
+  })
+
+  it('o valor de venda saiu do PDF (DEC-080): o card virou o aluguel de referência', () => {
+    expect(infoImovelParaPdf({}, cenario)).not.toHaveProperty('valor_venda')
   })
 })
 

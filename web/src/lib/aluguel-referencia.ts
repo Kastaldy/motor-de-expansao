@@ -8,7 +8,11 @@
  *    comercial em Vitória/ES"), sem adjetivo e sem fonte/data;
  *  - os três tipos entram, cada um com a sua mediana; o seletor abre em Comercial (valor bruto
  *    `loja`). Nomes de exibição (Felipe, 29/10): `loja` = Comercial, `comercial` = Laje Corporativa;
- *  - com o aluguel vazio, o número cinza É o aluguel que vai para a conta (regra da DEC-079).
+ *  - com o aluguel vazio, o número cinza É o aluguel que vai para a conta (regra da DEC-079);
+ *  - o quadro mostra a FAIXA p25–p75 da região, e a comparação é contra a faixa (pedido do
+ *    time imobiliário, decidido por Felipe em 04/11/2026). A mediana segue sendo o número cinza;
+ *  - a comparação diz as DUAS réguas ("42% acima da mediana · 10% acima da faixa"). Cor
+ *    (Felipe, 05/11/2026): vermelho acima da faixa, amarelo acima da mediana, verde no resto.
  */
 
 /** Valores BRUTOS do tipo, como o servidor os recebe. Nunca acentuar (CLAUDE.md §2). */
@@ -42,12 +46,28 @@ export interface AluguelReferencia {
   nivel: 'municipio' | 'uf' | 'brasil'
   uf: string | null
   municipio: string | null
+  /** p25 e p75 do R$/m² no mesmo recorte: a faixa do quadro. */
+  rs_m2_p25: number
+  rs_m2_p75: number
+}
+
+export interface FaixaAluguel {
+  min: number
+  max: number
 }
 
 /** Aluguel de referência para a metragem, em reais, arredondado à centena. */
 export function aluguelDeReferencia(ref: AluguelReferencia | null, m2: number): number | null {
   if (!ref || !(m2 > 0) || !(ref.rs_m2 > 0)) return null
-  return Math.round((ref.rs_m2 * m2) / 100) * 100
+  return naCentena(ref.rs_m2 * m2)
+}
+
+const naCentena = (reais: number) => Math.round(reais / 100) * 100
+
+/** Faixa do aluguel do mês para a metragem (p25 e p75 × m²), na centena. */
+export function faixaDoAluguel(ref: AluguelReferencia | null, m2: number): FaixaAluguel | null {
+  if (!ref || !(m2 > 0) || !(ref.rs_m2_p25 > 0) || !(ref.rs_m2_p75 > 0)) return null
+  return { min: naCentena(ref.rs_m2_p25 * m2), max: naCentena(ref.rs_m2_p75 * m2) }
 }
 
 /** A linha da base, em fato neutro: quantos anúncios e de onde. Nunca qualifica. */
@@ -60,16 +80,50 @@ export function textoDaBase(ref: AluguelReferencia): string {
 }
 
 /**
- * Comparação do aluguel digitado com a referência, em % arredondado. `null` sem as duas
- * pontas. 0 = igual à referência.
+ * Distância do aluguel digitado até a ponta mais próxima da faixa, em % dessa ponta. 0 =
+ * dentro da faixa; fora dela nunca devolve 0. `null` sem as duas pontas. Espelho de
+ * `diferenca_da_faixa_pct` no servidor (o PDF).
  */
-export function diferencaPct(aluguel: number | null | undefined, referencia: number | null): number | null {
-  if (aluguel == null || referencia == null || referencia <= 0) return null
-  return Math.round((aluguel / referencia - 1) * 100)
+export function diferencaDaFaixaPct(
+  aluguel: number | null | undefined,
+  faixa: FaixaAluguel | null,
+): number | null {
+  if (aluguel == null || faixa == null) return null
+  if (faixa.max > 0 && aluguel > faixa.max) {
+    return Math.max(1, Math.round((aluguel / faixa.max - 1) * 100))
+  }
+  if (faixa.min > 0 && aluguel < faixa.min) {
+    return Math.min(-1, Math.round((aluguel / faixa.min - 1) * 100))
+  }
+  return 0
 }
 
-/** A frase da comparação ("28% acima da referência"). */
+/** A frase da comparação ("12% acima da faixa"). */
 export function textoDaDiferenca(pct: number): string {
-  if (pct === 0) return 'igual à referência'
-  return `${Math.abs(pct)}% ${pct > 0 ? 'acima' : 'abaixo'} da referência`
+  if (pct === 0) return 'dentro da faixa'
+  return `${Math.abs(pct)}% ${pct > 0 ? 'acima' : 'abaixo'} da faixa`
+}
+
+/** Diferença do aluguel para a mediana do mês, em % dela. Espelho de `diferenca_da_mediana_pct`. */
+export function diferencaDaMedianaPct(
+  aluguel: number | null | undefined,
+  mediana: number | null,
+): number | null {
+  if (aluguel == null || mediana == null || !(mediana > 0)) return null
+  return Math.round((aluguel / mediana - 1) * 100)
+}
+
+/** Tom da comparação: `faixa` acima da faixa, `mediana` acima só da mediana, `ok` no resto. */
+export type TomDaComparacao = 'faixa' | 'mediana' | 'ok'
+
+export function tomDaComparacao(pctFaixa: number, pctMediana: number | null): TomDaComparacao {
+  if (pctFaixa > 0) return 'faixa'
+  if (pctMediana != null && pctMediana > 0) return 'mediana'
+  return 'ok'
+}
+
+/** A frase contra a mediana ("42% acima da mediana"). */
+export function textoDaDiferencaMediana(pct: number): string {
+  if (pct === 0) return 'na mediana'
+  return `${Math.abs(pct)}% ${pct > 0 ? 'acima' : 'abaixo'} da mediana`
 }

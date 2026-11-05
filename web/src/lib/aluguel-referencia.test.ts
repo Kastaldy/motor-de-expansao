@@ -2,10 +2,14 @@ import { describe, expect, it } from 'vitest'
 
 import {
   aluguelDeReferencia,
-  diferencaPct,
+  diferencaDaFaixaPct,
+  diferencaDaMedianaPct,
+  faixaDoAluguel,
   ROTULO_TIPO_IMOVEL,
   textoDaBase,
   textoDaDiferenca,
+  textoDaDiferencaMediana,
+  tomDaComparacao,
   TIPO_IMOVEL_PADRAO,
   type AluguelReferencia,
 } from './aluguel-referencia'
@@ -17,6 +21,8 @@ const ref = (over: Partial<AluguelReferencia> = {}): AluguelReferencia => ({
   nivel: 'municipio',
   uf: 'ES',
   municipio: 'Vitória',
+  rs_m2_p25: 18.4,
+  rs_m2_p75: 29.1,
   ...over,
 })
 
@@ -47,12 +53,44 @@ describe('régua de aluguel (DEC-080)', () => {
     for (const t of textos) expect(t).not.toMatch(/confian|OLX|baixa|\d{4}/i)
   })
 
-  it('diferença em % contra a referência', () => {
-    expect(diferencaPct(32000, 25000)).toBe(28)
-    expect(diferencaPct(20000, 25000)).toBe(-20)
-    expect(diferencaPct(undefined, 25000)).toBeNull()
-    expect(textoDaDiferenca(28)).toBe('28% acima da referência')
-    expect(textoDaDiferenca(-20)).toBe('20% abaixo da referência')
-    expect(textoDaDiferenca(0)).toBe('igual à referência')
+  it('faixa do mês = p25 e p75 × metragem, na centena', () => {
+    expect(faixaDoAluguel(ref(), 1500)).toEqual({ min: 27600, max: 43700 })
+    expect(faixaDoAluguel(null, 1500)).toBeNull()
+    expect(faixaDoAluguel(ref(), 0)).toBeNull()
+  })
+
+  it('comparação contra a ponta mais próxima da faixa', () => {
+    const faixa = { min: 27600, max: 43700 }
+    expect(diferencaDaFaixaPct(48000, faixa)).toBe(10)
+    expect(diferencaDaFaixaPct(22000, faixa)).toBe(-20)
+    expect(diferencaDaFaixaPct(30000, faixa)).toBe(0)
+    expect(diferencaDaFaixaPct(43700, faixa)).toBe(0)
+    // Fora da faixa nunca arredonda para "dentro".
+    expect(diferencaDaFaixaPct(43800, faixa)).toBe(1)
+    expect(diferencaDaFaixaPct(27500, faixa)).toBe(-1)
+    expect(diferencaDaFaixaPct(undefined, faixa)).toBeNull()
+    expect(textoDaDiferenca(10)).toBe('10% acima da faixa')
+    expect(textoDaDiferenca(-20)).toBe('20% abaixo da faixa')
+    expect(textoDaDiferenca(0)).toBe('dentro da faixa')
+  })
+
+  it('comparação contra a mediana (espelho do PDF)', () => {
+    expect(diferencaDaMedianaPct(48000, 33800)).toBe(42)
+    expect(diferencaDaMedianaPct(30000, 33800)).toBe(-11)
+    expect(diferencaDaMedianaPct(33800, 33800)).toBe(0)
+    expect(diferencaDaMedianaPct(48000, null)).toBeNull()
+    expect(diferencaDaMedianaPct(undefined, 33800)).toBeNull()
+    expect(textoDaDiferencaMediana(42)).toBe('42% acima da mediana')
+    expect(textoDaDiferencaMediana(-11)).toBe('11% abaixo da mediana')
+    expect(textoDaDiferencaMediana(0)).toBe('na mediana')
+  })
+
+  it('cor: vermelho acima da faixa, amarelo acima da mediana, verde no resto', () => {
+    expect(tomDaComparacao(10, 42)).toBe('faixa')
+    expect(tomDaComparacao(0, 18)).toBe('mediana')
+    expect(tomDaComparacao(0, 0)).toBe('ok')
+    expect(tomDaComparacao(0, -11)).toBe('ok')
+    expect(tomDaComparacao(-9, -26)).toBe('ok')
+    expect(tomDaComparacao(0, null)).toBe('ok')
   })
 })

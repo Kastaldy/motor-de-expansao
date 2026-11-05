@@ -28,15 +28,20 @@ import {
 } from '../lib/format'
 import {
   aluguelDeReferencia,
-  diferencaPct,
+  diferencaDaFaixaPct,
+  diferencaDaMedianaPct,
+  faixaDoAluguel,
   ROTULO_SELETOR_TIPO_IMOVEL,
   ROTULO_TIPO_IMOVEL,
   textoDaBase,
   textoDaDiferenca,
+  textoDaDiferencaMediana,
+  tomDaComparacao,
   TIPO_IMOVEL_PADRAO,
   TIPOS_IMOVEL_ALUGUEL,
   type AluguelReferencia,
   type TipoImovelAluguel,
+  type TomDaComparacao,
 } from '../lib/aluguel-referencia'
 import { formatarNumero } from '../lib/mascara'
 import {
@@ -266,9 +271,17 @@ function SeletorTipoImovel({
 }
 
 /**
- * O QUADRO DO ALUGUEL DE REFERÊNCIA (DEC-080): o R$/m² e o aluguel para a metragem, a base
- * em fato neutro (sem selo, sem fonte, sem data) e, com o aluguel digitado, a comparação.
+ * O QUADRO DO ALUGUEL DE REFERÊNCIA (DEC-080): a FAIXA p25–p75 do aluguel para a metragem e do
+ * R$/m², a base em fato neutro (sem selo, sem fonte, sem data) e, com o aluguel digitado, a
+ * comparação contra a faixa.
  */
+/** Vermelho acima da faixa, amarelo acima da mediana, verde no resto (Felipe, 05/11/2026). */
+const COR_DO_TOM: Readonly<Record<TomDaComparacao, string>> = {
+  faixa: 'var(--neg-forte)',
+  mediana: 'var(--warn-text)',
+  ok: 'var(--pos-text)',
+}
+
 function QuadroAluguelReferencia({
   referencia,
   m2,
@@ -278,9 +291,11 @@ function QuadroAluguelReferencia({
   m2: number
   aluguelDigitado: number | null
 }) {
-  const valor = aluguelDeReferencia(referencia, m2)
-  if (!referencia || valor == null) return null
-  const pct = diferencaPct(aluguelDigitado, valor)
+  const faixa = faixaDoAluguel(referencia, m2)
+  if (!referencia || faixa == null) return null
+  const pct = diferencaDaFaixaPct(aluguelDigitado, faixa)
+  const mediana = aluguelDeReferencia(referencia, m2)
+  const pctMediana = diferencaDaMedianaPct(aluguelDigitado, mediana)
   return (
     <div
       style={{
@@ -294,23 +309,29 @@ function QuadroAluguelReferencia({
       }}
     >
       <span style={{ font: '600 11px/1.3 var(--f-ui)', color: 'var(--tx-sub)' }}>
-        Aluguel de referência
+        Faixa de aluguel da região
       </span>
       <span style={{ font: '700 14px/1.3 var(--f-ui)', color: 'var(--tx-strong)' }}>
-        {brl(referencia.rs_m2, false, 2)}/m² · {brl(valor)}/mês para {num(m2)} m²
+        {brl(faixa.min)} a {brl(faixa.max)}/mês
       </span>
       <span style={{ font: '400 11px/1.4 var(--f-ui)', color: 'var(--tx-sub)' }}>
+        {brl(referencia.rs_m2_p25, false, 2)} a {brl(referencia.rs_m2_p75, false, 2)}/m² para{' '}
+        {num(m2)} m²
+      </span>
+      <span style={{ font: '400 11px/1.4 var(--f-ui)', color: 'var(--tx-sub)' }}>
+        {mediana != null && `Mediana ${brl(mediana)} · `}
         {textoDaBase(referencia)}
       </span>
       {pct != null && aluguelDigitado != null && (
         <span
           style={{
             font: `${pct > 0 ? 700 : 600} 12.5px/1.4 var(--f-ui)`,
-            color: pct > 0 ? 'var(--neg-forte)' : 'var(--pos-text)',
-            whiteSpace: 'nowrap',
+            color: COR_DO_TOM[tomDaComparacao(pct, pctMediana)],
           }}
         >
-          Seu aluguel: {textoDaDiferenca(pct)}
+          Seu aluguel:{' '}
+          {pctMediana != null && `${textoDaDiferencaMediana(pctMediana)} · `}
+          {textoDaDiferenca(pct)}
         </span>
       )}
     </div>
@@ -502,6 +523,8 @@ export default function ViabilityScreen({
   /** Troca o tipo do imóvel: troca a régua e, com o aluguel vazio, o aluguel da conta. */
   async function trocarTipoImovel(tipo: TipoImovelAluguel) {
     setTipoImovel(tipo)
+    // Fora do Brasil não há régua: o seletor só registra o tipo para o PDF.
+    if (moedaLocal) return
     const r = await buscarReferencia(tipo)
     refAluguelAgora.current = r
     setRefAluguel(r)
@@ -782,7 +805,14 @@ export default function ViabilityScreen({
         ...parametrosRelatorioPontual(ponto, { rotuloManual: info.nome }),
         // Metragem/aluguel vêm do Cenário e as chaves são remapeadas para o contrato
         // do PDF (senão o imóvel saía "n/d" mesmo preenchido — lib/report.ts).
-        infoImovel: infoImovelParaPdf(info, { m2, aluguel: aluguelReais ?? 0 }),
+        infoImovel: infoImovelParaPdf(info, {
+          m2,
+          aluguel: aluguelReais ?? 0,
+          tipo: tipoImovel,
+          aluguelInformado: aluguelDigitadoReais != null,
+          uf: ponto.uf,
+          municipio: ponto.municipio,
+        }),
         // SÓ os inputs do cenário: o backend roda o motor UMA vez e monta o payload
         // inteiro (números + gráficos) por conta própria. Não reenviamos o payload
         // calculado — ele tem 70 KB (série de 64 meses + grade) e estourava a query
@@ -1112,9 +1142,10 @@ export default function ViabilityScreen({
               STUDIOS FICA COMO ESTA': 0..3, um digito, nunca tem separador de milhar
               para exibir e a faixa ja' esta' no rotulo. Mascarar so' custaria o clamp
               e as setas nativas, sem entregar nada. */}
-          {!moedaLocal && (
-            <SeletorTipoImovel atual={tipoImovel} onTrocar={(t) => void trocarTipoImovel(t)} />
-          )}
+          {/* O tipo do imóvel é SÓ este seletor (Felipe, 04/11/2026): o campo de texto livre de
+              "Dados para o relatório" saiu, e o PDF imprime o rótulo daqui. Fora do Brasil
+              ele aparece sem a régua de aluguel. */}
+          <SeletorTipoImovel atual={tipoImovel} onTrocar={(t) => void trocarTipoImovel(t)} />
 
           <div style={{ display: 'flex', gap: 10 }}>
             <Campo label="Metragem">
@@ -2016,11 +2047,6 @@ export default function ViabilityScreen({
             />
             <div style={{ display: 'flex', gap: 8 }}>
               <input
-                placeholder="Valor de venda"
-                value={info.valor_venda ?? ''}
-                onChange={(e) => setInfo({ ...info, valor_venda: e.target.value })}
-              />
-              <input
                 placeholder="Pé-direito"
                 style={{ maxWidth: 92 }}
                 value={info.pe_direito ?? ''}
@@ -2033,11 +2059,6 @@ export default function ViabilityScreen({
                 onChange={(e) => setInfo({ ...info, vagas: e.target.value })}
               />
             </div>
-            <input
-              placeholder="Tipo do imóvel (loja, galpão…)"
-              value={info.tipo ?? ''}
-              onChange={(e) => setInfo({ ...info, tipo: e.target.value })}
-            />
             <textarea
               placeholder="Observações"
               rows={2}
