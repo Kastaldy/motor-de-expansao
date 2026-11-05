@@ -599,6 +599,8 @@ def montar_payload_viabilidade(
             "ticket_cheio": num_json_safe(premissas.ticket_cheio, 2),
             "ticket_agregador": num_json_safe(premissas.ticket_agregador, 2),
             "ticket_blended": num_json_safe(premissas.ticket_blended, 2),
+            # O "Ticket medio" da tela: mix de mensalidades sem churn nem inadimplencia.
+            "ticket_medio": num_json_safe(premissas.ticket_medio, 2),
             "ticket_agregador_fator": num_json_safe(premissas.ticket_agregador_fator, 4),
             # `share_balcao` vale sobre a demanda de MUSCULACAO (total - studios); sem
             # studio, e' a demanda total. `share_musculacao` diz quanto sobrou.

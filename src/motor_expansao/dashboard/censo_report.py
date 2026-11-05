@@ -8,7 +8,7 @@ from dataclasses import dataclass, replace
 from datetime import datetime
 from io import BytesIO
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 import pandas as pd
 from fpdf import FPDF
@@ -1429,9 +1429,10 @@ def _info_imovel_page(
     altura_obs = 0.0
     if observacoes:
         pdf.set_font("Helvetica", "", 10)
-        altura_obs = 6 + 16 + pdf.multi_cell(
-            _PAGE_W - 2 * margin_x, 13, _ascii(observacoes[:600]), dry_run=True, output="HEIGHT"
+        linhas = pdf.multi_cell(
+            _PAGE_W - 2 * margin_x, 13, _ascii(observacoes[:600]), dry_run=True, output="LINES"
         )
+        altura_obs = 6 + 16 + 13 * len(cast(list[str], linhas))
     altura_bloco = altura_endereco + 2 * card_h + gap + altura_obs
     topo_util = 60.0
     fundo_util = (

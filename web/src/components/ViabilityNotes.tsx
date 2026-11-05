@@ -77,7 +77,7 @@ function montarSecoes(p: PremissasViabilidade, demandaPremissa: number | null): 
         {
           kpi: 'Ticket médio',
           como:
-            `${brl(p.ticket_blended, false, 2)} por aluno total. ` +
+            `${brl(p.ticket_medio ?? p.ticket_blended, false, 2)} por aluno total. ` +
             (temStudios
               ? `Soma os studios (${nStudios} × ` +
                 `${p.share_por_studio != null ? pctFrac(p.share_por_studio, 0) : 'uma fatia'} ` +
@@ -88,8 +88,8 @@ function montarSecoes(p: PremissasViabilidade, demandaPremissa: number | null): 
             `o balcão (${pctFrac(p.share_balcao)}, paga o ticket de musculação) com os ` +
             `agregadores (${pctFrac(mixAgr)} — Gympass, TotalPass e similares, que pagam ` +
             `${brl(p.ticket_agregador, false, 2)}` +
-            `${fatorAgr ? `, ou ${pctFrac(fatorAgr)} do ticket de musculação` : ''}), e já ` +
-            'desconta churn e inadimplência. É este número que sustenta o break-even.',
+            `${fatorAgr ? `, ou ${pctFrac(fatorAgr)} do ticket de musculação` : ''}). ` +
+            'Churn e inadimplência não entram no ticket médio: o motor os desconta na receita.',
         },
         ...notaStudios,
         {

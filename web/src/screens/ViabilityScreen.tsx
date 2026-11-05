@@ -1318,7 +1318,9 @@ export default function ViabilityScreen({
                 className="num"
                 style={{ font: '700 14px/1 var(--f-num)', color: 'var(--tx-max)' }}
               >
-                {premissas ? brl(premissas.ticket_blended, false, 2) : TEXTO_SEM_DADO}
+                {premissas
+                  ? brl(premissas.ticket_medio ?? premissas.ticket_blended, false, 2)
+                  : TEXTO_SEM_DADO}
               </span>
             </div>
             <div
@@ -1346,7 +1348,7 @@ export default function ViabilityScreen({
                   {premissas.ticket_agregador_fator != null
                     ? `, ${pctFrac(premissas.ticket_agregador_fator, 0)} da musculação`
                     : ''}
-                  ). Já líquido de churn e inadimplência.
+                  ). Sem churn nem inadimplência.
                   {/* Onde o mix é campo do operador, "a tela só exibe" seria falso. */}
                   {!mixEditavel && ' Calculado pelo motor — a tela só exibe.'}
                 </>
