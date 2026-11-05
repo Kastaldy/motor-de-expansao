@@ -12500,7 +12500,8 @@ def _rede_movimentacao() -> pd.DataFrame | None:
     """Eventos de movimentação da concorrência, sem a Ultra e sem estúdios (DEC-056). Opcional.
 
     Vem de `scripts/ingerir_movimentacao_concorrencia.py` (pacote garimpado da VPS em 15/09).
-    Ausente, a tela diz que não há histórico — nunca "nenhuma abertura".
+    Ausente, as colunas do cadastro saem do card e a tela diz que ele não está no ambiente —
+    nunca "nenhuma abertura"; a contagem semanal, se houver, continua na tela.
     """
     tabela = _rede_ler_opcional(STAGING_DIR / movimentacao_concorrencia.ARQUIVO_STAGING)
     if tabela is None:
@@ -12557,8 +12558,9 @@ def _rede_movimentacao_redes() -> dict[str, Any]:
 
 def _rede_contagem_semanal(identidade: tuple[str, int, int] | None) -> dict[str, Any]:
     """A contagem semanal que o card lê, ou `{"erro": ...}` dizendo por que ela não está aqui."""
+    ausente, ilegivel = movimentacao_concorrencia.ERROS_CONTAGEM
     if identidade is None:
-        return {"erro": "ausente"}
+        return {"erro": ausente}
     try:
         historico, descartes = saldo_rede.ler_historico_tolerante(Path(identidade[0]))
         if descartes["linhas_sem_data"] or descartes["execucoes_duplicadas"]:
@@ -12566,11 +12568,12 @@ def _rede_contagem_semanal(identidade: tuple[str, int, int] | None) -> dict[str,
         return saldo_rede.contagem_da_tela(
             historico,
             execucoes_duplicadas=list(descartes["execucoes_duplicadas"]),
+            linhas_sem_data=int(descartes["linhas_sem_data"]),
             excluir=_rede_redes_estudio(),
         )
     except Exception as erro:  # noqa: BLE001
         print(f"[rede] {saldo_rede.ARQUIVO_STAGING} ilegível ({erro})", file=sys.stderr)
-        return {"erro": "ilegivel"}
+        return {"erro": ilegivel}
 
 
 @functools.lru_cache(maxsize=2)

@@ -301,143 +301,243 @@ def test_o_total_que_reprova_por_si_fica_marcado_e_a_rede_sozinha_nao(tmp_path: 
     assert selfit["queda_total_reprovou"] is False
 
 
+def test_guarda_conta_a_rede_ausente_como_zero(tmp_path: Path) -> None:
+    """A régua da DEC-061 (`snapshots.py`, `c_agora.get(rede, 0)`): perder a rede inteira é o caso
+    extremo de coleta parcial. Até 2026-11 ela ficava fora como `sumiu`, e uma execução com metade
+    das redes passava na guarda (achado da revisão de 05/11)."""
+    linhas = [(d, f"rede_{i}", 40, d) for d in ("2026-10-25",) for i in range(30)]
+    linhas += [(d, f"rede_{i}", 40, d) for d in ("2026-11-01",) for i in range(15)]
+    laudo = s.avaliar_queda_da_execucao(
+        s.ler_historico_contagem(_escrever_historico(tmp_path / "hist.csv", linhas)), execucao="2026-11-01"
+    )
+    assert laudo["aprovado"] is False
+    assert len(laudo["redes_que_desabaram"]) == 15, "cada ausente cai de 40 para 0"
+    assert laudo["queda_total_reprovou"] is True
+
+
 # --------------------------------------------------------------------------- #
-# Série que a TELA lê: cada execução contra a última ACEITA
+# O card: julgamento POR REDE, contra a última contagem BOA dela
 # --------------------------------------------------------------------------- #
 def _enchimento(datas: list[str], n_redes: int = 30) -> list[tuple[str, str, int, str]]:
-    """Redes estáveis de 40 unidades, na proporção do caso real (ver `_historico_do_incidente`)."""
+    """Redes estáveis de 40 unidades, coletadas no dia (proporção do caso real)."""
     return [(d, f"rede_{i}", 40, d) for d in datas for i in range(n_redes)]
 
 
-def _como(laudos: list[dict[str, object]]) -> list[tuple[object, object]]:
-    return [(laudo["execucao"], laudo["como"]) for laudo in laudos]
+def _hist(tmp_path: Path, linhas: list[tuple[str, str, int, str]]) -> pd.DataFrame:
+    return s.ler_historico_contagem(_escrever_historico(tmp_path / "hist.csv", linhas))
 
 
-def test_serie_julga_contra_a_ultima_aceita_e_o_rebote_some(tmp_path: Path) -> None:
-    """O caso real: Selfit 231 -> 119 (crash de 13/09) -> 231. Contra a vizinha, o dia 20 leria
-    +112 unidades que ninguém abriu; contra a última aceita (06/09), lê zero."""
-    datas = ["2026-09-06", "2026-09-13", "2026-09-20", "2026-09-27"]
-    linhas = _enchimento(datas) + [
+def _ate(hist: pd.DataFrame, data: str) -> pd.DataFrame:
+    return hist[hist["data_execucao"] <= data]
+
+
+def _situacoes(hist: pd.DataFrame, rede: str) -> list[str]:
+    return [str(f["redes"][rede]["situacao"]) for f in s.acompanhar_redes(hist) if rede in f["redes"]]
+
+
+def test_o_crash_de_13_09_nao_vira_rebote(tmp_path: Path) -> None:
+    """O caso real: a Selfit cai de 231 para 119 com `data_coleta` de maio (o baseline do
+    repositório) e volta a 231. Contra a vizinha, o dia 20 leria +112 unidades que ninguém abriu."""
+    linhas = _enchimento(["2026-09-06", "2026-09-13", "2026-09-20"]) + [
         ("2026-09-06", "selfit", 231, "2026-09-06"),
         ("2026-09-13", "selfit", 119, "2026-05-26"),
         ("2026-09-20", "selfit", 231, "2026-09-20"),
-        ("2026-09-27", "selfit", 233, "2026-09-27"),
     ]
-    hist = s.ler_historico_contagem(_escrever_historico(tmp_path / "hist.csv", linhas))
+    hist = _hist(tmp_path, linhas)
 
-    laudos = s.avaliar_serie(hist)
-    assert _como(laudos) == [
-        ("2026-09-06", "primeira"),
-        ("2026-09-13", "recusada"),
-        ("2026-09-20", "aprovada"),
-        ("2026-09-27", "aprovada"),
-    ]
-    assert laudos[2]["referencia"] == "2026-09-06", "o dia 20 e' julgado contra 06/09, nao contra 13/09"
+    no_dia_13 = s.contagem_da_tela(_ate(hist, "2026-09-13"))
+    assert no_dia_13["unidades"]["selfit"] == 231, "a coleta velha não entra"
+    assert no_dia_13["variacao"]["selfit"] == {"delta": None, "status": "nao_recoletada"}
+    assert no_dia_13["nao_recoletadas"] == ["selfit"]
+
+    no_dia_20 = s.contagem_da_tela(hist)
+    assert no_dia_20["variacao"]["selfit"] == {"delta": 0, "status": "estavel"}, "sem o rebote de +112"
     # A régua da vizinha, para registro: é ela que inventaria as 112 unidades.
     vizinha = s.saldo_entre_execucoes(hist, de="2026-09-13", ate="2026-09-20")
     assert int(vizinha[vizinha["rede"] == "selfit"].iloc[0]["delta"]) == 112
 
-    tela = s.contagem_da_tela(hist)
-    assert (tela["data"], tela["data_anterior"]) == ("2026-09-27", "2026-09-20")
-    assert tela["variacao"]["selfit"] == {"delta": 2, "status": "variou"}
-    assert tela["recusadas"] == [], "13/09 ficou antes da aceita anterior: nao explica nada da tela de hoje"
 
-
-def test_queda_que_se_repete_e_confirmada_e_a_serie_nao_congela(tmp_path: Path) -> None:
-    """Rede de 6 unidades que fecha 2 (-33%): sem a confirmação, toda semana seguinte seria julgada
-    contra a mesma contagem velha e reprovada para sempre, e a tela pararia junto."""
-    datas = ["2026-10-04", "2026-10-11", "2026-10-18", "2026-10-25"]
-    linhas = _enchimento(datas) + [
-        ("2026-10-04", "pequena", 6, "2026-10-04"),
-        ("2026-10-11", "pequena", 4, "2026-10-11"),
-        ("2026-10-18", "pequena", 4, "2026-10-18"),
-        ("2026-10-25", "pequena", 4, "2026-10-25"),
-    ]
-    hist = s.ler_historico_contagem(_escrever_historico(tmp_path / "hist.csv", linhas))
-
-    assert _como(s.avaliar_serie(hist)) == [
-        ("2026-10-04", "primeira"),
-        ("2026-10-11", "recusada"),
-        ("2026-10-18", "confirmada"),
-        ("2026-10-25", "aprovada"),
-    ]
-    na_confirmacao = s.contagem_da_tela(hist[hist["data_execucao"] <= "2026-10-18"])
-    assert na_confirmacao["confirmada"] is True
-    assert na_confirmacao["quedas_confirmadas"] == [
-        {"rede": "pequena", "antes": 6, "agora": 4, "coleta_defasada": False}
-    ]
-    # A variação da semana confirmada cobre DUAS semanas (contra 04/10), e a recusa diz por quê.
-    assert na_confirmacao["data_anterior"] == "2026-10-04"
-    assert na_confirmacao["variacao"]["pequena"] == {"delta": -2, "status": "variou"}
-    assert [r["execucao"] for r in na_confirmacao["recusadas"]] == ["2026-10-11"]
-
-
-def test_duas_recusas_diferentes_nao_se_confirmam(tmp_path: Path) -> None:
-    """Confirmar exige a MESMA contagem duas vezes: quedas em redes diferentes não são o mesmo fato."""
-    datas = ["2026-09-06", "2026-09-13", "2026-09-20"]
-    linhas = _enchimento(datas) + [
-        ("2026-09-06", "selfit", 231, "2026-09-06"),
-        ("2026-09-13", "selfit", 119, "2026-09-13"),
-        ("2026-09-20", "selfit", 231, "2026-09-20"),
-        ("2026-09-06", "panobianco", 150, "2026-09-06"),
-        ("2026-09-13", "panobianco", 150, "2026-09-13"),
-        ("2026-09-20", "panobianco", 60, "2026-09-20"),
-    ]
-    hist = s.ler_historico_contagem(_escrever_historico(tmp_path / "hist.csv", linhas))
-    assert _como(s.avaliar_serie(hist))[1:] == [("2026-09-13", "recusada"), ("2026-09-20", "recusada")]
-
-    tela = s.contagem_da_tela(hist)
-    assert tela["data"] == "2026-09-06" and tela["data_anterior"] is None
-    assert tela["execucao_mais_recente"] == "2026-09-20"
-    recusadas = {r["execucao"]: r for r in tela["recusadas"]}
-    assert [q["rede"] for q in recusadas["2026-09-13"]["redes"]] == ["selfit"]
-    assert [q["rede"] for q in recusadas["2026-09-20"]["redes"]] == ["panobianco"]
-
-
-def test_tela_diz_quando_a_ultima_contagem_ficou_de_fora(tmp_path: Path) -> None:
-    datas = ["2026-10-25", "2026-11-01", "2026-11-08"]
-    linhas = _enchimento(datas) + [
-        ("2026-10-25", "selfit", 231, "2026-10-25"),
-        ("2026-11-01", "selfit", 233, "2026-11-01"),
-        ("2026-11-08", "selfit", 119, "2026-05-26"),
-    ]
-    tela = s.contagem_da_tela(s.ler_historico_contagem(_escrever_historico(tmp_path / "hist.csv", linhas)))
-    assert (tela["data"], tela["data_anterior"], tela["execucao_mais_recente"]) == (
-        "2026-11-01",
-        "2026-10-25",
-        "2026-11-08",
-    )
-    assert tela["unidades"]["selfit"] == 233
-    (recusa,) = tela["recusadas"]
-    assert recusa["execucao"] == "2026-11-08" and recusa["motivo"] == "queda"
-    assert recusa["redes"] == [{"rede": "selfit", "antes": 233, "agora": 119, "coleta_defasada": True}]
-    assert recusa["queda_total_pct"] is None, "foi a rede que reprovou, nao o total"
-
-
-def test_estudio_sai_antes_da_guarda_e_nao_segura_as_outras_redes(tmp_path: Path) -> None:
-    """O card não mostra estúdio boutique (DEC-056): o tombo de um não pode prender as outras redes."""
+def test_queda_com_coleta_nova_e_segurada_e_as_outras_redes_seguem(tmp_path: Path) -> None:
+    """Uma rede quebrada não prende o card: só ela fica na última contagem boa."""
     linhas = _enchimento(["2026-10-25", "2026-11-01"]) + [
-        ("2026-10-25", "velocity", 125, "2026-10-25"),
-        ("2026-11-01", "velocity", 20, "2026-11-01"),
+        ("2026-10-25", "selfit", 233, "2026-10-25"),
+        ("2026-11-01", "selfit", 119, "2026-11-01"),
+        ("2026-10-25", "pratique", 190, "2026-10-25"),
+        ("2026-11-01", "pratique", 192, "2026-11-01"),
     ]
-    hist = s.ler_historico_contagem(_escrever_historico(tmp_path / "hist.csv", linhas))
-    assert s.contagem_da_tela(hist)["data"] == "2026-10-25", "sem excluir, o tombo do estudio reprova 01/11"
+    tela = s.contagem_da_tela(_hist(tmp_path, linhas))
+    assert tela["data"] == "2026-11-01"
+    assert tela["unidades"]["selfit"] == 233
+    assert tela["variacao"]["selfit"] == {"delta": None, "status": "segurada"}
+    assert tela["seguradas"] == [
+        {"rede": "selfit", "antes": 233, "agora": 119, "direcao": "queda", "desde": "2026-11-01"}
+    ]
+    assert tela["variacao"]["pratique"] == {"delta": 2, "status": "variou"}, "a outra rede anda"
+
+
+def test_queda_real_que_se_mantem_numa_coleta_nova_e_confirmada(tmp_path: Path) -> None:
+    """Rede de 6 que fecha 2 (-33%): fica segurada uma semana e entra quando a coleta seguinte
+    mostra o mesmo patamar. Sem a confirmação, ela ficaria presa na contagem velha para sempre."""
+    datas = ["2026-10-04", "2026-10-11", "2026-10-18", "2026-10-25"]
+    linhas = _enchimento(datas) + [(d, "pequena", n, d) for d, n in zip(datas, [6, 4, 4, 4], strict=True)]
+    hist = _hist(tmp_path, linhas)
+    assert _situacoes(hist, "pequena") == ["estreia", "segurada", "confirmada", "aceita"]
+
+    na_confirmacao = s.contagem_da_tela(_ate(hist, "2026-10-18"))
+    assert na_confirmacao["variacao"]["pequena"] == {"delta": -2, "status": "confirmada"}
+    assert na_confirmacao["confirmadas"] == [
+        {"rede": "pequena", "antes": 6, "agora": 4, "direcao": "queda", "desde": "2026-10-11"}
+    ]
+
+
+def test_reexecucao_sem_recoletar_nao_confirma_a_queda(tmp_path: Path) -> None:
+    """Achado da revisão de 05/11: rodar o relatório de novo numa quarta, sem recoletar, repetia a
+    contagem quebrada com outra data e a "confirmava"; o domingo consertado lia +112. A mesma
+    `data_coleta` não confirma nada: a confirmação exige uma coleta MAIS NOVA que a segurada."""
+    linhas = _enchimento(["2026-09-06", "2026-09-13", "2026-09-16", "2026-09-20"]) + [
+        ("2026-09-06", "selfit", 231, "2026-09-06"),
+        ("2026-09-13", "selfit", 119, "2026-09-13"),  # coleta nova, mas quebrada
+        ("2026-09-16", "selfit", 119, "2026-09-13"),  # o relatório de novo, a mesma coleta
+        ("2026-09-20", "selfit", 231, "2026-09-20"),
+    ]
+    hist = _hist(tmp_path, linhas)
+    assert _situacoes(hist, "selfit") == ["estreia", "segurada", "segurada", "aceita"]
+    assert s.contagem_da_tela(hist)["variacao"]["selfit"] == {"delta": 0, "status": "estavel"}
+
+
+def test_confirmar_exige_o_mesmo_patamar_e_o_mesmo_sentido(tmp_path: Path) -> None:
+    """Uma recuperação parcial (119 -> 200, ainda -13% da base) não é a queda se mantendo, e uma
+    queda que despenca de novo (119 -> 60) também não: as duas seguem seguradas ou entram pela
+    régua normal, nunca como "confirmada"."""
+    datas = ["2026-09-06", "2026-09-13", "2026-09-20"]
+    recupera = _enchimento(datas) + [(d, "selfit", n, d) for d, n in zip(datas, [231, 119, 200], strict=True)]
+    assert _situacoes(_hist(tmp_path, recupera), "selfit") == ["estreia", "segurada", "aceita"]
+    despenca = _enchimento(datas) + [(d, "selfit", n, d) for d, n in zip(datas, [231, 119, 60], strict=True)]
+    assert _situacoes(_hist(tmp_path, despenca), "selfit") == ["estreia", "segurada", "segurada"]
+
+
+def test_salto_para_cima_e_segurado_e_a_correcao_volta_sem_alarde(tmp_path: Path) -> None:
+    """Achado da revisão: conserto de coletor que duplica unidades (100 -> 200) entrava como
+    crescimento, e a correção (200 -> 100) era recusada como "coleta incompleta"."""
+    datas = ["2026-10-04", "2026-10-11", "2026-10-18", "2026-10-25"]
+    linhas = _enchimento(datas) + [(d, "inflada", n, d) for d, n in zip(datas, [100, 200, 100, 100], strict=True)]
+    hist = _hist(tmp_path, linhas)
+    assert _situacoes(hist, "inflada") == ["estreia", "segurada", "aceita", "aceita"]
+    assert all(f["valores"]["inflada"] == 100 for f in s.acompanhar_redes(hist))
+
+
+def test_salto_para_cima_que_se_mantem_e_confirmado(tmp_path: Path) -> None:
+    datas = ["2026-10-04", "2026-10-11", "2026-10-18"]
+    linhas = _enchimento(datas) + [(d, "ampliada", n, d) for d, n in zip(datas, [100, 160, 161], strict=True)]
+    tela = s.contagem_da_tela(_hist(tmp_path, linhas))
+    assert tela["variacao"]["ampliada"] == {"delta": 61, "status": "confirmada"}
+    assert tela["confirmadas"][0]["direcao"] == "subida"
+
+
+def test_duas_redes_pequenas_oscilando_nao_prendem_o_card(tmp_path: Path) -> None:
+    """A simulação da revisão de 05/11: julgando a semana inteira, duas redes de 5 a 9 unidades
+    caindo em semanas alternadas prendiam as outras ~100 redes numa contagem velha."""
+    datas = ["2026-10-04", "2026-10-11", "2026-10-18", "2026-10-25", "2026-11-01"]
+    linhas = _enchimento(datas)
+    linhas += [(d, "osc_a", n, d) for d, n in zip(datas, [8, 5, 8, 5, 8], strict=True)]
+    linhas += [(d, "osc_b", n, d) for d, n in zip(datas, [8, 8, 5, 8, 5], strict=True)]
+    linhas += [(d, "cresce", 100 + i, d) for i, d in enumerate(datas)]
+    tela = s.contagem_da_tela(_hist(tmp_path, linhas))
+    assert tela["data"] == "2026-11-01"
+    assert tela["variacao"]["cresce"] == {"delta": 1, "status": "variou"}
+    assert [x["rede"] for x in tela["seguradas"]] == ["osc_b"]
+
+
+def test_rede_nao_recoletada_fica_sem_variacao_e_nao_vira_zero(tmp_path: Path) -> None:
+    """A falha mais comum hoje (achado da revisão): o lote devolve a safra anterior à rede que não
+    rodou, com a `data_coleta` antiga. "Estável, 0" diria que ela não se mexeu; o fato é "não
+    sabemos"."""
+    linhas = _enchimento(["2026-10-25", "2026-11-01"]) + [
+        ("2026-10-25", "selfit", 233, "2026-10-25"),
+        ("2026-11-01", "selfit", 233, "2026-10-25"),
+    ]
+    tela = s.contagem_da_tela(_hist(tmp_path, linhas))
+    assert tela["unidades"]["selfit"] == 233
+    assert tela["variacao"]["selfit"] == {"delta": None, "status": "nao_recoletada"}
+    assert tela["nao_recoletadas"] == ["selfit"]
+
+
+def test_rede_ausente_fica_uma_semana_e_depois_sai(tmp_path: Path) -> None:
+    linhas = _enchimento(["2026-10-18", "2026-10-25", "2026-11-01"]) + [("2026-10-18", "extinta", 12, "2026-10-18")]
+    hist = _hist(tmp_path, linhas)
+    na_ausencia = s.contagem_da_tela(_ate(hist, "2026-10-25"))
+    assert na_ausencia["unidades"]["extinta"] == 12
+    assert na_ausencia["variacao"]["extinta"] == {"delta": None, "status": "ausente"}
+    assert na_ausencia["ausentes"] == ["extinta"]
+    depois = s.contagem_da_tela(hist)
+    assert "extinta" not in depois["unidades"]
+    assert depois["variacao"]["extinta"] == {"delta": None, "status": "sumiu"}
+    assert depois["removidas"] == ["extinta"]
+
+
+def test_queda_difusa_segura_a_execucao_inteira_e_a_repeticao_entra(tmp_path: Path) -> None:
+    """A guarda do TOTAL da DEC-061 segue valendo: muitas redes perdendo pouco, com coleta nova."""
+    datas = ["2026-10-25", "2026-11-01", "2026-11-08"]
+    linhas = [(d, f"rede_{i}", n, d) for d, n in zip(datas, [20, 15, 15], strict=True) for i in range(10)]
+    hist = _hist(tmp_path, linhas)
+
+    na_queda = s.contagem_da_tela(_ate(hist, "2026-11-01"))
+    assert na_queda["data"] == "2026-10-25"
+    assert na_queda["recusadas"] == [{"execucao": "2026-11-01", "motivo": "total", "queda_total_pct": 25.0}]
+
+    depois = s.contagem_da_tela(hist)
+    assert (depois["data"], depois["data_anterior"], depois["total_confirmado"]) == ("2026-11-08", "2026-10-25", True)
+    assert depois["variacao"]["rede_0"] == {"delta": -5, "status": "variou"}
+
+
+def test_estudio_sai_antes_da_guarda(tmp_path: Path) -> None:
+    """O card não mostra estúdio boutique (DEC-056): ele não entra nem na conta do total."""
+    linhas = [(d, "pratique", 40, d) for d in ("2026-10-25", "2026-11-01")] + [
+        ("2026-10-25", "velocity", 125, "2026-10-25"),
+        ("2026-11-01", "velocity", 100, "2026-11-01"),  # -20%: abaixo da régua por rede, -15% no total
+    ]
+    hist = _hist(tmp_path, linhas)
+    assert s.contagem_da_tela(hist)["data"] == "2026-10-25", "sem excluir, o estúdio reprova o total"
     tela = s.contagem_da_tela(hist, excluir={"velocity"})
     assert tela["data"] == "2026-11-01"
     assert "velocity" not in tela["unidades"] and "velocity" not in tela["variacao"]
 
 
-def test_variacao_da_tela_mantem_novo_fora_da_conta(tmp_path: Path) -> None:
+def test_variacao_da_tela_marca_a_estreia_como_novo(tmp_path: Path) -> None:
     """Mesma semântica do Telegram: rede que entra na cobertura é `novo`, sem `+n`."""
     linhas = _enchimento(["2026-10-25", "2026-11-01"]) + [("2026-11-01", "estreante", 12, "2026-11-01")]
-    tela = s.contagem_da_tela(s.ler_historico_contagem(_escrever_historico(tmp_path / "hist.csv", linhas)))
+    tela = s.contagem_da_tela(_hist(tmp_path, linhas))
     assert tela["variacao"]["estreante"] == {"delta": None, "status": "novo"}
     assert tela["variacao"]["rede_0"] == {"delta": 0, "status": "estavel"}
 
 
 def test_historico_vazio_nao_tem_contagem_e_nao_levanta(tmp_path: Path) -> None:
-    tela = s.contagem_da_tela(s.ler_historico_contagem(_escrever_historico(tmp_path / "hist.csv", [])))
+    tela = s.contagem_da_tela(_hist(tmp_path, []))
     assert tela["data"] is None and tela["unidades"] == {} and tela["recusadas"] == []
+    assert tela["seguradas"] == [] and tela["nao_recoletadas"] == []
+
+
+def test_o_vocabulario_da_tela_cobre_toda_situacao(tmp_path: Path) -> None:
+    """Toda situação de leitura vira um status que a tela conhece (a paridade com o TypeScript
+    fica em `test_paridade_crescimento_concorrencia_web.py`)."""
+    traducao = {"estreia": "novo", "removida": "sumiu", "aceita": "variou"}
+    for situacao in s.SITUACOES_LEITURA:
+        assert traducao.get(situacao, situacao) in s.STATUS_VARIACAO_TELA, situacao
+
+
+def test_a_serie_de_dois_anos_monta_em_tempo_de_requisicao(tmp_path: Path) -> None:
+    """Achado da revisão: a versão por execução custava 3 a 7 s com 104 execuções (crescia mais que
+    linear). O acompanhamento por rede é uma passada por execução; o teto aqui é folgado de
+    propósito, para medir a ordem de grandeza e não a máquina."""
+    import time
+
+    datas = [str(d.date()) for d in pd.date_range("2025-01-05", periods=104, freq="7D")]
+    linhas = [(d, f"rede_{i:03d}", 40 + (k % 3), d) for k, d in enumerate(datas) for i in range(107)]
+    hist = _hist(tmp_path, linhas)
+    inicio = time.perf_counter()
+    tela = s.contagem_da_tela(hist)
+    assert tela["data"] == datas[-1]
+    assert time.perf_counter() - inicio < 5.0
 
 
 # --------------------------------------------------------------------------- #
@@ -466,9 +566,10 @@ def test_leitura_tolerante_tira_a_execucao_duplicada_INTEIRA_e_conta_a_linha_sem
     assert descartes == {"execucoes_duplicadas": ["2026-11-01"], "linhas_sem_data": 1}
     assert set(hist["data_execucao"].astype(str)) == {"2026-10-25"}, "a panobianco de 01/11 sai junto"
 
-    tela = s.contagem_da_tela(hist, execucoes_duplicadas=descartes["execucoes_duplicadas"])
+    tela = s.contagem_da_tela(
+        hist, execucoes_duplicadas=descartes["execucoes_duplicadas"], linhas_sem_data=descartes["linhas_sem_data"]
+    )
     assert tela["data"] == "2026-10-25"
     assert tela["execucao_mais_recente"] == "2026-11-01"
-    assert tela["recusadas"] == [
-        {"execucao": "2026-11-01", "motivo": "duplicada", "redes": [], "queda_total_pct": None}
-    ]
+    assert tela["linhas_sem_data"] == 1, "a linha sem data também vira aviso na tela"
+    assert tela["recusadas"] == [{"execucao": "2026-11-01", "motivo": "duplicada", "queda_total_pct": None}]

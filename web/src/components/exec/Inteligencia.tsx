@@ -2,11 +2,12 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import type { ReactNode } from 'react'
 
 import {
+  AVISO_NACIONAL,
   avisosDaContagem,
+  celulaCadastro,
   celulaVariacao,
   diaMes,
   janela,
-  motivoSemCadastro,
   nomeRede,
   rodapeCrescimento,
   rotuloCadastro,
@@ -14,7 +15,7 @@ import {
   temVariacao,
   textoJanela,
 } from '../../lib/crescimento-concorrencia'
-import type { TomVariacao } from '../../lib/crescimento-concorrencia'
+import type { ColunaCadastro, TomVariacao } from '../../lib/crescimento-concorrencia'
 import { brl, brlCurto, num, pct, pctVar } from '../../lib/format'
 import type {
   RedeInteligencia,
@@ -908,12 +909,17 @@ const COR_VARIACAO: Record<TomVariacao, string> = {
   mais: 'var(--gr-coral)',
   menos: 'var(--pos)',
   zero: 'var(--tx-off)',
+  // "nova", "segurada", "sem coleta": rótulo com SIGNIFICADO, então nunca o token de de-ênfase.
+  info: 'var(--tx-muted)',
   vazio: 'var(--tx-off)',
 }
 
+const COLUNAS_CADASTRO: ColunaCadastro[] = ['aberturas', 'fechamentos', 'saldo', 'em_breve']
+
 /* Duas fontes, cada uma com a sua data, e o cabeçalho diz qual é qual (diagnóstico de 04/11/2026:
    o card lia só o pacote de setembro e ficou oito domingos parado em 06/09):
-   - "Contagem de DD/MM": unidades e variação da contagem semanal do coletor, a última ACEITA;
+   - "Contagem de DD/MM": unidades e variação da contagem semanal do coletor, a última contagem
+     boa de cada rede;
    - "Cadastro de DD/MM a DD/MM": aberturas, fechamentos, saldo e "Em breve" do pacote fixo.
    Nacional de propósito (decisão de 05/11/2026), e a tela diz isso. Os textos moram em
    `lib/crescimento-concorrencia`, testados sem DOM. */
@@ -927,7 +933,9 @@ function MovimentacaoConcorrencia({ dados }: { dados: RedeInteligencia }) {
   const cautela = janela(m?.periodos, 'cadastro', 'cautela')
   const comVariacao = temVariacao(m)
   const dataAnterior = m?.contagem?.data_anterior ?? null
-  const avisos = avisosDaContagem(m)
+  // A data de hoje liga o aviso de contagem velha: sem ela, um histórico que parou de chegar
+  // deixaria o card parado de novo sem denúncia nenhuma.
+  const avisos = avisosDaContagem(m, new Date().toISOString().slice(0, 10))
   const redes = (m?.redes ?? [])
     .map((r) => {
       const aberturas = comCautela ? r.aberturas : r.aberturas_conferidas
@@ -980,7 +988,7 @@ function MovimentacaoConcorrencia({ dados }: { dados: RedeInteligencia }) {
         <Lide>Histórico de movimentação da concorrência ausente neste ambiente.</Lide>
       ) : (
         <>
-          <Lide>Visão nacional das redes concorrentes: este card não muda com os filtros do topo da página.</Lide>
+          <Lide>{AVISO_NACIONAL}</Lide>
           {avisos.map((a) => (
             <div
               key={a.texto}
@@ -1001,24 +1009,28 @@ function MovimentacaoConcorrencia({ dados }: { dados: RedeInteligencia }) {
               <table style={{ width: '100%', borderCollapse: 'collapse', font: '500 11.5px/1 var(--f-num)', color: 'var(--tx-sub)' }}>
                 <thead>
                   <tr>
-                    <th aria-hidden="true" style={{ ...grupo, borderBottom: 'none' }} />
-                    <th colSpan={comVariacao ? 2 : 1} style={grupo}>{rotuloContagem(m)}</th>
-                    {comCadastro && <th colSpan={4} style={grupo}>{rotuloCadastro(m, comCautela)}</th>}
+                    {/* Canto vazio como célula comum (e não `aria-hidden`): fora da árvore de
+                        acessibilidade, ele empurrava os grupos uma coluna para a esquerda. */}
+                    <td style={{ ...grupo, borderBottom: 'none' }} />
+                    <th scope="colgroup" colSpan={comVariacao ? 2 : 1} style={grupo}>{rotuloContagem(m)}</th>
+                    {comCadastro && (
+                      <th scope="colgroup" colSpan={4} style={grupo}>{rotuloCadastro(m, comCautela)}</th>
+                    )}
                   </tr>
                   <tr>
-                    <th style={{ ...titulo, textAlign: 'left' }}>Rede</th>
-                    <th style={titulo}>Unidades</th>
+                    <th scope="col" style={{ ...titulo, textAlign: 'left' }}>Rede</th>
+                    <th scope="col" style={titulo}>Unidades</th>
                     {comVariacao && (
-                      <th style={titulo} title={`Variação da contagem desde ${diaMes(dataAnterior)}`}>
+                      <th scope="col" style={titulo} title={`Variação da contagem desde ${diaMes(dataAnterior)}`}>
                         Desde {diaMes(dataAnterior)}
                       </th>
                     )}
                     {comCadastro && (
                       <>
-                        <th style={titulo}>Aberturas</th>
-                        <th style={titulo}>Fechamentos</th>
-                        <th style={titulo}>Saldo</th>
-                        <th style={titulo}>Em breve</th>
+                        <th scope="col" style={titulo}>Aberturas</th>
+                        <th scope="col" style={titulo}>Fechamentos</th>
+                        <th scope="col" style={titulo}>Saldo</th>
+                        <th scope="col" style={titulo}>Em breve</th>
                       </>
                     )}
                   </tr>
@@ -1026,7 +1038,6 @@ function MovimentacaoConcorrencia({ dados }: { dados: RedeInteligencia }) {
                 <tbody>
                   {visiveis.map((r) => {
                     const v = celulaVariacao(r, dataAnterior)
-                    const motivo = motivoSemCadastro(r)
                     return (
                       <tr key={r.rede} style={{ height: 30 }}>
                         <td style={{ ...celula, textAlign: 'left' }}>
@@ -1047,17 +1058,22 @@ function MovimentacaoConcorrencia({ dados }: { dados: RedeInteligencia }) {
                             </span>
                           </td>
                         )}
-                        {comCadastro && (
-                          <>
-                            <td className="num" style={celula}>{motivo ? semLeitura(motivo) : r.aberturas ? num(r.aberturas) : zero}</td>
-                            <td className="num" style={celula}>{motivo ? semLeitura(motivo) : r.fechamentos ? num(r.fechamentos) : zero}</td>
-                            <td className="num" style={celula}>{motivo ? semLeitura(motivo) : saldo(r.saldo)}</td>
-                            {/* O "Em breve" vem de outro arquivo do pacote: a Smart Fit tem leitura nele. */}
-                            <td className="num" style={celula}>
-                              {r.em_breve ? num(r.em_breve) : r.sem_cadastro === 'fora_da_cobertura' ? semLeitura(motivo) : zero}
-                            </td>
-                          </>
-                        )}
+                        {comCadastro &&
+                          COLUNAS_CADASTRO.map((coluna) => {
+                            // A decisão "número, 0 ou —" é da lib (`celulaCadastro`), testada.
+                            const c = celulaCadastro(r, coluna)
+                            return (
+                              <td key={coluna} className="num" style={celula}>
+                                {c.tipo === 'sem_leitura'
+                                  ? semLeitura(c.titulo ?? null)
+                                  : coluna === 'saldo'
+                                    ? saldo(c.valor)
+                                    : c.tipo === 'zero'
+                                      ? zero
+                                      : num(c.valor)}
+                              </td>
+                            )
+                          })}
                       </tr>
                     )
                   })}

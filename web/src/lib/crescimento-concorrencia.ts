@@ -1,23 +1,31 @@
-/* Crescimento da concorrência — os textos e as datas do card, montados a partir do payload.
+/* Crescimento da concorrência — os textos, as datas e as células do card, montados do payload.
 
    O card juntava duas fontes com as datas escritas no código ("02/08 a 06/09", "31/08 a 12/09",
    "contagem oficial de 06/09") e ficou oito domingos parado sem que nada na tela denunciasse
    (diagnóstico de 04/11/2026). Daqui em diante toda data visível sai do dado, e as regras de
-   texto moram aqui, em funções puras testadas sem DOM (o vitest roda em `node`).
+   texto e de célula moram aqui, em funções puras testadas sem DOM (o vitest roda em `node`).
 
    As duas fontes, cada uma com a sua data:
    - UNIDADES e VARIAÇÃO: contagem semanal do coletor (a do relatório de domingo no Telegram),
-     sempre a última ACEITA — contagem com queda brusca é recusada e a tela diz qual e por quê;
+     julgada POR REDE contra a última contagem boa de cada uma; a rede não recoletada, ou com
+     salto brusco ainda não confirmado, fica com o número anterior, e a tela diz qual e por quê;
    - ABERTURAS, FECHAMENTOS, SALDO e EM BREVE: o cadastro de setembro (pacote fixo). */
 
 import { num, pct } from './format'
 import type {
   RedeContagemRecusada,
+  RedeContagemSemanal,
   RedeCrescimento,
   RedeCrescimentoRede,
   RedeMovimentoPeriodo,
-  RedeQuedaContagem,
+  RedeSaltoContagem,
 } from './types'
+
+/** Decisão de 05/11/2026: o card é nacional de propósito, e diz isso antes da tabela. */
+export const AVISO_NACIONAL = 'Visão nacional das redes concorrentes: este card não muda com os filtros do topo da página.'
+
+/** Com a contagem mais velha que isto (em dias), a tela avisa que o histórico pode ter parado. */
+export const DIAS_CONTAGEM_VELHA = 9
 
 /** "smart_fit" -> "Smart Fit". O slug da rede vem do coletor. */
 export function nomeRede(slug: string | null | undefined): string {
@@ -30,9 +38,23 @@ export function nomeRede(slug: string | null | undefined): string {
     .join(' ')
 }
 
+const ISO = /^\d{4}-\d{2}-\d{2}/
+
 /** "2026-11-01" -> "01/11". O que não é data ISO vira "—", nunca um pedaço do texto. */
 export function diaMes(iso: string | null | undefined): string {
-  return iso && /^\d{4}-\d{2}-\d{2}/.test(iso) ? `${iso.slice(8, 10)}/${iso.slice(5, 7)}` : '—'
+  return iso && ISO.test(iso) ? `${iso.slice(8, 10)}/${iso.slice(5, 7)}` : '—'
+}
+
+/** "2026-11-01" -> "01/11/2026", para quando o ano importa (contagem velha). */
+export function diaMesAno(iso: string | null | undefined): string {
+  return iso && ISO.test(iso) ? `${diaMes(iso)}/${iso.slice(0, 4)}` : '—'
+}
+
+/** Dias corridos de `de` até `ate` (datas ISO), ou `null` se alguma não for data. */
+export function diasEntre(de: string | null | undefined, ate: string | null | undefined): number | null {
+  if (!de || !ate || !ISO.test(de) || !ISO.test(ate)) return null
+  const dia = (iso: string) => Date.UTC(Number(iso.slice(0, 4)), Number(iso.slice(5, 7)) - 1, Number(iso.slice(8, 10)))
+  return Math.round((dia(ate) - dia(de)) / 86_400_000)
 }
 
 /** Inteiro com o sinal escrito ("+3", "-2", "0"): a cor sozinha não chega a todo leitor. */
@@ -72,7 +94,7 @@ export function janelaDoCadastro(periodos: RedeMovimentoPeriodo[] | undefined, c
   return comCautela ? janela(periodos, 'cadastro') : janela(periodos, 'cadastro', 'alta')
 }
 
-/** A coluna de variação só existe com DUAS contagens semanais aceitas para comparar. */
+/** A coluna de variação só existe com DUAS contagens semanais para comparar. */
 export function temVariacao(m: RedeCrescimento | undefined): boolean {
   return m?.contagem_origem === 'semanal' && !!m.contagem?.data_anterior
 }
@@ -86,7 +108,10 @@ export function rotuloCadastro(m: RedeCrescimento, comCautela: boolean): string 
   return j ? `Cadastro de ${textoJanela(j)}` : 'Cadastro'
 }
 
-export type TomVariacao = 'mais' | 'menos' | 'zero' | 'vazio'
+/* ------------------------------- células ------------------------------- */
+
+/** `info` = rótulo com significado (precisa de contraste); `vazio` = "—" sem dado. */
+export type TomVariacao = 'mais' | 'menos' | 'zero' | 'info' | 'vazio'
 
 export interface CelulaVariacao {
   texto: string
@@ -94,24 +119,49 @@ export interface CelulaVariacao {
   titulo?: string
 }
 
-/** A célula de variação de uma rede. `novo`/`sumiu` são COBERTURA do coletor, nunca `+n`/`-n`. */
+/** A célula de variação de uma rede. Cobertura nova e contagem segurada aparecem ESCRITAS na
+ *  célula (e não só na dica do mouse, que não existe no celular): "nova", "segurada"... */
 export function celulaVariacao(
-  r: Pick<RedeCrescimentoRede, 'variacao' | 'variacao_status'>,
+  r: Pick<RedeCrescimentoRede, 'variacao' | 'variacao_status' | 'lido'>,
   dataAnterior: string | null | undefined,
 ): CelulaVariacao {
   const desde = dataAnterior ? ` desde ${diaMes(dataAnterior)}` : ''
+  const numero = (v: number): Pick<CelulaVariacao, 'texto' | 'tom'> => ({
+    texto: comSinal(v),
+    tom: v > 0 ? 'mais' : v < 0 ? 'menos' : 'zero',
+  })
   switch (r.variacao_status) {
     case 'variou':
-    case 'estavel': {
-      const v = r.variacao ?? 0
-      return { texto: comSinal(v), tom: v > 0 ? 'mais' : v < 0 ? 'menos' : 'zero' }
-    }
+    case 'estavel':
+      return numero(r.variacao ?? 0)
+    case 'confirmada':
+      return {
+        ...numero(r.variacao ?? 0),
+        titulo: 'Salto brusco que se manteve numa coleta mais nova: entrou nesta contagem.',
+      }
     case 'novo':
       return {
         texto: 'nova',
-        tom: 'vazio',
+        tom: 'info',
         titulo: `Rede que entrou na contagem do coletor${desde}: é cobertura nova, não abertura.`,
       }
+    case 'segurada':
+      return {
+        texto: 'segurada',
+        tom: 'info',
+        titulo:
+          r.lido != null
+            ? `O coletor leu ${num(r.lido)} unidades, um salto brusco: fica a última contagem boa até a próxima coleta confirmar.`
+            : 'Salto brusco: fica a última contagem boa até a próxima coleta confirmar.',
+      }
+    case 'nao_recoletada':
+      return {
+        texto: 'sem coleta',
+        tom: 'info',
+        titulo: 'O coletor não recoletou esta rede nesta semana: fica a última contagem, sem variação.',
+      }
+    case 'ausente':
+      return { texto: 'ausente', tom: 'info', titulo: 'A rede não veio nesta contagem: fica a última por uma semana.' }
     case 'sumiu':
       return { texto: '—', tom: 'vazio', titulo: `Rede que saiu da contagem do coletor${desde}.` }
     default:
@@ -131,6 +181,34 @@ export function motivoSemCadastro(r: Pick<RedeCrescimentoRede, 'rede' | 'sem_cad
   return null
 }
 
+export type ColunaCadastro = 'aberturas' | 'fechamentos' | 'saldo' | 'em_breve'
+
+export interface CelulaCadastro {
+  /** `sem_leitura` = "—": a linha não tem leitura de cadastro, e zero afirmaria que não se mexeu */
+  tipo: 'numero' | 'zero' | 'sem_leitura'
+  valor: number
+  titulo?: string
+}
+
+/** O que cada coluna do cadastro mostra numa linha. `aberturas`, `fechamentos` e `saldo` já vêm
+ *  com o botão de cautela aplicado. O "Em breve" vem de outro arquivo do pacote, e a Smart Fit
+ *  TEM leitura nele: só a rede fora da cobertura perde o número ali. */
+export function celulaCadastro(
+  r: Pick<RedeCrescimentoRede, 'rede' | 'sem_cadastro' | 'aberturas' | 'fechamentos' | 'saldo' | 'em_breve'>,
+  coluna: ColunaCadastro,
+): CelulaCadastro {
+  const motivo = motivoSemCadastro(r)
+  const valor = r[coluna]
+  if (coluna === 'em_breve') {
+    if (valor) return { tipo: 'numero', valor }
+    return r.sem_cadastro === 'fora_da_cobertura'
+      ? { tipo: 'sem_leitura', valor: 0, titulo: motivo ?? undefined }
+      : { tipo: 'zero', valor: 0 }
+  }
+  if (motivo) return { tipo: 'sem_leitura', valor: 0, titulo: motivo }
+  return valor ? { tipo: 'numero', valor } : { tipo: 'zero', valor: 0 }
+}
+
 /* ------------------------------- avisos ------------------------------- */
 
 export interface AvisoCrescimento {
@@ -138,43 +216,82 @@ export interface AvisoCrescimento {
   texto: string
 }
 
+function plural(n: number, um: string, varios: string): string {
+  return n === 1 ? um : varios
+}
+
+/** "Selfit, Panobianco e Bluefit"; acima de `max`, "Selfit, Panobianco, Bluefit e mais 8". */
+function listaNomes(redes: string[], max = 3): string {
+  const nomes = redes.map(nomeRede)
+  if (nomes.length <= max) return nomes.length === 1 ? nomes[0] : `${nomes.slice(0, -1).join(', ')} e ${nomes[nomes.length - 1]}`
+  return `${nomes.slice(0, max).join(', ')} e mais ${num(nomes.length - max)}`
+}
+
+/** Sujeito da frase: "A Selfit" com uma rede só, a lista de nomes com várias. */
+function quem(redes: string[]): string {
+  return redes.length === 1 ? `A ${nomeRede(redes[0])}` : listaNomes(redes)
+}
+
 function listaDatas(itens: { execucao: string }[]): string {
   const ds = itens.map((r) => diaMes(r.execucao))
   return ds.length === 1 ? ds[0] : `${ds.slice(0, -1).join(', ')} e ${ds[ds.length - 1]}`
 }
 
-/** "a Selfit caiu de 231 para 119 unidades" — e a segunda rede, ou quantas mais. */
-function fraseQueda(quedas: RedeQuedaContagem[]): string {
-  const [primeira, segunda, ...resto] = quedas
-  if (!primeira) return ''
-  let t = `a ${nomeRede(primeira.rede)} caiu de ${num(primeira.antes)} para ${num(primeira.agora)} unidades`
-  if (segunda && !resto.length) t += ` e a ${nomeRede(segunda.rede)}, de ${num(segunda.antes)} para ${num(segunda.agora)}`
-  if (segunda && resto.length) t += `, e mais ${num(resto.length + 1)} redes caíram de forma brusca`
-  return t
-}
-
 function motivoDaRecusa(r: RedeContagemRecusada): string {
   if (r.motivo === 'duplicada') return 'ela aparece duas vezes no histórico'
-  if (r.redes.length) return `${fraseQueda(r.redes)}, sinal de coleta incompleta`
   if (r.queda_total_pct != null) return `o total caiu ${pct(r.queda_total_pct)}, sinal de coleta incompleta`
   return 'ela veio incompleta'
 }
 
-/** "da Selfit (de 231 para 150 unidades)"; com mais de uma rede, a primeira e quantas mais. */
-function fraseConfirmada(c: NonNullable<RedeCrescimento['contagem']>): string {
-  const [primeira, ...resto] = c.quedas_confirmadas
-  if (primeira) {
-    const quem = `da ${nomeRede(primeira.rede)} (de ${num(primeira.antes)} para ${num(primeira.agora)} unidades)`
-    return resto.length ? `${quem} e de mais ${num(resto.length)} rede${resto.length > 1 ? 's' : ''}` : quem
-  }
-  if (c.queda_total_confirmada_pct != null) return `do total (${pct(c.queda_total_confirmada_pct)})`
-  return 'na contagem'
+/** "de 233 para 119" — o salto de uma rede, sem a palavra "unidades" (quem chama decide). */
+function deAte(s: RedeSaltoContagem): string {
+  return `de ${s.antes != null ? num(s.antes) : '—'} para ${num(s.agora)}`
 }
 
-/** Tudo o que a tela precisa avisar sobre a contagem antes da tabela. Lista vazia = semana normal. */
-export function avisosDaContagem(m: RedeCrescimento | undefined): AvisoCrescimento[] {
+function avisoSeguradas(seguradas: RedeSaltoContagem[], data: string): AvisoCrescimento {
+  const fim = 'fica com a última contagem boa até a próxima coleta confirmar.'
+  if (seguradas.length === 1) {
+    const s = seguradas[0]
+    const verbo = s.direcao === 'queda' ? 'caiu' : 'subiu'
+    const leitura =
+      s.direcao === 'queda' ? 'sinal de coleta incompleta' : 'um salto que costuma ser ajuste do coletor, e não abertura'
+    const desde = s.desde && s.desde < data ? ` (segurada desde ${diaMes(s.desde)})` : ''
+    return {
+      tom: 'alerta',
+      texto: `A ${nomeRede(s.rede)} ${verbo} ${deAte(s)} unidades na contagem de ${diaMes(data)}${desde}, ${leitura}: ela ${fim}`,
+    }
+  }
+  const exemplos = seguradas.slice(0, 3).map((s) => `${nomeRede(s.rede)} (${deAte(s)})`)
+  const resto = seguradas.length > 3 ? ` e mais ${num(seguradas.length - 3)}` : ''
+  const lista = resto ? `${exemplos.join(', ')}${resto}` : `${exemplos.slice(0, -1).join(', ')} e ${exemplos[exemplos.length - 1]}`
+  return {
+    tom: 'alerta',
+    texto: `${num(seguradas.length)} redes tiveram salto brusco na contagem de ${diaMes(data)} e cada uma ${fim} São elas: ${lista}.`,
+  }
+}
+
+function avisoConfirmadas(confirmadas: RedeSaltoContagem[]): AvisoCrescimento {
+  if (confirmadas.length === 1) {
+    const s = confirmadas[0]
+    const qual = s.direcao === 'queda' ? 'A queda' : 'O salto'
+    return {
+      tom: 'info',
+      texto: `${qual} da ${nomeRede(s.rede)} (${deAte(s)} unidades) se manteve numa coleta mais nova e entrou nesta contagem.`,
+    }
+  }
+  return {
+    tom: 'info',
+    texto: `${num(confirmadas.length)} saltos bruscos se mantiveram numa coleta mais nova e entraram nesta contagem: ${listaNomes(confirmadas.map((s) => s.rede))}.`,
+  }
+}
+
+/** Tudo o que a tela precisa avisar antes da tabela. Lista vazia = semana normal.
+ *  `hoje` (data ISO) liga o aviso de contagem velha: sem ele, um histórico que parou de chegar
+ *  deixaria o card parado de novo sem denúncia nenhuma. */
+export function avisosDaContagem(m: RedeCrescimento | undefined, hoje?: string): AvisoCrescimento[] {
   if (!m?.disponivel) return []
   const c = m.contagem
+  const avisos: AvisoCrescimento[] = []
   if (m.contagem_origem !== 'semanal') {
     const motivo =
       c?.erro === 'ilegivel'
@@ -185,11 +302,28 @@ export function avisosDaContagem(m: RedeCrescimento | undefined): AvisoCrescimen
     const unidades = m.data_contagem
       ? `as unidades são da contagem de ${diaMes(m.data_contagem)}`
       : 'a coluna de unidades fica vazia'
-    return [{ tom: 'alerta', texto: `${motivo}: ${unidades}, e a variação fica de fora.` }]
+    avisos.push({ tom: 'alerta', texto: `${motivo}: ${unidades}, e a variação fica de fora.` })
+  } else if (c?.data) {
+    avisos.push(...avisosDaSemana(c, c.data, hoje))
   }
-  if (!c?.data) return []
+  if (!m.tem_cadastro) {
+    avisos.push({
+      tom: 'info',
+      texto: 'O cadastro de aberturas e fechamentos (pacote de setembro) não está neste ambiente: o card mostra só a contagem semanal.',
+    })
+  }
+  return avisos
+}
+
+function avisosDaSemana(c: RedeContagemSemanal, data: string, hoje?: string): AvisoCrescimento[] {
   const avisos: AvisoCrescimento[] = []
-  const data = c.data
+  const idade = diasEntre(data, hoje)
+  if (idade != null && idade > DIAS_CONTAGEM_VELHA) {
+    avisos.push({
+      tom: 'alerta',
+      texto: `A contagem mais recente é de ${diaMesAno(data)}, de ${num(idade)} dias atrás: o histórico semanal pode ter parado de chegar ao site.`,
+    })
+  }
   const depois = c.recusadas.filter((r) => r.execucao > data)
   const entre = c.recusadas.filter((r) => r.execucao < data)
   if (depois.length) {
@@ -198,16 +332,36 @@ export function avisosDaContagem(m: RedeCrescimento | undefined): AvisoCrescimen
       depois.length === 1
         ? `A contagem de ${diaMes(ultima.execucao)} ficou de fora: ${motivoDaRecusa(ultima)}.`
         : `As contagens de ${listaDatas(depois)} ficaram de fora (na de ${diaMes(ultima.execucao)}, ${motivoDaRecusa(ultima)}).`
-    avisos.push({ tom: 'alerta', texto: `${abre} O card segue na de ${diaMes(data)}, a última aceita.` })
+    avisos.push({ tom: 'alerta', texto: `${abre} O card segue na de ${diaMes(data)}.` })
   }
-  if (c.confirmada) {
+  if (c.seguradas.length) avisos.push(avisoSeguradas(c.seguradas, data))
+  if (c.confirmadas.length) avisos.push(avisoConfirmadas(c.confirmadas))
+  if (c.total_confirmado) {
+    avisos.push({ tom: 'info', texto: 'A queda do total se manteve por duas contagens seguidas, e esta entrou.' })
+  }
+  if (c.nao_recoletadas.length) {
+    const n = c.nao_recoletadas.length
     avisos.push({
       tom: 'info',
       texto:
-        `A queda ${fraseConfirmada(c)} apareceu em duas contagens seguidas e foi aceita como real` +
-        (c.data_anterior ? `; por isso a variação compara com ${diaMes(c.data_anterior)}.` : '.'),
+        n === 1
+          ? `A ${nomeRede(c.nao_recoletadas[0])} não foi recoletada nesta semana: fica com a última contagem, sem variação.`
+          : `${num(n)} redes não foram recoletadas nesta semana e ficam com a última contagem, sem variação: ${listaNomes(c.nao_recoletadas)}.`,
     })
-  } else if (entre.length && c.data_anterior) {
+  }
+  if (c.ausentes.length) {
+    avisos.push({
+      tom: 'info',
+      texto: `${quem(c.ausentes)} não ${plural(c.ausentes.length, 'veio', 'vieram')} na contagem de ${diaMes(data)}: ${plural(c.ausentes.length, 'fica', 'ficam')} com a última contagem por uma semana.`,
+    })
+  }
+  if (c.removidas.length) {
+    avisos.push({
+      tom: 'info',
+      texto: `${quem(c.removidas)} ${plural(c.removidas.length, 'saiu', 'saíram')} da contagem do coletor (não ${plural(c.removidas.length, 'veio', 'vieram')} duas semanas seguidas).`,
+    })
+  }
+  if (entre.length && c.data_anterior) {
     avisos.push({
       tom: 'info',
       texto:
@@ -218,7 +372,13 @@ export function avisosDaContagem(m: RedeCrescimento | undefined): AvisoCrescimen
     })
   }
   if (!c.data_anterior) {
-    avisos.push({ tom: 'info', texto: 'A variação aparece a partir da segunda contagem semanal aceita.' })
+    avisos.push({ tom: 'info', texto: 'A variação aparece a partir da segunda contagem semanal.' })
+  }
+  if (c.linhas_sem_data) {
+    avisos.push({
+      tom: 'info',
+      texto: `${num(c.linhas_sem_data)} ${plural(c.linhas_sem_data, 'linha do histórico veio', 'linhas do histórico vieram')} sem data e ${plural(c.linhas_sem_data, 'ficou', 'ficaram')} de fora.`,
+    })
   }
   return avisos
 }
@@ -238,9 +398,15 @@ export function rodapeCrescimento(m: RedeCrescimento, comCautela: boolean): stri
   }
   if (m.contagem_origem === 'semanal') {
     partes.push(
-      `Unidades: contagem semanal do coletor de ${diaMes(m.data_contagem)}, a mesma do relatório de domingo ` +
-        'no Telegram; a contagem que chega com queda brusca é recusada, e o card fica na anterior.',
+      `Unidades: contagem semanal do coletor de ${diaMes(m.data_contagem)}, a mesma do relatório de domingo no ` +
+        'Telegram, que já inclui as unidades anunciadas ("Em breve"). Cada rede é comparada com a última contagem ' +
+        'boa dela: a que não foi recoletada, ou que deu um salto brusco ainda não confirmado, fica com a contagem ' +
+        'anterior e sem variação.',
     )
+    if (temVariacao(m)) partes.push('A variação mistura aberturas, anúncios e ajustes do coletor.')
+    if (m.redes.some((r) => r.variacao_status === 'novo')) {
+      partes.push('"nova": rede que o coletor passou a contar; não é abertura.')
+    }
   } else if (m.contagem_origem === 'pacote') {
     partes.push(`Unidades: contagem oficial de ${diaMes(m.data_contagem)}, do pacote de setembro.`)
   }

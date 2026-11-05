@@ -34,7 +34,8 @@ import numpy as np
 import pandas as pd
 
 ARQUIVO_STAGING = "movimentacao_concorrencia.parquet"
-#: Total de unidades por rede na contagem oficial (o número do relatório do Telegram).
+#: Total de unidades por rede na contagem oficial de 06/09, congelada no pacote. Desde 2026-11 o card
+#: só a usa quando falta o histórico semanal (`contagem_origem = "pacote"`).
 ARQUIVO_CONTAGEM_STAGING = "contagem_redes_concorrencia.parquet"
 ARQUIVO_CONTAGEM = "contagem_oficial_por_rede_por_domingo.csv"
 
@@ -87,7 +88,12 @@ REDES_FORA_DO_CADASTRO: dict[str, str] = {"smart_fit": "teto_coletor"}
 
 #: Por que uma linha da tabela não tem leitura de aberturas e fechamentos (`sem_cadastro`):
 #: `teto_coletor` (acima) ou `fora_da_cobertura` (rede que o coletor ainda não cobria no pacote).
+#: A tela tem um ramo para cada um (`tests/unit/test_paridade_crescimento_concorrencia_web.py`).
 MOTIVOS_SEM_CADASTRO: tuple[str, ...] = ("teto_coletor", "fora_da_cobertura")
+
+#: Por que a contagem semanal não está no card (`contagem.erro`): o arquivo não está no staging,
+#: ou está e não deu para ler.
+ERROS_CONTAGEM: tuple[str, ...] = ("ausente", "ilegivel")
 
 
 def _texto(serie: pd.Series) -> pd.Series:
@@ -441,10 +447,14 @@ def _resumo_contagem(semanal: Mapping[str, Any] | None) -> dict[str, Any] | None
         "data": semanal.get("data"),
         "data_anterior": semanal.get("data_anterior"),
         "execucao_mais_recente": semanal.get("execucao_mais_recente"),
-        "confirmada": bool(semanal.get("confirmada")),
-        "quedas_confirmadas": list(semanal.get("quedas_confirmadas") or []),
-        "queda_total_confirmada_pct": semanal.get("queda_total_confirmada_pct"),
+        "linhas_sem_data": int(semanal.get("linhas_sem_data") or 0),
         "recusadas": list(semanal.get("recusadas") or []),
+        "seguradas": list(semanal.get("seguradas") or []),
+        "confirmadas": list(semanal.get("confirmadas") or []),
+        "nao_recoletadas": list(semanal.get("nao_recoletadas") or []),
+        "ausentes": list(semanal.get("ausentes") or []),
+        "removidas": list(semanal.get("removidas") or []),
+        "total_confirmado": bool(semanal.get("total_confirmado")),
     }
 
 
@@ -460,8 +470,9 @@ def crescimento_por_rede(
     DUAS fontes, cada uma com a sua data, e a tela diz as duas:
 
     - UNIDADES e VARIAÇÃO vêm da contagem SEMANAL do coletor (`semanal`, saída de
-      `saldo_rede.contagem_da_tela`), a mesma do relatório de domingo no Telegram: a última execução
-      ACEITA pela guarda da DEC-061 e a diferença contra a aceita anterior;
+      `saldo_rede.contagem_da_tela`), a mesma do relatório de domingo no Telegram, julgada POR REDE:
+      cada rede mostra a sua última contagem boa, e a variação é contra a foto anterior. Rede
+      segurada, não recoletada ou ausente nesta semana fica com o número anterior e sem variação;
     - ABERTURAS, FECHAMENTOS, SALDO e EM BREVE vêm do pacote de setembro (`eventos`), o único lugar
       com a lista de QUEM abriu e fechou. O saldo continua sendo aberturas menos fechamentos
       (decisão do Vinicius, 05/11/2026): a variação da contagem é outra coluna, não um saldo novo.
@@ -531,15 +542,20 @@ def crescimento_por_rede(
     redes = incluir_redes_sem_movimentacao(movimentaram, totais, fora)
 
     variacao: Mapping[str, Any] = {}
+    seguradas: dict[str, int] = {}
     if semanal_ok and semanal is not None:
         variacao = semanal.get("variacao") or {}
+        # O número que ficou de fora vai na linha, para a dica da célula dizer qual foi.
+        seguradas = {str(s["rede"]): int(s["agora"]) for s in semanal.get("seguradas") or []}
     total_variacao = 0
     for linha in redes:
         rede = str(linha["rede"])
         v = variacao.get(rede)
         linha["variacao"] = v["delta"] if v else None
         linha["variacao_status"] = v["status"] if v else None
-        if v and v["status"] in ("variou", "estavel"):
+        linha["lido"] = seguradas.get(rede)
+        # Só entra na soma o que a tela mostra com número: variou, estável e salto confirmado.
+        if v and v["status"] in ("variou", "estavel", "confirmada") and v["delta"] is not None:
             total_variacao += int(v["delta"])
         motivo = REDES_FORA_DO_CADASTRO.get(rede)
         # Sem a contagem do pacote não há como saber quem ele cobria: aí nada é marcado.

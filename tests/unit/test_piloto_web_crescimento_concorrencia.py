@@ -55,12 +55,12 @@ def _pacote(staging: Path) -> None:
     ).to_parquet(staging / mov.ARQUIVO_CONTAGEM_STAGING)
 
 
-def _semanas(*datas: str, selfit: int = 231) -> list[tuple[str, str, int]]:
+def _semanas(*datas: str, selfit: int = 231, velocity: int = 130) -> list[tuple[str, str, int]]:
     """Domingos com 30 redes estáveis (a proporção do caso real), a Pratique, a Selfit e um estúdio."""
     linhas: list[tuple[str, str, int]] = []
     for d in datas:
         linhas += [(d, f"rede_{i}", 40) for i in range(30)]
-        linhas += [(d, "pratique", 190), (d, "selfit", selfit), (d, "velocity", 130)]
+        linhas += [(d, "pratique", 190), (d, "selfit", selfit), (d, "velocity", velocity)]
     return linhas
 
 
@@ -112,12 +112,27 @@ def test_historico_ilegivel_nao_derruba_a_rota(rede: Path) -> None:  # noqa: F81
     assert (m["contagem_origem"], m["contagem"]["erro"]) == ("pacote", "ilegivel")
 
 
-def test_coleta_quebrada_na_ultima_semana_fica_de_fora_e_e_dita(rede: Path) -> None:  # noqa: F811
+def test_coleta_quebrada_de_uma_rede_segura_so_ela_e_e_dita(rede: Path) -> None:  # noqa: F811
+    """A Selfit cai de 231 para 119 com coleta nova: ela fica na última contagem boa, e as outras
+    redes andam (julgar a semana inteira prenderia todas por causa de uma)."""
     _pacote(pilot.STAGING_DIR)
     _historico(
         pilot.STAGING_DIR, _semanas("2026-10-25", "2026-11-01") + _semanas("2026-11-08", selfit=119)
     )
     m = pilot.rede_inteligencia_recorte()["movimentacao"]
-    assert m["data_contagem"] == "2026-11-01"
-    (recusa,) = m["contagem"]["recusadas"]
-    assert (recusa["execucao"], recusa["redes"][0]["rede"]) == ("2026-11-08", "selfit")
+    assert m["data_contagem"] == "2026-11-08"
+    selfit = {r["rede"]: r for r in m["redes"]}["selfit"]
+    assert (selfit["unidades"], selfit["variacao_status"], selfit["lido"]) == (231, "segurada", 119)
+    assert [s["rede"] for s in m["contagem"]["seguradas"]] == ["selfit"]
+
+
+def test_a_rota_tira_os_estudios_antes_da_guarda(rede: Path) -> None:  # noqa: F811
+    """A mutação que a revisão de 05/11 achou viva: sem `excluir` na chamada da rota, o tombo de um
+    estúdio entrava na guarda e no aviso, e nenhum teste falhava (o filtro da tabela escondia)."""
+    _pacote(pilot.STAGING_DIR)
+    _historico(
+        pilot.STAGING_DIR, _semanas("2026-10-25", "2026-11-01") + _semanas("2026-11-08", velocity=10)
+    )
+    m = pilot.rede_inteligencia_recorte()["movimentacao"]
+    assert m["data_contagem"] == "2026-11-08"
+    assert m["contagem"]["seguradas"] == [], "o estúdio não entra na guarda do card"

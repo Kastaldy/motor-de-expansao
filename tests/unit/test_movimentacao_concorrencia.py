@@ -183,32 +183,38 @@ def _eventos_do_pacote():
 def _contagem_do_pacote():
     """A contagem de 06/09 que o pacote trouxe (a Smart Fit ainda presa no teto de 1.000)."""
     return pd.DataFrame({
-        "rede": ["pratique", "smart_fit", "selfit", "velocity", "ultra"],
-        "unidades": [184, 1000, 231, 125, 92],
-        "data": ["2026-09-06"] * 5,
+        "rede": ["pratique", "smart_fit", "selfit", "skyfit", "bluefit", "velocity", "ultra"],
+        "unidades": [184, 1000, 231, 205, 118, 125, 92],
+        "data": ["2026-09-06"] * 7,
     })
 
 
 def _semanal():
-    """O que `saldo_rede.contagem_da_tela` devolve numa semana normal."""
+    """O que `saldo_rede.contagem_da_tela` devolve numa semana com uma rede de cada situação."""
     return {
         "data": "2026-11-01",
         "data_anterior": "2026-10-25",
         "execucao_mais_recente": "2026-11-01",
-        "unidades": {"pratique": 190, "smart_fit": 1061, "selfit": 233, "velocity": 130, "ultra": 171,
-                     "estreante": 12},
+        "linhas_sem_data": 0,
+        "unidades": {"pratique": 190, "smart_fit": 1061, "selfit": 233, "skyfit": 140, "bluefit": 120,
+                     "velocity": 130, "ultra": 171, "estreante": 12},
         "variacao": {
             "pratique": {"delta": 1, "status": "variou"},
             "smart_fit": {"delta": 2, "status": "variou"},
-            "selfit": {"delta": 0, "status": "estavel"},
+            "selfit": {"delta": None, "status": "segurada"},
+            "skyfit": {"delta": -70, "status": "confirmada"},
+            "bluefit": {"delta": None, "status": "nao_recoletada"},
             "velocity": {"delta": 5, "status": "variou"},
             "ultra": {"delta": 1, "status": "variou"},
             "estreante": {"delta": None, "status": "novo"},
         },
-        "confirmada": False,
-        "quedas_confirmadas": [],
-        "queda_total_confirmada_pct": None,
         "recusadas": [],
+        "seguradas": [{"rede": "selfit", "antes": 233, "agora": 119, "direcao": "queda", "desde": "2026-11-01"}],
+        "confirmadas": [{"rede": "skyfit", "antes": 210, "agora": 140, "direcao": "queda", "desde": "2026-10-25"}],
+        "nao_recoletadas": ["bluefit"],
+        "ausentes": [],
+        "removidas": [],
+        "total_confirmado": False,
     }
 
 
@@ -220,7 +226,7 @@ def test_card_le_unidades_da_contagem_semanal_e_movimento_do_pacote():
     )
     linhas = {r["rede"]: r for r in card["redes"]}
     # estúdio (DEC-056) e a própria Ultra ficam fora da contagem E da tabela
-    assert set(linhas) == {"pratique", "smart_fit", "selfit", "estreante"}
+    assert set(linhas) == {"pratique", "smart_fit", "selfit", "skyfit", "bluefit", "estreante"}
     # cada coluna com a sua fonte: unidades de 01/11, movimento de setembro
     pratique = linhas["pratique"]
     assert (pratique["unidades"], pratique["aberturas_conferidas"], pratique["fechamentos"]) == (190, 1, 1)
@@ -231,11 +237,18 @@ def test_card_le_unidades_da_contagem_semanal_e_movimento_do_pacote():
     # rede que o coletor passou a cobrir depois do pacote: sem leitura de setembro, e `novo` na variação
     assert linhas["estreante"]["sem_cadastro"] == "fora_da_cobertura"
     assert (linhas["estreante"]["variacao"], linhas["estreante"]["variacao_status"]) == (None, "novo")
-    assert linhas["selfit"]["sem_cadastro"] is None and linhas["selfit"]["aberturas"] == 0
-    # mercado: só quem tem contagem; a variação total só entre as comparáveis (o `novo` não soma)
-    assert (card["redes_mapeadas"], card["unidades_mapeadas"]) == (4, 190 + 1061 + 233 + 12)
-    assert card["variacao_total"] == 1 + 2 + 0
+    # a rede segurada mostra a última contagem boa e leva junto o número que ficou de fora
+    selfit = linhas["selfit"]
+    assert (selfit["unidades"], selfit["variacao"], selfit["variacao_status"], selfit["lido"]) == (
+        233, None, "segurada", 119,
+    )
+    assert linhas["bluefit"]["variacao_status"] == "nao_recoletada" and linhas["bluefit"]["lido"] is None
+    # mercado: só quem tem contagem; a variação total soma o que a tela mostra com número
+    # (variou, estável e confirmada) e deixa de fora novo, segurada e não recoletada
+    assert (card["redes_mapeadas"], card["unidades_mapeadas"]) == (6, 190 + 1061 + 233 + 140 + 120 + 12)
+    assert card["variacao_total"] == 1 + 2 - 70
     assert card["contagem"]["data_anterior"] == "2026-10-25"
+    assert card["contagem"]["nao_recoletadas"] == ["bluefit"]
     assert "unidades" not in card["contagem"], "o laudo não repete o que já viaja nas linhas"
     assert {(p["fonte"], p["confianca"]) for p in card["periodos"]} == {
         ("cadastro", "alta"), ("cadastro", "cautela"), ("em_breve", "alta"), ("wellhub", "alta"),
@@ -258,7 +271,7 @@ def test_card_sem_o_pacote_mostra_so_a_contagem():
     """O pacote não se regenera: perdê-lo não pode apagar a contagem semanal."""
     card = mov.crescimento_por_rede(None, None, _semanal(), excluir={"velocity"})
     assert (card["disponivel"], card["tem_cadastro"], card["contagem_origem"]) == (True, False, "semanal")
-    assert {r["rede"] for r in card["redes"]} == {"pratique", "smart_fit", "selfit", "estreante"}
+    assert {r["rede"] for r in card["redes"]} == {"pratique", "smart_fit", "selfit", "skyfit", "bluefit", "estreante"}
     assert all(r["sem_cadastro"] is None for r in card["redes"]), "sem pacote, as colunas somem inteiras"
     assert card["agregadores"] == [] and card["periodos"] == []
 
@@ -273,3 +286,12 @@ def test_semanal_sem_execucao_aceita_nao_conta_como_contagem():
     vazia = {**_semanal(), "data": None, "data_anterior": None, "unidades": {}, "variacao": {}}
     card = mov.crescimento_por_rede(_eventos_do_pacote(), _contagem_do_pacote(), vazia)
     assert (card["contagem_origem"], card["data_contagem"]) == ("pacote", "2026-09-06")
+
+
+def test_todo_motivo_sem_cadastro_emitido_esta_no_vocabulario():
+    """Os motivos que o card emite são exatamente os que a tela sabe explicar (a paridade com o
+    TypeScript fica em `test_paridade_crescimento_concorrencia_web.py`)."""
+    card = mov.crescimento_por_rede(_eventos_do_pacote(), _contagem_do_pacote(), _semanal())
+    emitidos = {r["sem_cadastro"] for r in card["redes"]} - {None}
+    assert emitidos == set(mov.MOTIVOS_SEM_CADASTRO)
+    assert set(mov.REDES_FORA_DO_CADASTRO.values()) <= set(mov.MOTIVOS_SEM_CADASTRO)

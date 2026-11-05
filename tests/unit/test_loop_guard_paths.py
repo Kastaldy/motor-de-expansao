@@ -190,6 +190,10 @@ def test_caminhos_criticos(path: str) -> None:
         "src/motor_expansao/dashboard/geometria_desenhada.py",
         # DEC-074 -- raio de 2 km / isocrona e o fator que escala as reguas absolutas.
         "src/motor_expansao/dashboard/alcance_ponto.py",
+        # 2026-11-05 -- a guarda de coleta quebrada e a montagem do card "Crescimento da
+        # concorrencia": decidem o numero de cada rede que a Visao Executiva mostra.
+        "src/motor_expansao/dashboard/saldo_rede.py",
+        "src/motor_expansao/dashboard/movimentacao_concorrencia.py",
         # DEC-022 — piloto web servido em producao: backend E frontend sob governanca.
         "web/server/app.py",
         "web/src/screens/MapScreen.tsx",

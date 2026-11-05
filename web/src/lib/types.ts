@@ -1803,32 +1803,44 @@ export interface RedeCrescimento {
   variacao_total?: number | null
   agregadores: RedeCrescimentoAgregador[]
 }
-/** Laudo da contagem semanal: qual foi aceita, contra qual compara e o que ficou de fora. */
+/** Laudo da contagem semanal, julgada POR REDE contra a última contagem boa de cada uma. */
 export interface RedeContagemSemanal {
   /** por que não há contagem semanal: o arquivo não está aqui ou não deu para ler */
   erro?: 'ausente' | 'ilegivel' | null
   data: string | null
   data_anterior: string | null
   execucao_mais_recente: string | null
-  /** a contagem atual foi aceita porque a queda se repetiu em duas contagens seguidas */
-  confirmada: boolean
-  quedas_confirmadas: RedeQuedaContagem[]
-  queda_total_confirmada_pct: number | null
-  /** contagens recusadas depois da aceita anterior (antes ou depois da atual) */
+  /** linhas do histórico sem data válida, que ficaram de fora */
+  linhas_sem_data?: number
+  /** execuções INTEIRAS de fora depois da anterior: queda difusa do total ou dia duplicado */
   recusadas: RedeContagemRecusada[]
+  /** redes com salto brusco nesta contagem, ainda não confirmado: ficam na contagem anterior */
+  seguradas: RedeSaltoContagem[]
+  /** saltos que se mantiveram numa coleta mais nova e entraram nesta contagem */
+  confirmadas: RedeSaltoContagem[]
+  /** redes que o coletor não recoletou nesta semana (a data da coleta não avançou) */
+  nao_recoletadas: string[]
+  /** redes que não vieram nesta contagem: ficam com a anterior por uma semana */
+  ausentes: string[]
+  /** redes que não vieram duas vezes seguidas e saíram da contagem */
+  removidas: string[]
+  /** a queda difusa do total se repetiu e esta contagem entrou mesmo assim */
+  total_confirmado?: boolean
 }
-export interface RedeQuedaContagem {
+export interface RedeSaltoContagem {
   rede: string
-  antes: number
+  /** a última contagem boa da rede */
+  antes: number | null
+  /** o que o coletor leu nesta contagem */
   agora: number
-  /** a coleta da rede é mais velha que a contagem de referência (o coletor não rodou) */
-  coleta_defasada?: boolean
+  direcao: 'queda' | 'subida'
+  /** desde que contagem a rede está segurada */
+  desde?: string | null
 }
 export interface RedeContagemRecusada {
   execucao: string
-  motivo: 'queda' | 'duplicada'
-  redes: RedeQuedaContagem[]
-  /** preenchido quando foi o TOTAL que reprovou a contagem */
+  motivo: 'total' | 'duplicada'
+  /** preenchido quando foi a queda difusa do TOTAL que deixou a execução de fora */
   queda_total_pct: number | null
 }
 export interface RedeCrescimentoRede {
@@ -1841,11 +1853,22 @@ export interface RedeCrescimentoRede {
   em_breve: number
   saldo: number
   logo?: string | null
-  /** total na contagem semanal aceita (ou na do pacote, sem ela); `null` = rede fora da contagem */
+  /** a última contagem boa da rede (ou a do pacote, sem a semanal); `null` = rede fora da contagem */
   unidades?: number | null
-  /** diferença contra a contagem aceita anterior; `null` quando a rede é nova ou saiu da contagem */
+  /** diferença contra a contagem anterior; `null` quando não há número comparável (ver o status) */
   variacao?: number | null
-  variacao_status?: 'novo' | 'sumiu' | 'variou' | 'estavel' | null
+  variacao_status?:
+    | 'novo'
+    | 'sumiu'
+    | 'variou'
+    | 'estavel'
+    | 'confirmada'
+    | 'segurada'
+    | 'nao_recoletada'
+    | 'ausente'
+    | null
+  /** rede segurada: o número que o coletor leu nesta contagem e que ficou de fora */
+  lido?: number | null
   /** a linha não tem leitura de aberturas e fechamentos: as colunas do cadastro mostram "—" */
   sem_cadastro?: 'teto_coletor' | 'fora_da_cobertura' | null
 }
