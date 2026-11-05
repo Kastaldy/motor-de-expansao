@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import type { ReactNode } from 'react'
 
+import { legendaDoEntorno } from '../../lib/crescimento-concorrencia'
 import { brl, num, pct, pctVar } from '../../lib/format'
 import type {
   RedeMapaConcorrente,
@@ -220,6 +221,13 @@ export default function FichaInteligencia({
                       <MovimentacaoEntorno eventos={mov.eventos} logos={mov.logos ?? {}} />
                     ) : (
                       <Vazio>Nenhuma movimentação registrada a 2 km.</Vazio>
+                    )}
+                    {/* A lista acima é do pacote de setembro, que não se atualiza: a data vai junto, e
+                        fica ANTES da lista "no agregador desde", que vem da série semanal. */}
+                    {mov?.disponivel && legendaDoEntorno(mov.periodos) && (
+                      <div style={{ marginTop: 6, font: '400 10.5px/1.5 var(--f-ui)', color: 'var(--tx-muted)' }}>
+                        {legendaDoEntorno(mov.periodos)}
+                      </div>
                     )}
                     {cn.itens.length > 0 && (
                       <div style={{ marginTop: 10, font: '400 11px/1.6 var(--f-ui)', color: 'var(--tx-narrative)' }}>
@@ -677,7 +685,7 @@ function MovimentacaoEntorno({ eventos, logos }: { eventos: RedeMovimentoEvento[
                   {e.rede && e.fonte !== 'wellhub' ? <span style={{ color: 'var(--tx-muted)' }}> · {nomeRede(e.rede)}</span> : null}
                 </span>
                 {e.confianca === 'cautela' && (
-                  <span title="Foto não validada (28/05 a 02/08)" style={{ font: '500 9.5px/1.6 var(--f-ui)', color: 'var(--warn)' }}>
+                  <span title={`Foto não validada (${dataCurta(e.de)} a ${dataCurta(e.ate)})`} style={{ font: '500 9.5px/1.6 var(--f-ui)', color: 'var(--warn)' }}>
                     cautela
                   </span>
                 )}

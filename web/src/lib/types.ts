@@ -1762,16 +1762,7 @@ export interface RedeInteligencia {
     ultima_semana: string | null
     unidades_afetadas: number
   }
-  movimentacao?: {
-    disponivel: boolean
-    periodos: RedeMovimentoPeriodo[]
-    data_contagem?: string | null
-    /** TODA rede mapeada, inclusive as sem movimentação no período (que vêm zeradas) */
-    redes: RedeCrescimentoRede[]
-    redes_mapeadas?: number
-    unidades_mapeadas?: number
-    agregadores: RedeCrescimentoAgregador[]
-  }
+  movimentacao?: RedeCrescimento
   canibalizacao: { id: string; nome: string; vizinha: string | null; distancia_m: number | null }[]
   mudancas: RedeMudanca[]
   fontes_oferta: string[]
@@ -1791,6 +1782,55 @@ export interface RedeMovimentoEvento {
   de: string | null
   ate: string | null
 }
+/** Card "Crescimento da concorrência" (Visão Executiva), NACIONAL: não segue o recorte da carteira.
+ *  Unidades e variação vêm da contagem semanal do coletor; o movimento, do cadastro de setembro. */
+export interface RedeCrescimento {
+  /** há algo para mostrar (o cadastro de setembro, uma contagem, ou os dois) */
+  disponivel: boolean
+  /** o pacote de setembro (aberturas, fechamentos, "Em breve", Wellhub) está presente */
+  tem_cadastro?: boolean
+  periodos: RedeMovimentoPeriodo[]
+  /** data da coluna de unidades: a última contagem semanal aceita ou, sem ela, a do pacote */
+  data_contagem?: string | null
+  contagem_origem?: 'semanal' | 'pacote' | null
+  contagem?: RedeContagemSemanal | null
+  /** TODA rede mapeada, inclusive as sem movimentação no período (que vêm zeradas) */
+  redes: RedeCrescimentoRede[]
+  /** redes com contagem; as que só aparecem no cadastro não entram */
+  redes_mapeadas?: number
+  unidades_mapeadas?: number
+  /** soma da variação entre as redes presentes nas duas contagens; `null` sem duas contagens */
+  variacao_total?: number | null
+  agregadores: RedeCrescimentoAgregador[]
+}
+/** Laudo da contagem semanal: qual foi aceita, contra qual compara e o que ficou de fora. */
+export interface RedeContagemSemanal {
+  /** por que não há contagem semanal: o arquivo não está aqui ou não deu para ler */
+  erro?: 'ausente' | 'ilegivel' | null
+  data: string | null
+  data_anterior: string | null
+  execucao_mais_recente: string | null
+  /** a contagem atual foi aceita porque a queda se repetiu em duas contagens seguidas */
+  confirmada: boolean
+  quedas_confirmadas: RedeQuedaContagem[]
+  queda_total_confirmada_pct: number | null
+  /** contagens recusadas depois da aceita anterior (antes ou depois da atual) */
+  recusadas: RedeContagemRecusada[]
+}
+export interface RedeQuedaContagem {
+  rede: string
+  antes: number
+  agora: number
+  /** a coleta da rede é mais velha que a contagem de referência (o coletor não rodou) */
+  coleta_defasada?: boolean
+}
+export interface RedeContagemRecusada {
+  execucao: string
+  motivo: 'queda' | 'duplicada'
+  redes: RedeQuedaContagem[]
+  /** preenchido quando foi o TOTAL que reprovou a contagem */
+  queda_total_pct: number | null
+}
 export interface RedeCrescimentoRede {
   rede: string
   aberturas: number
@@ -1801,8 +1841,13 @@ export interface RedeCrescimentoRede {
   em_breve: number
   saldo: number
   logo?: string | null
-  /** total na contagem oficial do fim do período validado; `null` = rede fora da contagem */
+  /** total na contagem semanal aceita (ou na do pacote, sem ela); `null` = rede fora da contagem */
   unidades?: number | null
+  /** diferença contra a contagem aceita anterior; `null` quando a rede é nova ou saiu da contagem */
+  variacao?: number | null
+  variacao_status?: 'novo' | 'sumiu' | 'variou' | 'estavel' | null
+  /** a linha não tem leitura de aberturas e fechamentos: as colunas do cadastro mostram "—" */
+  sem_cadastro?: 'teto_coletor' | 'fora_da_cobertura' | null
 }
 export interface RedeCrescimentoAgregador {
   agregador: string

@@ -162,3 +162,114 @@ def test_rede_mapeada_sem_movimentacao_entra_zerada_e_estudio_fica_fora():
     assert parada["aberturas_conferidas"] == 0 and parada["em_breve"] == 0
     # sem contagem nenhuma, a lista original volta intacta
     assert mov.incluir_redes_sem_movimentacao(redes, {}) == redes
+
+
+# --------------------------------------------------------------------------- #
+# O card inteiro: contagem SEMANAL + movimento do pacote (`crescimento_por_rede`)
+# --------------------------------------------------------------------------- #
+def _eventos_do_pacote():
+    return pd.DataFrame([
+        {"fonte": "cadastro", "tipo": "abertura", "confianca": "alta", "rede": "pratique",
+         "de": "2026-08-02", "ate": "2026-09-06"},
+        {"fonte": "cadastro", "tipo": "fechamento", "confianca": "cautela", "rede": "pratique",
+         "de": "2026-05-28", "ate": "2026-08-02"},
+        {"fonte": "em_breve", "tipo": "em_breve", "confianca": "alta", "rede": "smart_fit",
+         "de": "2026-07-01", "ate": "2026-09-06"},
+        {"fonte": "wellhub", "tipo": "entrou_agregador", "confianca": "alta", "rede": None,
+         "de": "2026-08-31", "ate": "2026-09-12"},
+    ])
+
+
+def _contagem_do_pacote():
+    """A contagem de 06/09 que o pacote trouxe (a Smart Fit ainda presa no teto de 1.000)."""
+    return pd.DataFrame({
+        "rede": ["pratique", "smart_fit", "selfit", "velocity", "ultra"],
+        "unidades": [184, 1000, 231, 125, 92],
+        "data": ["2026-09-06"] * 5,
+    })
+
+
+def _semanal():
+    """O que `saldo_rede.contagem_da_tela` devolve numa semana normal."""
+    return {
+        "data": "2026-11-01",
+        "data_anterior": "2026-10-25",
+        "execucao_mais_recente": "2026-11-01",
+        "unidades": {"pratique": 190, "smart_fit": 1061, "selfit": 233, "velocity": 130, "ultra": 171,
+                     "estreante": 12},
+        "variacao": {
+            "pratique": {"delta": 1, "status": "variou"},
+            "smart_fit": {"delta": 2, "status": "variou"},
+            "selfit": {"delta": 0, "status": "estavel"},
+            "velocity": {"delta": 5, "status": "variou"},
+            "ultra": {"delta": 1, "status": "variou"},
+            "estreante": {"delta": None, "status": "novo"},
+        },
+        "confirmada": False,
+        "quedas_confirmadas": [],
+        "queda_total_confirmada_pct": None,
+        "recusadas": [],
+    }
+
+
+def test_card_le_unidades_da_contagem_semanal_e_movimento_do_pacote():
+    """O defeito de 04/11/2026: as unidades vinham da contagem de 06/09 do pacote e ficaram paradas."""
+    card = mov.crescimento_por_rede(_eventos_do_pacote(), _contagem_do_pacote(), _semanal(), excluir={"velocity"})
+    assert (card["disponivel"], card["tem_cadastro"], card["contagem_origem"], card["data_contagem"]) == (
+        True, True, "semanal", "2026-11-01",
+    )
+    linhas = {r["rede"]: r for r in card["redes"]}
+    # estúdio (DEC-056) e a própria Ultra ficam fora da contagem E da tabela
+    assert set(linhas) == {"pratique", "smart_fit", "selfit", "estreante"}
+    # cada coluna com a sua fonte: unidades de 01/11, movimento de setembro
+    pratique = linhas["pratique"]
+    assert (pratique["unidades"], pratique["aberturas_conferidas"], pratique["fechamentos"]) == (190, 1, 1)
+    assert (pratique["variacao"], pratique["variacao_status"], pratique["sem_cadastro"]) == (1, "variou", None)
+    # a Smart Fit tem contagem inteira, mas NENHUMA leitura de cadastro: zero ali seria afirmação
+    assert (linhas["smart_fit"]["unidades"], linhas["smart_fit"]["sem_cadastro"]) == (1061, "teto_coletor")
+    assert linhas["smart_fit"]["em_breve"] == 1, "o pipeline 'Em breve' dela não era NAO_USAR"
+    # rede que o coletor passou a cobrir depois do pacote: sem leitura de setembro, e `novo` na variação
+    assert linhas["estreante"]["sem_cadastro"] == "fora_da_cobertura"
+    assert (linhas["estreante"]["variacao"], linhas["estreante"]["variacao_status"]) == (None, "novo")
+    assert linhas["selfit"]["sem_cadastro"] is None and linhas["selfit"]["aberturas"] == 0
+    # mercado: só quem tem contagem; a variação total só entre as comparáveis (o `novo` não soma)
+    assert (card["redes_mapeadas"], card["unidades_mapeadas"]) == (4, 190 + 1061 + 233 + 12)
+    assert card["variacao_total"] == 1 + 2 + 0
+    assert card["contagem"]["data_anterior"] == "2026-10-25"
+    assert "unidades" not in card["contagem"], "o laudo não repete o que já viaja nas linhas"
+    assert {(p["fonte"], p["confianca"]) for p in card["periodos"]} == {
+        ("cadastro", "alta"), ("cadastro", "cautela"), ("em_breve", "alta"), ("wellhub", "alta"),
+    }
+
+
+def test_card_sem_contagem_semanal_cai_para_a_do_pacote_e_diz_de_quando():
+    card = mov.crescimento_por_rede(
+        _eventos_do_pacote(), _contagem_do_pacote(), {"erro": "ausente"}, excluir={"velocity"}
+    )
+    assert (card["contagem_origem"], card["data_contagem"], card["contagem"]["erro"]) == (
+        "pacote", "2026-09-06", "ausente",
+    )
+    assert {r["rede"]: r["unidades"] for r in card["redes"]}["smart_fit"] == 1000
+    assert all(r["variacao"] is None and r["variacao_status"] is None for r in card["redes"])
+    assert card["variacao_total"] is None
+
+
+def test_card_sem_o_pacote_mostra_so_a_contagem():
+    """O pacote não se regenera: perdê-lo não pode apagar a contagem semanal."""
+    card = mov.crescimento_por_rede(None, None, _semanal(), excluir={"velocity"})
+    assert (card["disponivel"], card["tem_cadastro"], card["contagem_origem"]) == (True, False, "semanal")
+    assert {r["rede"] for r in card["redes"]} == {"pratique", "smart_fit", "selfit", "estreante"}
+    assert all(r["sem_cadastro"] is None for r in card["redes"]), "sem pacote, as colunas somem inteiras"
+    assert card["agregadores"] == [] and card["periodos"] == []
+
+
+def test_card_sem_nenhuma_fonte_nao_esta_disponivel():
+    card = mov.crescimento_por_rede(None, None, {"erro": "ilegivel"})
+    assert card["disponivel"] is False and card["redes"] == []
+    assert card["contagem"]["erro"] == "ilegivel", "a tela diz POR QUE está vazia"
+
+
+def test_semanal_sem_execucao_aceita_nao_conta_como_contagem():
+    vazia = {**_semanal(), "data": None, "data_anterior": None, "unidades": {}, "variacao": {}}
+    card = mov.crescimento_por_rede(_eventos_do_pacote(), _contagem_do_pacote(), vazia)
+    assert (card["contagem_origem"], card["data_contagem"]) == ("pacote", "2026-09-06")

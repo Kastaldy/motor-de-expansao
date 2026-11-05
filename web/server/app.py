@@ -100,6 +100,7 @@ from motor_expansao.dashboard import (  # noqa: E402
     rede_diagnostico,
     rede_faturamento_financeiro,
     rede_metricas,
+    saldo_rede,
 )
 
 # Contrato financeiro do ponto — REGUA UNICA (FIN-VIAB-01). Estas funcoes moravam aqui
@@ -12539,38 +12540,52 @@ def _rede_movimentacao_unidade(unidade_id: str) -> dict[str, Any]:
     }
 
 
-@functools.lru_cache(maxsize=1)
 def _rede_movimentacao_redes() -> dict[str, Any]:
-    """Crescimento por REDE e por agregador no pacote inteiro (não depende do recorte).
+    """Crescimento por REDE e por agregador, NACIONAL (não depende do recorte, de propósito).
 
     A pergunta aqui é "quem está crescendo", e ela é da rede concorrente, não da unidade Ultra:
-    uma abertura da Panobianco em Ribeirão Preto conta mesmo sem Ultra por perto.
+    uma abertura da Panobianco em Ribeirão Preto conta mesmo sem Ultra por perto. A tela diz que
+    o card não segue os filtros do topo (decisão do Vinicius, 05/11/2026).
+
+    A chave do cache é o `stat` do histórico semanal (`saldo_rede.ARQUIVO_STAGING`): o lote de
+    domingo troca o arquivo e o card relê na chamada seguinte. Um `lru_cache` sem chave esperaria
+    o restart, e o restart de domingo só roda quando o regen publica. O pacote de setembro é fixo
+    (não há como reingeri-lo) e segue no cache de `_rede_movimentacao`.
     """
-    eventos = _rede_movimentacao()
-    if eventos is None:
-        return {"disponivel": False, "periodos": [], "data_contagem": None, "redes": [], "agregadores": []}
-    redes = movimentacao_concorrencia.resumo_por_rede(eventos)
-    contagem = _rede_ler_opcional(STAGING_DIR / movimentacao_concorrencia.ARQUIVO_CONTAGEM_STAGING)
-    totais = dict(zip(contagem["rede"], contagem["unidades"], strict=True)) if contagem is not None else {}
-    data_contagem = str(contagem["data"].iloc[0]) if contagem is not None and len(contagem) else None
-    for linha in redes:
-        linha["unidades"] = int(totais[linha["rede"]]) if linha["rede"] in totais else None
+    return _rede_movimentacao_redes_do_arquivo(_stat_ou_none(STAGING_DIR / saldo_rede.ARQUIVO_STAGING))
+
+
+def _rede_contagem_semanal(identidade: tuple[str, int, int] | None) -> dict[str, Any]:
+    """A contagem semanal que o card lê, ou `{"erro": ...}` dizendo por que ela não está aqui."""
+    if identidade is None:
+        return {"erro": "ausente"}
+    try:
+        historico, descartes = saldo_rede.ler_historico_tolerante(Path(identidade[0]))
+        if descartes["linhas_sem_data"] or descartes["execucoes_duplicadas"]:
+            print(f"[rede] {saldo_rede.ARQUIVO_STAGING}: descartes {descartes}", file=sys.stderr)
+        return saldo_rede.contagem_da_tela(
+            historico,
+            execucoes_duplicadas=list(descartes["execucoes_duplicadas"]),
+            excluir=_rede_redes_estudio(),
+        )
+    except Exception as erro:  # noqa: BLE001
+        print(f"[rede] {saldo_rede.ARQUIVO_STAGING} ilegível ({erro})", file=sys.stderr)
+        return {"erro": "ilegivel"}
+
+
+@functools.lru_cache(maxsize=2)
+def _rede_movimentacao_redes_do_arquivo(identidade: tuple[str, int, int] | None) -> dict[str, Any]:
     # Toda rede MAPEADA entra, mesmo sem nenhuma movimentação no período (Felipe, 17/09): a
-    # tabela deixa de ser só "quem mexeu" e passa a carregar o tamanho do mercado.
-    redes = movimentacao_concorrencia.incluir_redes_sem_movimentacao(
-        redes, totais, _rede_redes_estudio()
+    # tabela não é só "quem mexeu", ela carrega o tamanho do mercado.
+    payload = movimentacao_concorrencia.crescimento_por_rede(
+        _rede_movimentacao(),
+        _rede_ler_opcional(STAGING_DIR / movimentacao_concorrencia.ARQUIVO_CONTAGEM_STAGING),
+        _rede_contagem_semanal(identidade),
+        excluir=_rede_redes_estudio(),
     )
-    for linha in redes:
+    for linha in payload["redes"]:
         linha["logo"] = _icone_rede(linha["rede"])
-    return {
-        "disponivel": True,
-        "periodos": movimentacao_concorrencia.periodos(eventos),
-        "data_contagem": data_contagem,
-        "redes": redes,
-        "redes_mapeadas": len(redes),
-        "unidades_mapeadas": sum(int(linha["unidades"] or 0) for linha in redes),
-        "agregadores": movimentacao_concorrencia.resumo_agregadores(eventos),
-    }
+    return payload
 
 
 @functools.lru_cache(maxsize=4)

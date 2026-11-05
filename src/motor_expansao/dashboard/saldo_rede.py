@@ -1,9 +1,11 @@
 """Saldo semanal de unidades POR REDE, a partir do histórico de contagem do coletor.
 
-É o número que o Telegram já mostra toda semana ("a Selfit tinha 231, agora tem 231") e que a tela
-de movimentação concorrencial não tinha: lá o saldo vinha de um pacote estático, tirado à mão uma
-vez. O insumo existe desde 2026-06-29 e é anexado a cada lote de domingo por
-`relatorio_crescimento.py` (VPS, `/opt/gymscraping-infra/historico_contagem.csv`).
+É o número que o Telegram já mostra toda semana ("a Selfit tinha 231, agora tem 231"). Até 2026-11
+a tela de movimentação concorrencial não o lia: as unidades do card "Crescimento da concorrência"
+vinham de um pacote estático, tirado à mão uma vez, e ficaram paradas em 06/09. Desde então o card
+lê `contagem_da_tela`. O insumo existe desde 2026-06-29 e é anexado a cada lote de domingo por
+`relatorio_crescimento.py` (VPS, `/opt/gymscraping-infra/historico_contagem.csv`); o passo 2.1 do
+mesmo lote o copia para o staging do motor (`ARQUIVO_STAGING`).
 
 **A semântica do saldo é a que já existe, não uma nova.** O relatório do coletor compara a execução
 corrente com a ANTERIOR (`contagem_anterior.csv`) e chama de `novo` a rede sem contagem prévia.
@@ -34,7 +36,9 @@ como defasadas, quando são 154.
 
 from __future__ import annotations
 
+from collections.abc import Iterable, Mapping, Sequence
 from pathlib import Path
+from typing import Any, cast
 
 import pandas as pd
 
@@ -59,6 +63,16 @@ CONTRATO_COLUNAS_HISTORICO: dict[str, str] = {
 #: Estados possíveis de uma rede no saldo entre duas execuções.
 STATUS_SALDO_VALIDOS: tuple[str, ...] = ("novo", "sumiu", "variou", "estavel")
 
+#: Nome do histórico no staging do motor. O passo 2.1 do lote de domingo (`run_weekly_90.sh`) o copia
+#: de `/opt/gymscraping-infra/historico_contagem.csv` logo depois de o relatório anexar a semana.
+ARQUIVO_STAGING = "historico_contagem.csv"
+
+#: Os três jeitos de uma execução entrar na série que a tela lê (ver `avaliar_serie`).
+COMO_ACEITA: tuple[str, ...] = ("primeira", "aprovada", "confirmada")
+
+#: `data_execucao` válida. Linha sem ela é arquivo cortado no meio da cópia ou linha suja.
+_DATA_ISO = r"\d{4}-\d{2}-\d{2}"
+
 
 def ler_historico_contagem(caminho: Path) -> pd.DataFrame:
     """CSV do coletor -> frame LONGO tipado, uma linha por `(data_execucao, rede)`.
@@ -66,8 +80,39 @@ def ler_historico_contagem(caminho: Path) -> pd.DataFrame:
     Faz `strip` em todas as colunas de texto por causa do CRLF (ver o topo do módulo). Duplicata de
     `(data_execucao, rede)` LEVANTA: o histórico é append-only e uma execução repetida significa que
     o lote rodou duas vezes no mesmo dia — somar ou escolher uma delas em silêncio produziria saldo
-    falso para aquela semana inteira.
+    falso para aquela semana inteira. Quem precisa MOSTRAR a contagem lê por
+    `ler_historico_tolerante`.
     """
+    out = _ler_e_tipar(caminho)
+    dup = int(out.duplicated(subset=["data_execucao", "rede"]).sum())
+    if dup:
+        raise ValueError(f"historico com (data_execucao, rede) duplicado: {dup} linha(s)")
+    return out.sort_values(["data_execucao", "rede"], kind="mergesort").reset_index(drop=True)
+
+
+def ler_historico_tolerante(caminho: Path) -> tuple[pd.DataFrame, dict[str, Any]]:
+    """A leitura de quem MOSTRA a contagem: um dia ruim sai da série, o arquivo não cai inteiro.
+
+    `ler_historico_contagem` levanta em `(data_execucao, rede)` repetido, e com razão. Para a TELA,
+    porém, levantar devolveria o card inteiro ao pacote de setembro por causa de um único domingo.
+    Aqui a execução repetida sai INTEIRA (todas as redes daquele dia; nunca uma das cópias
+    escolhida) e volta nomeada em `execucoes_duplicadas`, para a tela dizer que ela ficou de fora.
+    Linha sem `data_execucao` ISO também sai, e é contada em `linhas_sem_data`.
+    """
+    out = _ler_e_tipar(caminho)
+    com_data = out["data_execucao"].astype(str).str.fullmatch(_DATA_ISO).astype(bool)
+    n_sem_data = int((~com_data).sum())
+    out = out[com_data.to_numpy(dtype=bool)]
+    repetidas = out.loc[out.duplicated(subset=["data_execucao", "rede"], keep=False), "data_execucao"]
+    duplicadas = sorted({str(d) for d in repetidas})
+    if duplicadas:
+        out = out[~out["data_execucao"].astype(str).isin(duplicadas).to_numpy(dtype=bool)]
+    out = out.sort_values(["data_execucao", "rede"], kind="mergesort").reset_index(drop=True)
+    return out, {"execucoes_duplicadas": duplicadas, "linhas_sem_data": n_sem_data}
+
+
+def _ler_e_tipar(caminho: Path) -> pd.DataFrame:
+    """CSV do coletor -> frame LONGO tipado, SEM julgar duplicata (cada leitor decide o que fazer)."""
     # `utf-8-sig`, nunca `utf-8` puro: é o padrão de CSV do projeto (CLAUDE.md §2) e o que os
     # módulos irmãos que leem feed de coletor já aplicam (`snapshots.py`, `curadoria_agregadores.py`).
     # Com BOM e `utf-8` puro, o header sai como `﻿data_execucao`, a coluna "não existe" e o
@@ -91,11 +136,7 @@ def ler_historico_contagem(caminho: Path) -> pd.DataFrame:
     out["unidades"] = out["unidades"].astype("int64")
     for coluna in ("data_execucao", "rede", "data_coleta"):
         out[coluna] = out[coluna].astype("string")
-
-    dup = int(out.duplicated(subset=["data_execucao", "rede"]).sum())
-    if dup:
-        raise ValueError(f"historico com (data_execucao, rede) duplicado: {dup} linha(s)")
-    return out.sort_values(["data_execucao", "rede"], kind="mergesort").reset_index(drop=True)
+    return out
 
 
 def execucoes(historico: pd.DataFrame, *, so_domingos: bool = False) -> list[str]:
@@ -228,6 +269,7 @@ def avaliar_queda_da_execucao(
             "redes_que_desabaram": [],
             "redes_defasadas": [],
             "queda_total_pct": None,
+            "queda_total_reprovou": False,
         }
 
     saldo = saldo_entre_execucoes(historico, de=referencia, ate=execucao)
@@ -272,7 +314,8 @@ def avaliar_queda_da_execucao(
             f"rede {d['rede']} caiu {d['antes']} -> {d['agora']} ({d['queda_pct']:.1f}%) "
             f"contra {referencia}{agravante}"
         )
-    if total_antes >= MIN_UNIDADES_GUARDA_TOTAL and queda_total > tolerancia_total_pct:
+    total_reprovou = total_antes >= MIN_UNIDADES_GUARDA_TOTAL and queda_total > tolerancia_total_pct
+    if total_reprovou:
         motivos.append(
             f"total caiu {total_antes} -> {total_agora} ({queda_total:.1f}%) contra {referencia}, "
             f"acima do limite de {tolerancia_total_pct:.0f}%"
@@ -286,15 +329,195 @@ def avaliar_queda_da_execucao(
         "redes_que_desabaram": desabaram,
         "redes_defasadas": defasadas,
         "queda_total_pct": round(queda_total, 2),
+        # O total reprovou POR SI (e não só pelas redes): a tela diz "o total caiu", não "a rede X".
+        "queda_total_reprovou": bool(total_reprovou),
+    }
+
+
+def avaliar_serie(
+    historico: pd.DataFrame,
+    *,
+    tolerancia_rede_pct: float = TOLERANCIA_QUEDA_REDE_PCT,
+    tolerancia_total_pct: float = TOLERANCIA_QUEDA_TOTAL_PCT,
+) -> list[dict[str, object]]:
+    """Laudo de CADA execução, em ordem, julgada contra a última ACEITA — nunca só contra a vizinha.
+
+    Comparar com a imediatamente anterior (o default de `avaliar_queda_da_execucao`) produz o
+    REBOTE: em 2026-09-13 a Selfit caiu de 231 para 119 pelo crash do lote, e em 2026-09-20 voltou
+    a 231. Contra 13/09, o dia 20 leria +112 unidades que ninguém abriu; contra a última aceita
+    (06/09), lê 0, que é o fato.
+
+    Uma execução é aceita de três jeitos (`como`, vocabulário de `COMO_ACEITA`):
+
+    - `primeira`: a mais antiga da série. Não tem com o que comparar, e a guarda mede queda, não
+      tamanho;
+    - `aprovada`: passa na guarda contra a última aceita;
+    - `confirmada`: reprovada contra a última aceita, mas COERENTE com a execução imediatamente
+      anterior (passa na guarda contra ela), que também tinha sido reprovada. É a queda que se repetiu em duas contagens seguidas, e aí
+      ela deixa de ser coleta quebrada para virar fato. Sem essa saída a régua CONGELARIA a série:
+      uma rede de 6 unidades que fecha 2 (-33%) seria reprovada contra a mesma contagem velha em
+      toda semana seguinte, para sempre.
+
+    O preço da confirmação fica declarado: duas coletas quebradas IGUAIS, em domingos seguidos,
+    passam na segunda. Desde o BLK-COLETA-01 o coletor que falha volta à safra anterior, e não ao
+    baseline do repositório, então o tombo de 13/09 não se repete desse jeito; e a tela nomeia toda
+    queda que aceitou por confirmação. Recusada fica com `como = "recusada"`.
+    """
+    laudos: list[dict[str, object]] = []
+    referencia: str | None = None
+    for data in execucoes(historico):
+        if referencia is None:
+            laudo: dict[str, object] = {
+                "execucao": data,
+                "aceita": True,
+                "como": "primeira",
+                "referencia": None,
+                "motivos": [],
+                "redes_que_desabaram": [],
+                "queda_total_pct": None,
+                "queda_total_reprovou": False,
+            }
+        else:
+            contra_ultima = avaliar_queda_da_execucao(
+                historico,
+                execucao=data,
+                referencia=referencia,
+                tolerancia_rede_pct=tolerancia_rede_pct,
+                tolerancia_total_pct=tolerancia_total_pct,
+            )
+            como = "aprovada" if contra_ultima["aprovado"] else "recusada"
+            if como == "recusada" and laudos and not laudos[-1]["aceita"]:
+                contra_vizinha = avaliar_queda_da_execucao(
+                    historico,
+                    execucao=data,
+                    referencia=str(laudos[-1]["execucao"]),
+                    tolerancia_rede_pct=tolerancia_rede_pct,
+                    tolerancia_total_pct=tolerancia_total_pct,
+                )
+                if contra_vizinha["aprovado"]:
+                    como = "confirmada"
+            laudo = {
+                "execucao": data,
+                "aceita": como != "recusada",
+                "como": como,
+                "referencia": referencia,
+                "motivos": contra_ultima["motivos"],
+                "redes_que_desabaram": contra_ultima["redes_que_desabaram"],
+                "queda_total_pct": contra_ultima["queda_total_pct"],
+                "queda_total_reprovou": contra_ultima["queda_total_reprovou"],
+            }
+        laudos.append(laudo)
+        if laudo["aceita"]:
+            referencia = data
+    return laudos
+
+
+def _quedas(laudo: Mapping[str, object] | None) -> list[dict[str, object]]:
+    """As redes que caíram num laudo, só com o que a tela escreve (quem, de quanto, para quanto)."""
+    if not laudo:
+        return []
+    desabaram = cast(list[dict[str, Any]], laudo.get("redes_que_desabaram") or [])
+    return [
+        {
+            "rede": str(d["rede"]),
+            "antes": int(d["antes"]),
+            "agora": int(d["agora"]),
+            "coleta_defasada": bool(d["coleta_defasada"]),
+        }
+        for d in desabaram
+    ]
+
+
+def contagem_da_tela(
+    historico: pd.DataFrame,
+    *,
+    execucoes_duplicadas: Sequence[str] = (),
+    excluir: Iterable[str] = (),
+) -> dict[str, object]:
+    """O que o card "Crescimento da concorrência" mostra: a última contagem ACEITA (`avaliar_serie`)
+    e a variação por rede contra a aceita anterior (`saldo_entre_execucoes`, mesma semântica do
+    Telegram: `novo` e `sumiu` são cobertura do coletor, nunca `+n`/`-n`).
+
+    `excluir` tira as redes ANTES da guarda, não só da exibição: a guarda olha as redes que a tela
+    mostra. Sem isso, o tombo de um estúdio boutique (que o card não exibe, DEC-056) seguraria a
+    contagem de todas as outras redes numa semana velha.
+
+    `recusadas` lista o que ficou de fora DEPOIS da aceita anterior. As que caem entre as duas
+    aceitas explicam por que a variação cobre mais de uma semana; as que vêm depois da última aceita
+    explicam por que o card não está na execução mais recente. Cada uma traz as redes que caíram,
+    para a tela dizer quem e quanto. `execucoes_duplicadas` vêm de `ler_historico_tolerante` e entram
+    nessa lista com `motivo = "duplicada"`.
+    """
+    fora = {str(r).lower() for r in excluir}
+    if fora:
+        historico = historico[~historico["rede"].astype(str).str.lower().isin(fora).to_numpy(dtype=bool)]
+    laudos = avaliar_serie(historico)
+    aceitas = [laudo for laudo in laudos if laudo["aceita"]]
+    datas = [str(laudo["execucao"]) for laudo in laudos] + [str(d) for d in execucoes_duplicadas]
+    atual = aceitas[-1] if aceitas else None
+    anterior = aceitas[-2] if len(aceitas) >= 2 else None
+    data = str(atual["execucao"]) if atual else None
+    data_anterior = str(anterior["execucao"]) if anterior else None
+    piso = data_anterior or ""
+
+    recusadas: list[dict[str, object]] = [
+        {
+            "execucao": str(laudo["execucao"]),
+            "motivo": "queda",
+            "redes": _quedas(laudo),
+            "queda_total_pct": laudo["queda_total_pct"] if laudo["queda_total_reprovou"] else None,
+        }
+        for laudo in laudos
+        if not laudo["aceita"] and str(laudo["execucao"]) > piso
+    ]
+    recusadas += [
+        {"execucao": str(d), "motivo": "duplicada", "redes": [], "queda_total_pct": None}
+        for d in execucoes_duplicadas
+        if str(d) > piso
+    ]
+    recusadas.sort(key=lambda r: str(r["execucao"]))
+
+    unidades: dict[str, int] = {}
+    variacao: dict[str, dict[str, object]] = {}
+    if data is not None:
+        foto = historico[historico["data_execucao"].astype(str) == data]
+        unidades = {str(r): int(n) for r, n in zip(foto["rede"], foto["unidades"], strict=True)}
+        if data_anterior is not None:
+            saldo = saldo_entre_execucoes(historico, de=data_anterior, ate=data)
+            variacao = {
+                str(linha["rede"]): {
+                    "delta": None if pd.isna(linha["delta"]) else int(linha["delta"]),
+                    "status": str(linha["status"]),
+                }
+                for linha in saldo.to_dict("records")
+            }
+    confirmada = bool(atual is not None and atual["como"] == "confirmada")
+    return {
+        "data": data,
+        "data_anterior": data_anterior,
+        "execucao_mais_recente": max(datas) if datas else None,
+        "unidades": unidades,
+        "variacao": variacao,
+        "confirmada": confirmada,
+        "quedas_confirmadas": _quedas(atual) if confirmada else [],
+        "queda_total_confirmada_pct": (
+            atual["queda_total_pct"] if confirmada and atual is not None and atual["queda_total_reprovou"] else None
+        ),
+        "recusadas": recusadas,
     }
 
 
 __all__ = [
+    "ARQUIVO_STAGING",
+    "COMO_ACEITA",
     "CONTRATO_COLUNAS_HISTORICO",
     "STATUS_SALDO_VALIDOS",
     "ler_historico_contagem",
+    "ler_historico_tolerante",
     "execucoes",
     "pivot_contagem",
     "saldo_entre_execucoes",
     "avaliar_queda_da_execucao",
+    "avaliar_serie",
+    "contagem_da_tela",
 ]

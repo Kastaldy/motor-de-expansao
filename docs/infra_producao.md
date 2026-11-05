@@ -286,6 +286,8 @@ receita (o `Ultra.csv` e a cadeia de penetração).
   6. **Restart** de `api`/`telegram-bot`/`web`. Os passos 5, 5.5 e 6
      só rodam se o regen da etapa 4 publicar. Depois da coleta o lote também roda o **snapshot semanal**
      (`FONTES="unidades wellhub"`) e, depois do relatório, copia `historico_contagem.csv` para o staging do motor.
+     É desse arquivo que o card "Crescimento da concorrência" da Visão Executiva tira as unidades e a variação
+     (a última contagem aceita pela guarda da DEC-061); o site relê o arquivo quando ele muda, sem esperar o restart.
 - **Cron:** `0 6 * * 0` (domingo **06:00 UTC = 03:00 BRT**; o servidor é UTC). `crontab -l` no root.
 - **Logs:** `/var/log/gymscraping/weekly_<TS>.log` (+ symlink `weekly_latest.log`).
 
