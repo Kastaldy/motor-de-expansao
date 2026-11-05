@@ -5325,3 +5325,23 @@ Menores, no código do banco:
 
 - BLK-BANCO-14 (concluído 2026-11-04) — ver tasks/completed.md
 
+
+## Epic BLK-CI — Tempo do CI (esteira; READ-ONLY sobre o M1)
+
+### BLK-CI-01 — O check `test` serial domina o CI; paralelizar a suíte
+
+| Campo | Valor |
+|---|---|
+| **Criticidade** | **Baixa** — toca `.github/workflows/ci.yml` e, se preciso, markers/`conftest` de teste. READ-ONLY sobre o M1; não altera nenhum teste de produto. |
+| **Prioridade** | Média — não bloqueia entregas, mas cada PR espera 15–18 min no `test`. |
+| **Esteira** | investigação + `ci.yml` (± markers/`conftest`) → PR próprio (conferência do Vinicius) |
+| **Quem** | qualquer um |
+| **Status** | Aberto |
+| **Depende de** | — |
+| **Autonomia** | **manual (NÃO loop-safe)** — mexe em CI. |
+
+**O problema (medido 04/11/2026).** O check `test` leva **15–18 min** e é ~todo o tempo do CI (o resto ≤ 2 min: `guard` 13s, `review-gate` 10s, `claude-review` ~2min, `web` ~45s; fila ~0). A suíte quase **quadruplicou** desde jul/2026 (baseline §5: 2.006 → **7.634** testes) e roda **em série** (`pytest -q`, sem `-n`, com `pytest-xdist` **instalado e ocioso**). Descartados por medição como gargalo pontual: imports de libs (self-time 0,6s via `-X importtime`), parametrização concentrada (6.749 casos de `unit` distribuídos por 267 arquivos; maior = 233, top-10 = 19%) e o assertion-rewrite (desligá-lo não acelerou). **A causa é volume × execução serial**, CPU-bound — o tempo oscila muito com a carga do runner (a mesma coleta variou 322s→735s localmente), o que também explica a percepção de "mais lento agora".
+
+**Ataque (em ordem).** (1) Ligar **`-n auto`** no `ci.yml` — a alavanca principal, já que o custo é volume serial e não há gargalo pontual para enxugar. (2) Isolar o que não tolera paralelismo: integração PostGIS e testes que tocam arquivos/portas → `--dist loadscope` + markers de serialização. (3) Medir o ganho real pelo nº de cores do runner. **Meta:** `test` ≤ ~8 min sem perder cobertura. **Ressalva:** o xdist **coleta por worker**, então o ganho vem da execução paralela entre cores — validar que compensa no runner usado (se não, avaliar dividir a suíte: `unit` em todo PR, integração só quando o path relevante muda).
+
+READ-ONLY sobre o M1. Não muda o que os testes verificam, só como/quando rodam.
