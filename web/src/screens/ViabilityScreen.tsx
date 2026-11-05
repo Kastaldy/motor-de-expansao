@@ -1314,7 +1314,7 @@ export default function ViabilityScreen({
             </span>
             <span
               className="num"
-              style={{ font: '700 22px/1.1 var(--f-num)', color: 'var(--tx-max)' }}
+              style={{ font: '700 18px/1.1 var(--f-num)', color: 'var(--tx-max)' }}
             >
               {premissas
                 ? brl(premissas.ticket_medio ?? premissas.ticket_blended, false, 2)
