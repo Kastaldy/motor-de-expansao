@@ -115,7 +115,11 @@ def test_censitario_com_viabilidade_e_graficos():
 
 
 def test_relatorio_completo_soma_todas_as_paginas():
-    """Fotos(1) + info(1) + viab numeros(1) + viab graficos(1) + conclusao(1) = 7 + 5 = 12."""
+    """Fotos(1) + info(1) + viab numeros(1) + viab graficos(1) + conclusao(1) = 7 + 5 = 12.
+
+    "Todas" as opcionais deste gerador SEM a `praca` e a `foto_satelite`: o total com elas e' o
+    teste logo abaixo.
+    """
     viab = {**_VIAB, "graficos": [_png(), _png(), _png(), _png()]}
     pdf_bytes = gerar_pdf_relatorio_pontual_classico(
         _MIN_RESULT,
@@ -125,6 +129,29 @@ def test_relatorio_completo_soma_todas_as_paginas():
         viabilidade=viab,
     )
     assert b"/Count 12" in pdf_bytes
+
+
+def test_relatorio_completo_com_praca_e_vista_aerea_soma_15_paginas():
+    """O teto REAL do PDF do ponto: as 12 do teste acima + 2 da praca + 1 da vista aerea = 15.
+
+    O teste acima conta as opcionais do gerador, mas sem a `praca` (piloto web: "Pressao
+    concorrencial" e "Como a cidade esta indo") e sem a `foto_satelite` (BLK-SAT). Medido em
+    2026-10-29 com estes mesmos insumos: 15. Sem esta trava, uma pagina podia sumir ou se repetir
+    no PDF completo sem nenhum teste ficar vermelho (achado a-08 da conferencia da higiene dos docs).
+    """
+    from .test_relatorio_pontual_praca import _praca
+
+    viab = {**_VIAB, "graficos": [_png(), _png(), _png(), _png()]}
+    pdf_bytes = gerar_pdf_relatorio_pontual_classico(
+        _MIN_RESULT,
+        None,
+        fotos=[_png(640, 480), _png(480, 640)],
+        info_imovel={"metragem_m2": 1500, "endereco": "Rua Teste, 1"},
+        viabilidade=viab,
+        praca=_praca(),
+        foto_satelite=_png(800, 800),
+    )
+    assert b"/Count 15" in pdf_bytes
 
 
 def test_integra_graficos_reais_do_relviab_03():

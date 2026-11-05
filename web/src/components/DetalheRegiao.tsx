@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { institutoDoCenso } from '../lib/rodape-base'
 
-import { num } from '../lib/format'
+import { num, renda } from '../lib/format'
 import type { PontoCensoDetalhe, PontoConcorrencia } from '../lib/types'
 
 /**
@@ -71,7 +71,7 @@ export default function DetalheRegiao({
             {sp.encontrado ? (
               <>
                 <Linha rotulo="Código do setor" valor={sp.cod_setor ?? '—'} mono />
-                <Linha rotulo="Renda per capita" valor={`R$ ${num(sp.renda_per_capita)}`} />
+                <Linha rotulo="Renda per capita" valor={renda(sp.renda_per_capita)} />
                 <Linha rotulo="Score socioeconômico" valor={num(sp.score, 1)} />
                 <Linha rotulo="Densidade" valor={`${num(sp.densidade_hab_km2)} hab/km²`} />
                 <Linha rotulo="Bairro / distrito" valor={sp.bairro ?? sp.distrito ?? '—'} />

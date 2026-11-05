@@ -5277,13 +5277,20 @@ def _praca_onde_crescer_page(pdf: _UltraPDF, result: dict[str, Any], praca: Any,
 
 
 # Regua da Sintese: tercos (p33 / mediana / p67) entre os 313 municipios BR com 100 mil+
-# habitantes, medidos na base local em 2026-10-20 (penetracao = consumido / (consumido +
-# residual); residual por mil habitantes). As cidades pequenas ficam fora da regua: a maioria
-# nao tem academia mapeada e a mediana do pais inteiro e' 0%. Antes os dois cards diziam sempre
-# "penetracao baixa" e "residual significativo", qualquer que fosse o numero (Sao Paulo: 41,8%,
-# entre as maiores). Leitura de COMPARACAO, nao previsao de desempenho.
-_SINTESE_PENETRACAO_TERCOS = (10.5, 15.8, 22.8)
-_SINTESE_RESIDUAL_MIL_TERCOS = (138.0, 151.0, 169.0)
+# habitantes (penetracao = consumido / (consumido + residual); residual por mil habitantes),
+# medidos com `scripts/medir_regua_sintese.py` na base que este PDF le em PRODUCAO
+# (`outputs/hexagonos_dashboard_enriquecido`, 27 UFs, regenerada em 2026-10-25; emenda de
+# 2026-10-29 da DEC-011). As cidades pequenas ficam fora da regua: a maioria nao tem academia
+# mapeada e a mediana do pais inteiro e' 0%. Antes da regua os dois cards diziam sempre
+# "penetracao baixa" e "residual significativo", qualquer que fosse o numero. Leitura de
+# COMPARACAO, nao previsao de desempenho.
+#
+# A primeira regua (10,5 / 15,8 / 22,8 e 138 / 151 / 169) saiu de uma base local de 2026-10-20,
+# sem script, e na producao punha 247 das 313 cidades em "Mercado maduro" e 293 em "Residual
+# abaixo da maioria". Remedir com o script, nunca editar a mao, quando uma DEC mudar consumo,
+# residual ou capacidade: de 21/10 a 25/10 a variacao foi de 0,1 p.p.
+_SINTESE_PENETRACAO_TERCOS = (33.0, 42.3, 49.8)
+_SINTESE_RESIDUAL_MIL_TERCOS = (78.0, 90.0, 104.0)
 
 
 def _texto_penetracao_sintese(pen: Any) -> str:

@@ -22,7 +22,7 @@ import {
   type Dimensao,
   type RotuloPartido,
 } from './comparacao'
-import { UNIDADE_MOEDA } from './format'
+import { UNIDADE_RENDA } from './format'
 import { sufixoDoModo } from './estudo-ultra'
 import { contornosDoItem, fatorReguaDoItem } from './alcance'
 import {
@@ -79,7 +79,7 @@ export const DIMENSOES_PONTO: readonly Dimensao<PontoPayload>[] = Object.freeze(
     chave: 'renda_domiciliar',
     rotulo: 'Renda domiciliar',
     ler: (p: PontoPayload) => p.censo?.renda_media_domiciliar ?? null,
-    unidade: UNIDADE_MOEDA,
+    unidade: UNIDADE_RENDA,
     maiorEhMelhor: true,
     limiarRelativo: 0.1,
     limiarAbsoluto: 300,

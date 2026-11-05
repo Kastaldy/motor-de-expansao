@@ -663,6 +663,27 @@ def test_o_recorte_de_fontes_e_FAIL_CLOSED(caplog: pytest.LogCaptureFixture) -> 
     )
 
 
+def test_o_help_do_recorte_descreve_o_desenho_da_dec_066(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """O `--help` é a primeira coisa que o operador lê, e mentia desde a DEC-066 (achado a-05).
+
+    Dizia que a partição do TotalPass "não entra no ranking" e que `--todas-as-fontes` era a porta
+    que o BLK-MA-20 abriria. Desde a DEC-066 o TotalPass entra inteiro, e quem o protege é o SINAL
+    (`s1` em `SINAIS_INATIVOS`). O resultado nunca mudou, só o modelo mental de quem lê.
+    """
+    with pytest.raises(SystemExit):
+        m._parse_args(["--help"])
+    texto = " ".join(capsys.readouterr().out.split())  # o argparse quebra linha em qualquer palavra
+    assert "nao entra no ranking" not in texto, "o --help voltou a dizer que o TotalPass fica fora"
+    assert "porta que o BLK-MA-20 abre" not in texto, (
+        "o --help voltou ao desenho de antes da DEC-066"
+    )
+    assert "DEC-066" in texto and "SINAIS_INATIVOS" in texto, (
+        "o --help não diz mais onde está a proteção (o sinal, não a fonte)"
+    )
+
+
 def test_recorte_de_fontes_e_prosa_sem_o_flag() -> None:
     """A DEC exige que o recorte seja IMPOSTO, não prometido: o parâmetro tem de existir de ponta
     a ponta — `ler_snapshots(fontes=)` e `coordenadas_por_chave(fontes=)`.
