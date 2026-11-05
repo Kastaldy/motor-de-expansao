@@ -873,9 +873,11 @@ export interface PremissasViabilidade {
      está escalando junto com a unidade"). A tela LÊ estes campos; nunca multiplica
      `folha_pct` por faturamento. ------------------------------------------------ */
   folha_pct: number
-  /** R$/mês de folha, FIXO desde o mês 1 (= folha_pct × faturamento maduro). */
+  /** R$/mês de folha, FIXO desde o mês 1 (= folha_pct × a base abaixo). */
   folha_fixa_mes: number
-  /** Faturamento de regime pleno usado como BASE do dimensionamento da folha. */
+  /** Faturamento de regime pleno usado como BASE do dimensionamento da folha. Com
+   *  studios, é o da mesma unidade SEM studios (Emenda 1 da DEC-068): a equipe da
+   *  academia não muda com eles. O nome do campo fica por contrato. */
   folha_base_faturamento_maduro: number
   /** Sempre true no contrato v1: deixa explícito que a folha não acompanha a rampa. */
   folha_fixa_desde_mes_1: boolean

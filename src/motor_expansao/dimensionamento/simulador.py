@@ -21,7 +21,8 @@ O custo operacional NAO e 100% fixo — tem tres naturezas, agora EXPLICITAS no
 resultado (antes o dataclass so expunha o total e a UI reconstruia por diferenca):
   - variavel (% da receita liquida): royalties + marketing + manutencao + cartoes
   - folha: FIXA no tempo, dimensionada por `SIM_FOLHA_PCT` x faturamento MADURO e
-    paga integralmente desde o mes 1 (a equipe existe antes dos alunos)
+    paga integralmente desde o mes 1 (a equipe existe antes dos alunos). Com
+    studios, o maduro e' o da mesma unidade SEM studios (`base_folha`, DEC-068)
   - fixo absoluto:                   outros_fixos + aluguel + custo pre-operacional
 
 COMPATIBILIDADE
@@ -39,7 +40,7 @@ READ-ONLY sobre o M1: nao recalcula score_priorizacao nem artefatos oficiais
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Any
 
 from scipy.optimize import brentq
@@ -211,9 +212,10 @@ class Premissas:
     manutencao_pct: float = SIM_MANUTENCAO_PCT
     cartoes_pct: float = SIM_CARTOES_PCT
 
-    # Folha: `folha_pct` DIMENSIONA a folha pelo faturamento MADURO, e o valor
-    # resultante e FIXO desde o mes 1 (nao escala com a rampa) — ver
-    # `folha_fixa_mes()`. `pessoal_mes_override` troca por um absoluto (legado).
+    # Folha: `folha_pct` DIMENSIONA a folha pelo faturamento MADURO (com studios, o da
+    # mesma unidade sem studios), e o valor resultante e FIXO desde o mes 1 (nao
+    # escala com a rampa) — ver `folha_fixa_mes()` e `base_folha()`.
+    # `pessoal_mes_override` troca por um absoluto (legado).
     folha_pct: float = SIM_FOLHA_PCT
     pessoal_mes_override: float | None = None
 
@@ -462,21 +464,42 @@ class Premissas:
         meses de rampa ficam mais pesados e o break-even sobe — a folha deixa de ser
         diluida pelo volume.
 
+        Com studios, a base e' a da mesma unidade SEM studios (`base_folha`, Emenda 1
+        da DEC-068): a equipe da academia nao muda com eles.
+
         Com override absoluto (`pessoal_mes_override`) devolve o override, que ja era
         fixo por definicao — e o caminho legado.
         """
         if self.pessoal_mes_override is not None:
             return float(self.pessoal_mes_override)
-        return self.folha_pct * self.faturamento_maduro(demanda_total)
+        return self.folha_pct * self.base_folha(demanda_total)
 
     def faturamento_maduro(self, demanda_total: float) -> float:
         """Faturamento bruto de REGIME PLENO a precos do ano 1 (sem reajuste).
 
-        Base de dimensionamento da folha. Inclui a anuidade porque o regime pleno a
-        tem; e a precos do ano 1 para o reajuste anual entrar UMA vez, no consumidor.
+        Inclui a anuidade porque o regime pleno a tem; e a precos do ano 1 para o
+        reajuste anual entrar UMA vez, no consumidor. Sem studio, e' tambem a base
+        da folha; com studio, a base e' a de `base_folha()`.
         """
         com_anuidade = self.anuidade_valor > 0
         return self.faturamento(demanda_total, com_anuidade=com_anuidade)
+
+    def base_folha(self, demanda_total: float) -> float:
+        """Base de dimensionamento da folha: o faturamento MADURO da mesma unidade SEM
+        studios, para a mesma demanda (Emenda 1 da DEC-068, leitura C, decidida por
+        Vinicius em 2026-11-05).
+
+        A equipe da academia nao muda com os studios: cada studio ja paga a equipe dele
+        nos R$ 6.000/mes de `custo_studio_mes`. Antes a mensalidade do studio tambem
+        entrava nesta base, e a mesma equipe era cobrada duas vezes. A unidade sem
+        studios tem a demanda inteira na musculacao (split balcao/agregador sobre o
+        total, anuidade do balcao); nao e' o faturamento de hoje menos o dos studios.
+
+        Sem studio, devolve o proprio `faturamento_maduro` (motor identico ao bit).
+        """
+        if not self.tickets_studios:
+            return self.faturamento_maduro(demanda_total)
+        return replace(self, tickets_studios=()).faturamento_maduro(demanda_total)
 
     def custo_fixo_total_mes(self, demanda_total: float) -> float:
         """Custo fixo mensal SEM aluguel: outros fixos + studios + folha dimensionada."""

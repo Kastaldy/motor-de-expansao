@@ -619,11 +619,13 @@ def montar_payload_viabilidade(
             # e pago integralmente desde o mes 1 — a equipe existe antes dos alunos.
             # Consequencia: a folha e CUSTO FIXO (saiu de `fator_receita_para_ebitda`) e
             # os meses de rampa ficam mais pesados. Os tres campos abaixo vem do proprio
-            # motor (`Premissas.folha_fixa_mes` / `.faturamento_maduro`); a tela LE, nao
-            # multiplica percentual por faturamento.
+            # motor (`Premissas.folha_fixa_mes` / `.base_folha`); a tela LE, nao
+            # multiplica percentual por faturamento. Com studios (Emenda 1 da DEC-068),
+            # a base e' o faturamento maduro da mesma unidade SEM studios; o nome do
+            # campo fica (contrato) e o valor e' sempre a base usada.
             "folha_fixa_mes": num_json_safe(premissas.folha_fixa_mes(float(body.demanda)), 2),
             "folha_base_faturamento_maduro": num_json_safe(
-                premissas.faturamento_maduro(float(body.demanda)), 2
+                premissas.base_folha(float(body.demanda)), 2
             ),
             "folha_fixa_desde_mes_1": True,
             "folha_regime": "fixa_desde_mes_1_dimensionada_pelo_faturamento_maduro",

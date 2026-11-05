@@ -164,6 +164,11 @@ pleno, casa cheia e anuidade em cobrança, **a preços do ano 1**), e esse valor
 1**, reajustando anualmente como os demais custos. No caso de referência: 17% × R$ 288.257,57 =
 **R$ 49.003,79/mês**, do M1 ao M60.
 
+**Com studio**, a base é o faturamento maduro da mesma unidade **sem** studios, com a mesma demanda
+(`Premissas.base_folha`, Emenda 1 da DEC-068, decidida por Vinicius em 05/11/2026). A equipe da
+academia não muda com os studios, e cada um já paga a equipe dele nos R$ 6.000/mês de custo fixo
+(§9(d)). No caso de referência, a folha fica em R$ 49.003,79/mês com 0, 1, 2 ou 3 studios.
+
 **Por quê:** a equipe existe antes dos alunos. O quadro de pessoal de uma unidade de 1.050 m² é
 dimensionado pela operação que ela vai ter — recepção, limpeza, professores por horário, gerência
 — e é contratado para abrir a porta, não conforme a matrícula chega. Dimensionar pelo faturamento
@@ -451,7 +456,8 @@ motor**. Ficam documentadas aqui exatamente para que ninguém as "conserte" liga
 ## 9. Conflitos abertos
 
 Três divergências **conhecidas** entre o código e a fonte documental, mais uma dúvida de modelagem (d). A
-da folha (a) foi decidida em 30/09/2026; as outras seguem sem decisão nomeada. Nenhuma bloqueia o ciclo.
+da folha (a) foi decidida em 30/09/2026 e a do studio (d) em 05/11/2026; as outras seguem sem decisão
+nomeada. Nenhuma bloqueia o ciclo.
 
 ### (a) FOLHA — a nota tem DUAS dimensões: a ESTRUTURA e o NÍVEL, as duas decididas
 
@@ -489,7 +495,13 @@ Desde a 3ª rodada é obrigatório separar as duas, porque foram resolvidas em m
 | **Sensibilidade (re-medida na 4ª rodada, 2026-07-25)** | A R$ 137 o caso golden faz faturamento **R$ 269.412,97**, folha **R$ 45.800,20** (a régua de 17% acompanha o faturamento maduro menor), EBITDA **R$ 101.306,71 (37,60%)** — a margem **passa** o mínimo de 30% —, break-even **1.199,2**, cheque total **R$ 1.162.843,40** (mês 6) e payback **37 meses**: **estoura o critério de 36** e `flag_viavel` cai para **falso**. E o mais duro: **na régua nova o VPL fica NEGATIVO nas duas óticas** — **do negócio** TIR **24,79%** / VPL **−R$ 9.517,56**, **do sócio** TIR **25,66%** / VPL **−R$ 32.166,21**. A R$ 137 o ativo rende **abaixo** da taxa mínima do negócio (24,79% < 25,00%), e a alavancagem deixa de compensar. |
 | **Status** | **Aberto só quanto a 137 × 147** (a escada por studio está sem objeto desde 2026-10-05). Não corrigido: mexer no ticket muda a conclusão de todos os cenários já apresentados, e a régua comercial vigente (R$ 147 como entrada) é decisão de produto, não de engenharia. Precisa de Felipe. |
 
-### (d) CUSTO DO STUDIO × FOLHA — dupla contagem (resposta do Felipe em 03/11/2026; correção pendente)
+### (d) CUSTO DO STUDIO × FOLHA — dupla contagem (resposta do Felipe em 03/11/2026; corrigida em 05/11/2026)
+
+> **Decidido em 05/11/2026 (Vinicius), leitura C da Emenda 1 da DEC-068:** a folha da academia não muda
+> com os studios. A base dos 17% é o faturamento maduro da mesma unidade sem studios, e cada studio soma
+> só os seus R$ 6.000/mês. No caso de referência (2.304 alunos), a folha fica em R$ 49.004/mês com 0 a 3
+> studios, e o EBITDA com 1 studio vai de R$ 110.129 para R$ 110.932. O texto abaixo é o problema como
+> foi levantado.
 
 Cada studio soma **R$ 6.000/mês** de custo fixo (`SIM_CUSTO_STUDIO`, descrito como folha de pagamento adicional
 por studio) e, desde a DEC-068, a receita do studio também entra na base dos **17%** da folha (§4.1). Em 03/11/2026, o Felipe
@@ -497,9 +509,8 @@ confirmou, por Vinicius, que os R$ 6.000 já incluem o gasto com funcionário do
 incide sobre a receita do studio cobra a mesma equipe uma segunda vez, e a Viabilidade fica pessimista para unidade
 com studio. Medido no simulador com ticket de balcão de R$ 147 e os tickets padrão dos studios (R$ 157, 167 e 177),
 a cobrança a mais é de R$ 1.967/mês com 1 studio e R$ 6.277/mês com 3, numa unidade de 1.000 alunos; com 2.000
-alunos, R$ 3.934 e R$ 12.553. A DEC-068 tinha decidido que as duas cobranças valem juntas. A correção, que tira a
-receita do studio da base dos 17%, muda os números da Viabilidade e entra por emenda da DEC-068, com aprovação do
-Felipe.
+alunos, R$ 3.934 e R$ 12.553. A DEC-068 tinha decidido que as duas cobranças valem juntas; a Emenda 1 corrigiu isso, na leitura
+do quadro acima.
 
 ---
 

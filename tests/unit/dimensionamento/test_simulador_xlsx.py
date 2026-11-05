@@ -350,7 +350,8 @@ def test_dre_le_a_folha_de_uma_unica_celula_de_premissas(wb: openpyxl.Workbook) 
         )
 
     # A ponte Premissas -> Folha: uma celula aponta para o interruptor, outra para o
-    # TOTAL do quadro, e a "Folha mensal FIXA" combina as duas com o % do maduro.
+    # TOTAL do quadro, e a "Folha mensal FIXA" combina as duas com o % da BASE da folha
+    # (o maduro da mesma unidade sem studios, Emenda 1 da DEC-068), nao com o maduro.
     pontes = _premissas_por_rotulo(wb)
     assert pontes["modo da folha (interruptor)"] == f"={ABA_FOLHA}!$B${_FOLHA_MODO_ROW}"
     assert str(pontes["total do quadro de pessoal (aba folha)"]).startswith(
@@ -358,7 +359,8 @@ def test_dre_le_a_folha_de_uma_unica_celula_de_premissas(wb: openpyxl.Workbook) 
     )
     folha_fixa = str(pontes["folha mensal fixa (vale desde o mes 1)"])
     assert "quadro de pessoal" in folha_fixa
-    assert _usa(folha_fixa, _ref_premissa(wb, "faturamento maduro"))
+    assert _usa(folha_fixa, _ref_premissa(wb, "base da folha"))
+    assert not _usa(folha_fixa, _ref_premissa(wb, "faturamento maduro"))
     assert _usa(folha_fixa, _ref_premissa(wb, "folha como % do faturamento maduro"))
 
 
@@ -380,17 +382,44 @@ def test_folha_fixa_e_a_mesma_formula_nos_64_meses(wb: openpyxl.Workbook) -> Non
     assert len(normalizadas) == 1, f"a folha tem {len(normalizadas)} fórmulas diferentes"
 
 
-def test_faturamento_maduro_e_a_base_da_folha_a_precos_do_ano_1(
+def test_faturamento_maduro_e_a_precos_do_ano_1(
     wb: openpyxl.Workbook,
 ) -> None:
-    """A base e demanda x receita por aluno + personal, sem fator de reajuste."""
+    """O maduro e demanda x receita por aluno + personal, sem fator de reajuste."""
     formula = str(
-        _premissas_por_rotulo(wb)["faturamento maduro (base de dimensionamento da folha)"]
+        _premissas_por_rotulo(wb)["faturamento maduro (regime pleno, a precos do ano 1)"]
     )
     assert _usa(formula, _ref_premissa(wb, "demanda total"))
     assert _usa(formula, _ref_premissa(wb, "receita por aluno total"))
     assert _usa(formula, _ref_premissa(wb, "receita fixa de personal"))
     # Nao pode olhar nenhuma coluna de mes: se olhasse, o reajuste entraria duas vezes.
+    assert ABA_DRE not in formula and ABA_FLUXO not in formula
+
+
+def test_base_da_folha_e_a_unidade_sem_studios_a_precos_do_ano_1(
+    wb: openpyxl.Workbook,
+) -> None:
+    """Emenda 1 da DEC-068: a base da folha e' a mesma unidade SEM studios.
+
+    Usa a demanda inteira na musculacao (split balcao/agregador, anuidade do balcao) e
+    nenhuma celula de studio; tambem nao olha coluna de mes.
+    """
+    rotulo_base = "base da folha: faturamento maduro da mesma unidade sem studios"
+    formula = str(_premissas_por_rotulo(wb)[rotulo_base])
+    for rotulo in ("demanda total", "share de balcao", "ticket de musculacao",
+                   "churn mensal", "inadimplencia", "anuidade por aluno",
+                   "somente balcao e studios pagam", "receita fixa de personal"):
+        assert _usa(formula, _ref_premissa(wb, rotulo)), rotulo
+    # "ticket do agregador" e' prefixo de dois rotulos (o R$ e a fracao): vai pelo EXATO.
+    ws = wb[ABA_PREMISSAS]
+    ref_agregador = next(
+        f"{ABA_PREMISSAS}!$B${r}" for r in range(4, ws.max_row + 1)
+        if _norm(ws.cell(row=r, column=1).value or "") == "ticket do agregador"
+    )
+    assert _usa(formula, ref_agregador)
+    for rotulo in ("receita por aluno total", "fracao da demanda total nos studios",
+                   "receita de studio por aluno total", "numero de studios"):
+        assert not _usa(formula, _ref_premissa(wb, rotulo)), rotulo
     assert ABA_DRE not in formula and ABA_FLUXO not in formula
 
 
@@ -716,10 +745,13 @@ def test_afericao_grava_os_valores_do_motor_corretos(wb: openpyxl.Workbook, resu
         "folha": resultado.folha_mensal,
         # Folha FIXA: a base madura, o R$ dimensionado e o valor DO MES 1 (que era o
         # defeito — antes o mes 1 pagava menos folha porque a rampa nao tinha chegado).
-        "faturamento maduro (base de dimensionamento da folha)": _premissas().faturamento_maduro(
+        "faturamento maduro (regime pleno, a precos do ano 1)": _premissas().faturamento_maduro(
             _DEMANDA
         ),
-        "folha fixa dimensionada pelo faturamento maduro": _premissas().folha_fixa_mes(_DEMANDA),
+        "base da folha: faturamento maduro da mesma unidade sem studios": _premissas().base_folha(
+            _DEMANDA
+        ),
+        "folha fixa dimensionada pela base da folha": _premissas().folha_fixa_mes(_DEMANDA),
         "folha no mes 1 (a folha nao acompanha a rampa)": serie[1]["folha"],
         "custo fixo total sem aluguel (outros fixos + studios + folha)": _premissas().custo_fixo_total_mes(
             _DEMANDA
