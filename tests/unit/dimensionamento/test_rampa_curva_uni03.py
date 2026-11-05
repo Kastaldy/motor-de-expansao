@@ -218,8 +218,11 @@ def test_reta_reproduz_o_motor_anterior_byte_a_byte() -> None:
     assert _digest(golden.serie_mensal) == (
         "cc52c0100e8994f747521a8ca3e4d337a4210a882074cfb9792f2252bcdc1b96"
     )
+    # Refeito em 2026-11-05 pela Emenda 1 da DEC-068 (leitura C: a folha nao muda com os
+    # studios). Era 32cc6c4a...; so mudam folha, custos_op, ebitda_mensal, fcf_mensal e
+    # fcf_acumulado, conferido contra a serie da main 937c8792.
     assert _digest(studios.serie_mensal) == (
-        "32cc6c4a805fa379cf286681f7312464935722dcc2c87103ce66e2e4c76b5c8c"
+        "3a9e990536dae9d8dcc7906488e443f622b0bbd34708fbdc60cf492c9f54c611"
     )
     assert _digest(legado.serie_mensal) == (
         "4d4f6c713f5bedf37c410c6382dd520a909435a802d617eb81b193c3be6efdd4"
