@@ -1,4 +1,4 @@
-import { num } from '../lib/format'
+import { UNIDADE_MOEDA, UNIDADE_RENDA, num, valorComUnidade } from '../lib/format'
 import { recomendar, type EntradaRecomendacao, type TipoAcao } from '../lib/recomendacao'
 
 /**
@@ -134,9 +134,15 @@ function Selo({ passa }: { passa: boolean | null }) {
   )
 }
 
-function valorFmt(v: number | null, unidade: string): string {
+/**
+ * A renda chega do servidor com a sentinela `UNIDADE_RENDA` (`_criterios_do_ponto`), e o
+ * símbolo sai da moeda da RENDA. Até 2026-10-29 o servidor mandava "R$" e esta função o
+ * escrevia cravado, também sobre a renda em DÓLAR da Argentina (achado a-03). Exportada
+ * para `moeda-da-renda.test.ts`.
+ */
+export function valorFmt(v: number | null, unidade: string): string {
   if (v == null) return num(v)
-  if (unidade === 'R$') return `R$ ${num(v)}`
+  if (unidade === UNIDADE_RENDA || unidade === UNIDADE_MOEDA) return valorComUnidade(v, unidade)
   if (unidade === 'score') return num(v, 1)
   return num(v)
 }

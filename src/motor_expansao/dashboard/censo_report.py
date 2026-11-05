@@ -1797,10 +1797,15 @@ def _viab_linha_custos(viabilidade: dict[str, Any]) -> str | None:
         return None
 
     pct = viabilidade.get("folha_pct")
+    # Com studio, a base e' o maduro da mesma unidade SEM studios (Emenda 1 da DEC-068):
+    # a equipe da academia nao muda com eles. Frase curta de proposito (ver acima).
+    sem_studios = (
+        " sem os studios" if (_viab_inteiro(viabilidade.get("n_studios")) or 0) > 0 else ""
+    )
     base = (
-        f"por {_viab_pct(pct)} do faturamento maduro"
+        f"por {_viab_pct(pct)} do faturamento maduro{sem_studios}"
         if _viab_tem(pct)
-        else "pelo faturamento maduro"
+        else f"pelo faturamento maduro{sem_studios}"
     )
     linha = f"Folha {_viab_brl(folha)}/mês FIXA desde o mês 1, dimensionada {base}."
 
@@ -4974,8 +4979,10 @@ def gerar_pdf_relatorio_pontual_classico(
     mapas de calor (6->7 paginas); o BLK-RELPON-11 inseriu "Imagem do Entorno" (7->8 paginas) e o
     BLK-RELPON-14 REMOVEU essa pagina por completo (8->7 paginas).
     As paginas OPCIONAIS `fotos`, `info_imovel` e `viabilidade` (numeros + graficos) somam no
-    maximo mais 4 -> teto de 11 paginas (era 12 com o entorno); `foto_satelite` (BLK-SAT, so no
-    caminho API/bot) soma mais uma quando presente.
+    maximo mais 4, e a Conclusao mais 1 -> teto de 12 paginas (`/Count 12`). As duas da `praca`
+    (piloto web) e a `foto_satelite` (BLK-SAT, piloto e API) somam ate' mais 3 -> 15 com tudo,
+    medido em 2026-10-29 e travado por
+    `test_relatorio_completo_com_praca_e_vista_aerea_soma_15_paginas`.
 
     `conclusao_so_estudo=True` (BLK-CONC-ESTUDO) faz a pagina de Conclusao sair TAMBEM sem
     `viabilidade`, em modo so-estudo -- e o que o caminho API/bot pede. Default `False`
@@ -5110,8 +5117,9 @@ def gerar_pdf_relatorio_pontual_classico(
     #
     # COM `viabilidade` -> parecer completo, como desde 2026-08-06.
     # SEM `viabilidade` -> so entra se o chamador PEDIR (`conclusao_so_estudo=True`), e ai
-    # roda em modo so-estudo. Quem pede: `api/service.py` (caminho API/bot), que nunca teve
-    # o payload, e -- desde 2026-10-14 -- o botao "Estudo" da analise de ponto do piloto
+    # roda em modo so-estudo. Quem pede: `api/service.py` (caminho API/bot), sempre que o PDF
+    # fica sem cenario de viabilidade -- o bot nunca a manda, e a API a aceita desde
+    # 2026-09-10 (PR #338) --, e desde 2026-10-14 o botao "Estudo" da analise de ponto do piloto
     # web, por `so_estudo=true` em `POST /api/relatorio/pontual` (`web/server/app.py`;
     # decisao 4 do Vinicius). Nesse modo a rota tambem descarta viabilidade e dados do
     # imovel, entao o PDF sai so' demografico, com as paginas da praca.

@@ -15,6 +15,7 @@ antigos (DECs, `tasks/completed.md`, `context/handoff/`) os citam.
 | `comparar_pressao_1km.py` | Comparativo: pressao concorrencial 2 km do centroide (atual) vs 1 km por area (novo) |
 | `medir_impacto_litoral_blk_fix_06.py` | BLK-FIX-06 / FASE A (MEDICAO) — Impacto do criterio geometrico HIBRIDO no litoral |
 | `medir_impacto_litoral_blk_fix_06b.py` | BLK-FIX-06-B (MEDICAO) — Impacto da geracao de candidatos por OVERLAP no litoral |
+| `medir_regua_sintese.py` | Mede a régua da Síntese do Relatório Municipal na base que o PDF lê. SÓ LEITURA. |
 | `medir_sweep_litoral_06b.py` | BLK-FIX-06-B (LEQUE) — Recuperacao costeira por limiar de fracao-de-terra |
 | `movimentacao_concorrencial.py` | Relatório de movimentação concorrencial — snapshot único (READ-ONLY sobre o M1) |
 | `smoke_test_fontes.py` | scripts/medicoes/smoke_test_fontes.py — Smoke test das fontes de dados gratuitas |

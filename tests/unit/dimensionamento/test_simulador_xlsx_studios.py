@@ -366,8 +366,12 @@ def test_recalculo_das_premissas_derivadas_bate_com_o_motor(ler, cenario) -> Non
     assert cel("receita por aluno total (com anuidade)") == pytest.approx(
         p.receita_por_aluno_total, abs=1e-6
     )
-    assert cel("faturamento maduro (base de dimensionamento da folha)") == pytest.approx(
+    assert cel("faturamento maduro (regime pleno, a precos do ano 1)") == pytest.approx(
         p.faturamento_maduro(demanda), abs=0.01
+    )
+    # Emenda 1 da DEC-068: a base da folha e' a da mesma unidade sem studios.
+    assert cel("base da folha: faturamento maduro da mesma unidade sem studios") == pytest.approx(
+        p.base_folha(demanda), abs=0.01
     )
     assert cel("folha mensal fixa (vale desde o mes 1)") == pytest.approx(
         p.folha_fixa_mes(demanda), abs=0.01
@@ -478,7 +482,8 @@ def test_modo_apenas_balcao_trocado_no_excel_desliga_receita_e_custo_dos_studios
     assert cel("receita por aluno total (com anuidade)") == pytest.approx(
         p0.receita_por_aluno_total, abs=1e-6
     )
-    fat_maduro = cel("faturamento maduro (base de dimensionamento da folha)")
+    fat_maduro = cel("faturamento maduro (regime pleno, a precos do ano 1)")
+    assert cel("base da folha: faturamento maduro da mesma unidade sem studios") == pytest.approx(fat_maduro, abs=0.01)
     assert fat_maduro == pytest.approx(
         demanda * cel("receita por aluno total (com anuidade)") + p0.personal_mes, abs=0.01
     )

@@ -241,11 +241,21 @@ enviar_telegram('🔴 [Coleta] ' + sys.argv[1], os.environ['API_TELEGRAM_TOKEN']
       #    logo_<slug>.png. O script normaliza o nome das logos do coletor e NUNCA reduz a
       #    contagem de uma rede -- coleta parcial nao apaga o que ja estava visivel.
       echo "[$(date -u)] sync do diretorio de concorrentes dos apps..."
-      docker run --rm --user 0:0 -e PYTHONIOENCODING=utf-8 \
+      # BLK-SAUDE-08: desde a DEC-047 o modulo do sync resolve `perfil.json` NO IMPORT. Sem
+      # MOTOR_DATA_DIR ele procurava o perfil ao lado do pacote instalado (site-packages) e morria
+      # com `PerfilInvalidoError`: falhou de 2026-09-20 em diante, e o diretorio congelou em
+      # 2026-09-06. Com MOTOR_DATA_DIR o loader e' fail-closed em `$MOTOR_DATA_DIR/perfil.json`,
+      # dai o bind do perfil de producao -- o mesmo par que a DEC-049 deu ao telegram-bot.
+      # E a falha passa a GRITAR: com `|| echo` ela morria no log, e ficou tres semanas sem
+      # ninguem ver. NAO aborta o lote: os apps seguem com os arquivos anteriores.
+      if ! docker run --rm --user 0:0 -e PYTHONIOENCODING=utf-8 -e MOTOR_DATA_DIR=/app/data \
+        -v "$MOTOR/data/perfil.json:/app/data/perfil.json:ro" \
         -v "$INFRA/sync_concorrentes_dashboard.py:/tmp/sync.py:ro" \
         -v "$REPO:/gymscraping:ro" -v "$MOTOR/concorrentes:/destino" "$IMG" \
-        python /tmp/sync.py --gymscraping /gymscraping --destino /destino --aplicar \
-        || echo "AVISO: sync falhou; os apps seguem com os arquivos anteriores"
+        python /tmp/sync.py --gymscraping /gymscraping --destino /destino --aplicar; then
+        echo "!! [$(date -u)] ERRO: sync do diretorio de concorrentes FALHOU -- os apps seguem com os arquivos anteriores"
+        _avisar_ops "sync do diretório de concorrentes dos apps FALHOU; os apps seguem com os logotipos e as listas anteriores (ver o log do lote)"
+      fi
 
       # 4.5) Pins de vulnerabilidade M&A (BLK-MA-05/15/17): materializa do snapshot + carteira +
       #      concorrentes (regenerados acima). GUARDA DE VAZIO: grava em *_novo e so' PROMOVE se

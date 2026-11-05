@@ -42,6 +42,7 @@ telegram-bot ──HTTP interno──► api ──► volumes :ro (outputs + ib
 | `data/staging/uplift_composicao_setor.parquet` | uplift de composição por setor (choropleth `renda_domiciliar` do PDF) | **Sim, na prática** — ver aviso abaixo |
 | *(fator temporal da renda)* | **não é mais arquivo de staging** desde a E0 da correção de renda: viaja **na imagem**, em `src/motor_expansao/renda/fatores/BR/` (versão em uso no `VIGENTE`). Não há `scp` dele | — (ver `docs/runbook_atualizacao_renda.md`) |
 | `data/ultra/` | assets de branding do PDF | Não (fallback de cor sólida) |
+| `data/oportunidades/viaveis.parquet` | base de anúncios do coletor, a mesma do `web`: a API monta a pasta só para leitura e responde `GET /api/v1/aluguel-referencia` com ela (DEC-080, Emenda 1) | Não: sem o arquivo, só essa rota responde 503 |
 | `data/perfil.json` | perfil do país (DEC-047), bind de ARQUIVO em `api` e `telegram-bot` | **Sim** — tem de existir ANTES do `up`: ausente, o Docker cria um diretório vazio e o container falha com `"is a directory"`; sem `MOTOR_DATA_DIR` + bind o bot entra em crash loop (DEC-049) |
 
 > **⚠ Parquets de
@@ -104,6 +105,15 @@ A imagem `motor-expansao-api` é publicada no GHCR pelo job **`publish-api`** do
 `Dockerfile.api`, `src/motor_expansao/{api,dashboard,dimensionamento,renda}/**`,
 `src/motor_expansao/perfil.py` ou `pyproject.toml`. A VPS **puxa** por digest
 (`API_IMAGE` no `.env`), sem buildar localmente. Execução na VPS é passo humano (§6).
+
+> **⚠ O compose da VPS fica atrás da main, de propósito (medido em 05/11/2026).** A main tira o
+> bind `./portal` do Caddy (#502, DEC-081), e essa mudança só vale junto com o Estágio 3 do corte do
+> login. Por isso **não rode `git pull` em `/opt/motor-expansao/app`** (o roteiro de deploy do PR #520
+> mandava): o compose da main inteiro mudaria o `caddy`, e o próximo `up -d` sem nome de serviço o
+> recriaria fora do corte. Mudança de compose para a API entra por conteúdo: o compose da VPS mais só
+> o bloco que o deploy precisa, com backup antes e a prova de que só `api` e `telegram-bot` mudam
+> (`docker compose config --hash` de cada serviço, antes e depois). Assim entraram as 6 linhas do #520
+> em 05/11/2026: o compose da VPS passou do blob `8c7537e0` (o do #494) ao `65189bbf`.
 
 > ⚠️ **ATENÇÃO — o filtro do `publish-api` não cobre tudo que a imagem executa.**
 >

@@ -335,15 +335,17 @@ def test_n_studios_custa_no_dre(empty_data: Path) -> None:
     por studio segue: e' o que este teste trava. Historico: ate o FIN-VIAB-01 o campo
     era aceito e DESCARTADO — o studio elevava o ticket no front e nao custava nada.
 
-    `dre.custos_fixos` (outros fixos + aluguel) nao contem a folha, que agora tambem
-    se move com os studios (a receita deles entra na base dos 17%).
+    `dre.custos_fixos` (outros fixos + aluguel) nao contem a folha. Desde a Emenda 1 da
+    DEC-068 (leitura C, 2026-11-05) a folha NAO se move com os studios: a base dos 17% e' o
+    faturamento maduro da mesma unidade sem studios, e cada studio soma so' o custo dele.
+    Ate' la' a receita do studio entrava na base e a mesma equipe era cobrada duas vezes.
     """
     from motor_expansao.dimensionamento.config import SIM_CUSTO_STUDIO
 
     sem = _viab(n_studios=0)["dre"]
     com = _viab(n_studios=2)["dre"]
     assert com["custos_fixos"] - sem["custos_fixos"] == pytest.approx(2 * SIM_CUSTO_STUDIO, abs=0.05)
-    assert com["folha"] > sem["folha"]
+    assert com["folha"] == pytest.approx(sem["folha"], abs=0.01)
     assert com["custo_studios"] == pytest.approx(2 * SIM_CUSTO_STUDIO, abs=0.01)
     assert sem["custo_studios"] == 0
     assert sem["receita_studios"] == 0

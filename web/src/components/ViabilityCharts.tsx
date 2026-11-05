@@ -560,7 +560,9 @@ export function CascataDre({
         {premissas
           ? `: ${brl(premissas.folha_fixa_mes, false, 2)}/mês, dimensionados por ${pctFrac(
               premissas.folha_pct,
-            )} do faturamento MADURO (${brl(premissas.folha_base_faturamento_maduro, true)})`
+            )} do faturamento MADURO${
+              (premissas.n_studios ?? 0) > 0 ? ' de uma unidade igual sem studios' : ''
+            } (${brl(premissas.folha_base_faturamento_maduro, true)})`
           : ''}{' '}
         — a equipe é contratada antes dos alunos, então ela NÃO acompanha a rampa e só o
         reajuste anual a move. Neste mês de regime pleno o valor coincide com a base; nos

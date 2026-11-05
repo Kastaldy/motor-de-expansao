@@ -20,7 +20,7 @@
  */
 
 import type { Hex } from './types'
-import { UNIDADE_MOEDA } from './format'
+import { UNIDADE_RENDA } from './format'
 
 /**
  * Uma dimensao comparavel: de onde ler, como chamar, e o que significa "melhor".
@@ -96,7 +96,7 @@ export const DIMENSOES: readonly Dimensao<Hex>[] = Object.freeze([
     chave: 'renda',
     rotulo: 'Renda per capita',
     ler: (h: Hex) => h.renda,
-    unidade: UNIDADE_MOEDA,
+    unidade: UNIDADE_RENDA,
     maiorEhMelhor: true,
     limiarRelativo: 0.1,
     limiarAbsoluto: 100,
