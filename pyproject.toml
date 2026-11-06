@@ -176,6 +176,14 @@ geocoder = [
     "webdriver-manager>=4.0.0",
 ]
 
+# GeoIP (pais do IP) na aba Acessos do piloto (DEC-082). Base MaxMind-mmdb lida em
+# runtime; OPCIONAL por design: sem a lib ou sem MOTOR_GEOIP_DB a aba degrada (pais
+# None), como antes. So entra na imagem `web` (Dockerfile.web). Fora do constraints.txt:
+# nao ha pin a propagar (o cap `<3` guarda a major).
+geoip = [
+    "maxminddb>=2.5,<3",
+]
+
 [tool.ruff]
 line-length = 100
 target-version = "py311"
