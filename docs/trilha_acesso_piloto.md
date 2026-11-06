@@ -253,3 +253,32 @@ A trilha ganhou um consumidor visual: a aba `Acessos` do piloto
   produção) na emenda 2 da DEC-027: na casa de dezenas de MB por ano no volume atual.
   O único alarme é o de disco do HOST (`scripts/healthcheck_vps.sh`, `df /`), que olha a
   partição inteira e não este diretório.
+
+
+## Acesso sem conta, atípicos e GeoIP (nov/2026)
+
+A aba Acessos (e o relatório do Telegram) não listam o `desconhecido` como usuário:
+
+- **Contas não-reais** (`USUARIOS_OCULTOS` em `acesso_analytics.py`, hoje `zyx_teste`):
+  somem de toda a aba — tabela, contagens, série e rollup novo. Ficam na trilha bruta;
+  o corte é só de exibição.
+- **Acesso sem conta** (`usuario == "desconhecido"`): sai da tabela/contagem de usuários e
+  vai no bloco **"Acessos sem conta"** (abertura da tela pública + robôs), com:
+  - **atípicos** — 5xx, ou sucesso em rota `/api/*` que exige sessão (o portão deveria ter
+    barrado), com drill-down por evento (hora, rota, status, IP, agente e descrição);
+  - **rajadas** — `_RAJADA_MIN_ACESSOS` (10)+ acessos do mesmo IP em `_RAJADA_JANELA_MIN`
+    (5) min — força-bruta/scraping.
+
+IP e agente aparecem **só** no detalhe de atípicos/rajadas, por serem evento de segurança
+— exceção consciente ao corte de uso da DEC-027.
+
+### GeoIP (país do IP) — OPCIONAL
+
+O país do IP (destacando os de fora do Brasil) é carimbado em atípicos e rajadas quando há
+uma base MaxMind-mmdb. Liga-desliga por ambiente:
+
+- `MOTOR_GEOIP_DB` = caminho da base `.mmdb` no container. Sem a env (ou sem a lib
+  `maxminddb`, ou base ilegível), o país fica vazio e a aba degrada — nada quebra.
+- Base sugerida: **DB-IP Country Lite** (`download.db-ip.com/free/`), licença CC BY, ~4 MB,
+  atualização **mensal**. Montar num volume `:ro` e apontar a env para ela.
+- Como é mensal, prever a atualização (cron ou troca manual do arquivo no volume).

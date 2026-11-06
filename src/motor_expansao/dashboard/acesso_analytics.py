@@ -186,6 +186,23 @@ FEATURES_ROTULOS: tuple[tuple[str | None, str, str], ...] = (
 )
 _FEATURE_OUTRAS = "Outras ações"
 
+#: Contas que NÃO são usuário real (teste/automação). Somem de TODA a aba e do
+#: relatório — tabela, contagens, série, heatmap e rollup novo. Ficam na trilha
+#: bruta (o registro fiel não muda): o corte é de EXIBIÇÃO, como `ROTAS_FORA_DA_METRICA`.
+USUARIOS_OCULTOS: frozenset[str] = frozenset({"zyx_teste"})
+
+#: O "usuário" que não é usuário: acesso sem conta (abertura da tela pública de
+#: login + robôs). Sai da tabela de usuários e da contagem de únicos; aparece
+#: consolidado no bloco "Acessos sem conta" (não some, mas não assusta).
+USUARIO_SEM_CONTA = "desconhecido"
+
+#: Rotas /api/* que atendem SEM sessão — espelho de `ROTAS_PUBLICAS_SEM_SESSAO` de
+#: `web/server/acesso.py` (não importável daqui). Acesso sem conta a elas é
+#: esperado; fora delas, COM sucesso, é o que o bloco marca como atípico.
+_ROTAS_API_PRE_AUTH: frozenset[str] = frozenset(
+    {"/api/login", "/api/logout", "/api/health", "/api/verify", "/api/verify-sessao"}
+)
+
 #: Pausa que fecha uma sessão na ficha do usuário (leitura de "sentou para usar").
 _GAP_SESSAO = timedelta(minutes=30)
 #: Teto de eventos da linha do tempo da ficha (os mais recentes).
@@ -292,6 +309,187 @@ def _hhmm(momento: object) -> str | None:
     return momento.strftime("%H:%M") if isinstance(momento, datetime) else None
 
 
+def _nome(r: dict[str, Any]) -> str:
+    return str(r.get("usuario") or USUARIO_SEM_CONTA)
+
+
+def _usuario_de_metrica(nome: str) -> bool:
+    """Conta como usuário na aba: nem acesso sem conta, nem conta de teste."""
+    return nome != USUARIO_SEM_CONTA and nome not in USUARIOS_OCULTOS
+
+
+def _acesso_sem_conta_atipico(r: dict[str, Any]) -> bool:
+    """Acesso sem conta que MERECE olhar, e não o ruído esperado.
+
+    Atípico = 5xx (defeito nosso) OU sucesso numa rota /api/* que exige sessão — o
+    portão deveria ter barrado, então um 2xx/3xx ali é sinal de furo. Abrir a
+    página pública e robô varrendo a internet NÃO são atípicos.
+    """
+    status = r.get("status")
+    rota = str(r.get("rota") or "")
+    if isinstance(status, int) and status >= 500:
+        return True
+    return (
+        rota.startswith("/api/")
+        and rota not in _ROTAS_API_PRE_AUTH
+        and isinstance(status, int)
+        and 200 <= status < 400
+    )
+
+
+def _motivo_atipico(r: dict[str, Any]) -> str:
+    """Por que este acesso sem conta é atípico (texto do drill-down)."""
+    status = r.get("status")
+    if isinstance(status, int) and status >= 500:
+        return "erro do servidor (5xx) numa requisição sem conta"
+    return "sucesso sem conta em rota que exige sessão — o portão deveria ter barrado"
+
+
+#: Teto de eventos atípicos no drill-down (os mais recentes).
+_TETO_ATIPICOS_DETALHE = 50
+
+#: RAJADA: >= _RAJADA_MIN_ACESSOS acessos SEM CONTA do mesmo IP numa janela de
+#: <= _RAJADA_JANELA_MIN minutos (sinal de força-bruta/scraping).
+_RAJADA_MIN_ACESSOS = 10
+_RAJADA_JANELA_MIN = 5
+
+
+#: Leitor(es) GeoIP por caminho (abre a base .mmdb uma vez). GeoIP é OPCIONAL:
+#: sem `MOTOR_GEOIP_DB`, sem a lib `maxminddb` ou com base ilegível, o país é None
+#: e a aba degrada (como antes). Base livre sugerida: DB-IP Country Lite (CC BY).
+_GEOIP_CACHE: dict[str, object] = {}
+
+
+def _geoip_reader(caminho: str):
+    if caminho not in _GEOIP_CACHE:
+        try:
+            import maxminddb  # noqa: PLC0415 — dep OPCIONAL, só carregada se a env apontar
+
+            _GEOIP_CACHE[caminho] = maxminddb.open_database(caminho)
+        except Exception:  # noqa: BLE001 — sem base/lib, GeoIP apenas desliga
+            _GEOIP_CACHE[caminho] = None
+    return _GEOIP_CACHE[caminho]
+
+
+def pais_do_ip(ip: object) -> str | None:
+    """Código ISO-2 do país do IP (ex. "BR", "DE"), ou None se GeoIP desligado.
+
+    Lê a base apontada por `MOTOR_GEOIP_DB`. Nunca levanta: IP inválido, base
+    ausente ou lib não instalada devolvem None (a trilha é rastro)."""
+    caminho = os.environ.get("MOTOR_GEOIP_DB", "").strip()
+    if not ip or not caminho:
+        return None
+    leitor = _geoip_reader(caminho)
+    if leitor is None:
+        return None
+    try:
+        rec = leitor.get(str(ip))  # type: ignore[attr-defined]
+    except Exception:  # noqa: BLE001 — IP malformado etc.
+        return None
+    pais = (rec or {}).get("country") or {} if isinstance(rec, dict) else {}
+    iso = pais.get("iso_code")
+    return iso if isinstance(iso, str) else None
+
+
+def _fora_do_pais(ip: object) -> bool:
+    """O IP está fora do país que ESTE processo serve? Compara o país do IP com o do
+    perfil (DEC-047: país é dado do deploy, nunca `if pais == \"XX\"` no código)."""
+    iso = pais_do_ip(ip)
+    if not iso:
+        return False
+    try:
+        from motor_expansao.perfil import resolver_perfil  # noqa: PLC0415
+
+        casa = resolver_perfil().pais
+    except Exception:  # noqa: BLE001 — sem perfil resolvível, não marca como fora
+        return False
+    return iso != casa
+
+
+def _rajadas(eventos: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """IPs com rajada de acesso sem conta (janela deslizante). Força-bruta/scraping."""
+    por_ip: dict[str, list[datetime]] = {}
+    for r in eventos:
+        ip, m = r.get("ip"), r.get("momento")
+        if ip and isinstance(m, datetime):
+            por_ip.setdefault(str(ip), []).append(m)
+    janela = timedelta(minutes=_RAJADA_JANELA_MIN)
+    saida: list[dict[str, Any]] = []
+    for ip, tempos in por_ip.items():
+        if len(tempos) < _RAJADA_MIN_ACESSOS:
+            continue
+        tempos.sort()
+        melhor: tuple[int, datetime, datetime] | None = None
+        i = 0
+        for j in range(len(tempos)):
+            while tempos[j] - tempos[i] > janela:
+                i += 1
+            n = j - i + 1
+            if melhor is None or n > melhor[0]:
+                melhor = (n, tempos[i], tempos[j])
+        if melhor is not None and melhor[0] >= _RAJADA_MIN_ACESSOS:
+            saida.append({
+                "pais": pais_do_ip(ip),
+                "fora_do_pais": _fora_do_pais(ip),
+                "acessos": len(tempos),
+                "pico": melhor[0],
+                "dia": melhor[1].date().isoformat(),
+                "de": _hhmm(melhor[1]),
+                "ate": _hhmm(melhor[2]),
+            })
+    saida.sort(key=lambda x: -x["pico"])
+    return saida
+
+
+def _bloco_sem_conta(eventos: list[dict[str, Any]]) -> dict[str, Any]:
+    """Consolida o acesso sem conta (pré-login + robôs): total, por feature, os
+    atípicos AGREGADOS e o DETALHE por evento (para investigar o suspeito).
+
+    O detalhe expõe PAÍS e agente, nunca o IP bruto — a DEC-027 fixou IP só como
+    contagem de distintos nesta aba (`ips_distintos`). O país é derivado (GeoIP) e
+    dá a origem do suspeito sem o identificador em si.
+    """
+    por_feature = Counter(_feature_do_evento(r) for r in eventos)
+    atip = [r for r in eventos if _acesso_sem_conta_atipico(r)]
+    atip.sort(
+        key=lambda r: r["momento"]
+        if isinstance(r.get("momento"), datetime)
+        else datetime.min.replace(tzinfo=UTC),
+        reverse=True,
+    )
+    agregado = Counter(
+        (str(r.get("metodo") or "?"), str(r.get("rota") or "?"), r.get("status")) for r in atip
+    )
+    return {
+        "total": len(eventos),
+        "por_feature": [{"feature": f, "n": n} for f, n in por_feature.most_common()],
+        "atipicos": [
+            {"metodo": m, "rota": rota, "status": s, "n": n}
+            for (m, rota, s), n in agregado.most_common(20)
+        ],
+        "atipicos_total": len(atip),
+        "ips_distintos": len({str(r.get("ip")) for r in eventos if r.get("ip")}),
+        "rajadas": _rajadas(eventos),
+        "atipicos_eventos": [
+            {
+                "dia": r["momento"].date().isoformat()
+                if isinstance(r.get("momento"), datetime)
+                else None,
+                "hora": _hhmm(r.get("momento")),
+                "metodo": str(r.get("metodo") or "?"),
+                "rota": str(r.get("rota") or "?"),
+                "feature": _feature_do_evento(r),
+                "motivo": _motivo_atipico(r),
+                "status": r.get("status"),
+                "pais": pais_do_ip(r.get("ip")),
+                "fora_do_pais": _fora_do_pais(r.get("ip")),
+                "agente": (str(r.get("agente")).strip()[:80] or None) if r.get("agente") else None,
+            }
+            for r in atip[:_TETO_ATIPICOS_DETALHE]
+        ],
+    }
+
+
 # ---------------------------------------------------------------------------
 # Rollup diário sem dado pessoal (tendência além da janela de 90 dias da aba)
 # ---------------------------------------------------------------------------
@@ -379,10 +577,11 @@ def _gravar_rollup(diretorio: Path, dias: dict[str, dict[str, Any]]) -> None:
 
 
 def _dia_de_rollup(eventos: list[dict[str, Any]]) -> dict[str, Any]:
-    por_aba = Counter(str(r["aba"]) for r in eventos if r.get("aba"))
+    reais = [r for r in eventos if _nome(r) not in USUARIOS_OCULTOS]
+    por_aba = Counter(str(r["aba"]) for r in reais if r.get("aba"))
     return {
-        "acoes": len(eventos),
-        "usuarios": len({str(r.get("usuario") or "desconhecido") for r in eventos}),
+        "acoes": len(reais),
+        "usuarios": len({_nome(r) for r in reais if _usuario_de_metrica(_nome(r))}),
         "por_aba": dict(sorted(por_aba.items())),
     }
 
@@ -536,7 +735,10 @@ def _linhas_usuarios(
 ) -> list[dict[str, Any]]:
     por_usuario: dict[str, list[dict[str, Any]]] = {}
     for r in eventos:
-        por_usuario.setdefault(str(r.get("usuario") or "desconhecido"), []).append(r)
+        nome = _nome(r)
+        if not _usuario_de_metrica(nome):
+            continue  # acesso sem conta e contas de teste não entram na tabela
+        por_usuario.setdefault(nome, []).append(r)
     largura_spark = min(int(dias), _DIAS_SPARKLINE)
     eixo_spark = [hoje - timedelta(days=i) for i in range(largura_spark - 1, -1, -1)]
     linhas: list[dict[str, Any]] = []
@@ -575,6 +777,11 @@ def resumo(
 
     consolidar_rollup_seguro(base, agora_utc)
     eventos, do_painel, _confiavel = _eventos_da_janela(base, primeiro, hoje)
+    # Conta de teste some de tudo; o acesso sem conta sai das métricas de usuário
+    # (tabela e únicos) e vai no bloco `sem_conta`, mas segue contando como tráfego
+    # nas ações/série/heatmap (não nomeia ninguém).
+    eventos = [r for r in eventos if _nome(r) not in USUARIOS_OCULTOS]
+    sem_conta = [r for r in eventos if _nome(r) == USUARIO_SEM_CONTA]
     de_hoje = [r for r in eventos if r["momento"].date() == hoje]
 
     # Contagens AO VIVO por dia BRT da janela: alimentam o "hoje" da série e o
@@ -585,7 +792,8 @@ def resumo(
         d = r["momento"].date().isoformat()
         v = vivos.setdefault(d, {"acoes": 0, "usuarios": set()})
         v["acoes"] += 1
-        v["usuarios"].add(str(r.get("usuario") or "desconhecido"))
+        if _usuario_de_metrica(_nome(r)):
+            v["usuarios"].add(_nome(r))
 
     # Série longa: dias fechados vêm do rollup (sobrevivem à poda); hoje entra ao
     # vivo. Dias sem arquivo (container parado = nenhum acesso servível) entram
@@ -614,7 +822,7 @@ def resumo(
         {
             "dia": hoje.isoformat(),
             "acoes": len(de_hoje),
-            "usuarios": len({str(r.get("usuario") or "desconhecido") for r in de_hoje}),
+            "usuarios": len({_nome(r) for r in de_hoje if _usuario_de_metrica(_nome(r))}),
         }
     )
 
@@ -626,17 +834,17 @@ def resumo(
     contagem_abas = Counter(str(r["aba"]) for r in eventos if r.get("aba"))
     usuarios_por_aba: dict[str, set[str]] = {}
     for r in eventos:
-        if r.get("aba"):
-            usuarios_por_aba.setdefault(str(r["aba"]), set()).add(
-                str(r.get("usuario") or "desconhecido")
-            )
+        if r.get("aba") and _usuario_de_metrica(_nome(r)):
+            usuarios_por_aba.setdefault(str(r["aba"]), set()).add(_nome(r))
     por_aba = [
         {"aba": _label(aba), "acoes": n, "usuarios": len(usuarios_por_aba.get(aba, ()))}
         for aba, n in contagem_abas.most_common()
     ]
 
     ultimo = max(
-        (r for r in de_hoje), key=lambda r: r["momento"], default=None
+        (r for r in de_hoje if _usuario_de_metrica(_nome(r))),
+        key=lambda r: r["momento"],
+        default=None,
     )
     aba_top_hoje = Counter(str(r["aba"]) for r in de_hoje if r.get("aba")).most_common(1)
 
@@ -644,7 +852,7 @@ def resumo(
         "gerado_em": agora_brt.strftime("%d/%m %H:%M"),
         "janela_dias": dias,
         "hoje": {
-            "usuarios": len({str(r.get("usuario") or "desconhecido") for r in de_hoje}),
+            "usuarios": len({_nome(r) for r in de_hoje if _usuario_de_metrica(_nome(r))}),
             "acoes": len(de_hoje),
             "aba_top": _label(aba_top_hoje[0][0]) if aba_top_hoje else None,
             "ultimo": (
@@ -657,6 +865,7 @@ def resumo(
         "heatmap": heatmap,
         "por_aba": por_aba,
         "usuarios": _linhas_usuarios(eventos, hoje, dias),
+        "sem_conta": _bloco_sem_conta(sem_conta),
         "saude": _saude(eventos, do_painel),
     }
 
@@ -679,7 +888,7 @@ def ficha_usuario(
 
     da_janela, _do_painel, _confiavel = _eventos_da_janela(base, primeiro, hoje)
     eventos = [r for r in da_janela if str(r.get("usuario") or "desconhecido") == nome]
-    if not eventos:
+    if nome in USUARIOS_OCULTOS or not eventos:
         return None
     eventos.sort(key=lambda r: r["momento"])
 
