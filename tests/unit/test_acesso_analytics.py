@@ -818,3 +818,110 @@ def test_a_nossa_propria_sonda_curl_fica_fora_de_TUDO(tmp_path: Path) -> None:
 
     s = aa.resumo(tmp_path, dias=7, agora_utc=AGORA)["saude"]
     assert s["erros_5xx_fora_da_metrica"] == 1, "a sonda curl entrou na conta do painel"
+
+
+# --- enquadramento do acesso sem conta + ocultar conta de teste (DEC-027) ------
+
+
+def test_conta_de_teste_some_da_aba(tmp_path: Path) -> None:
+    """`zyx_teste` não aparece na tabela de usuários nem tem ficha (404)."""
+    _gravar(tmp_path, AGORA, usuario="felipe")
+    _gravar(tmp_path, AGORA, usuario="zyx_teste")
+
+    r = aa.resumo(tmp_path, dias=7, agora_utc=AGORA)
+    nomes = {u["nome"] for u in r["usuarios"]}
+    assert "felipe" in nomes
+    assert "zyx_teste" not in nomes
+    assert aa.ficha_usuario("zyx_teste", tmp_path, dias=7, agora_utc=AGORA) is None
+
+
+def test_acesso_sem_conta_fora_da_tabela_e_no_bloco(tmp_path: Path) -> None:
+    """`desconhecido` sai da tabela/contagem de usuários e entra no bloco sem_conta."""
+    _gravar(tmp_path, AGORA, usuario="felipe")
+    _gravar(tmp_path, AGORA, usuario="desconhecido", rota="/", metodo="GET", status=200)
+    _gravar(tmp_path, AGORA, usuario="desconhecido", rota="/", metodo="GET", status=200)
+
+    r = aa.resumo(tmp_path, dias=7, agora_utc=AGORA)
+    nomes = {u["nome"] for u in r["usuarios"]}
+    assert nomes == {"felipe"}
+    assert r["hoje"]["usuarios"] == 1  # só felipe conta como usuário
+    assert r["sem_conta"]["total"] == 2
+    features = {f["feature"]: f["n"] for f in r["sem_conta"]["por_feature"]}
+    assert features.get("Abriu o piloto") == 2
+
+
+def test_bloco_sem_conta_marca_atipico(tmp_path: Path) -> None:
+    """Sucesso sem conta em rota protegida é atípico; abrir a página pública, não."""
+    _gravar(tmp_path, AGORA, usuario="desconhecido", rota="/", metodo="GET", status=200)
+    _gravar(tmp_path, AGORA, usuario="desconhecido", rota="/api/uf/SP", metodo="GET", status=200)
+    _gravar(tmp_path, AGORA, usuario="desconhecido", rota="/api/login", metodo="POST", status=401)
+
+    r = aa.resumo(tmp_path, dias=7, agora_utc=AGORA)
+    rotas_atipicas = {a["rota"] for a in r["sem_conta"]["atipicos"]}
+    assert "/api/uf/SP" in rotas_atipicas  # sucesso sem sessão em rota protegida: furo
+    assert "/" not in rotas_atipicas  # abrir o piloto é esperado
+    assert "/api/login" not in rotas_atipicas  # pré-auth e 401, não é atípico
+
+
+
+def test_atipicos_tem_detalhe_sem_ip_bruto(tmp_path: Path) -> None:
+    """Drill-down com hora, rota, status, pais e agente — NUNCA o IP bruto (DEC-027)."""
+    _gravar(tmp_path, AGORA, usuario="desconhecido", rota="/api/uf/SP", metodo="GET",
+            status=200, ip="198.51.100.7", agente="Mozilla/5.0 X")
+    _gravar(tmp_path, AGORA, usuario="desconhecido", rota="/", metodo="GET", status=200)
+
+    sc = aa.resumo(tmp_path, dias=7, agora_utc=AGORA)["sem_conta"]
+    assert sc["atipicos_total"] == 1
+    ev = sc["atipicos_eventos"]
+    assert len(ev) == 1
+    assert ev[0]["rota"] == "/api/uf/SP"
+    assert ev[0]["status"] == 200
+    assert "ip" not in ev[0]  # IP bruto nunca sai no payload
+    assert ev[0]["agente"] == "Mozilla/5.0 X"
+    assert ev[0]["hora"] is not None
+    assert ev[0]["pais"] is None  # sem MOTOR_GEOIP_DB degrada
+    assert ev[0]["fora_do_pais"] is False
+    assert sc["ips_distintos"] >= 1  # contagem (permitida pela DEC-027)
+
+
+
+def test_rajada_de_ip_sem_conta(tmp_path: Path) -> None:
+    """IP sem conta com >=10 acessos em <=5 min vira rajada; IP lento, nao."""
+    for i in range(12):
+        _gravar(tmp_path, AGORA + timedelta(seconds=i * 10), usuario="desconhecido",
+                rota="/api/login", metodo="POST", status=401, ip="185.220.101.1")
+    for i in range(12):  # mesmo volume, mas espalhado (nao e rajada)
+        _gravar(tmp_path, AGORA + timedelta(minutes=i * 20), usuario="desconhecido",
+                rota="/", metodo="GET", status=200, ip="9.9.9.9")
+    sc = aa.resumo(tmp_path, dias=7, agora_utc=AGORA + timedelta(hours=5))["sem_conta"]
+    rajadas = sc["rajadas"]
+    # so o IP de forca-bruta vira rajada; o lento (espalhado) nao. O IP bruto nao e
+    # exposto (DEC-027): conferimos a CONTAGEM e o pico, nao o endereco.
+    assert len(rajadas) == 1
+    assert rajadas[0]["pico"] >= 10
+    assert all("ip" not in r for r in rajadas)
+
+
+def test_rotas_pre_auth_em_sincronia_com_web_server() -> None:
+    """_ROTAS_API_PRE_AUTH espelha ROTAS_PUBLICAS_SEM_SESSAO de web/server/acesso.py.
+    Duas redacoes da mesma lista desencontram em silencio (licao da DEC-044)."""
+    import re as _re
+
+    raiz = Path(__file__).resolve().parents[2]
+    texto = (raiz / "web" / "server" / "acesso.py").read_text(encoding="utf-8")
+    m = _re.search(r"ROTAS_PUBLICAS_SEM_SESSAO\s*=\s*frozenset\(\s*\{([^}]*)\}", texto)
+    assert m, "nao achei ROTAS_PUBLICAS_SEM_SESSAO em web/server/acesso.py"
+    do_web = set(_re.findall(r'"(/api/[^"]+)"', m.group(1)))
+    assert do_web == set(aa._ROTAS_API_PRE_AUTH), (
+        f"pre-auth dessincronizado: web={do_web} analytics={set(aa._ROTAS_API_PRE_AUTH)}"
+    )
+
+
+def test_geoip_degrada_sem_base(tmp_path: Path, monkeypatch) -> None:
+    """Sem MOTOR_GEOIP_DB (ou com base inexistente), GeoIP degrada: pais None, nao levanta."""
+    monkeypatch.delenv("MOTOR_GEOIP_DB", raising=False)
+    assert aa.pais_do_ip("8.8.8.8") is None
+    assert aa._fora_do_pais("8.8.8.8") is False
+    monkeypatch.setenv("MOTOR_GEOIP_DB", str(tmp_path / "nao-existe.mmdb"))
+    assert aa.pais_do_ip("8.8.8.8") is None
+    assert aa._fora_do_pais("8.8.8.8") is False

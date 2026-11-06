@@ -798,6 +798,124 @@ export const COLUNAS_ACESSOS: Coluna<AcessosUsuarioLinha>[] = CHAVES_ORDENAVEIS.
    Nível 1 — o painel.
    --------------------------------------------------------------------------- */
 
+function BlocoSemConta({ sc }: { sc: AcessosResumo['sem_conta'] }) {
+  const [aberto, setAberto] = useState(false)
+  if (!sc || sc.total === 0) {
+    return (
+      <span style={{ font: '400 12px/1.4 var(--f-ui)', color: 'var(--tx-muted)' }}>
+        Nenhum acesso sem conta na janela.
+      </span>
+    )
+  }
+  const nAtipicos = sc.atipicos_total ?? 0
+  const eventos = sc.atipicos_eventos ?? []
+  return (
+    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(12, minmax(0, 1fr))', gap: 16 }}>
+      <div style={{ gridColumn: 'span 7', minWidth: 0 }}>
+        <BarrasHorizontais itens={sc.por_feature.map((f) => ({ rotulo: f.feature, valor: f.n }))} />
+      </div>
+      <div style={{ gridColumn: 'span 5', display: 'flex', flexDirection: 'column', gap: 10 }}>
+        <div style={{ font: '400 11.5px/1.5 var(--f-ui)', color: 'var(--tx-soft)' }}>
+          {sc.total} acessos sem conta na janela, de {sc.ips_distintos} IP(s) distinto(s) — não são
+          usuários: é a tela pública de login sendo aberta e robôs varrendo a internet. Ficam fora
+          da lista de usuários de propósito.
+        </div>
+        {nAtipicos === 0 ? (
+          <span style={{ font: '600 11px/1 var(--f-ui)', color: 'var(--pos-text)' }}>
+            nada atípico na janela
+          </span>
+        ) : (
+          <button
+            type="button"
+            onClick={() => setAberto((v) => !v)}
+            aria-expanded={aberto}
+            style={{
+              alignSelf: 'flex-start',
+              padding: '6px 10px',
+              borderRadius: 'var(--r-md)',
+              border: '1px solid var(--neg)',
+              background: 'transparent',
+              color: 'var(--neg)',
+              font: '600 11px/1 var(--f-ui)',
+              cursor: 'pointer',
+            }}
+          >
+            {nAtipicos} ocorrência{nAtipicos > 1 ? 's' : ''} atípica{nAtipicos > 1 ? 's' : ''} —{' '}
+            {aberto ? 'ocultar detalhe' : 'ver detalhe'}
+          </button>
+        )}
+        {sc.rajadas && sc.rajadas.length > 0 && (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+            <span style={{ font: '600 11px/1.3 var(--f-ui)', color: 'var(--neg)' }}>
+              {sc.rajadas.length} IP(s) com rajada — vários acessos sem conta em ≤ 5 min (força-bruta/scraping):
+            </span>
+            {sc.rajadas.map((r, i) => (
+              <span
+                key={`${r.dia}-${r.de}-${i}`}
+                className="num"
+                style={{ font: '500 10.5px/1.4 var(--f-num)', color: 'var(--tx-soft)' }}
+              >
+                Um IP
+                {r.pais ? (
+                  <strong style={{ color: r.fora_do_pais ? 'var(--neg)' : 'var(--tx-soft)' }}>
+                    {' '}({r.pais}{r.fora_do_pais ? ', fora do país' : ''})
+                  </strong>
+                ) : null}{' '}— {r.pico} em ≤5 min ({r.dia} {r.de}–{r.ate}), {r.acessos} no total
+              </span>
+            ))}
+          </div>
+        )}
+      </div>
+      {aberto && nAtipicos > 0 && (
+        <div style={{ gridColumn: 'span 12', display: 'flex', flexDirection: 'column', gap: 4 }}>
+          <div style={{ font: '400 10px/1.5 var(--f-ui)', color: 'var(--tx-muted)' }}>
+            Acesso sem conta a rota protegida com sucesso, ou erro 5xx. País e agente aparecem
+            aqui; o IP fica só na trilha bruta (DEC-027: nesta aba, IP apenas como contagem).
+          </div>
+          {eventos.map((e, i) => (
+            <div
+              key={`${e.dia}-${e.hora}-${e.rota}-${i}`}
+              style={{
+                display: 'flex',
+                alignItems: 'baseline',
+                gap: 10,
+                padding: '6px 0',
+                borderBottom: '1px solid var(--line-soft)',
+                flexWrap: 'wrap',
+              }}
+            >
+              <span className="num" style={{ width: 96, flexShrink: 0, font: '500 11px/1 var(--f-num)', color: 'var(--tx-muted)' }}>
+                {diaCurto(e.dia)} {e.hora}
+              </span>
+              <Chip tom="red">{String(e.status ?? '?')}</Chip>
+              <span className="num" style={{ font: '600 11px/1 var(--f-num)', color: 'var(--tx-max)' }}>
+                {e.metodo}
+              </span>
+              <span className="num" style={{ font: '500 11px/1.3 var(--f-num)', color: 'var(--tx-soft)', flex: 1, minWidth: 120 }}>
+                {e.rota}
+              </span>
+              <span className="num" style={{ font: '700 10.5px/1 var(--f-num)', color: e.fora_do_pais ? 'var(--neg)' : 'var(--tx-muted)' }}>
+                {e.pais ? `${e.pais}${e.fora_do_pais ? ' (fora do país)' : ''}` : 'país n/d'}
+              </span>
+              <span style={{ font: '500 11px/1.4 var(--f-ui)', color: 'var(--tx-soft)', flexBasis: '100%' }}>
+                {e.feature} — {e.motivo}
+              </span>
+              <span style={{ font: '400 10px/1.3 var(--f-ui)', color: 'var(--tx-muted)', flexBasis: '100%' }}>
+                {e.agente ?? '(sem agente)'}
+              </span>
+            </div>
+          ))}
+          {sc.atipicos_total > eventos.length && (
+            <span style={{ font: '400 10px/1.4 var(--f-ui)', color: 'var(--tx-muted)' }}>
+              e mais {sc.atipicos_total - eventos.length} (detalhe completo na trilha bruta).
+            </span>
+          )}
+        </div>
+      )}
+    </div>
+  )
+}
+
 export default function AcessosScreen({ onInicio }: { onInicio: () => void }) {
   const [dias, setDias] = useState<number>(30)
   const [resumo, setResumo] = useState<AcessosResumo | null>(null)
@@ -1141,6 +1259,10 @@ export default function AcessosScreen({ onInicio }: { onInicio: () => void }) {
 
               <Card span={12} titulo="Administração de usuários">
                 <PainelUsuarios />
+              </Card>
+
+              <Card span={12} titulo="Acessos sem conta — abertura da tela pública e robôs">
+                <BlocoSemConta sc={resumo.sem_conta} />
               </Card>
 
               <div
