@@ -60,7 +60,7 @@ function montarSecoes(p: PremissasViabilidade, demandaPremissa: number | null): 
                 ? `, e cada studio soma só ${brl(p.custo_studio_mes)}/mês de custo fixo, que ` +
                   'já paga a equipe dele.'
                 : ', e cada studio soma só um custo fixo mensal, que já paga a equipe dele.') +
-              ' Quando a demanda vem do modelo de praça, ligar o studio muda os alunos ' +
+              ' Quando a demanda vem do modelo de praça, ter studio muda os alunos ' +
               'sugeridos, e a folha acompanha.',
           },
         ]

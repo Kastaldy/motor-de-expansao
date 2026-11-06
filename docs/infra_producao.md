@@ -1075,8 +1075,8 @@ DRY_RUN=1 /opt/motor-expansao-infra/run_pico_por_uf.sh   # conferir o resumo ant
 ```
 
 Depois, a cópia da home pode ser apagada. **Instalada em 05/11/2026** pelo Felipe, com o modo seco OK; a
-primeira rodada agendada é a de 03/12. A cópia instalada é a da `main` de 05/11 (`7fa9874a`); a de hoje
-difere dela só no comentário de instalação do cabeçalho.
+primeira rodada agendada é a de 03/12. A cópia instalada é a da `main` de 05/11 (`7fa9874a`); a versão do
+repositório a partir de 06/11 difere dela só no comentário de instalação do cabeçalho.
 
 **Linha de crontab (dia 3 de cada mês, 04:00 UTC = 01:00 BRT):**
 
