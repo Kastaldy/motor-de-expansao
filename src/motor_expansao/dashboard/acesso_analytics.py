@@ -391,6 +391,21 @@ def pais_do_ip(ip: object) -> str | None:
     return iso if isinstance(iso, str) else None
 
 
+def _fora_do_pais(ip: object) -> bool:
+    """O IP está fora do país que ESTE processo serve? Compara o país do IP com o do
+    perfil (DEC-047: país é dado do deploy, nunca `if pais == \"XX\"` no código)."""
+    iso = pais_do_ip(ip)
+    if not iso:
+        return False
+    try:
+        from motor_expansao.perfil import resolver_perfil  # noqa: PLC0415
+
+        casa = resolver_perfil().pais
+    except Exception:  # noqa: BLE001 — sem perfil resolvível, não marca como fora
+        return False
+    return iso != casa
+
+
 def _rajadas(eventos: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """IPs com rajada de acesso sem conta (janela deslizante). Força-bruta/scraping."""
     por_ip: dict[str, list[datetime]] = {}
@@ -416,6 +431,7 @@ def _rajadas(eventos: list[dict[str, Any]]) -> list[dict[str, Any]]:
             saida.append({
                 "ip": ip,
                 "pais": pais_do_ip(ip),
+                "fora_do_pais": _fora_do_pais(ip),
                 "acessos": len(tempos),
                 "pico": melhor[0],
                 "dia": melhor[1].date().isoformat(),
@@ -467,6 +483,7 @@ def _bloco_sem_conta(eventos: list[dict[str, Any]]) -> dict[str, Any]:
                 "status": r.get("status"),
                 "ip": (str(r.get("ip")).strip() or None) if r.get("ip") else None,
                 "pais": pais_do_ip(r.get("ip")),
+                "fora_do_pais": _fora_do_pais(r.get("ip")),
                 "agente": (str(r.get("agente")).strip()[:80] or None) if r.get("agente") else None,
             }
             for r in atip[:_TETO_ATIPICOS_DETALHE]

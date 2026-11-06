@@ -856,8 +856,8 @@ function BlocoSemConta({ sc }: { sc: AcessosResumo['sem_conta'] }) {
               >
                 {r.ip}
                 {r.pais ? (
-                  <strong style={{ color: r.pais !== 'BR' ? 'var(--neg)' : 'var(--tx-soft)' }}>
-                    {' '}({r.pais}{r.pais !== 'BR' ? ', fora do BR' : ''})
+                  <strong style={{ color: r.fora_do_pais ? 'var(--neg)' : 'var(--tx-soft)' }}>
+                    {' '}({r.pais}{r.fora_do_pais ? ', fora do país' : ''})
                   </strong>
                 ) : null}{' '}— {r.pico} em ≤5 min ({r.dia} {r.de}–{r.ate}), {r.acessos} no total
               </span>
@@ -896,8 +896,8 @@ function BlocoSemConta({ sc }: { sc: AcessosResumo['sem_conta'] }) {
               <span className="num" style={{ font: '500 10.5px/1 var(--f-num)', color: 'var(--tx-soft)' }}>
                 {e.ip ?? '—'}
                 {e.pais ? (
-                  <span style={{ marginLeft: 6, fontWeight: 700, color: e.pais !== 'BR' ? 'var(--neg)' : 'var(--tx-muted)' }}>
-                    {e.pais}{e.pais !== 'BR' ? ' (fora do BR)' : ''}
+                  <span style={{ marginLeft: 6, fontWeight: 700, color: e.fora_do_pais ? 'var(--neg)' : 'var(--tx-muted)' }}>
+                    {e.pais}{e.fora_do_pais ? ' (fora do país)' : ''}
                   </span>
                 ) : null}
               </span>

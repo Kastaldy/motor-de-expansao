@@ -2609,6 +2609,7 @@ export interface AcessosSemContaEvento {
   /** IP e agente só no detalhe de ATÍPICOS (evento de segurança) — ver DEC-027. */
   ip: string | null
   pais: string | null
+  fora_do_pais: boolean
   agente: string | null
 }
 
@@ -2625,6 +2626,7 @@ export interface AcessosSemConta {
   rajadas: {
     ip: string
     pais: string | null
+    fora_do_pais: boolean
     acessos: number
     pico: number
     dia: string
