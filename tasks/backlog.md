@@ -3636,7 +3636,7 @@ Decidir qual, aplicar no compose por PR, e a aplicação na VPS é passo manual 
 | **Criticidade** | **Média** — o passo é fail-soft por desenho e os apps seguem com os arquivos anteriores; o dano é obsolescência silenciosa, não corrupção. |
 | **Prioridade** | **Média** — está quebrado há 3 semanas e ninguém soube. |
 | **Esteira** | `[aplicação na VPS: passo MANUAL, comando a comando — §6]` + PR neste repositório (o lote de domingo é versionado em `scripts/cron/run_weekly_90.sh` desde 2026-09-17, PR #377; a cópia em `/opt/gymscraping-infra/` é instalação) |
-| **Status** | **Em andamento** — conserto do repositório no PR #528 (`b02e805a`, de 29/10/2026, junto com o pacote de 05/11); aplicação na VPS pendente |
+| **Status** | **Em andamento** — conserto do repositório no PR #528 (`b02e805a`, de 29/10/2026, junto com o pacote de 05/11); **aplicado na VPS em 05/11/2026 pelo Felipe**: a cópia instalada (a versão de 22/09 mais 17 linhas de versões posteriores, sem edição à mão) recebeu só o conserto, sem o bloco do feed do TotalPass da DEC-066 (adiado), e foi conferida pela conta deploy; falta ver o lote de 08/11 |
 | **Depende de** | — |
 | **Autonomia** | **manual (NÃO loop-safe)** — VPS + repositório irmão. NUNCA marcar loop-safe. |
 

@@ -168,6 +168,9 @@ pleno, casa cheia e anuidade em cobrança, **a preços do ano 1**), e esse valor
 (`Premissas.base_folha`, Emenda 1 da DEC-068, decidida por Vinicius em 05/11/2026). A equipe da
 academia não muda com os studios, e cada um já paga a equipe dele nos R$ 6.000/mês de custo fixo
 (§9(d)). No caso de referência, a folha fica em R$ 49.003,79/mês com 0, 1, 2 ou 3 studios.
+A regra vale para a mesma demanda. Quando a demanda vem do modelo de praça, o studio entra no modelo
+só como "tem ou não tem": ter studio muda os alunos sugeridos, e a folha acompanha os alunos (visto
+na conferência de 05/11/2026).
 
 **Por quê:** a equipe existe antes dos alunos. O quadro de pessoal de uma unidade de 1.050 m² é
 dimensionado pela operação que ela vai ter — recepção, limpeza, professores por horário, gerência

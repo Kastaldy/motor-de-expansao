@@ -34,10 +34,12 @@
 # ANTES DE AGENDAR: o modo seco (mede e imprime; staging :ro; sem Telegram):
 #     DRY_RUN=1 /opt/motor-expansao-infra/run_pico_por_uf.sh
 #
-# INSTALACAO (uma vez):
-#     install -d -m 0755 /opt/motor-expansao-infra
-#     cp /opt/motor-expansao/app/scripts/cron/run_pico_por_uf.sh /opt/motor-expansao-infra/
-#     chmod +x /opt/motor-expansao-infra/run_pico_por_uf.sh
+# INSTALACAO (uma vez). O checkout da VPS (/opt/motor-expansao/app) esta parado e NAO tem
+# este script: ele vai da estacao para a home da conta deploy, e o root instala de la':
+#     (estacao) scp -i ~/.ssh/id_ultra_deploy scripts/cron/run_pico_por_uf.sh deploy@<vps>:
+#     (root)    install -d -m 0755 /opt/motor-expansao-infra
+#     (root)    install -m 0755 -o root -g root /home/deploy/run_pico_por_uf.sh /opt/motor-expansao-infra/run_pico_por_uf.sh
+#     (root)    sha256sum /opt/motor-expansao-infra/run_pico_por_uf.sh   # o mesmo da main
 #
 # LINHA DE CRONTAB (dia 3 de cada mes, 04:00 UTC = 01:00 BRT):
 #     0 4 3 * * /opt/motor-expansao-infra/run_pico_por_uf.sh

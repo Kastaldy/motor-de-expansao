@@ -1060,14 +1060,23 @@ da API com `MOTOR_DATA_DIR` e o bind do `perfil.json` de produção). Antes de a
 seco é obrigatório: `DRY_RUN=1 /opt/motor-expansao-infra/run_pico_por_uf.sh` mede e imprime
 sem gravar (staging `:ro`) e sem Telegram.
 
-**Instalação (uma vez, manual, comando a comando — §6):**
+**Instalação (uma vez, manual, comando a comando — §6).** O checkout da VPS (`/opt/motor-expansao/app`)
+está parado em 19/08 e não tem este script: ele vai da estação para a home da conta deploy, e o root
+instala de lá.
 
 ```bash
+# na estação, pela conta deploy:
+scp -i ~/.ssh/id_ultra_deploy scripts/cron/run_pico_por_uf.sh deploy@2.25.137.241:
+# na VPS, como root:
 install -d -m 0755 /opt/motor-expansao-infra
-cp /opt/motor-expansao/app/scripts/cron/run_pico_por_uf.sh /opt/motor-expansao-infra/
-chmod +x /opt/motor-expansao-infra/run_pico_por_uf.sh
+install -m 0755 -o root -g root /home/deploy/run_pico_por_uf.sh /opt/motor-expansao-infra/run_pico_por_uf.sh
+sha256sum /opt/motor-expansao-infra/run_pico_por_uf.sh   # tem de bater com o da main
 DRY_RUN=1 /opt/motor-expansao-infra/run_pico_por_uf.sh   # conferir o resumo antes de agendar
 ```
+
+Depois, a cópia da home pode ser apagada. **Instalada em 05/11/2026** pelo Felipe, com o modo seco OK; a
+primeira rodada agendada é a de 03/12. A cópia instalada é a da `main` de 05/11 (`7fa9874a`); a versão do
+repositório a partir de 06/11 difere dela só no comentário de instalação do cabeçalho.
 
 **Linha de crontab (dia 3 de cada mês, 04:00 UTC = 01:00 BRT):**
 
