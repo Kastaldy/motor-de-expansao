@@ -203,6 +203,12 @@ _ROTAS_API_PRE_AUTH: frozenset[str] = frozenset(
     {"/api/login", "/api/logout", "/api/health", "/api/verify", "/api/verify-sessao"}
 )
 
+#: 5xx de INDISPONIBILIDADE (gateway/serviço fora, restart, fila do banco cheia) — não
+#: é furo, é o backend momentaneamente indisponível. Fica FORA do "atípico": só erro
+#: REAL (`500` e afins) merece olhar. Medido em produção: 7 "atípicos" de 30/10 eram
+#: `503` de um restart (mesmo minuto, mesmo navegador), não um ataque.
+_STATUS_INDISPONIVEL: frozenset[int] = frozenset({502, 503, 504})
+
 #: Pausa que fecha uma sessão na ficha do usuário (leitura de "sentou para usar").
 _GAP_SESSAO = timedelta(minutes=30)
 #: Teto de eventos da linha do tempo da ficha (os mais recentes).
@@ -321,13 +327,14 @@ def _usuario_de_metrica(nome: str) -> bool:
 def _acesso_sem_conta_atipico(r: dict[str, Any]) -> bool:
     """Acesso sem conta que MERECE olhar, e não o ruído esperado.
 
-    Atípico = 5xx (defeito nosso) OU sucesso numa rota /api/* que exige sessão — o
-    portão deveria ter barrado, então um 2xx/3xx ali é sinal de furo. Abrir a
-    página pública e robô varrendo a internet NÃO são atípicos.
+    Atípico = erro REAL do servidor (`500` e afins), NÃO indisponibilidade
+    (`502/503/504` — restart/carga, `_STATUS_INDISPONIVEL`), OU sucesso numa rota
+    /api/* que exige sessão — o portão deveria ter barrado, então um 2xx/3xx ali é
+    sinal de furo. Abrir a página pública e robô varrendo a internet NÃO são atípicos.
     """
     status = r.get("status")
     rota = str(r.get("rota") or "")
-    if isinstance(status, int) and status >= 500:
+    if isinstance(status, int) and status >= 500 and status not in _STATUS_INDISPONIVEL:
         return True
     return (
         rota.startswith("/api/")

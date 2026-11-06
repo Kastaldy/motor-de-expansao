@@ -925,3 +925,23 @@ def test_geoip_degrada_sem_base(tmp_path: Path, monkeypatch) -> None:
     monkeypatch.setenv("MOTOR_GEOIP_DB", str(tmp_path / "nao-existe.mmdb"))
     assert aa.pais_do_ip("8.8.8.8") is None
     assert aa._fora_do_pais("8.8.8.8") is False
+
+
+def test_indisponibilidade_5xx_nao_e_atipico(tmp_path: Path) -> None:
+    """500 (erro real) e atipico; 502/503/504 (indisponibilidade/restart) nao sao."""
+    _gravar(tmp_path, AGORA, usuario="desconhecido", rota="/api/rede/inteligencia",
+            metodo="GET", status=503)
+    _gravar(tmp_path, AGORA, usuario="desconhecido", rota="/api/rede/carteira",
+            metodo="GET", status=502)
+    _gravar(tmp_path, AGORA, usuario="desconhecido", rota="/api/rede/filtros",
+            metodo="GET", status=504)
+    _gravar(tmp_path, AGORA, usuario="desconhecido", rota="/api/rede/unidade",
+            metodo="GET", status=500)
+
+    sc = aa.resumo(tmp_path, dias=7, agora_utc=AGORA)["sem_conta"]
+    rotas = {a["rota"] for a in sc["atipicos"]}
+    assert "/api/rede/unidade" in rotas  # 500 = erro real -> atipico
+    assert "/api/rede/inteligencia" not in rotas  # 503 = indisponibilidade
+    assert "/api/rede/carteira" not in rotas  # 502
+    assert "/api/rede/filtros" not in rotas  # 504
+    assert sc["atipicos_total"] == 1  # so o 500
