@@ -816,8 +816,9 @@ function BlocoSemConta({ sc }: { sc: AcessosResumo['sem_conta'] }) {
       </div>
       <div style={{ gridColumn: 'span 5', display: 'flex', flexDirection: 'column', gap: 10 }}>
         <div style={{ font: '400 11.5px/1.5 var(--f-ui)', color: 'var(--tx-soft)' }}>
-          {sc.total} acessos sem conta na janela — não são usuários: é a tela pública de login
-          sendo aberta e robôs varrendo a internet. Ficam fora da lista de usuários de propósito.
+          {sc.total} acessos sem conta na janela, de {sc.ips_distintos} IP(s) distinto(s) — não são
+          usuários: é a tela pública de login sendo aberta e robôs varrendo a internet. Ficam fora
+          da lista de usuários de propósito.
         </div>
         {nAtipicos === 0 ? (
           <span style={{ font: '600 11px/1 var(--f-ui)', color: 'var(--pos-text)' }}>
@@ -848,13 +849,13 @@ function BlocoSemConta({ sc }: { sc: AcessosResumo['sem_conta'] }) {
             <span style={{ font: '600 11px/1.3 var(--f-ui)', color: 'var(--neg)' }}>
               {sc.rajadas.length} IP(s) com rajada — vários acessos sem conta em ≤ 5 min (força-bruta/scraping):
             </span>
-            {sc.rajadas.map((r) => (
+            {sc.rajadas.map((r, i) => (
               <span
-                key={r.ip}
+                key={`${r.dia}-${r.de}-${i}`}
                 className="num"
                 style={{ font: '500 10.5px/1.4 var(--f-num)', color: 'var(--tx-soft)' }}
               >
-                {r.ip}
+                Um IP
                 {r.pais ? (
                   <strong style={{ color: r.fora_do_pais ? 'var(--neg)' : 'var(--tx-soft)' }}>
                     {' '}({r.pais}{r.fora_do_pais ? ', fora do país' : ''})
@@ -868,8 +869,8 @@ function BlocoSemConta({ sc }: { sc: AcessosResumo['sem_conta'] }) {
       {aberto && nAtipicos > 0 && (
         <div style={{ gridColumn: 'span 12', display: 'flex', flexDirection: 'column', gap: 4 }}>
           <div style={{ font: '400 10px/1.5 var(--f-ui)', color: 'var(--tx-muted)' }}>
-            Acesso sem conta a rota protegida com sucesso, ou erro 5xx. IP e agente aparecem aqui
-            por ser evento de segurança (exceção ao corte de uso da DEC-027).
+            Acesso sem conta a rota protegida com sucesso, ou erro 5xx. País e agente aparecem
+            aqui; o IP fica só na trilha bruta (DEC-027: nesta aba, IP apenas como contagem).
           </div>
           {eventos.map((e, i) => (
             <div
@@ -893,13 +894,8 @@ function BlocoSemConta({ sc }: { sc: AcessosResumo['sem_conta'] }) {
               <span className="num" style={{ font: '500 11px/1.3 var(--f-num)', color: 'var(--tx-soft)', flex: 1, minWidth: 120 }}>
                 {e.rota}
               </span>
-              <span className="num" style={{ font: '500 10.5px/1 var(--f-num)', color: 'var(--tx-soft)' }}>
-                {e.ip ?? '—'}
-                {e.pais ? (
-                  <span style={{ marginLeft: 6, fontWeight: 700, color: e.fora_do_pais ? 'var(--neg)' : 'var(--tx-muted)' }}>
-                    {e.pais}{e.fora_do_pais ? ' (fora do país)' : ''}
-                  </span>
-                ) : null}
+              <span className="num" style={{ font: '700 10.5px/1 var(--f-num)', color: e.fora_do_pais ? 'var(--neg)' : 'var(--tx-muted)' }}>
+                {e.pais ? `${e.pais}${e.fora_do_pais ? ' (fora do país)' : ''}` : 'país n/d'}
               </span>
               <span style={{ font: '500 11px/1.4 var(--f-ui)', color: 'var(--tx-soft)', flexBasis: '100%' }}>
                 {e.feature} — {e.motivo}

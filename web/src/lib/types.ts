@@ -2606,8 +2606,7 @@ export interface AcessosSemContaEvento {
   feature: string
   motivo: string
   status: number | null
-  /** IP e agente só no detalhe de ATÍPICOS (evento de segurança) — ver DEC-027. */
-  ip: string | null
+  /** País (GeoIP) e agente no detalhe dos atípicos — nunca o IP bruto (DEC-027). */
   pais: string | null
   fora_do_pais: boolean
   agente: string | null
@@ -2620,11 +2619,12 @@ export interface AcessosSemConta {
   /** Padrões atípicos agregados — vazio = nada que mereça olhar. */
   atipicos: { metodo: string; rota: string; status: number | null; n: number }[]
   atipicos_total: number
+  /** IPs distintos entre os acessos sem conta (DEC-027: IP só como contagem). */
+  ips_distintos: number
   /** Detalhe por evento dos atípicos (drill-down), mais recentes primeiro. */
   atipicos_eventos: AcessosSemContaEvento[]
   /** IPs com rajada de acesso sem conta (força-bruta/scraping). */
   rajadas: {
-    ip: string
     pais: string | null
     fora_do_pais: boolean
     acessos: number

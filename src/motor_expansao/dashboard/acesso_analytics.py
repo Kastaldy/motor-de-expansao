@@ -429,7 +429,6 @@ def _rajadas(eventos: list[dict[str, Any]]) -> list[dict[str, Any]]:
                 melhor = (n, tempos[i], tempos[j])
         if melhor is not None and melhor[0] >= _RAJADA_MIN_ACESSOS:
             saida.append({
-                "ip": ip,
                 "pais": pais_do_ip(ip),
                 "fora_do_pais": _fora_do_pais(ip),
                 "acessos": len(tempos),
@@ -446,9 +445,9 @@ def _bloco_sem_conta(eventos: list[dict[str, Any]]) -> dict[str, Any]:
     """Consolida o acesso sem conta (pré-login + robôs): total, por feature, os
     atípicos AGREGADOS e o DETALHE por evento (para investigar o suspeito).
 
-    O detalhe dos atípicos expõe IP e agente — exceção consciente ao corte da
-    DEC-027, que vale só aqui: um acesso atípico SEM CONTA é evento de segurança,
-    não uso de pessoa, e o IP é o que o admin precisa para investigar.
+    O detalhe expõe PAÍS e agente, nunca o IP bruto — a DEC-027 fixou IP só como
+    contagem de distintos nesta aba (`ips_distintos`). O país é derivado (GeoIP) e
+    dá a origem do suspeito sem o identificador em si.
     """
     por_feature = Counter(_feature_do_evento(r) for r in eventos)
     atip = [r for r in eventos if _acesso_sem_conta_atipico(r)]
@@ -469,6 +468,7 @@ def _bloco_sem_conta(eventos: list[dict[str, Any]]) -> dict[str, Any]:
             for (m, rota, s), n in agregado.most_common(20)
         ],
         "atipicos_total": len(atip),
+        "ips_distintos": len({str(r.get("ip")) for r in eventos if r.get("ip")}),
         "rajadas": _rajadas(eventos),
         "atipicos_eventos": [
             {
@@ -481,7 +481,6 @@ def _bloco_sem_conta(eventos: list[dict[str, Any]]) -> dict[str, Any]:
                 "feature": _feature_do_evento(r),
                 "motivo": _motivo_atipico(r),
                 "status": r.get("status"),
-                "ip": (str(r.get("ip")).strip() or None) if r.get("ip") else None,
                 "pais": pais_do_ip(r.get("ip")),
                 "fora_do_pais": _fora_do_pais(r.get("ip")),
                 "agente": (str(r.get("agente")).strip()[:80] or None) if r.get("agente") else None,

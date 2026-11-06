@@ -864,8 +864,8 @@ def test_bloco_sem_conta_marca_atipico(tmp_path: Path) -> None:
 
 
 
-def test_atipicos_tem_detalhe_por_evento(tmp_path: Path) -> None:
-    """O drill-down lista cada atipico com hora, rota, status, IP e agente."""
+def test_atipicos_tem_detalhe_sem_ip_bruto(tmp_path: Path) -> None:
+    """Drill-down com hora, rota, status, pais e agente — NUNCA o IP bruto (DEC-027)."""
     _gravar(tmp_path, AGORA, usuario="desconhecido", rota="/api/uf/SP", metodo="GET",
             status=200, ip="198.51.100.7", agente="Mozilla/5.0 X")
     _gravar(tmp_path, AGORA, usuario="desconhecido", rota="/", metodo="GET", status=200)
@@ -876,9 +876,12 @@ def test_atipicos_tem_detalhe_por_evento(tmp_path: Path) -> None:
     assert len(ev) == 1
     assert ev[0]["rota"] == "/api/uf/SP"
     assert ev[0]["status"] == 200
-    assert ev[0]["ip"] == "198.51.100.7"
+    assert "ip" not in ev[0]  # IP bruto nunca sai no payload
     assert ev[0]["agente"] == "Mozilla/5.0 X"
     assert ev[0]["hora"] is not None
+    assert ev[0]["pais"] is None  # sem MOTOR_GEOIP_DB degrada
+    assert ev[0]["fora_do_pais"] is False
+    assert sc["ips_distintos"] >= 1  # contagem (permitida pela DEC-027)
 
 
 
@@ -891,6 +894,34 @@ def test_rajada_de_ip_sem_conta(tmp_path: Path) -> None:
         _gravar(tmp_path, AGORA + timedelta(minutes=i * 20), usuario="desconhecido",
                 rota="/", metodo="GET", status=200, ip="9.9.9.9")
     sc = aa.resumo(tmp_path, dias=7, agora_utc=AGORA + timedelta(hours=5))["sem_conta"]
-    ips = {r["ip"]: r["pico"] for r in sc["rajadas"]}
-    assert "185.220.101.1" in ips and ips["185.220.101.1"] >= 10
-    assert "9.9.9.9" not in ips
+    rajadas = sc["rajadas"]
+    # so o IP de forca-bruta vira rajada; o lento (espalhado) nao. O IP bruto nao e
+    # exposto (DEC-027): conferimos a CONTAGEM e o pico, nao o endereco.
+    assert len(rajadas) == 1
+    assert rajadas[0]["pico"] >= 10
+    assert all("ip" not in r for r in rajadas)
+
+
+def test_rotas_pre_auth_em_sincronia_com_web_server() -> None:
+    """_ROTAS_API_PRE_AUTH espelha ROTAS_PUBLICAS_SEM_SESSAO de web/server/acesso.py.
+    Duas redacoes da mesma lista desencontram em silencio (licao da DEC-044)."""
+    import re as _re
+
+    raiz = Path(__file__).resolve().parents[2]
+    texto = (raiz / "web" / "server" / "acesso.py").read_text(encoding="utf-8")
+    m = _re.search(r"ROTAS_PUBLICAS_SEM_SESSAO\s*=\s*frozenset\(\s*\{([^}]*)\}", texto)
+    assert m, "nao achei ROTAS_PUBLICAS_SEM_SESSAO em web/server/acesso.py"
+    do_web = set(_re.findall(r'"(/api/[^"]+)"', m.group(1)))
+    assert do_web == set(aa._ROTAS_API_PRE_AUTH), (
+        f"pre-auth dessincronizado: web={do_web} analytics={set(aa._ROTAS_API_PRE_AUTH)}"
+    )
+
+
+def test_geoip_degrada_sem_base(tmp_path: Path, monkeypatch) -> None:
+    """Sem MOTOR_GEOIP_DB (ou com base inexistente), GeoIP degrada: pais None, nao levanta."""
+    monkeypatch.delenv("MOTOR_GEOIP_DB", raising=False)
+    assert aa.pais_do_ip("8.8.8.8") is None
+    assert aa._fora_do_pais("8.8.8.8") is False
+    monkeypatch.setenv("MOTOR_GEOIP_DB", str(tmp_path / "nao-existe.mmdb"))
+    assert aa.pais_do_ip("8.8.8.8") is None
+    assert aa._fora_do_pais("8.8.8.8") is False
