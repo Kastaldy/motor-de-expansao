@@ -11,6 +11,7 @@
 #   coleta      domingo pós-coleta: resumo do relatório GymScraping ou alerta de falha
 #   agregadores idade da última partição de snapshot de cada agregador (cron semanal, BLK-MA-21)
 #   crescimento idade do artefato da camada de crescimento municipal (cron trimestral, DEC-052)
+#   geoip       idade da base GeoIP do pais do IP na aba Acessos (cron mensal, DEC-082)
 #   mercado     coerência da camada de mercado com o cadastro de concorrentes (cron semanal, DEC-059)
 #   pins        idade da última PROMOÇÃO dos pins de M&A + quantos são desenháveis (cron semanal)
 #   banco       backup (dump do dia, última execução, cópia semanal, off-box), expurgo das sessões
@@ -69,6 +70,12 @@ AGREGADORES=(wellhub)
 # O default 100 tem PARIDADE com `crescimento/constantes.py` (teste trava os dois).
 CRESCIMENTO_MAX_DIAS="${MONITOR_CRESCIMENTO_MAX_DIAS:-100}"
 CRESCIMENTO_PARQUET="${MONITOR_CRESCIMENTO_PARQUET:-/opt/motor-expansao/data/staging/crescimento_municipal.parquet}"
+# Base GeoIP (DEC-082): cron MENSAL (run_geoip_update.sh) baixa o DB-IP Country Lite e
+# troca a base por rename atomico. Base que NUNCA existiu tambem e FAIL (GeoIP ainda nao
+# instalado). O mtime e HONESTO aqui: o cron so troca o arquivo quando ha base nova e
+# validada. ~1 mes + folga: 45 dias acusa FAIL ~2 semanas apos um mes perdido, nao na hora.
+GEOIP_MAX_DIAS="${MONITOR_GEOIP_MAX_DIAS:-45}"
+GEOIP_BASE="${MONITOR_GEOIP_BASE:-/opt/motor-expansao/data/geoip/dbip-country-lite.mmdb}"
 # Camada de mercado/residual (DEC-059): cron SEMANAL, dentro da janela de domingo.
 #
 # 9 dias pelo mesmo raciocínio do limiar dos agregadores: a rodada da própria semana
@@ -445,6 +452,24 @@ check_crescimento() {
     fi
 }
 
+check_geoip() {
+    # Idade da base GeoIP (DEC-082). Sem este check, um cron mensal morto seria invisivel:
+    # GeoIP e OPCIONAL -- a aba Acessos degrada o pais para "n/d" sem erro e /api/health segue 200.
+    local idade_seg idade_dias
+    if [[ ! -f "$GEOIP_BASE" ]]; then
+        report geoip FAIL "Base GeoIP NUNCA instalada (${GEOIP_BASE} ausente). O cron mensal (run_geoip_update.sh) e a 1a carga foram instalados?"
+        return
+    fi
+    idade_seg=$(($(date +%s) - $(stat -c %Y "$GEOIP_BASE")))
+    idade_dias=$((idade_seg / 86400))
+    if ((idade_dias > GEOIP_MAX_DIAS)); then
+        report geoip FAIL "Base GeoIP com ${idade_dias} dias (limiar ${GEOIP_MAX_DIAS}). O cron mensal rodou? Ver /var/log/motor-snapshots/geoip_latest.log"
+    else
+        log "geoip: OK (${idade_dias}d)"
+        report geoip OK ""
+    fi
+}
+
 check_mercado() {
     # Coerência da camada de mercado com o cadastro de concorrentes (DEC-059).
     #
@@ -808,6 +833,7 @@ authelia) check_authelia ;;
 coleta) check_coleta ;;
 agregadores) check_agregadores ;;
 crescimento) check_crescimento ;;
+geoip) check_geoip ;;
 mercado) check_mercado ;;
 pins) check_pins ;;
 banco) check_banco ;;
@@ -816,7 +842,7 @@ test)
     echo "mensagem de teste enviada"
     ;;
 *)
-    echo "uso: $0 {containers|host|authelia|coleta|agregadores|crescimento|mercado|pins|banco|test}" >&2
+    echo "uso: $0 {containers|host|authelia|coleta|agregadores|crescimento|geoip|mercado|pins|banco|test}" >&2
     exit 2
     ;;
 esac

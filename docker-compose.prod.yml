@@ -398,6 +398,10 @@ services:
       # PRECISA estar aqui, e nao so' no `.env`: este compose nao tem `env_file`.
       #   MOTOR_ROTAS_URL=http://motor_expansao_valhalla:8002
       MOTOR_ROTAS_URL: ${MOTOR_ROTAS_URL:-}
+      # GeoIP (pais do IP) na aba Acessos (DEC-082, READ-ONLY sobre o M1): caminho da base
+      # .mmdb DENTRO do container. Vazia (default) = GeoIP desligado, o pais degrada p/ n/d.
+      # Base montada :ro abaixo e trocada pelo cron mensal (docs/geoip_atualizacao.md).
+      MOTOR_GEOIP_DB: ${MOTOR_GEOIP_DB:-}
     volumes:
       # O perfil do pais desta instancia (Bloco A / DEC-047). E o PRIMEIRO arquivo que o
       # `web/server/app.py` le no import: sem ele o processo NAO sobe, de proposito — uma
@@ -425,6 +429,9 @@ services:
       # cadastro (DEC-023) e trilha de acesso (DEC-027). Host: `chown 1000:1000` (appuser).
       - /opt/motor-expansao/cadastro:/app/cadastro:rw            # cadastro operacional (consultor etc.)
       - /opt/motor-expansao/logs/acesso:/app/logs/acesso:rw      # trilha de acesso (quem fez o que)
+      # Base GeoIP (DB-IP Country Lite, CC BY) -- leitura pura, compartilhada com o web_ar.
+      # DIRETORIO (nao arquivo) p/ o cron trocar a base por rename atomico sem recriar o mount.
+      - /opt/motor-expansao/data/geoip:/app/data/geoip:ro        # pais do IP na aba Acessos (DEC-082)
     networks:
       - app_net
     security_opt:

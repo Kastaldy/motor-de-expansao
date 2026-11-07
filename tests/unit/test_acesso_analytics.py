@@ -945,3 +945,25 @@ def test_indisponibilidade_5xx_nao_e_atipico(tmp_path: Path) -> None:
     assert "/api/rede/carteira" not in rotas  # 502
     assert "/api/rede/filtros" not in rotas  # 504
     assert sc["atipicos_total"] == 1  # so o 500
+
+
+def test_geoip_usa_a_base_quando_ligada(monkeypatch) -> None:
+    """Com MOTOR_GEOIP_DB e um leitor que devolve pais, a aba USA a base: pais preenchido e
+    `fora_do_pais` True quando o pais do IP difere do perfil do processo (DEC-082)."""
+    import types
+
+    monkeypatch.setenv("MOTOR_GEOIP_DB", "/qualquer/base.mmdb")
+
+    class _LeitorFalso:
+        def get(self, ip: str) -> object:
+            return {"country": {"iso_code": "DE"}} if ip == "203.0.113.7" else None
+
+    monkeypatch.setattr(aa, "_geoip_reader", lambda _caminho: _LeitorFalso())
+    monkeypatch.setattr(
+        "motor_expansao.perfil.resolver_perfil",
+        lambda: types.SimpleNamespace(pais="BR"),
+    )
+    assert aa.pais_do_ip("203.0.113.7") == "DE"
+    assert aa._fora_do_pais("203.0.113.7") is True   # DE != BR (perfil do processo)
+    assert aa.pais_do_ip("198.51.100.1") is None      # sem registro -> None
+    assert aa._fora_do_pais("198.51.100.1") is False  # sem pais, nao marca

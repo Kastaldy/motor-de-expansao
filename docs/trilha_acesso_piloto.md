@@ -264,13 +264,13 @@ A aba Acessos (e o relatório do Telegram) não listam o `desconhecido` como usu
   o corte é só de exibição.
 - **Acesso sem conta** (`usuario == "desconhecido"`): sai da tabela/contagem de usuários e
   vai no bloco **"Acessos sem conta"** (abertura da tela pública + robôs), com:
-  - **atípicos** — 5xx, ou sucesso em rota `/api/*` que exige sessão (o portão deveria ter
-    barrado), com drill-down por evento (hora, rota, status, IP, agente e descrição);
+  - **atípicos** — erro real do servidor (500 e afins; 502/503/504 de restart/carga NÃO contam), ou sucesso em rota `/api/*` que exige sessão (o portão deveria ter
+    barrado), com drill-down por evento (hora, rota, status, país, agente e descrição);
   - **rajadas** — `_RAJADA_MIN_ACESSOS` (10)+ acessos do mesmo IP em `_RAJADA_JANELA_MIN`
     (5) min — força-bruta/scraping.
 
-IP e agente aparecem **só** no detalhe de atípicos/rajadas, por serem evento de segurança
-— exceção consciente ao corte de uso da DEC-027.
+O **país** e o agente aparecem no detalhe de atípicos/rajadas (evento de segurança); o IP
+entra apenas como contagem de distintos (`ips_distintos`) — a DEC-027 fixou o IP só como contagem.
 
 ### GeoIP (país do IP) — OPCIONAL
 
@@ -279,6 +279,12 @@ uma base MaxMind-mmdb. Liga-desliga por ambiente:
 
 - `MOTOR_GEOIP_DB` = caminho da base `.mmdb` no container. Sem a env (ou sem a lib
   `maxminddb`, ou base ilegível), o país fica vazio e a aba degrada — nada quebra.
-- Base sugerida: **DB-IP Country Lite** (`download.db-ip.com/free/`), licença CC BY, ~4 MB,
-  atualização **mensal**. Montar num volume `:ro` e apontar a env para ela.
-- Como é mensal, prever a atualização (cron ou troca manual do arquivo no volume).
+- Base: **DB-IP Country Lite** (`download.db-ip.com/free/`), licença **CC BY** (atribuição
+  obrigatória), ~4 MB, atualização **mensal**. Montada `:ro` como diretório compartilhado por
+  BR e AR (`/opt/motor-expansao/data/geoip` → `/app/data/geoip`).
+- **Ativação (DEC-082):** a lib `maxminddb` entra na imagem `web` (grupo `geoip` do `pyproject`
+  + `Dockerfile.web`); as envs `MOTOR_GEOIP_DB` (BR) e `MOTOR_GEOIP_DB_AR` (AR) apontam a base.
+- **Atualização mensal:** o cron `scripts/cron/run_geoip_update.sh` baixa o mês, valida dentro do
+  container, troca por rename atômico e reinicia `web`+`web_ar` (o leitor é memoizado por caminho).
+  Monitor `geoip` no `healthcheck_vps.sh` (idade; nunca-existiu = FAIL). Runbook:
+  `docs/geoip_atualizacao.md`.

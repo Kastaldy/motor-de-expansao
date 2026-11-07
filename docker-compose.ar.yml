@@ -82,6 +82,10 @@ services:
       # o /api/verify responde 404/503 e o Caddy derruba a AR).
       MOTOR_DATABASE_URL: ${MOTOR_DATABASE_URL_AR:-}
       MOTOR_AUTENTICACAO_PROPRIA: ${MOTOR_AUTENTICACAO_PROPRIA_AR:-}
+      # GeoIP (pais do IP) na aba Acessos da AR (DEC-082): a MESMA base global do BR, montada
+      # :ro abaixo; este processo compara com o proprio perfil (AR). `_AR` para ligar BR e AR
+      # de forma independente no mesmo .env. Vazia = desligado (pais degrada p/ n/d).
+      MOTOR_GEOIP_DB: ${MOTOR_GEOIP_DB_AR:-}
       # ── O que NAO entra, e por que ─────────────────────────────────────────────
       # API_BASEMAP_LABELS_URL / API_BASEMAP_TILES_URL: decisao 0.9 — o perfil AR
       #   declara basemap_labels_url_obrigatoria=false (mapa sem toponimo, com aviso
@@ -120,6 +124,9 @@ services:
       # `executiva` fora do perfil (404 pelo gate de pais). Host: chown 1000:1000.
       - /opt/motor-expansao-ar/cadastro:/app/cadastro:rw           # acesso_abas.json (fail-closed + concessoes)
       - /opt/motor-expansao-ar/logs/acesso:/app/logs/acesso:rw     # trilha de acesso (DEC-027)
+      # Base GeoIP compartilhada com o BR (DB-IP Country Lite, CC BY), leitura pura -- como o
+      # branding `ultra` acima. Um so arquivo e um so cron servem as duas stacks (DEC-082).
+      - /opt/motor-expansao/data/geoip:/app/data/geoip:ro          # pais do IP na aba Acessos (DEC-082)
     networks:
       - app_net
     security_opt:
