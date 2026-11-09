@@ -212,7 +212,8 @@ Todas as cinco foram tomadas até 25/09/2026 (a DEC-067 as dá por fechadas); ca
    **CONSEQUÊNCIA QUE ESTA DECISÃO CRIA, e que o resto da epic herda:** a plataforma segue de
    **fator único**. A senha passa a ser a única barreira, e tudo o que a protege carrega o peso
    sozinho — a trava de 5 tentativas em 15 min, o prazo de 2 h da senha temporária e a revogação
-   de sessões na troca. **Nenhum deles tem rede por baixo**, então afrouxar qualquer um é decisão
+   de sessões na troca. *(Desde 09/11/2026 a trava tem dois tetos: 5 por conta e IP, em memória, e
+   50 por conta, no banco — ver a emenda de 09/11 na DEC-067.)* **Nenhum deles tem rede por baixo**, então afrouxar qualquer um é decisão
    de segurança, não de conveniência.
 
    > **DOIS FORAM AFROUXADOS em 25/09/2026, por decisão do dono — e este parágrafo é o padrão que

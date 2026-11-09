@@ -197,6 +197,22 @@ def test_com_o_portao_ligado_o_Remote_User_do_CLIENTE_e_descartado(
     assert "felipe" not in [v for _n, v in req.headers_do_scope()]
 
 
+def test_o_PORTAO_recusa_o_login_que_nao_cabe_no_cabecalho(
+    _ligado: None, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A borda (`/api/verify`) e este portao sao DUAS portas: se so'
+    a primeira recusasse, quem alcancasse o container sem passar pelo Caddy herdaria a identidade
+    degradada (`felipe` + U+200B virava `felipe` no header, e o RBAC dava o perfil do Felipe)."""
+    monkeypatch.setattr(db_sessoes, "validar", lambda _t: _sessao(login="felipe\u200b"))
+
+    req = _Requisicao(cookies={acesso.COOKIE_SESSAO_DEV: "t"})
+    resposta, chegou = _rodar(req)
+
+    assert resposta.status_code == 403
+    assert chegou == [], "a requisicao seguiu para a rota com a identidade degradada"
+    assert req.valores_de("remote-user") == []
+
+
 def test_o_Remote_Email_TAMBEM_e_descartado(_ligado: None, monkeypatch: pytest.MonkeyPatch) -> None:
     """O SEGUNDO header, e e' por ele que o defeito do gerador passaria.
 

@@ -351,9 +351,11 @@ def registrar_login_recusado(
     na resposta HTTP, que continua sendo a mesma para os dois casos justamente para nao
     entregar a lista de quem trabalha aqui.
 
-    A LINHA QUE ESTA FUNCAO GRAVA E' O INSUMO DA TRAVA (18/09/2026): `contar_recusas_recentes`
-    a le, e `POST /api/login` barra a conta em `sessoes.MAX_TENTATIVAS` recusas dentro de
-    `sessoes.JANELA_TENTATIVAS_MIN`. Duas consequencias de manutencao:
+    A LINHA QUE ESTA FUNCAO GRAVA E' O INSUMO DO TETO DA CONTA: `contar_recusas_recentes` a le,
+    e `POST /api/login` barra a conta inteira em `sessoes.MAX_TENTATIVAS_CONTA` recusas dentro de
+    `sessoes.JANELA_TENTATIVAS_MIN`. Desde 09/11/2026 as CINCO recusas que
+    trancam no dia a dia sao as do par (conta, IP), em memoria (`web/server/rate_limit_login`);
+    esta linha e' a rede contra o ataque espalhado. Duas consequencias de manutencao:
 
     - quem NAO chamar esta funcao num caminho de recusa novo abre um buraco na trava, em
       silencio -- a trava so' enxerga o que foi registrado aqui;
@@ -364,8 +366,9 @@ def registrar_login_recusado(
     A tentativa ja' BARRADA nao chega aqui, de proposito: se contasse, uma requisicao por
     janela manteria a conta trancada para sempre e o contador nunca drenaria.
 
-    O QUE CONTINUA EM ABERTO: trava por IP. Sem `id_usuario` nao ha' o que contar, entao
-    varredura de nomes INEXISTENTES nao tranca nada; o IP esta' fora pelo P15.
+    O QUE CONTINUA EM ABERTO: varredura de nomes INEXISTENTES nao tranca nada aqui -- sem
+    `id_usuario` nao ha' o que contar, e o IP esta' fora pelo P15. A trava por IP existe desde
+    09/11/2026, mas em MEMORIA, nao nesta tabela; e o rate-limit por origem corta a taxa.
 
     (A trava NAO e' nenhuma das cinco decisoes numeradas da epic -- a 3 e' 2FA. A versao
     anterior desta docstring dizia que era, e estava errada.)
@@ -388,8 +391,9 @@ def contar_recusas_recentes(
 
     A JANELA E' MOVEL, E ISSO E' O QUE FAZ A TRANCA SE SOLTAR SOZINHA. Contar "5 desde
     sempre" seria bloqueio permanente -- e como a contagem e' POR CONTA, qualquer pessoa
-    trancaria a conta de qualquer outra para sempre, digitando o usuario dela cinco vezes.
-    Com janela, o dano de uma tranca maliciosa expira sem ninguem precisar intervir.
+    trancaria a conta de qualquer outra para sempre. Com janela, o dano de uma tranca maliciosa
+    expira sem ninguem precisar intervir. (Desde 09/11/2026 o teto aqui e' 50, nao 5: as cinco
+    contam por conta+IP em memoria, e esta contagem e' so' a rede contra o ataque espalhado.)
 
     O QUE ELA NAO ALCANCA, e nao ha' como alcancar daqui: tentativa contra usuario que NAO
     EXISTE nao tem `id_usuario` para contar, e o IP -- que resolveria -- nao esta' em

@@ -25,6 +25,7 @@ from fastapi.responses import JSONResponse
 from motor_expansao.api import __version__
 from motor_expansao.api.errors import APIError, api_error_handler, unexpected_error_handler
 from motor_expansao.api.settings import get_settings
+from motor_expansao.origem_ip import chave_de_origem
 
 _log = logging.getLogger("motor_expansao.api")
 
@@ -188,13 +189,23 @@ def create_app() -> FastAPI:
 
     @app.middleware("http")
     async def _rate_limit(request: Request, call_next):
-        """Barra o excedente (429) por token/IP antes do trabalho pesado (BLK-SEC-05)."""
+        """Barra o excedente (429) por token/IP antes do trabalho pesado (BLK-SEC-05).
+
+        A chave so' e' o TOKEN quando ele e' um dos `API_TOKENS` (revisao de seguranca de 06/11/2026).
+        Antes valia qualquer Bearer, ainda nao validado: trocando o token a cada
+        requisicao, cada uma caia numa janela nova e o teto por IP nunca disparava -- o que
+        liberava adivinhar token sem limite e inflar `_rate_state` com uma entrada por token
+        inventado. Token desconhecido agora conta no balde do IP, como quem nao manda token.
+        Os prefixos `tok:`/`ip:` impedem um token valido de colidir com o balde de um IP.
+        """
         if request.url.path not in _rotas_livres_rl:
             auth = request.headers.get("Authorization", "")
             token = auth[7:].strip() if auth[:7].lower() == "bearer " else ""
             xff = request.headers.get("X-Forwarded-For", "")
-            ip = _ip_do_edge(xff, request.client.host if request.client else "")
-            if not _rate_limit_ok(token or ip or "anon"):
+            # Chave agregada (IPv6 no /56): ver `motor_expansao.origem_ip`.
+            ip = chave_de_origem(_ip_do_edge(xff, request.client.host if request.client else ""))
+            chave = f"tok:{token}" if token and token in settings.tokens else f"ip:{ip or 'anon'}"
+            if not _rate_limit_ok(chave):
                 return JSONResponse(
                     {"detail": "Muitas requisicoes. Tente novamente em instantes.", "codigo": "rate_limited"},
                     status_code=429,

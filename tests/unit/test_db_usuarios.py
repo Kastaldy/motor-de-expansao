@@ -733,6 +733,36 @@ def test_criar_grava_exatamente_o_que_o_modulo_de_senha_produziu(
     assert "senha-inicial-do-piloto" not in gravado, "a senha em claro vazou para a coluna"
 
 
+@pytest.mark.parametrize(
+    "login",
+    ["felipe\u200b", "fe\u200blipe", "ana€", "ana silva", "ana\u00a0silva", "ana\u00ad"],
+)
+def test_criar_recusa_login_que_nao_chega_inteiro_ao_backend(
+    monkeypatch: pytest.MonkeyPatch, _sem_argon2: None, login: str
+) -> None:
+    """O login atravessa um header latin-1 e o RBAC re-resolve a
+    pessoa pelo texto. Caractere que some no caminho, ou invisivel na tela, vira outro login.
+    Recusado ANTES de abrir transacao."""
+    con = _con_criacao(monkeypatch)
+    with pytest.raises(ValueError):
+        mod.criar(
+            login=login, nome="Ana", email="ana@ultra.com", perfil="expansao", paises=["BR"],
+            autor=7,
+        )
+    assert con.executados == []
+
+
+@pytest.mark.parametrize("login", ["joão", "maria.souza", "jose-luis", "ana_ribeiro2"])
+def test_criar_aceita_acento_ponto_hifen_e_sublinhado(
+    monkeypatch: pytest.MonkeyPatch, _sem_argon2: None, login: str
+) -> None:
+    """A regra nao e' "so' ASCII": acento cabe em latin-1 e chega intacto."""
+    _con_criacao(monkeypatch)
+    mod.criar(
+        login=login, nome="Ana", email="ana@ultra.com", perfil="expansao", paises=["BR"], autor=7
+    )
+
+
 def test_criar_recusa_quando_a_senha_inicial_nao_esta_configurada(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
