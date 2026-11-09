@@ -102,6 +102,7 @@ from motor_expansao.dashboard import (  # noqa: E402
     rede_metricas,
     saldo_rede,
 )
+from motor_expansao.dashboard import relatorio_praca as _rp  # noqa: E402  (passo 4 e PDF Pontual)
 
 # Contrato financeiro do ponto — REGUA UNICA (FIN-VIAB-01). Estas funcoes moravam aqui
 # dentro; foram para o `src/` para que a API GeoEspacial as use SEM importar esta app.
@@ -326,22 +327,9 @@ NOMEADAS_PATH = STAGING_DIR / "vulnerabilidade_ma_nomeadas.parquet"
 REDES_PATH = STAGING_DIR / "vulnerabilidade_ma_redes.parquet"
 
 # O que o piloto realmente consome do artefato municipal. Lido de forma defensiva:
-# coluna ausente some do subset em vez de derrubar a rota.
-_COLS_CRESCIMENTO = [
-    "cod6",
-    "cres_chave_nome",
-    "cres_tendencia",
-    "cres_emp_pct",
-    "cres_saldo_empresas",
-    "cres_confiab",
-    "cres_salario",
-    "cres_salario_var",
-    "cres_setor",
-    "cres_uf_mediana",
-    "cres_dims",
-    "cres_series",
-    "v_frase",
-]
+# coluna ausente some do subset em vez de derrubar a rota. A lista mora em
+# `relatorio_praca` porque a API le as MESMAS colunas para a pagina do PDF Pontual.
+_COLS_CRESCIMENTO = list(_rp.COLS_CRESCIMENTO_MUNICIPAL)
 
 # As reguas absolutas passam a vir do perfil do pais (Bloco A / DEC-047). Os NOMES de
 # modulo permanecem, e isso nao e preguica: quatro contratos os leem POR ATRIBUTO
@@ -3187,124 +3175,23 @@ def _mun_val(df_muni: pd.DataFrame, col: str) -> Any:
     return s.iloc[0] if len(s) else None
 
 
-def _pct_sinal(v: Any) -> str:
-    """Percentual com sinal explicito e virgula decimal: "+12,0%", "-3,5%".
-
-    O `+.1f` da prosa legada, com o separador pt-BR de `_fmt` -- o mesmo que o tooltip e o
-    PDF usam para o mesmo numero ("variou +12.0%" ao lado de um tooltip com "+12,0%" eram
-    duas grafias na mesma tela).
-    """
-    texto = _fmt(v, 1)
-    if _num(v, 1) is None:  # ausente: o texto de "sem dado", sem sinal nem "%"
-        return texto
-    return f"{texto}%" if texto.startswith("-") else f"+{texto}%"
+# Percentual com sinal explicito e virgula decimal ("+12,0%"): mora com a frase do passo 4
+# em `relatorio_praca`, que e' quem o usa; o nome fica aqui para quem ja o chamava.
+_pct_sinal = _rp._pct_sinal
 
 
 def _narrativa_crescimento(df_muni: pd.DataFrame, municipio: str, *, leitura: bool = False) -> str:
-    """Passo 4. Como a cidade esta indo.
+    """Passo 4. Como a cidade esta indo -- a frase da tela e do PDF Pontual.
 
-    So repassa o que o projeto Crescimento Regional TEC ja apura: a tendencia do
-    emprego formal (CAGED, defasagem ~3 meses) e o saldo de empresas da Receita.
-
-    O `v_frase` E' uma recomendacao — chega a dizer "vale ficar de olho, nao abrir
-    agora" — e chamar tudo isto de "contexto, nao recomendacao" escondia isso. A
-    distincao que vale e de NIVEL, nao de natureza: o veredito e' sobre a PRACA
-    (esta cidade merece atencao?) e nao escolhe nem ordena PONTO — quem faz isso e' o
-    passo 5, pelo residual, sem olhar para o crescimento. Nada aqui promete
-    desempenho de unidade.
-
-    `leitura=True` (TELA da instancia com a regua da recomendacao unica, DEC-077): o
-    veredito sai -- "e praca para entrar" disputaria com o Top 10 a resposta de onde
-    expandir --, e fica so' a leitura descritiva (emprego contra a mediana da UF, setor,
-    salario, fontes, confiabilidade). Sem tendencia, o texto aponta para os Detalhes do
-    passo, onde as cinco dimensoes seguem visiveis. `leitura=False` e o texto legado,
-    intocado: e' o que o PDF Pontual le (`_praca_para_pdf`) e o que a instancia sem regua
-    mostra -- por isso `v_frase` continua em `_COLS_CRESCIMENTO`.
+    A redacao mora em `relatorio_praca.narrativa_crescimento` desde que a API passou a gerar a
+    mesma pagina (`paginas_praca`): uma redacao, tres leitores. Aqui so' se le a linha municipal
+    do frame da tela (broadcast: basta a 1a linha nao nula de cada coluna). `leitura=True` e' a
+    instancia com a regua da recomendacao unica (DEC-077); `leitura=False`, o texto legado.
     """
-    tend = _mun_val(df_muni, "cres_tendencia")
-    conf = _mun_val(df_muni, "cres_confiab")
-    if leitura:
-        if tend is None:
-            tem_detalhes = bool(
-                _texto(_mun_val(df_muni, "cres_dims")) or _texto(_mun_val(df_muni, "cres_series"))
-            )
-            if not tem_detalhes:
-                return f"A leitura de crescimento de {municipio} não está disponível."
-            motivo = (
-                " — poucos vínculos formais para a medição se sustentar" if conf else ""
-            )
-            return (
-                f"O emprego formal de {municipio} não tem tendência confiável no CAGED"
-                f"{motivo}. As cinco leituras de crescimento do município (renda, população, "
-                "empresas, prédios e emprego) estão em Detalhes, abaixo."
-            )
-        veredito = None
-    else:
-        veredito = _mun_val(df_muni, "v_frase")
-    # Percentual da prosa. Na TELA com regua sai com virgula decimal ("+12,0%"), como o
-    # tooltip e o PDF escrevem; o legado segue com o `+.1f` de sempre (o golden da AR e o
-    # texto que o PDF Pontual le travam esses bytes).
-    pct = _pct_sinal if leitura else (lambda v: f"{v:+.1f}%")
-    # `cres_tendencia` e nula de proposito onde a confiabilidade e muito baixa
-    # (2.182 de 5.571 municipios), mas `v_frase` existe em TODOS. Testar a tendencia
-    # primeiro escondia o veredito em 39% do pais — inclusive onde o painel mais
-    # precisa dele. So cai no "sem leitura" quando as DUAS faltam.
-    if tend is None and not veredito:
-        motivo = (
-            " — o município tem vínculos formais de menos para a medição se sustentar"
-            if conf
-            else ""
-        )
-        return (
-            f"Sem leitura de crescimento para {municipio}{motivo}. "
-            "As áreas sem concorrência seguem valendo."
-        )
-    emp = _mun_val(df_muni, "cres_emp_pct")
-    med = _mun_val(df_muni, "cres_uf_mediana")
-    uf = _mun_val(df_muni, "uf")
-    setor = _mun_val(df_muni, "cres_setor")
-    sal = _mun_val(df_muni, "cres_salario")
-    sal_var = _mun_val(df_muni, "cres_salario_var")
-
-    # O VEREDITO vem primeiro: e a leitura de decisao, e o resto e o que a sustenta.
-    if veredito:
-        detalhe = []
-        if setor:
-            detalhe.append(f"A abertura de empresas aqui é puxada por {str(setor).lower()}")
-        if sal is not None:
-            t = f"quem é admitido entra ganhando R$ {_fmt(int(sal))}"
-            if sal_var is not None:
-                t += f" ({sal_var:+.1f}% no ano)"
-            detalhe.append(t)
-        cauda = (" " + ", ".join(detalhe) + ".") if detalhe else ""
-        aviso = ""
-        if conf and str(conf) in ("baixa", "muito_baixa"):
-            aviso = " Confiabilidade baixa: poucos vínculos formais no município."
-        return f"{veredito}{cauda} CAGED, RAIS, Receita Federal e satélite.{aviso}"
-
-    # Passa pelo MESMO mapa do tooltip. Antes havia um `.replace("estavel", ...)`
-    # ad-hoc aqui: dois dialetos para a mesma coluna, e so um deles saberia de um
-    # rotulo novo.
-    tend_txt = _ROTULO_TEND.get(str(tend), str(tend)).lower()
-    partes = [f"O emprego formal em {municipio} está {tend_txt}"]
-    if emp is not None:
-        partes[0] += f": variou {pct(emp)} desde dez/2022"
-        # Numero sozinho nao tem escala. A mediana da UF da a referencia em uma linha.
-        if med is not None:
-            comp = "acima" if emp > med else "abaixo" if emp < med else "na"
-            partes[0] += f", {comp} da mediana de {uf or 'estado'} ({pct(med)})"
-    partes[0] += "."
-    if setor:
-        partes.append(f"O que mais puxa a abertura de empresas aqui é {str(setor).lower()}.")
-    if sal is not None:
-        frase = f"Quem é admitido entra ganhando R$ {_fmt(int(sal))}"
-        if sal_var is not None:
-            frase += f", {pct(sal_var)} em relação ao ano anterior"
-        partes.append(frase + ".")
-    partes.append("CAGED e Receita Federal, até junho de 2026 — contexto sobre a praça.")
-    if conf and str(conf) in ("baixa", "muito_baixa"):
-        partes.append("Confiabilidade baixa: poucos vínculos formais no município.")
-    return " ".join(partes)
+    linha = {c: _mun_val(df_muni, c) for c in _COLS_CRESCIMENTO}
+    return _rp.narrativa_crescimento(
+        linha, municipio, uf=_mun_val(df_muni, "uf"), rotulo_tendencia=_ROTULO_TEND, leitura=leitura
+    )
 
 
 # ============================================================================
@@ -13444,15 +13331,9 @@ def _hexes_do_municipio(uf: str, cod_municipio: str | None, nome_municipio: str 
     fallback de `_juntar_crescimento` (6 UFs tem o codigo 100% nulo no M1). Devolve um frame
     NOVO: `carregar_uf` e' cache compartilhado entre requisicoes.
     """
-    df = carregar_uf(uf)
-    mask = pd.Series(False, index=df.index)
-    if cod_municipio and "cod_municipio" in df.columns:
-        cod = df["cod_municipio"].astype("string").str.replace(r"\.0$", "", regex=True)
-        mask |= (cod == str(cod_municipio)) | (cod.str[:6] == str(cod_municipio)[:6])
-    if nome_municipio and "nome_municipio" in df.columns:
-        alvo = _norm_nome(pd.Series([nome_municipio])).iloc[0]
-        mask |= _norm_nome(df["nome_municipio"]) == alvo
-    return df.loc[mask].copy()
+    return _rp.filtrar_hexes_do_municipio(
+        carregar_uf(uf), cod_municipio=cod_municipio, nome_municipio=nome_municipio
+    )
 
 
 def _praca_para_pdf(
@@ -13468,13 +13349,12 @@ def _praca_para_pdf(
 ):
     """Monta a `PracaDoPonto` das duas paginas novas (pressao e crescimento). `None` sem base da UF.
 
-    Mapa que falha vira fallback textual; municipio ou hexagono sem crescimento viram a frase de
-    "sem dado". Nenhum caminho daqui derruba o PDF.
+    Aqui so' se CARREGA o recorte (o frame da tela, ja com `cres_*` e `cres_hex_*`); a montagem
+    e' a de `praca_do_ponto.montar_praca_do_ponto`, a mesma da API (`paginas_praca`). Mapa que
+    falha vira fallback textual; municipio ou hexagono sem crescimento viram a frase de "sem
+    dado". Nenhum caminho daqui derruba o PDF.
     """
-    import h3
-
-    from motor_expansao.dashboard import relatorio_praca as rp
-    from motor_expansao.dashboard import relatorio_praca_mapas as rpm
+    from motor_expansao.dashboard.praca_do_ponto import montar_praca_do_ponto
 
     try:
         hexes = _hexes_do_municipio(uf, cod_municipio, nome_municipio)
@@ -13482,59 +13362,23 @@ def _praca_para_pdf(
         _LOG_PRACA.warning("praca sem base da UF %s: %s", uf, exc.detail)
         return None
 
-    municipio = nome_municipio or (str(_mun_val(hexes, "nome_municipio")) if len(hexes) else "")
-    municipio = municipio.title() if municipio.isupper() else municipio
-
-    linha_cres = {c: _mun_val(hexes, c) for c in _COLS_CRESCIMENTO if c in hexes.columns}
     # DEC-077: na instancia com a regua da recomendacao unica o PDF Pontual tambem perde a
     # frase-veredito ("E' praca para entrar" e variantes) e fica com a leitura descritiva da
     # TELA (`leitura=True`). Sem regua (AR), o texto legado de sempre.
-    leitura = _regra_recomendacao() is not None
-    if leitura:
-        linha_cres.pop("v_frase", None)
-        tem_cres = linha_cres.get("cres_tendencia") is not None or bool(
-            _texto(linha_cres.get("cres_dims")) or _texto(linha_cres.get("cres_series"))
-        )
-    else:
-        tem_cres = linha_cres.get("cres_tendencia") is not None or linha_cres.get("v_frase")
-    frase = _narrativa_crescimento(hexes, municipio, leitura=leitura) if tem_cres else None
-    crescimento = rp.resumir_crescimento(linha_cres, uf=uf, frase=frase, rotulo_tendencia=_ROTULO_TEND)
-
-    # Hexagono do ponto: primeiro na propria cidade (ja com `cres_hex_*`); ponto na divisa cai
-    # num hexagono de outro municipio, e ai' a leitura vem direto da camada por hexagono.
-    hex_ponto = str(h3.latlng_to_cell(lat, lng, 7))
-    linha_hex: dict[str, Any] | None = None
-    if "hex_id" in hexes.columns:
-        achados = hexes.loc[hexes["hex_id"].astype(str) == hex_ponto]
-        if len(achados):
-            linha_hex = achados.iloc[0].to_dict()
-    if linha_hex is None or pd.isna(pd.to_numeric(pd.Series([linha_hex.get("cres_hex_taxa")]), errors="coerce").iloc[0]):
-        chex = carregar_crescimento_hex()
-        if chex is not None:
-            achados = chex.loc[chex["hex_id"] == hex_ponto]
-            if len(achados):
-                linha_hex = achados.iloc[0].to_dict()
-    crescimento_hex = rp.crescimento_do_hexagono(linha_hex, hexes)
-
-    mapas: dict[str, bytes] = {}
-    for fundo in ((True, False) if basemap else (False,)):
-        try:
-            mapas["pressao_raios"] = rpm.render_pressao_raios(lat, lng, comp_df, ultra_df, basemap=fundo)
-            break
-        except Exception as exc:  # noqa: BLE001 - mapa que falha vira fallback textual
-            _LOG_PRACA.warning("mapa pressao_raios (fundo=%s) falhou: %r", fundo, exc)
-
-    _LOG_PRACA.info(
-        "praca %s/%s: hexagono %s, crescimento=%s, obra nova=%s",
-        municipio, uf, hex_ponto, crescimento.disponivel, crescimento_hex.disponivel,
-    )
-    return rp.PracaDoPonto(
-        municipio=municipio,
+    return montar_praca_do_ponto(
+        lat,
+        lng,
         uf=uf,
-        pressao=rp.pressao_sobre_ponto(lat, lng, comp_df, ultra_df),
-        crescimento=crescimento,
-        crescimento_hex=crescimento_hex,
-        mapas=mapas,
+        nome_municipio=nome_municipio,
+        hexes_cidade=hexes,
+        linha_crescimento={c: _mun_val(hexes, c) for c in _COLS_CRESCIMENTO},
+        carregar_crescimento_hex=carregar_crescimento_hex,
+        comp_df=comp_df,
+        ultra_df=ultra_df,
+        leitura=_regra_recomendacao() is not None,
+        rotulo_tendencia=_ROTULO_TEND,
+        basemap=basemap,
+        log=_LOG_PRACA,
     )
 
 

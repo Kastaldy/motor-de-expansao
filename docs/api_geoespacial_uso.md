@@ -133,6 +133,7 @@ ou **PDF** (8 páginas sem `viabilidade`: as 7 de base + a Conclusão só-estudo
 | `info_imovel` | `object` / `null` | Não | Dados do imóvel (`metragem_m2`, `aluguel_pedido`, `valor_venda`, `pe_direito_m`, `vagas`, `tipo_imovel`, `endereco`, `observacoes`) → página "Imóvel · Informações" |
 | `viabilidade` | `object` / `null` | Não | Cenário financeiro (`m2`, `aluguel`, `demanda` obrigatórios) → páginas de Viabilidade + Conclusão com selo financeiro |
 | `alcance` | `"raio_1km"` / `"raio_2km"` / `"carro_5min"` / `"carro_10min"` / `null` | Não | Recorte do Estudo (DEC-074, Emenda 3). Fora do raio de 1 km: só no PDF e sem `viabilidade` nem `info_imovel` (ver "Estudo por alcance" abaixo) |
+| `paginas_praca` | `boolean` | Não (default `false`) | Com `true`, o PDF ganha "Pressão concorrencial" (depois de Concorrentes) e "Como a cidade está indo" (depois de Big Numbers), as duas páginas do PDF do site, pela mesma montagem (emenda de 2026-11-09 da DEC-005). Sem o campo, o PDF de sempre (o bot não manda). Ignorado na saída JSON |
 
 **`viabilidade` não repete `lat`/`lng`** — a coordenada é a do próprio request (ou a resolvida
 do `maps_url`). Dois lugares para o mesmo ponto seria um lugar para eles discordarem.

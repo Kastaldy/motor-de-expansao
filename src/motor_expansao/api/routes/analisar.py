@@ -82,6 +82,7 @@ async def analisar(
             tipo_imovel=payload.tipo_imovel,
             solicitante=payload.solicitante,
             alcance=payload.alcance,
+            paginas_praca=payload.paginas_praca,
         )
         return Response(
             content=pdf_bytes,
