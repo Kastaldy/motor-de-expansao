@@ -51,7 +51,7 @@ from fastapi import FastAPI, Form, Header, HTTPException, Request, UploadFile
 from fastapi.encoders import jsonable_encoder
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse, Response
+from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 from starlette.concurrency import run_in_threadpool
@@ -1196,7 +1196,7 @@ def _registrar_acesso(request: Request, *, status: int, inicio: float, tamanho: 
             ip=_ip_real_do_xff(xff, cliente),
             metodo=request.method,
             rota=caminho,
-            query=request.url.query,
+            query=_redigir_ticket_na_trilha(caminho, request.url.query),
             status=status,
             duracao_ms=round((time.perf_counter() - inicio) * 1000),
             agente=request.headers.get("user-agent"),
@@ -6259,6 +6259,236 @@ def logout(request: Request) -> Response:
             httponly=True,
             samesite="lax",
         )
+    return resposta
+
+
+class TicketSSOIn(BaseModel):
+    """Pedido de ticket de SSO: so\' o pais de DESTINO. O `rd` (caminho final naquele host)
+    viaja na URL de consumo e e\' validado LA\', nao precisa ir no corpo."""
+
+    pais: str
+
+
+@app.post("/api/sso/ticket", include_in_schema=False)
+def sso_ticket(body: TicketSSOIn, request: Request) -> Response:
+    """Emite um ticket de uso unico para a pessoa ENTRAR noutro host sem redigitar a senha
+    (DEC-083, follow-up Opcao B da DEC-081). O apex (seletor pais-neutro) chama isto para
+    QUALQUER pais da pessoa; por isso a rota e\' PAIS-NEUTRA (`ROTAS_PAIS_NEUTRO`), mas EXIGE
+    sessao.
+
+    404 com a chave desligada (como `/api/login`): sem autenticacao propria, nao ha\' handoff.
+    403 se o pais pedido nao estiver entre os paises da pessoa -- gate da DEC-081 na EMISSAO,
+    por pertinencia (sem `if pais == 'XX'`, fio de alarme da DEC-047), fail-closed no vazio.
+    So\' devolve o TOKEN: o front monta a URL de consumo com a tabela pais->host DELE (PAISES em
+    SelecaoPais.tsx), fonte unica do host -- o backend nunca mapeia pais->host (DEC-047).
+    """
+    from motor_expansao.db import sessoes as db_sessoes
+    from motor_expansao.db import sso_tickets as db_sso
+
+    if not db_sessoes.ligada():
+        raise HTTPException(404, "Not Found")
+
+    pais = (body.pais or "").strip().upper()
+    if len(pais) != 2 or not pais.isalpha() or not pais.isascii():
+        raise HTTPException(422, "pais invalido")
+
+    # Reconfere o cookie (o portao ja\' validou a sessao numa rota gateada, mas esta e\'
+    # pais-neutra) para pegar a IDENTIDADE e o id da sessao de origem numa consulta so\'.
+    token = _token_de_sessao(request)
+    sessao = db_sessoes.validar(token or "") if token else None
+    if sessao is None:
+        raise HTTPException(401, "Sessão expirada ou inexistente.")
+
+    if pais not in sessao.identidade.paises:
+        # Membership, fail-closed. A 2a camada e\' o `_portao_de_sessao` do host de DESTINO,
+        # que reconfere ao servir a 1a requisicao da sessao recem-aberta pelo consumo.
+        raise HTTPException(403, "Sua conta não tem acesso a esse país.")
+
+    emitido = db_sso.emitir(
+        id_usuario=sessao.identidade.id_usuario,
+        pais_destino=pais,
+        id_sessao_origem=sessao.id_sessao,
+    )
+    return JSONResponse({"ticket": emitido.token})
+
+
+def _rd_local_seguro(rd: str) -> str:
+    """O `rd` do SSO e\' um CAMINHO local DESTE host (o destino ja\' e\' este processo), nunca
+    uma URL cross-host. Aceita so\' caminho absoluto de UMA barra; vazio, `//evil`, `http://...`,
+    barra invertida ou controle viram `/`. Assim nao ha\' redirect aberto sem um validador de
+    dominio aqui (o gemeo client-side e\' o `destinoSeguro` de `lib/destino.ts`)."""
+    if (
+        rd.startswith("/")
+        and not rd.startswith("//")
+        and "\\" not in rd
+        and not any(c < " " for c in rd)  # todo controle C0 (\t, \0, \n, \r, ...), nao so' \n/\r
+    ):
+        return rd
+    return "/"
+
+
+def _redigir_ticket_na_trilha(caminho: str, query: str) -> str:
+    """Tira o ticket de SSO (`?t=`) da query ANTES de a trilha (DEC-027) grava-la.
+
+    O ticket e' material de credencial (DEC-083), e a trilha tem retencao longa (emenda 2
+    da DEC-027): guardar o segredo para sempre nao tem valor de auditoria -- so' o `rd`
+    tem. Uso unico + TTL de 60s ja' tornam um ticket logado inutil (o consumo e' atomico e
+    acontece ANTES do log), mas nao se guarda credencial a toa. So' a rota de CONSUMO e'
+    afetada; as outras passam intactas. Checagem por CAMINHO (rota), nunca por pais -- o fio
+    de alarme da DEC-047 e' sobre `pais`, nao sobre rota."""
+    if caminho != "/api/sso/entrar" or "t=" not in query:
+        return query
+    from urllib.parse import parse_qsl, urlencode
+
+    pares = [
+        (chave, "<redigido>" if chave == "t" else valor)
+        for chave, valor in parse_qsl(query, keep_blank_values=True)
+    ]
+    return urlencode(pares)
+
+
+#: Cookie efemero do passo de CONFIRMACAO do SSO (DEC-083). `__Host-` em producao (host-only,
+#: nao-plantavel por irmao), sem prefixo em dev (sem https). Vida curta: so' liga a pagina de
+#: confirmacao (GET) ao POST que consome, por double-submit -- NUNCA e' sessao.
+_COOKIE_SSO_CONFIRMA = "__Host-sso_confirma"
+_COOKIE_SSO_CONFIRMA_DEV = "sso_confirma"
+
+
+def _nome_cookie_confirma() -> str:
+    return _COOKIE_SSO_CONFIRMA if acesso.em_producao() else _COOKIE_SSO_CONFIRMA_DEV
+
+
+def _para_o_login_sso(destino: str) -> Response:
+    """Redirect de FALHA do SSO para o login deste host, preservando o destino. Ticket
+    invalido/usado/expirado/pais errado, ou confirmacao sem nonce, cai aqui -- nunca concede."""
+    from urllib.parse import quote
+
+    return RedirectResponse(f"/entrar.html?rd={quote(destino, safe='')}", status_code=303)
+
+
+def _html_confirma_sso(*, login: str, t: str, rd: str, nonce: str) -> str:
+    """Pagina MINIMA de confirmacao do SSO (DEC-083). Mostra de QUEM e' a conta antes de ativar
+    -- a defesa contra login-CSRF. Tudo que vem de fora (login do banco, `t`, `rd`, nonce) e'
+    html-escapado; o POST do form carrega o nonce (double-submit com o cookie `__Host-`)."""
+    import html
+
+    e = html.escape
+    return (
+        "<!doctype html><html lang=\"pt-br\"><head><meta charset=\"utf-8\">"
+        "<meta name=\"viewport\" content=\"width=device-width,initial-scale=1\">"
+        "<title>Confirmar entrada</title><style>"
+        "body{font-family:system-ui,-apple-system,sans-serif;background:#0f1115;color:#e8eaed;"
+        "display:flex;min-height:100vh;align-items:center;justify-content:center;margin:0;padding:16px}"
+        ".c{max-width:420px;width:100%;box-sizing:border-box;padding:32px;border:1px solid #2a2f3a;"
+        "border-radius:16px;background:#161a22}h1{font-size:18px;margin:0 0 10px}"
+        "p{color:#9aa4b2;margin:0 0 22px;line-height:1.5}b{color:#fff}"
+        "button{font:600 15px/1 system-ui;padding:13px 18px;border:0;border-radius:10px;"
+        "background:#3b82f6;color:#fff;cursor:pointer;width:100%}"
+        "a{display:block;text-align:center;margin-top:14px;color:#9aa4b2;font-size:13px}"
+        "</style></head><body><div class=\"c\"><h1>Confirmar entrada</h1>"
+        f"<p>Você está entrando como <b>{e(login)}</b>. Se não reconhece esta conta, não continue.</p>"
+        "<form method=\"post\" action=\"/api/sso/entrar\">"
+        f"<input type=\"hidden\" name=\"t\" value=\"{e(t)}\">"
+        f"<input type=\"hidden\" name=\"rd\" value=\"{e(rd)}\">"
+        f"<input type=\"hidden\" name=\"csrf\" value=\"{e(nonce)}\">"
+        f"<button type=\"submit\">Entrar como {e(login)}</button></form>"
+        "<a href=\"/entrar.html\">Não sou eu / cancelar</a></div></body></html>"
+    )
+
+
+@app.get("/api/sso/entrar", include_in_schema=False)
+def sso_entrar(request: Request, t: str = "", rd: str = "/") -> Response:
+    """Passo 1 do consumo do SSO (DEC-083): NAO consome -- mostra "entrar como <login>?".
+
+    PUBLICA (o ticket E' a credencial; quem chega ainda nao tem sessao neste host). Le' o ticket
+    SEM gastar (`espiar`), confere que e' para ESTE host (`pais_destino == PERFIL.pais`) e serve a
+    pagina de CONFIRMACAO: assim a vitima de um login-CSRF VE de quem e' a conta antes de ativar
+    (fecha o residuo declarado da DEC-083). O gasto so' acontece no POST (passo 2), que exige o
+    nonce que esta pagina setou. Ticket invalido/usado/expirado ou para outro host cai no login.
+    """
+    import secrets
+
+    from motor_expansao.db import sessoes as db_sessoes
+    from motor_expansao.db import sso_tickets as db_sso
+
+    destino = _rd_local_seguro(rd)
+    if not db_sessoes.ligada():
+        raise HTTPException(404, "Not Found")
+
+    espiado = db_sso.espiar(t)
+    if espiado is None or espiado.pais_destino != PERFIL.pais:
+        return _para_o_login_sso(destino)
+
+    # Nonce do double-submit: vai no cookie `__Host-` (HttpOnly) E no campo oculto do form. So' um
+    # POST vindo DESTA pagina (same-origin) carrega os dois iguais -- um auto-POST cross-site do
+    # atacante nao recebe o cookie `lax` nem consegue le-lo, entao nao gasta o ticket sozinho.
+    nonce = secrets.token_urlsafe(24)
+    resposta = HTMLResponse(_html_confirma_sso(login=espiado.login, t=t, rd=destino, nonce=nonce))
+    resposta.set_cookie(
+        key=_nome_cookie_confirma(),
+        value=nonce,
+        max_age=180,
+        httponly=True,
+        secure=acesso.em_producao(),
+        samesite="lax",
+        path="/",  # `__Host-` EXIGE Path=/ (e proibe Domain); e' nonce efemero, inocuo em todo host
+    )
+    resposta.headers["Referrer-Policy"] = "no-referrer"
+    # Clickjacking anularia a defesa (a vitima clicaria sem VER de quem e' a conta): a pagina
+    # de confirmacao NAO pode ser enquadrada. Na APP (defesa em profundidade), nao so' no Caddy
+    # -- o snippet `sec_headers` e' gitignored e a CSP saiu dele por quebrar o mapa da SPA.
+    resposta.headers["X-Frame-Options"] = "DENY"
+    resposta.headers["Content-Security-Policy"] = "frame-ancestors 'none'"
+    return resposta
+
+
+@app.post("/api/sso/entrar", include_in_schema=False)
+def sso_entrar_confirmar(
+    request: Request,
+    t: str = Form(""),
+    rd: str = Form("/"),
+    csrf: str = Form(""),
+) -> Response:
+    """Passo 2 do consumo do SSO (DEC-083): CONFIRMADO -> consome e abre a sessao LOCAL.
+
+    O double-submit (cookie `__Host-` setado pelo GET == campo `csrf` do form) prova que este POST
+    veio da pagina de confirmacao DESTE host, nao de um auto-POST cross-site do atacante (que nao
+    recebe o cookie `lax` nem o le). So' entao: consome o ticket (atomico, uso unico), confere
+    `pais_destino == PERFIL.pais`, abre a sessao `__Host-` local e 303 para o `rd`. Falha -> login.
+    """
+    import secrets
+
+    from motor_expansao.db import sessoes as db_sessoes
+    from motor_expansao.db import sso_tickets as db_sso
+
+    destino = _rd_local_seguro(rd)
+    if not db_sessoes.ligada():
+        raise HTTPException(404, "Not Found")
+
+    cookie_nonce = request.cookies.get(_nome_cookie_confirma())
+    if not cookie_nonce or not csrf or not secrets.compare_digest(cookie_nonce, csrf):
+        return _para_o_login_sso(destino)
+
+    consumido = db_sso.consumir(t)
+    if consumido is None or consumido.pais_destino != PERFIL.pais:
+        return _para_o_login_sso(destino)
+
+    aberta = db_sessoes.abrir(
+        id_usuario=consumido.id_usuario,
+        ip=_ip_real_do_xff(
+            request.headers.get("x-forwarded-for"),
+            request.client.host if request.client else None,
+        ),
+        user_agent=request.headers.get("user-agent"),
+    )
+    resposta = RedirectResponse(destino, status_code=303)
+    _cookie_de_sessao(resposta, aberta.token, lembrar=False)
+    # Queima o cookie de confirmacao (uso unico) e nao vaza o ticket no Referer da navegacao.
+    resposta.delete_cookie(
+        key=_nome_cookie_confirma(), path="/", secure=acesso.em_producao(),
+        httponly=True, samesite="lax",
+    )
+    resposta.headers["Referrer-Policy"] = "no-referrer"
     return resposta
 
 

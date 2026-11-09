@@ -200,7 +200,7 @@ USUARIO_SEM_CONTA = "desconhecido"
 #: `web/server/acesso.py` (não importável daqui). Acesso sem conta a elas é
 #: esperado; fora delas, COM sucesso, é o que o bloco marca como atípico.
 _ROTAS_API_PRE_AUTH: frozenset[str] = frozenset(
-    {"/api/login", "/api/logout", "/api/health", "/api/verify", "/api/verify-sessao"}
+    {"/api/login", "/api/logout", "/api/health", "/api/verify", "/api/verify-sessao", "/api/sso/entrar"}
 )
 
 #: 5xx de INDISPONIBILIDADE (gateway/serviço fora, restart, fila do banco cheia) — não

@@ -460,6 +460,24 @@ export const api = {
     }
   },
 
+  /**
+   * SSO entre hosts (DEC-083, follow-up Opcao B da DEC-081): pede um TICKET de uso unico
+   * para entrar no host de outro pais SEM redigitar a senha. Devolve so o token; quem monta
+   * a URL de consumo e o `SelecaoPais`, que tem a tabela pais->host (o backend nunca mapeia
+   * pais->host -- fio de alarme da DEC-047). **403** = o pais nao esta entre os seus; **404**
+   * = login proprio desligado neste ambiente; **401** = sessao caiu.
+   */
+  ssoTicket: (pais: string): Promise<{ ticket: string }> =>
+    pedir<{ ticket: string }>(
+      '/api/sso/ticket',
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ pais }),
+      },
+      10_000,
+    ),
+
   ufs: () => pedir<{ ufs: string[] }>('/api/ufs'),
 
   /** Oportunidades imobiliárias (camada de oferta, READ-ONLY, sem PII). Lê o

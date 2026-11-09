@@ -155,6 +155,13 @@
       "documento": "021-usuario-paises.md",
       "sha256_bloco": "280da9ec44a2f89df0c19330ea48eb616863c6a946947fbca5770edcf18b4a2e",
       "sha256_arquivo": "072a5959b1e8b60825f619cf2b403249c501506526a52ac368cb8b150a35da4b"
+    },
+    {
+      "versao": "022",
+      "arquivo": "022-sso-tickets.sql",
+      "documento": "022-sso-tickets.md",
+      "sha256_bloco": "1f9451927659914410117186913b92fdd9295aaadb14457deebd2f195463852f",
+      "sha256_arquivo": "f7a4726568aa0c5fd4dd797e92819a77bc95ab1456db47477a0ac4f7c916d534"
     }
   ]
 }

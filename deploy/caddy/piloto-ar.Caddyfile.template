@@ -29,12 +29,12 @@
 # (`motor_expansao_web_ar`), resolvido na rede compartilhada app_app_net.
 
 piloto-ar.ultra-expansao.tech {
-    # As CINCO rotas de fora sao as MESMAS de `acesso.ROTAS_PUBLICAS_SEM_SESSAO` (igual ao BR):
+    # As SEIS rotas de fora sao as MESMAS de `acesso.ROTAS_PUBLICAS_SEM_SESSAO` (igual ao BR):
     # login/logout/health/verify/verify-sessao. A raiz e os estaticos ficam publicos (a tela de
     # login e' a propria SPA); so' o primeiro `/api/*` protegido devolve 401.
     @protegido {
         path /api/*
-        not path /api/login /api/logout /api/health /api/verify /api/verify-sessao
+        not path /api/login /api/logout /api/health /api/verify /api/verify-sessao /api/sso/entrar
     }
 
     # A BORDA FICA, mudando so' o ALVO: de `authelia:9091` para o nosso `web_ar`. `?rd=` SAI

@@ -88,12 +88,12 @@ def test_hash_ignora_fim_de_linha(tmp_path: Path, monkeypatch: pytest.MonkeyPatc
     assert cli._sha256_do_arquivo("x.sql") == com_crlf
 
 
-def test_o_contrato_conferido_cobre_as_13_tabelas_do_modelo() -> None:
+def test_o_contrato_conferido_cobre_as_14_tabelas_do_modelo() -> None:
     """A lista de `conferir` e a da §0 da `verificacao.md` tem de ser a MESMA: se
     divergirem, a ferramenta passa a atestar um contrato que o documento nao descreve.
 
     Eram ONZE ate' a D30, que somou `sessoes` (migration 018), e DOZE ate' a 021 (DEC-081),
-    que somou `usuario_paises` -> 13. O nome deste teste carrega o numero pelo mesmo motivo
+    que somou `usuario_paises` -> 13, e QUATORZE desde a 022 (DEC-083: `sso_tickets`). O nome deste teste carrega o numero pelo mesmo motivo
     que o do `..._as_8_funcoes` logo abaixo: numero no nome que deixou de ser o numero e' a
     deriva doc-contra-codigo que esta suite existe para pegar.
 
@@ -102,7 +102,7 @@ def test_o_contrato_conferido_cobre_as_13_tabelas_do_modelo() -> None:
     A nota da 018 dizia "tres lugares" ate' esta assercao ficar vermelha com `12 == 11`, e
     foi corrigida la'.
     """
-    assert len(cli.TABELAS_DO_MODELO) == 13
+    assert len(cli.TABELAS_DO_MODELO) == 14
     assert postgres.TABELA_MIGRACOES not in cli.TABELAS_DO_MODELO, (
         "a tabela de controle e' do motor, nao do modelo — some-la mudaria os seis numeros"
     )
@@ -156,7 +156,7 @@ def test_contagens_conferem_com_os_seis_numeros_da_secao_zero() -> None:
         # correto passa a acusar DIVERGENTE.
         # 021 (DEC-081): +1 pela PK composta de `usuario_paises`; nenhum `CREATE INDEX`
         # explicito (o `INDICES_ESPERADOS` do `test_migracoes.py` segue 35), entao 49 -> 50.
-        "indices": 50,
+        "indices": 53,  # 022 (DEC-083): +3 de sso_tickets (PK + UNIQUE do token + idx de id_usuario)
         # 14 desde a 019: `ck_usuarios_prazo_exige_troca`, que impede senha PROPRIA com prazo
         # de validade -- o estado que faria a pessoa ser barrada com a senha certa. Era 13 desde
         # a D30 (`chk_sessao_expira_apos_criacao`, a guarda contra sessao que nasce vencida --
@@ -165,12 +165,12 @@ def test_contagens_conferem_com_os_seis_numeros_da_secao_zero() -> None:
         # MIGRATIONS, e nao so' contra um banco vivo, por `test_migracoes.py` -- ate' entao nada
         # o cobria no CI, que ate' 24/10/2026 nao tinha Postgres.
         # 15 desde a 021 (DEC-081): `chk_usuario_paises_sigla` (sigla ISO de 2 letras MAIUSCULAS).
-        "constraints CHECK": 15,
+        "constraints CHECK": 17,  # 022 (DEC-083): +2 (chk_sso_ticket_sigla, chk_sso_ticket_expira_apos_criacao)
         # 12 desde a D30: `sessoes.id_usuario`, a UNICA FK do modelo com ON DELETE CASCADE
         # (sessao nao e' registro a preservar, e sessao orfa decidindo acesso e' o que nao
         # se quer). Toda FK ganha indice, e e' por isso que os indices somaram 3 e nao 2.
         # 13 desde a 021 (DEC-081): `usuario_paises.id_usuario` -> usuarios, ON DELETE CASCADE.
-        "chaves estrangeiras": 13,
+        "chaves estrangeiras": 15,  # 022 (DEC-083): +2 (sso_tickets.id_usuario, sso_tickets.id_sessao_origem)
         # 7 desde a D29: a guarda de coerencia (migration 017) poe uma trigger em
         # `areas_estudo` e outra em `contratos`. Mesma regra do numero acima -- este e o da
         # §0 da `verificacao.md` andam JUNTOS, senao um banco correto acusa DIVERGENTE.
