@@ -46,6 +46,7 @@ id de alvo, para nao haver como chamar isso para outra pessoa por engano.
 from __future__ import annotations
 
 import re
+import unicodedata
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any
@@ -592,6 +593,31 @@ def _normalizar_paises(paises: list[str]) -> list[str]:
     return vistos
 
 
+def _validar_login(login: str) -> None:
+    """Recusa o login que o piloto nao consegue carregar inteiro (revisao de seguranca de 06/11/2026).
+
+    Duas regras, e as duas existem pela MESMA razao: o login atravessa um header HTTP (latin-1)
+    e o RBAC re-resolve a pessoa pelo texto que chegou. Caractere que o header descarta faz o
+    login virar OUTRO login (`felipe` + U+200B chegava como `felipe`); caractere invisivel ou de
+    controle, mesmo dentro de latin-1, faz dois logins parecerem um so' na tela de Acessos.
+
+    Acento continua valendo (`joão` cabe em latin-1) -- a regra nao e' "so' ASCII", e' "o que
+    entra e' o que chega".
+    """
+    try:
+        login.encode("latin-1")
+    except UnicodeEncodeError:
+        raise ValueError(
+            "Login com caractere não aceito. Use letras, números, ponto, hífen ou sublinhado."
+        ) from None
+    for caractere in login:
+        if caractere.isspace() or unicodedata.category(caractere) in ("Cc", "Cf"):
+            raise ValueError(
+                "Login com espaço ou caractere invisível. Use letras, números, ponto, hífen ou "
+                "sublinhado."
+            )
+
+
 def criar(
     *, login: str, nome: str, email: str, perfil: str, paises: list[str], autor: int
 ) -> dict[str, Any]:
@@ -620,6 +646,7 @@ def criar(
     email = email.strip()
     if not login or not nome or not email:
         raise ValueError("Login, nome e e-mail são obrigatórios.")
+    _validar_login(login)
     if "@" not in email:
         raise ValueError("E-mail inválido.")
     paises_norm = _normalizar_paises(paises)

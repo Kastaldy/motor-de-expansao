@@ -270,18 +270,31 @@ def test_o_veredito_nunca_e_cacheavel(_ligado: None, monkeypatch: pytest.MonkeyP
     assert negado.headers["Cache-Control"] == "no-store"
 
 
-def test_login_acentuado_degrada_em_vez_de_derrubar_a_autenticacao(
-    _ligado: None, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """`login_usuario` vem do banco e nao tem restricao de charset. Header e' latin-1, e uma
-    excecao de codificacao aqui vira 500 que o Caddy repassa como NEGACAO — ou seja, um
-    login fora de latin-1 trancaria o dono dele para fora do piloto."""
-    monkeypatch.setattr(db_sessoes, "validar", lambda _t: _sessao(login="joão✓"))
+def test_login_acentuado_passa_intacto(_ligado: None, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Acento portugues cabe em latin-1: o login chega ao backend exatamente como esta' no banco."""
+    monkeypatch.setattr(db_sessoes, "validar", lambda _t: _sessao(login="joão"))
 
     resposta = pilot.verify(_Requisicao(cookies={acesso.COOKIE_SESSAO_DEV: "t"}))
 
     assert resposta.status_code == 200
     assert resposta.headers["Remote-User"] == "joão"
+
+
+@pytest.mark.parametrize("login", ["joão✓", "felipe\u200b", "vinicius€"])
+def test_login_fora_de_latin1_e_RECUSADO_em_vez_de_virar_outro_login(
+    _ligado: None, monkeypatch: pytest.MonkeyPatch, login: str
+) -> None:
+    """Antes o caractere que nao cabia no header era DESCARTADO:
+    `felipe` + espaco de largura zero chegava ao backend como `felipe`, e o RBAC dava a essa
+    conta o perfil e os paises do Felipe. Agora e' 403 -- nem 500 (a excecao de codificacao que
+    a degradacao evitava), nem 200 com o nome de outra pessoa."""
+    monkeypatch.setattr(db_sessoes, "validar", lambda _t: _sessao(login=login))
+
+    resposta = pilot.verify(_Requisicao(cookies={acesso.COOKIE_SESSAO_DEV: "t"}))
+
+    assert resposta.status_code == 403
+    assert "Remote-User" not in resposta.headers, "a negacao entregou uma identidade a borda"
+    assert resposta.headers["Cache-Control"] == "no-store"
 
 
 # --------------------------------------------------------------------------------------

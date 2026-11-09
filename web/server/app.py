@@ -693,17 +693,46 @@ def _sem_headers_de_identidade(scope: dict[str, Any]) -> list[tuple[bytes, bytes
 def _valor_de_cabecalho(valor: str) -> str:
     """Texto seguro para um header HTTP: latin-1, descartando o que nao couber.
 
-    `login_usuario` vem do BANCO e NAO tem restricao de charset (`usuarios.criar` so' exige
-    nao-vazio), entao um login acentuado e' estado legitimo. Header HTTP e' latin-1: o
-    Starlette LEVANTA ao codificar um caractere fora dela, e o estrago depende de onde isso
-    acontece -- no portao seria 500 na requisicao da pessoa; no `/api/verify` seria 500 que o
-    Caddy repassa como NEGACAO, ou seja, um login com acento trancaria o dono dele para fora
-    do piloto. Degradar o valor e' preferivel a derrubar a autenticacao.
+    Header HTTP e' latin-1, e o Starlette LEVANTA ao codificar um caractere fora dela. Para o
+    LOGIN, degradar deixou de ser aceito (revisao de seguranca de 06/11/2026): o RBAC re-resolve a
+    pessoa pelo texto, e o caractere descartado fazia o login virar OUTRO login. Por isso todo
+    login passa antes por `_login_cabe_no_cabecalho`, que recusa com 403, e `usuarios.criar`
+    recusa o login que nao cabe. Aqui o descarte ficou como defesa residual -- para o login ele
+    nao altera mais nada, e para o perfil (`Remote-Groups`) evita o 500. Acento cabe em latin-1.
 
     Redacao UNICA de proposito: o portao e a rota de verificacao emitem a mesma identidade, e
     duas normalizacoes diferentes da mesma string desencontrariam em silencio (DEC-044).
     """
     return valor.encode("latin-1", "ignore").decode("latin-1")
+
+
+def _login_cabe_no_cabecalho(login: str) -> bool:
+    """`True` se o login atravessa o header SEM perder caractere.
+
+    A revisao de seguranca de 06/11/2026 mediu o defeito de degradar: o RBAC, a allowlist de
+    Acessos e a trilha re-resolvem a pessoa pelo TEXTO do header, nao pelo `id_usuario` da
+    sessao. Um login como `felipe` + espaco de largura zero (U+200B) saia do header como
+    `felipe` -- e a conta passava a operar com o perfil, os paises e a autoria de OUTRA pessoa.
+    Acento portugues ou espanhol cabe em latin-1 e passa intacto; o que nao cabe e' recusado
+    com 403, nunca degradado. A criacao ja' recusa esses logins (`usuarios._validar_login`);
+    esta guarda cobre a linha que nasceu antes da regra ou por SQL a mao.
+    """
+    return _valor_de_cabecalho(login) == login
+
+
+def _negar_login_irrepresentavel(login: str) -> JSONResponse:
+    """403 (e nao 401, que a SPA leria como sessao vencida e mandaria para o login em laco)."""
+    _LOG_D17.warning(
+        "login com caractere fora de latin-1 recusado no portao (%d caracteres); corrija o "
+        "login no cadastro",
+        len(login),
+    )
+    return JSONResponse(
+        {"detail": "Seu login tem um caractere que o sistema não aceita. Peça a um "
+         "administrador para corrigi-lo."},
+        status_code=403,
+        headers={"Cache-Control": "no-store"},
+    )
 
 
 def _token_de_sessao(request: Request) -> str | None:
@@ -779,7 +808,9 @@ async def _portao_de_sessao(request: Request, call_next):  # type: ignore[no-unt
                     )
                 except Exception:  # noqa: BLE001 — a trilha nunca derruba rota publica
                     login_publico = None
-                if login_publico:
+                # Rotulo de trilha em rota publica: login que nao cabe no header fica
+                # "desconhecido", em vez de ser carimbado com o nome de outra pessoa.
+                if login_publico and _login_cabe_no_cabecalho(login_publico):
                     valor = _valor_de_cabecalho(login_publico)
                     request.scope["headers"] = [
                         *request.scope["headers"],
@@ -808,6 +839,9 @@ async def _portao_de_sessao(request: Request, call_next):  # type: ignore[no-unt
         # `lib/sessao.ts` ja' trata 401 como queda de sessao SEM precisar de sonda -- e e'
         # por isso que o portao proprio torna a sonda dispensavel para este caso.
         return JSONResponse({"detail": "Sessão expirada ou inexistente."}, status_code=401)
+
+    if not _login_cabe_no_cabecalho(sessao.identidade.login):
+        return _negar_login_irrepresentavel(sessao.identidade.login)
 
     # GATE DE PAIS (DEC-081), 2a camada (defesa em profundidade). O `/api/verify` ja' nega na
     # borda, mas o backend NAO confia no veredito dela (mesmo principio da revalidacao de
@@ -5957,7 +5991,8 @@ def db_sessoes_duracao_s() -> int:
 
 #: BLK-BANCO-07: teto de verificacoes Argon2id CONCORRENTES no /api/login. Medido: cada
 #: verificacao custa 64 MiB + ~60 ms, e o login INEXISTENTE paga o mesmo `ph.hash` (defesa
-#: de cronometro) sem trancar a conta (a trava de 5/15min e' por conta). Pos-corte o
+#: de cronometro) sem trancar a conta (a trava e' 5/15 min por conta+IP em memoria e 50/15 min
+#: por conta no banco; nenhuma tranca login inexistente). Pos-corte o
 #: /api/login e' publico; o rate-limit por IP (`rate_limit_login`) corta a TAXA por origem
 #: e este semaforo corta o CUSTO concorrente. Sem o semaforo, uma rajada de ~32 logins
 #: concorrentes estoura o `mem_limit` do web (OOM) e satura o threadpool compartilhado. O
@@ -5980,22 +6015,25 @@ def login(body: LoginIn, request: Request) -> Response:
     trabalha aqui. E' a mesma decisao que `credenciais_por_login` ja' tomou na consulta,
     onde inexistente e inativo caem no mesmo `None`.
 
-    TRAVA DE TENTATIVAS (18/09/2026): 5 recusas na janela MOVEL de 15 min barram a conta. A
-    contagem sai dos proprios eventos `login.recusado`; o indice
-    `idx_eventos_id_usuario_criado_em` ja' existia, entao nao houve migracao. A janela e'
-    movel de proposito -- sem ela a tranca nunca drenaria e qualquer pessoa poderia deixar a
-    conta de outra trancada para sempre.
+    TRAVA DE TENTATIVAS (18/09/2026; dividida em DOIS tetos em 09/11/2026):
+    5 recusas do MESMO IP na janela MOVEL de 15 min barram aquele IP para aquela conta (em
+    memoria, `rate_limit_login.reservar_tentativa_par`), e 50 recusas da conta, de qualquer origem,
+    barram a conta inteira (no banco, pelos eventos `login.recusado`). Antes o teto de 5 era
+    da CONTA, e quem soubesse um login trancava a dona dele com cinco tentativas por janela.
+    A janela segue movel de proposito -- sem ela a tranca nunca drenaria.
 
     TRAVA POR IP (solidificacao #1 do pentest): `rate_limit_login` limita a TAXA por origem
-    (default 20/60 s), chaveada pelo IP que a BORDA observou (ULTIMO X-Forwarded-For). NAO e'
-    a trava por CONTA de cima (que conta `login.recusado` por `id_usuario`) -- sao eixos
-    distintos. O IP real na borda depende de `trusted_proxies` no Caddy (furo #7, em aberto):
+    (default 20/60 s), chaveada pelo IP que a BORDA observou (ULTIMO X-Forwarded-For; IPv6
+    agregado no /56). NAO e' a trava de tentativas de cima, que conta SENHA ERRADA de conta
+    existente -- este limite conta qualquer tentativa da origem, exista a conta ou nao.
+    O IP real na borda depende de `trusted_proxies` no Caddy (furo #7, em aberto):
     por isso a chave usa o ULTIMO elemento do XFF (o que o Caddy anexa), nunca o 1o que o
     cliente dita. O `regulation:` do Authelia, que cobria isto, saiu no corte.
     """
     from motor_expansao.db import senhas as db_senhas
     from motor_expansao.db import sessoes as db_sessoes
     from motor_expansao.db import usuarios as db_usuarios
+    from motor_expansao.origem_ip import chave_de_origem
 
     if not db_sessoes.ligada():
         raise HTTPException(404, "Not Found")
@@ -6004,9 +6042,13 @@ def login(body: LoginIn, request: Request) -> Response:
     # a BORDA observou (ULTIMO X-Forwarded-For), nao o 1o que o cliente dita -- senao XFF
     # forjado evadiria o teto (furo #7). FORA do try de proposito: la o `_erro_de_usuarios`
     # traduziria o 429. Nao abre oraculo: e por ORIGEM, pre-credencial.
-    _ip_edge = rate_limit_login.ip_observado_pelo_edge(
-        request.headers.get("x-forwarded-for"),
-        request.client.host if request.client else None,
+    # A CHAVE e' a origem agregada (IPv6 no /56, `origem_ip`): sem isso uma maquina com IPv6
+    # girava o endereco e abria balde novo a cada tentativa, nos dois limites abaixo.
+    _ip_edge = chave_de_origem(
+        rate_limit_login.ip_observado_pelo_edge(
+            request.headers.get("x-forwarded-for"),
+            request.client.host if request.client else None,
+        )
     )
     if rate_limit_login.sob_limite(_ip_edge):
         _LOG_D17.warning("login: teto de taxa por IP atingido (429)")
@@ -6026,6 +6068,9 @@ def login(body: LoginIn, request: Request) -> Response:
         # errada" -- troca aceita, porque quem provocou a tranca ja' sabe que a conta
         # existe e o tempo nao lhe conta nada novo.
         trancado = False
+        trancado_par = False
+        reservou_par = False
+        recusas = 0
         if credencial is not None:
             recusas = db_eventos.contar_recusas_recentes(
                 id_usuario=credencial.id_usuario,
@@ -6036,7 +6081,21 @@ def login(body: LoginIn, request: Request) -> Response:
                 # O outro marco que zera (o ultimo acerto) sai do proprio `eventos`, la' dentro.
                 redefinida_em=credencial.redefinida_em,
             )
-            trancado = recusas >= db_sessoes.MAX_TENTATIVAS
+            trancado = recusas >= db_sessoes.MAX_TENTATIVAS_CONTA
+            if not trancado:
+                # O PAR (conta, IP) barra quem esta' errando DESTA origem sem tocar em quem entra
+                # de outra; o teto da conta, acima, e' a rede contra o ataque espalhado. A
+                # checagem RESERVA a tentativa no mesmo lock, antes do Argon2 -- ler e so'
+                # contar depois deixava uma rajada simultanea passar do teto (revisao de 09/11).
+                trancado_par = rate_limit_login.reservar_tentativa_par(
+                    credencial.id_usuario,
+                    _ip_edge,
+                    maximo=db_sessoes.MAX_TENTATIVAS,
+                    janela_s=db_sessoes.JANELA_TENTATIVAS_MIN * 60,
+                    redefinida_em=credencial.redefinida_em,
+                )
+                reservou_par = not trancado_par
+                trancado = trancado_par
 
         # A verificacao roda MESMO sem credencial, e o `None` e' proposital: `senhas.verificar`
         # JA' paga um `ph.hash` descartavel quando o hash e' nulo ou fora do formato PHC,
@@ -6058,6 +6117,9 @@ def login(body: LoginIn, request: Request) -> Response:
         else:
             ocupado = True
             confere = False
+            # Nao foi avaliada: a reserva do par volta, senao a carga contaria como erro de senha.
+            if reservou_par:
+                rate_limit_login.desfazer_reserva_par(credencial.id_usuario, _ip_edge)
 
         # SENHA TEMPORARIA VENCIDA (D31) conta como senha errada, e a checagem vem DEPOIS do
         # Argon2 de proposito -- o oposto da trava acima. La' negar cedo poupa CPU numa rajada;
@@ -6086,8 +6148,9 @@ def login(body: LoginIn, request: Request) -> Response:
         # drenaria. Sem registrar, a tranca SEMPRE expira. Fica o aviso no log do operador,
         # que e' quem precisa enxergar o ataque.
         _LOG_D17.warning(
-            "usuario %d barrado pela trava de tentativas (%d recusas em %d min)",
+            "usuario %d barrado pela trava de tentativas (%s; %d recusas da conta em %d min)",
             credencial.id_usuario if credencial else -1,
+            "esta origem" if trancado_par else "conta inteira",
             recusas,
             db_sessoes.JANELA_TENTATIVAS_MIN,
         )
@@ -6104,6 +6167,7 @@ def login(body: LoginIn, request: Request) -> Response:
         # Registra a RECUSA antes de responder, e sem mudar o que se responde: o 401 e a
         # mensagem seguem identicos nos dois casos, porque distinguir entregaria o oraculo
         # de quem trabalha aqui. Quem distingue e' a LINHA no banco, que o visitante nao ve.
+        # O par (conta, IP) JA' contou esta recusa: a reserva entrou antes do Argon2.
         try:
             from motor_expansao.db import eventos as db_eventos
 
@@ -6119,6 +6183,8 @@ def login(body: LoginIn, request: Request) -> Response:
     # trilha da DEC-027 -- nao ha' segunda leitura do `X-Forwarded-For` neste arquivo, e nao
     # pode haver: usar o PRIMEIRO token em vez do ultimo foi vulnerabilidade real (pentest de
     # 19/08/2026), e uma segunda redacao da regra e' a que esquece a licao.
+    # O acerto zera o PAR desta origem (o banco zera a conta pelo evento `login`, logo abaixo).
+    rate_limit_login.limpar_par(credencial.id_usuario, _ip_edge)
     aberta = db_sessoes.abrir(
         id_usuario=credencial.id_usuario,
         ip=_ip_real_do_xff(
@@ -6250,6 +6316,8 @@ def _prelude_forward_auth(request: Request):
             status_code=401,
             headers={"Cache-Control": "no-store"},
         )
+    if not _login_cabe_no_cabecalho(sessao.identidade.login):
+        return _negar_login_irrepresentavel(sessao.identidade.login)
     return sessao
 
 

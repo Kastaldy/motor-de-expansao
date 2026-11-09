@@ -523,7 +523,11 @@ def test_entra_com_a_senha_certa(con: Any, pessoa: dict[str, Any]) -> None:
 
 
 def test_cinco_recusas_trancam_a_conta(con: Any, pessoa: dict[str, Any]) -> None:
-    """A trava conta o que `login.recusado` gravou, na janela móvel."""
+    """A contagem do banco soma o que `login.recusado` gravou, na janela móvel.
+
+    Desde 09/11/2026 o banco é o teto da CONTA (`MAX_TENTATIVAS_CONTA`); as
+    cinco recusas que trancam são as do par conta+IP, em memória (`rate_limit_login`). Este
+    teste prova só a contagem, que alimenta o teto da conta."""
     _definir_senha_propria(con, pessoa["id"], SENHA_ESCOLHIDA)
     for _ in range(db_sessoes.MAX_TENTATIVAS):
         db_eventos.registrar_login_recusado(autor=pessoa["id"], usuario_conhecido=True)

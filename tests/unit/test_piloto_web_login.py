@@ -237,31 +237,228 @@ def _travar(monkeypatch: pytest.MonkeyPatch, recusas: int, *, confere: bool = Fa
     return caras
 
 
-def test_na_quinta_recusa_a_conta_e_barrada(ligado: None, monkeypatch: pytest.MonkeyPatch) -> None:
-    """Cinco e' o limite decidido em 18/09/2026: com cinco na janela, a sexta nao passa.
+def test_no_teto_da_CONTA_ela_e_barrada_de_qualquer_origem(
+    ligado: None, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """O teto da conta no banco (`MAX_TENTATIVAS_CONTA`) barra de QUALQUER IP: e' a rede contra o
+    ataque espalhado por muitas origens, que a trava por par nao enxerga.
 
     A senha aqui esta' CERTA: sem a trava este login ENTRARIA, entao o 401 so' pode vir dela.
     """
     from motor_expansao.db import usuarios as db_usuarios
 
     monkeypatch.setattr(db_usuarios, "credenciais_por_login", lambda _l: _credencial())
-    _travar(monkeypatch, recusas=5, confere=True)
+    _travar(monkeypatch, recusas=db_sessoes.MAX_TENTATIVAS_CONTA, confere=True)
 
     with pytest.raises(pilot.HTTPException) as caiu:
         pilot.login(pilot.LoginIn(login="vinicius", senha="a-senha-certa"), _req())
     assert caiu.value.status_code == 401
 
 
-def test_com_quatro_recusas_ainda_passa(ligado: None, monkeypatch: pytest.MonkeyPatch) -> None:
-    """A trava é no QUINTO, não no quarto — o limite é `>=`, e este teste fixa o lado de cá."""
+def test_um_abaixo_do_teto_da_conta_ainda_passa(
+    ligado: None, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """O limite é `>=`, e este teste fixa o lado de cá do teto da conta."""
     from motor_expansao.db import usuarios as db_usuarios
 
     monkeypatch.setattr(db_usuarios, "credenciais_por_login", lambda _l: _credencial())
-    caras = _travar(monkeypatch, recusas=4)
+    caras = _travar(monkeypatch, recusas=db_sessoes.MAX_TENTATIVAS_CONTA - 1)
 
     with pytest.raises(pilot.HTTPException):
         pilot.login(pilot.LoginIn(login="vinicius", senha="errada"), _req())
-    assert caras == ["argon2"], "com 4 recusas a senha ainda deve ser verificada"
+    assert caras == ["argon2"], "abaixo do teto a senha ainda deve ser verificada"
+
+
+def test_cinco_recusas_do_MESMO_IP_barram_so_aquele_IP(
+    ligado: None, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """O furo fechado em 09/11/2026: errar a senha de alguem trancava a
+    dona da conta. Agora quem erra de um IP tranca so' aquele IP, e a dona entra do dela.
+
+    O banco devolve ZERO recusas de proposito: a trava aqui e' so' a do par, em memoria.
+    """
+    from motor_expansao.db import usuarios as db_usuarios
+
+    monkeypatch.setattr(db_usuarios, "credenciais_por_login", lambda _l: _credencial())
+    caras = _travar(monkeypatch, recusas=0, confere=False)
+
+    atacante = "198.51.100.7"
+    for _ in range(db_sessoes.MAX_TENTATIVAS):
+        with pytest.raises(pilot.HTTPException) as errou:
+            pilot.login(pilot.LoginIn(login="vinicius", senha="errada"), _req(xff=atacante))
+        assert errou.value.status_code == 401
+    assert len(caras) == db_sessoes.MAX_TENTATIVAS
+
+    # A partir daqui a senha esta' CERTA: so' a trava pode negar.
+    _travar(monkeypatch, recusas=0, confere=True)
+    with pytest.raises(pilot.HTTPException) as barrado:
+        pilot.login(pilot.LoginIn(login="vinicius", senha="a-senha-certa"), _req(xff=atacante))
+    assert barrado.value.status_code == 401, "o IP que errou cinco vezes nao foi barrado"
+
+    resposta = pilot.login(
+        pilot.LoginIn(login="vinicius", senha="a-senha-certa"), _req(xff="203.0.113.20")
+    )
+    assert resposta.status_code == 200, "a dona da conta ficou trancada pelo erro de outro IP"
+
+
+def test_girar_o_endereco_IPv6_dentro_do_56_nao_abre_par_novo(
+    ligado: None, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Revisao de 09/11/2026: com o endereco inteiro como chave, uma maquina com IPv6 trocava de
+    endereco a cada tentativa, nunca chegava a 5 num par e levava a conta ao teto de 50."""
+    from motor_expansao.db import usuarios as db_usuarios
+
+    monkeypatch.setattr(db_usuarios, "credenciais_por_login", lambda _l: _credencial())
+    _travar(monkeypatch, recusas=0, confere=False)
+    for i in range(db_sessoes.MAX_TENTATIVAS):
+        with pytest.raises(pilot.HTTPException):
+            pilot.login(
+                pilot.LoginIn(login="vinicius", senha="errada"), _req(xff=f"2001:db8:0:{i:x}::1")
+            )
+
+    _travar(monkeypatch, recusas=0, confere=True)
+    with pytest.raises(pilot.HTTPException) as barrado:
+        pilot.login(pilot.LoginIn(login="vinicius", senha="a-senha-certa"), _req(xff="2001:db8:0:ff::1"))
+    assert barrado.value.status_code == 401, "outra rede /64 do mesmo /56 escapou da trava do par"
+
+
+def test_rajada_simultanea_nao_passa_do_teto_do_par() -> None:
+    """Revisao de 09/11/2026: ler e so' contar DEPOIS do Argon2 deixava 6 requisicoes simultaneas
+    passarem com 4 recusas na janela. A reserva e' atomica com a checagem."""
+    import threading
+
+    import rate_limit_login
+
+    kw = {"maximo": db_sessoes.MAX_TENTATIVAS, "janela_s": 900}
+    for i in range(db_sessoes.MAX_TENTATIVAS - 1):
+        assert not rate_limit_login.reservar_tentativa_par(7, "1.2.3.4", agora=1000.0 + i, **kw)
+
+    largada = threading.Barrier(6)
+    avaliadas: list[bool] = []
+
+    def tentar() -> None:
+        largada.wait()
+        if not rate_limit_login.reservar_tentativa_par(7, "1.2.3.4", agora=1010.0, **kw):
+            avaliadas.append(True)
+
+    threads = [threading.Thread(target=tentar) for _ in range(6)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+    assert len(avaliadas) == 1, f"{len(avaliadas)} tentativas avaliadas com 4 recusas na janela"
+
+
+def test_semaforo_cheio_DEVOLVE_a_reserva_do_par(
+    ligado: None, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """O 503 por carga nao e' tentativa avaliada: se a reserva ficasse, cinco 503 seguidos
+    trancariam a pessoa sem ela ter errado a senha nenhuma vez."""
+    import rate_limit_login
+
+    from motor_expansao.db import usuarios as db_usuarios
+
+    monkeypatch.setattr(db_usuarios, "credenciais_por_login", lambda _l: _credencial())
+    _travar(monkeypatch, recusas=0, confere=True)
+    monkeypatch.setattr(pilot, "_SEM_LOGIN", type("Cheio", (), {"acquire": lambda *_a, **_k: False})())
+    for _ in range(db_sessoes.MAX_TENTATIVAS + 1):
+        with pytest.raises(pilot.HTTPException) as cheio:
+            pilot.login(pilot.LoginIn(login="vinicius", senha="a-senha-certa"), _req(xff="1.2.3.4"))
+        assert cheio.value.status_code == 503
+    assert rate_limit_login._recusas_par.get((7, "1.2.3.4"), []) == []
+
+
+def test_quatro_recusas_do_mesmo_IP_ainda_deixam_entrar(
+    ligado: None, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A trava do par e' no QUINTO, nao no quarto -- o limite e' `>=`."""
+    from motor_expansao.db import usuarios as db_usuarios
+
+    monkeypatch.setattr(db_usuarios, "credenciais_por_login", lambda _l: _credencial())
+    _travar(monkeypatch, recusas=0, confere=False)
+    for _ in range(db_sessoes.MAX_TENTATIVAS - 1):
+        with pytest.raises(pilot.HTTPException):
+            pilot.login(pilot.LoginIn(login="vinicius", senha="errada"), _req(xff="198.51.100.7"))
+
+    _travar(monkeypatch, recusas=0, confere=True)
+    resposta = pilot.login(
+        pilot.LoginIn(login="vinicius", senha="a-senha-certa"), _req(xff="198.51.100.7")
+    )
+    assert resposta.status_code == 200
+
+    # A 2a revisao (09/11) mediu: com a reserva antes do Argon2, o acerto deixa 5 marcas se o
+    # `limpar_par` sumir -- e o PROXIMO login certo da mesma origem tomaria 401 por 15 min.
+    de_novo = pilot.login(
+        pilot.LoginIn(login="vinicius", senha="a-senha-certa"), _req(xff="198.51.100.7")
+    )
+    assert de_novo.status_code == 200, "o acerto nao zerou o par: a dona ficou trancada"
+
+
+def test_tentativa_barrada_pelo_PAR_nao_prolonga_a_tranca(
+    ligado: None, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A mesma regra do banco, agora na memoria: a tentativa barrada nao conta, senao uma por
+    janela manteria o par trancado para sempre."""
+    import rate_limit_login
+
+    from motor_expansao.db import usuarios as db_usuarios
+
+    monkeypatch.setattr(db_usuarios, "credenciais_por_login", lambda _l: _credencial())
+    _travar(monkeypatch, recusas=0, confere=False)
+    ip = "198.51.100.7"
+    for _ in range(db_sessoes.MAX_TENTATIVAS + 3):
+        with pytest.raises(pilot.HTTPException):
+            pilot.login(pilot.LoginIn(login="vinicius", senha="errada"), _req(xff=ip))
+    assert len(rate_limit_login._recusas_par[(7, ip)]) == db_sessoes.MAX_TENTATIVAS
+
+
+def _encher_par(ip: str, *, inicio: float = 1000.0) -> None:
+    """Cinco tentativas reservadas (e nao devolvidas) = cinco recusas do par."""
+    import rate_limit_login
+
+    for i in range(db_sessoes.MAX_TENTATIVAS):
+        assert not rate_limit_login.reservar_tentativa_par(
+            7, ip, maximo=db_sessoes.MAX_TENTATIVAS, janela_s=900, agora=inicio + i
+        )
+
+
+def test_o_par_se_solta_quando_a_janela_passa() -> None:
+    """A tranca do par e' temporaria: depois de 15 min sem novas recusas, o IP volta a tentar."""
+    import rate_limit_login
+
+    _encher_par("1.2.3.4")
+    kw = {"maximo": db_sessoes.MAX_TENTATIVAS, "janela_s": 900}
+    assert rate_limit_login.reservar_tentativa_par(7, "1.2.3.4", agora=1010.0, **kw)
+    assert not rate_limit_login.reservar_tentativa_par(7, "1.2.3.4", agora=1005.0 + 900, **kw)
+
+
+def test_a_REDEFINICAO_solta_o_par_em_todas_as_origens() -> None:
+    """Redefinir (admin confirmou a identidade) zera todas as origens."""
+    from datetime import UTC, datetime
+
+    import rate_limit_login
+
+    _encher_par("1.1.1.1")
+    _encher_par("2.2.2.2")
+    depois = datetime.fromtimestamp(1100.0, tz=UTC)
+    kw = {"maximo": db_sessoes.MAX_TENTATIVAS, "janela_s": 900, "redefinida_em": depois}
+    assert not rate_limit_login.reservar_tentativa_par(7, "1.1.1.1", agora=1200.0, **kw)
+    assert not rate_limit_login.reservar_tentativa_par(7, "2.2.2.2", agora=1200.0, **kw)
+
+
+def test_o_ACERTO_limpa_so_o_proprio_par() -> None:
+    """Acertar a senha zera so' a origem do acerto -- a dona entrando num IP nao pode destrancar
+    quem tenta em outro. Sem piso nenhum: a 2a revisao mostrou que, com o piso da redefinicao no
+    caminho, a assercao do `limpar_par` passava vazia."""
+    import rate_limit_login
+
+    _encher_par("1.1.1.1")
+    _encher_par("2.2.2.2")
+    rate_limit_login.limpar_par(7, "1.1.1.1")
+
+    kw = {"maximo": db_sessoes.MAX_TENTATIVAS, "janela_s": 900}
+    assert not rate_limit_login.reservar_tentativa_par(7, "1.1.1.1", agora=1010.0, **kw)
+    assert rate_limit_login.reservar_tentativa_par(7, "2.2.2.2", agora=1010.0, **kw)
 
 
 def test_excesso_de_tentativas_do_mesmo_IP_recebe_429(
@@ -296,7 +493,7 @@ def test_a_conta_barrada_NAO_paga_o_argon2(ligado: None, monkeypatch: pytest.Mon
     from motor_expansao.db import usuarios as db_usuarios
 
     monkeypatch.setattr(db_usuarios, "credenciais_por_login", lambda _l: _credencial())
-    caras = _travar(monkeypatch, recusas=9)
+    caras = _travar(monkeypatch, recusas=db_sessoes.MAX_TENTATIVAS_CONTA + 4)
 
     with pytest.raises(pilot.HTTPException):
         pilot.login(pilot.LoginIn(login="vinicius", senha="qualquer"), _req())
@@ -317,7 +514,7 @@ def test_tentativa_BARRADA_nao_vira_evento(ligado: None, monkeypatch: pytest.Mon
     monkeypatch.setattr(db_usuarios, "credenciais_por_login", lambda _l: _credencial())
     # O coletor entra DEPOIS do `_travar`, que tambem instala um dublê desta função: na
     # ordem inversa o no-op dele apagava a captura e a asserção ficava verde sozinha.
-    _travar(monkeypatch, recusas=5, confere=True)
+    _travar(monkeypatch, recusas=db_sessoes.MAX_TENTATIVAS_CONTA, confere=True)
     monkeypatch.setattr(db_eventos, "registrar_login_recusado", lambda **kw: vistos.append(kw))
 
     with pytest.raises(pilot.HTTPException):
@@ -360,7 +557,7 @@ def test_a_conta_barrada_devolve_a_MESMA_mensagem(
     from motor_expansao.db import usuarios as db_usuarios
 
     monkeypatch.setattr(db_usuarios, "credenciais_por_login", lambda _l: _credencial())
-    _travar(monkeypatch, recusas=5, confere=True)
+    _travar(monkeypatch, recusas=db_sessoes.MAX_TENTATIVAS_CONTA, confere=True)
     with pytest.raises(pilot.HTTPException) as barrada:
         pilot.login(pilot.LoginIn(login="vinicius", senha="a-senha-certa"), _req())
 

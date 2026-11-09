@@ -273,6 +273,63 @@ def test_rate_limit_middleware_429_e_health_livre(monkeypatch) -> None:
     assert resp.json()["codigo"] == "rate_limited"
 
 
+def test_rate_limit_token_INVENTADO_cai_no_balde_do_IP(monkeypatch) -> None:
+    """Trocar o Bearer a cada requisicao nao abre janela nova no rate-limit.
+
+    Antes a chave era o token cru, ainda nao validado: cada token inventado ganhava 120
+    requisicoes proprias, e adivinhar `API_TOKENS` nao tinha teto nenhum.
+    """
+    pytest.importorskip("httpx")
+    from fastapi.testclient import TestClient
+
+    from motor_expansao.api import main
+    from motor_expansao.api.settings import Settings
+
+    dev = Settings(
+        environment="development",
+        tokens={"tok-forte-abc": "bot"},
+        api_call_token="tok-forte-abc",
+        bot_senha="uma-senha-forte-123",
+    )
+    monkeypatch.setattr(main, "get_settings", lambda: dev)
+    monkeypatch.setattr(main, "_RATE_LIMIT_MAX", 2)
+    client = TestClient(main.create_app())
+    main._rate_state.clear()
+
+    def com(token: str) -> int:
+        return client.get("/qualquer-rota", headers={"Authorization": f"Bearer {token}"}).status_code
+
+    assert com("chute-1") != 429
+    assert com("chute-2") != 429
+    assert com("chute-3") == 429, "token inventado ganhou janela propria e evadiu o teto do IP"
+    assert not any(k.startswith("tok:chute") for k in main._rate_state), (
+        "token inventado virou chave no estado do rate-limit"
+    )
+    # O consumidor legitimo segue com a janela DELE, mesmo com o IP ja' estourado.
+    assert com("tok-forte-abc") != 429
+
+
+def test_rate_limit_da_API_agrega_IPv6_pelo_MIDDLEWARE(monkeypatch) -> None:
+    """Revisao de 09/11/2026: girar o IPv6 dentro do bloco do assinante nao abre balde novo.
+
+    Pelo middleware de verdade, e nao pela funcao auxiliar: a 2a revisao mostrou que o teste
+    da auxiliar seguia verde com o `chave_de_origem` arrancado do `_rate_limit`."""
+    pytest.importorskip("httpx")
+    from fastapi.testclient import TestClient
+
+    from motor_expansao.api import main
+
+    monkeypatch.setattr(main, "_RATE_LIMIT_MAX", 2)
+    client = TestClient(main.create_app())
+    main._rate_state.clear()
+
+    codigos = [
+        client.get("/qualquer-rota", headers={"X-Forwarded-For": f"2001:db8:0:{i:x}::1"}).status_code
+        for i in range(3)
+    ]
+    assert codigos[-1] == 429, f"cada rede /64 do mesmo /56 ganhou balde proprio: {codigos}"
+
+
 def test_dev_ignora_segredos_default() -> None:
     from motor_expansao.api.main import _garantir_producao_sem_defaults
     from motor_expansao.api.settings import Settings

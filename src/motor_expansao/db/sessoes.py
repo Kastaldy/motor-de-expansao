@@ -99,13 +99,24 @@ TRAVA_TOQUE_MIN = 5
 #: TRAVA DE TENTATIVAS (decisao de 18/09/2026: cinco). Recusas contadas numa JANELA MOVEL --
 #: e a janela nao e' detalhe, e' o que impede a trava de virar arma.
 #:
-#: A contagem so' existe POR CONTA (o `id_usuario` do evento `login.recusado`). Contar por IP
-#: e' impossivel no banco enquanto o **P15** estiver aberto, porque o IP nao e' gravado em
-#: `eventos`. Consequencia que precisa estar dita: qualquer pessoa consegue trancar a conta
-#: de outra digitando o usuario dela cinco vezes com senha errada. Por isso a tranca e'
-#: TEMPORARIA e se solta sozinha quando as recusas velhas saem da janela -- bloqueio
-#: permanente entregaria um botao de negar acesso a quem souber um nome de usuario.
+#: DOIS TETOS desde a revisao de seguranca de 06/11/2026, e eles nao medem a mesma coisa:
+#:
+#: - `MAX_TENTATIVAS` (5) conta por (CONTA, IP de origem), em memoria, em
+#:   `web/server/rate_limit_login.py`. E' a trava do dia a dia: quem erra de um IP tranca so'
+#:   aquele IP para aquela conta.
+#: - `MAX_TENTATIVAS_CONTA` (50) conta por CONTA, no banco (`eventos.login.recusado`). E' a
+#:   rede contra o ataque espalhado por muitos IPs, que a trava por par nao enxerga.
+#:
+#: ANTES so' existia a contagem por conta, com teto 5 -- e qualquer pessoa trancava a conta de
+#: outra digitando o usuario dela cinco vezes com senha errada, renovando a tranca a cada
+#: janela. O IP continua FORA do banco (P15); por isso a trava por par vive em memoria.
+#:
+#: O QUE A TROCA CUSTOU, dito sem suavizar: o volume de tentativas que uma conta aceita na
+#: janela subiu de 5 para 50 -- mas so' para quem tem 10 IPs ou mais. De um IP so', seguem 5.
+#: A tranca segue TEMPORARIA nos dois tetos: bloqueio permanente entregaria um botao de negar
+#: acesso a quem souber um nome de usuario.
 MAX_TENTATIVAS = 5
+MAX_TENTATIVAS_CONTA = 50
 JANELA_TENTATIVAS_MIN = 15
 
 #: Bytes de entropia do token. 32 bytes -> 43 caracteres urlsafe.
