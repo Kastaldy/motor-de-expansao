@@ -10,6 +10,26 @@
 
 ---
 
+## Pré-requisito — acesso à VPS
+
+Os comandos abaixo assumem acesso SSH à VPS de produção como o usuário `deploy` — cada operador
+com a **sua própria** chave (onboarding e política em
+[acesso_deploy_colaborador.md](acesso_deploy_colaborador.md)). Para não repetir a chave em cada
+linha, defina um alias uma vez no seu `~/.ssh/config`:
+
+```
+Host motor-vps
+    HostName 2.25.137.241
+    User deploy
+    IdentityFile ~/.ssh/SUA-CHAVE-DE-DEPLOY
+```
+
+Assim todos os comandos usam `ssh motor-vps`. (Sem o alias, troque cada `ssh motor-vps` por
+`ssh -i ~/.ssh/SUA-CHAVE deploy@2.25.137.241`.) Cada comando na VPS exige a **sua** confirmação
+(CLAUDE.md §6).
+
+---
+
 # A. Banco de dados
 
 ## O que está no banco — e o que não está
@@ -29,7 +49,7 @@ Defina uma vez por terminal. Cada consulta vai pela entrada-padrão (heredoc). R
 
 ```bash
 motorq() {
-  ssh -i ~/.ssh/id_ultra_deploy deploy@2.25.137.241 \
+  ssh motor-vps \
     'cd /opt/motor-expansao/app && docker compose -f docker-compose.prod.yml exec -T postgres psql -U reservas_owner -d banco_de_reservas -P pager=off -v ON_ERROR_STOP=1'
 }
 ```
@@ -269,14 +289,14 @@ ali é o **texto do login** (`Remote-User`), não o `id_usuario`.
 - **Arquivos crus** (volume de log do serviço `web`, env `MOTOR_ACESSO_LOG_DIR`). Para localizá-los:
 
 ```bash
-ssh -i ~/.ssh/id_ultra_deploy deploy@2.25.137.241 \
+ssh motor-vps \
   'cd /opt/motor-expansao/app && docker compose -f docker-compose.prod.yml exec -T web sh -lc "echo DIR=\$MOTOR_ACESSO_LOG_DIR; find / -name \"acesso-*.jsonl\" 2>/dev/null | sort | tail"'
 ```
 
 Com o caminho em mãos, um dia específico (ex. filtrando por usuário com `grep`):
 
 ```bash
-ssh -i ~/.ssh/id_ultra_deploy deploy@2.25.137.241 \
+ssh motor-vps \
   'cd /opt/motor-expansao/app && docker compose -f docker-compose.prod.yml exec -T web sh -lc "cat \$MOTOR_ACESSO_LOG_DIR/acesso-2026-11-09.jsonl"'
 ```
 
@@ -330,7 +350,7 @@ container efêmero da **imagem `web` que está no ar** (detectada na hora — se
 do compose, com a credencial de **dono** montada do `.env`:
 
 ```bash
-ssh -i ~/.ssh/id_ultra_deploy deploy@2.25.137.241 'bash -s' <<'OPS'
+ssh motor-vps 'bash -s' <<'OPS'
 cd /opt/motor-expansao/app
 IMG="$(docker inspect motor_expansao_web --format '{{.Config.Image}}')"
 NET="$(docker network ls --format '{{.Name}}' | grep -E '(^|_)app_net$' | head -1)"
@@ -351,7 +371,7 @@ OPS
 está rodando em cada serviço e comparar com a `main`:
 
 ```bash
-ssh -i ~/.ssh/id_ultra_deploy deploy@2.25.137.241 'bash -s' <<'OPS'
+ssh motor-vps 'bash -s' <<'OPS'
 for c in motor_expansao_web motor_expansao_web_ar motor_expansao_api motor_expansao_telegram_bot; do
   rev=$(docker inspect "$c" --format '{{index .Config.Labels "org.opencontainers.image.revision"}}' 2>/dev/null)
   printf '%-30s %s\n' "$c" "${rev:0:12}"
