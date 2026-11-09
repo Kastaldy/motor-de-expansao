@@ -1234,8 +1234,14 @@ def gerar_pdf_ponto(
     tipo_imovel: str | None = None,
     solicitante: str | None = None,
     alcance: str | None = None,
+    paginas_praca: bool = False,
 ) -> bytes:
     """Gera o PDF de 8 paginas do Relatorio Pontual Censitario (BLK-API-04).
+
+    `paginas_praca` (emenda de 2026-11-09 da DEC-005): `True` acrescenta "Pressao
+    concorrencial" e "Como a cidade esta indo", as duas paginas do PDF do site, pela mesma
+    montagem (`praca_do_ponto.montar_praca_do_ponto`). `False` (default; o bot do Telegram):
+    o gerador nem recebe o kwarg, e o PDF e' o de antes.
 
     Enriquecido (READ-ONLY): mapas com *ruas* (basemap online, DEC-004) + pins de
     concorrentes/Ultra, e Big Numbers de SAM/residual via `residual`. Fallback
@@ -1452,6 +1458,23 @@ def gerar_pdf_ponto(
     info_imovel = _info_imovel_com_aluguel(
         info_imovel, viabilidade_inputs, tipo_imovel, uf, result, settings
     )
+
+    # Paginas da PRACA (pressao sobre o ponto e como a cidade esta indo), so' a pedido: sem o
+    # campo o kwarg nem e' passado. Mesma escada de basemap dos mapas acima; qualquer falha
+    # deixa o PDF sair sem elas, como no site.
+    if paginas_praca:
+        try:
+            praca = _praca_do_ponto(
+                lat, lng, uf=uf, cod_municipio=cod_municipio,
+                nome_municipio=_nome_municipio_de(setores_df),
+                comp_df=comp_df, ultra_df=ultra_df, settings=settings,
+                basemap=mapas is not None,
+            )
+        except Exception as exc:  # noqa: BLE001 - as duas paginas nunca derrubam o PDF
+            _LOG_PRACA.warning("paginas da praca omitidas: %r", exc)
+            praca = None
+        if praca is not None:
+            gerador_kw["praca"] = praca
 
     return gerar_pdf_relatorio_pontual_classico(
         result, mapas, residual=residual, perfil_bairro=perfil_bairro, ultra_dir=ultra_dir,
@@ -2176,3 +2199,102 @@ def _praca_da_cidade(
 
 #: Rotulo de exibicao da tendencia (valor bruto sem acento, §2) -- o mesmo de `app._ROTULO_TEND`.
 _ROTULO_TENDENCIA = {"Estavel": "Estável", "Em alta": "Em alta", "Em queda": "Em queda"}
+
+
+# ===========================================================================
+# Paginas da PRACA no Relatorio Pontual (`paginas_praca`, emenda de 2026-11-09 da DEC-005)
+#
+# O site monta "Pressao concorrencial" e "Como a cidade esta indo" desde 2026-09-17
+# (`app._praca_para_pdf`). A API so' CARREGA o mesmo recorte pelos parquets deste deploy --
+# os hexagonos do municipio no enriquecido da UF, `crescimento_hex` e `crescimento_municipal`
+# da staging -- e entrega a `praca_do_ponto.montar_praca_do_ponto`, a montagem do site.
+# ===========================================================================
+
+#: As colunas do enriquecido que o recorte do municipio usa (o resto do artefato nao e' lido).
+_COLS_HEXES_PRACA = ("hex_id", "cod_municipio", "nome_municipio")
+
+
+@lru_cache(maxsize=4)
+def _hexes_da_uf_para_praca(part_str: str):
+    """`hex_id`, `cod_municipio` e `nome_municipio` da particao enriquecida da UF. None se ausente."""
+    import pandas as pd
+    import pyarrow.parquet as pq
+
+    part = Path(part_str)
+    arquivos = sorted(part.glob("*.parquet")) if part.is_dir() else []
+    if not arquivos:
+        return None
+    disponiveis = set(pq.read_schema(arquivos[0]).names)
+    cols = [c for c in _COLS_HEXES_PRACA if c in disponiveis]
+    if "hex_id" not in cols:
+        return None
+    df = pd.read_parquet(part, columns=cols)
+    df["hex_id"] = df["hex_id"].astype(str)
+    return df
+
+
+@lru_cache(maxsize=2)
+def _crescimento_hex_df(path_str: str):
+    """`crescimento_hex.parquet` com `hex_id` em texto (como `app.carregar_crescimento_hex`)."""
+    df = _carregar_parquet_full(path_str)
+    if df is None or "hex_id" not in df.columns:
+        return None
+    return df.assign(hex_id=df["hex_id"].astype(str))
+
+
+def _praca_do_ponto(
+    lat: float,
+    lng: float,
+    *,
+    uf: str,
+    cod_municipio: str | None,
+    nome_municipio: str | None,
+    comp_df,
+    ultra_df,
+    settings: Settings,
+    basemap: bool = True,
+):
+    """A `PracaDoPonto` das duas paginas, com os dados deste deploy. `None` sem a base da UF.
+
+    Mesmo recorte do site: hexagonos do municipio por `cod_municipio` ou nome
+    (`relatorio_praca.filtrar_hexes_do_municipio`) com `crescimento_hex` juntado por `hex_id`
+    (`m:1`), a linha municipal de `crescimento_municipal` pelo codigo e, sem ele, pelo nome
+    (`linha_crescimento_municipal`), e a leitura sem veredito onde ha' a regua da recomendacao
+    unica (DEC-077). Os pins sao os mesmos do slide Concorrentes deste PDF.
+    """
+    from motor_expansao.dashboard import relatorio_praca as rp
+    from motor_expansao.dashboard.praca_do_ponto import montar_praca_do_ponto
+    from motor_expansao.recomendacao import carregar_regra
+
+    uf_sigla = str(uf).strip().upper()
+    part = Path(settings.censo_geo_dir).parent / _ENRIQUECIDO_DIR / f"uf={uf_sigla}"
+    hexes_uf = _hexes_da_uf_para_praca(str(part))
+    if hexes_uf is None:
+        _LOG_PRACA.warning("praca sem base da UF %s (%s): paginas omitidas", uf_sigla, part)
+        return None
+    hexes = rp.filtrar_hexes_do_municipio(
+        hexes_uf, cod_municipio=cod_municipio, nome_municipio=nome_municipio
+    )
+    chex = _crescimento_hex_df(str(settings.staging_dir / "crescimento_hex.parquet"))
+    if chex is not None:
+        hexes = hexes.merge(chex, on="hex_id", how="left", validate="m:1")
+
+    cres_df = _carregar_parquet_full(str(settings.staging_dir / "crescimento_municipal.parquet"))
+    linha = rp.linha_crescimento_municipal(
+        cres_df, uf=uf_sigla, cod_municipio=cod_municipio, nome_municipio=nome_municipio
+    )
+    return montar_praca_do_ponto(
+        lat,
+        lng,
+        uf=uf,
+        nome_municipio=nome_municipio,
+        hexes_cidade=hexes,
+        linha_crescimento=linha,
+        carregar_crescimento_hex=lambda: chex,
+        comp_df=comp_df,
+        ultra_df=ultra_df,
+        leitura=carregar_regra() is not None,
+        rotulo_tendencia=_ROTULO_TENDENCIA,
+        basemap=basemap,
+        log=_LOG_PRACA,
+    )

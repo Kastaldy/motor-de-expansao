@@ -638,6 +638,213 @@ def linha_crescimento_municipal(
     return dict(alvo.iloc[0].to_dict())
 
 
+#: Colunas da camada municipal que a pagina "Como a cidade esta indo" e a tela do passo 4 leem.
+#: Fonte unica: o piloto (`app._COLS_CRESCIMENTO`) e a API (`service._praca_do_ponto`) leem daqui.
+#: O artefato tem 31 colunas; `cres_ramp`, `dim_*` e `pos_*` ficam fora de proposito.
+COLS_CRESCIMENTO_MUNICIPAL: tuple[str, ...] = (
+    "cod6",
+    "cres_chave_nome",
+    "cres_tendencia",
+    "cres_emp_pct",
+    "cres_saldo_empresas",
+    "cres_confiab",
+    "cres_salario",
+    "cres_salario_var",
+    "cres_setor",
+    "cres_uf_mediana",
+    "cres_dims",
+    "cres_series",
+    "v_frase",
+)
+
+
+def _norm_nome_municipio(serie: pd.Series) -> pd.Series:
+    """Nome de municipio para casamento: sem acento, maiusculo, sem espaco duplo."""
+    return (
+        serie.astype("string")
+        .str.normalize("NFKD")
+        .str.encode("ascii", "ignore")
+        .str.decode("ascii")
+        .str.upper()
+        .str.strip()
+        .str.replace(r"\s+", " ", regex=True)
+    )
+
+
+def filtrar_hexes_do_municipio(
+    df: pd.DataFrame, *, cod_municipio: str | None, nome_municipio: str | None
+) -> pd.DataFrame:
+    """Os hexagonos do municipio no artefato enriquecido da UF (frame NOVO).
+
+    Casa por `cod_municipio` (inteiro ou pelos 6 primeiros digitos) e, onde a particao o deixa
+    nulo, pelo NOME normalizado -- o mesmo fallback da juncao do crescimento (6 UFs tem o codigo
+    100% nulo no M1). A mesma regra no piloto e na API: a mediana dos hexagonos da cidade, na
+    pagina "Como a cidade esta indo", sai do conjunto que esta funcao devolve.
+    """
+    mask = pd.Series(False, index=df.index)
+    if cod_municipio and "cod_municipio" in df.columns:
+        cod = df["cod_municipio"].astype("string").str.replace(r"\.0$", "", regex=True)
+        mask |= (cod == str(cod_municipio)) | (cod.str[:6] == str(cod_municipio)[:6])
+    if nome_municipio and "nome_municipio" in df.columns:
+        alvo = _norm_nome_municipio(pd.Series([nome_municipio])).iloc[0]
+        mask |= _norm_nome_municipio(df["nome_municipio"]) == alvo
+    return df.loc[mask].copy()
+
+
+# --------------------------------------------------------------------------- #
+# Frase de "Como a cidade esta indo" -- UMA redacao para a tela e os dois PDFs #
+# --------------------------------------------------------------------------- #
+def _valor(linha: Mapping[str, Any], chave: str) -> Any:
+    """Valor da linha municipal; None/NaN/pd.NA viram None (o `_mun_val` do piloto, numa linha)."""
+    valor = linha.get(chave)
+    if valor is None:
+        return None
+    try:
+        if pd.isna(valor):
+            return None
+    except (TypeError, ValueError):
+        pass
+    return valor
+
+
+def _texto_ou_none(v: Any) -> str | None:
+    if v is None:
+        return None
+    try:
+        if pd.isna(v):
+            return None
+    except (TypeError, ValueError):
+        pass
+    s = str(v).strip()
+    return s or None
+
+
+def _fmt_br(v: Any, casas: int = 0) -> str:
+    """Numero pt-BR (milhar com ponto, decimal com virgula); ausente -> `TEXTO_SEM_DADO`."""
+    from motor_expansao.dashboard.constants import TEXTO_SEM_DADO
+    from motor_expansao.dimensionamento.payload_viabilidade import num_json_safe
+
+    n = num_json_safe(v, casas)
+    if n is None:
+        return TEXTO_SEM_DADO
+    return f"{n:,.{casas}f}".replace(",", "\x00").replace(".", ",").replace("\x00", ".")
+
+
+def _pct_sinal(v: Any) -> str:
+    """Percentual com sinal explicito e virgula decimal: "+12,0%", "-3,5%"."""
+    from motor_expansao.dimensionamento.payload_viabilidade import num_json_safe
+
+    texto = _fmt_br(v, 1)
+    if num_json_safe(v, 1) is None:  # ausente: o texto de "sem dado", sem sinal nem "%"
+        return texto
+    return f"{texto}%" if texto.startswith("-") else f"+{texto}%"
+
+
+def narrativa_crescimento(
+    linha: Mapping[str, Any] | None,
+    municipio: str,
+    *,
+    uf: str | None,
+    rotulo_tendencia: Mapping[str, str],
+    leitura: bool = False,
+) -> str:
+    """Passo 4. Como a cidade esta indo -- a frase do topo da pagina e da tela.
+
+    Movida de `web/server/app.py` (`_narrativa_crescimento`) para a API do Brasil gerar a pagina
+    com o MESMO texto do site: uma redacao, tres leitores (tela do piloto, PDF Pontual do piloto
+    e PDF Pontual da API). `linha` e' a linha municipal da camada de crescimento
+    (`COLS_CRESCIMENTO_MUNICIPAL`); `uf` e' a sigla do ponto.
+
+    So repassa o que o projeto Crescimento Regional TEC ja apura: a tendencia do emprego formal
+    (CAGED, defasagem ~3 meses) e o saldo de empresas da Receita. O `v_frase` E' uma
+    recomendacao, sobre a PRACA, e nao escolhe nem ordena PONTO. Nada aqui promete desempenho
+    de unidade.
+
+    `leitura=True` (instancia com a regua da recomendacao unica, DEC-077): o veredito sai --
+    "e praca para entrar" disputaria com o Top 10 a resposta de onde expandir --, e fica so' a
+    leitura descritiva. Sem tendencia, o texto aponta para os Detalhes do passo. `leitura=False`
+    e' o texto legado, intocado (o golden da AR trava esses bytes).
+    """
+    m = dict(linha or {})
+    tend = _valor(m, "cres_tendencia")
+    conf = _valor(m, "cres_confiab")
+    if leitura:
+        if tend is None:
+            tem_detalhes = bool(
+                _texto_ou_none(_valor(m, "cres_dims")) or _texto_ou_none(_valor(m, "cres_series"))
+            )
+            if not tem_detalhes:
+                return f"A leitura de crescimento de {municipio} não está disponível."
+            motivo = (
+                " — poucos vínculos formais para a medição se sustentar" if conf else ""
+            )
+            return (
+                f"O emprego formal de {municipio} não tem tendência confiável no CAGED"
+                f"{motivo}. As cinco leituras de crescimento do município (renda, população, "
+                "empresas, prédios e emprego) estão em Detalhes, abaixo."
+            )
+        veredito = None
+    else:
+        veredito = _valor(m, "v_frase")
+    # Percentual da prosa. Com regua sai com virgula decimal ("+12,0%"), como o tooltip e o PDF
+    # escrevem; o legado segue com o `+.1f` de sempre.
+    pct = _pct_sinal if leitura else (lambda v: f"{v:+.1f}%")
+    # `cres_tendencia` e nula de proposito onde a confiabilidade e muito baixa (2.182 de 5.571
+    # municipios), mas `v_frase` existe em TODOS. So cai no "sem leitura" quando as DUAS faltam.
+    if tend is None and not veredito:
+        motivo = (
+            " — o município tem vínculos formais de menos para a medição se sustentar"
+            if conf
+            else ""
+        )
+        return (
+            f"Sem leitura de crescimento para {municipio}{motivo}. "
+            "As áreas sem concorrência seguem valendo."
+        )
+    emp = _valor(m, "cres_emp_pct")
+    med = _valor(m, "cres_uf_mediana")
+    setor = _valor(m, "cres_setor")
+    sal = _valor(m, "cres_salario")
+    sal_var = _valor(m, "cres_salario_var")
+
+    # O VEREDITO vem primeiro: e a leitura de decisao, e o resto e o que a sustenta.
+    if veredito:
+        detalhe = []
+        if setor:
+            detalhe.append(f"A abertura de empresas aqui é puxada por {str(setor).lower()}")
+        if sal is not None:
+            t = f"quem é admitido entra ganhando R$ {_fmt_br(int(sal))}"
+            if sal_var is not None:
+                t += f" ({sal_var:+.1f}% no ano)"
+            detalhe.append(t)
+        cauda = (" " + ", ".join(detalhe) + ".") if detalhe else ""
+        aviso = ""
+        if conf and str(conf) in ("baixa", "muito_baixa"):
+            aviso = " Confiabilidade baixa: poucos vínculos formais no município."
+        return f"{veredito}{cauda} CAGED, RAIS, Receita Federal e satélite.{aviso}"
+
+    tend_txt = rotulo_tendencia.get(str(tend), str(tend)).lower()
+    partes = [f"O emprego formal em {municipio} está {tend_txt}"]
+    if emp is not None:
+        partes[0] += f": variou {pct(emp)} desde dez/2022"
+        # Numero sozinho nao tem escala. A mediana da UF da a referencia em uma linha.
+        if med is not None:
+            comp = "acima" if emp > med else "abaixo" if emp < med else "na"
+            partes[0] += f", {comp} da mediana de {uf or 'estado'} ({pct(med)})"
+    partes[0] += "."
+    if setor:
+        partes.append(f"O que mais puxa a abertura de empresas aqui é {str(setor).lower()}.")
+    if sal is not None:
+        frase = f"Quem é admitido entra ganhando R$ {_fmt_br(int(sal))}"
+        if sal_var is not None:
+            frase += f", {pct(sal_var)} em relação ao ano anterior"
+        partes.append(frase + ".")
+    partes.append("CAGED e Receita Federal, até junho de 2026 — contexto sobre a praça.")
+    if conf and str(conf) in ("baixa", "muito_baixa"):
+        partes.append("Confiabilidade baixa: poucos vínculos formais no município.")
+    return " ".join(partes)
+
+
 # --------------------------------------------------------------------------- #
 # Hexagono do ponto na camada de crescimento (pontual)                        #
 # --------------------------------------------------------------------------- #

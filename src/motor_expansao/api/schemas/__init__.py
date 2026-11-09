@@ -115,6 +115,18 @@ class AnalisarRequest(BaseModel):
         ),
         examples=["carro_10min"],
     )
+    # --- Paginas da praca no PDF Pontual (emenda de 2026-11-09 da DEC-005) -----------
+    # "Pressao concorrencial" e "Como a cidade esta indo", as duas do PDF do site. Opt-in de
+    # proposito: o bot do Telegram chama esta mesma rota e segue com o PDF de sempre.
+    paginas_praca: bool = Field(
+        default=False,
+        description=(
+            "Com true, o PDF ganha as paginas 'Pressão concorrencial' (depois de Concorrentes) "
+            "e 'Como a cidade está indo' (depois de Big Numbers), como o PDF do site. Default "
+            "false: o PDF de sempre. Ignorado na saída JSON."
+        ),
+        examples=[True],
+    )
 
     @model_validator(mode="after")
     def _exige_coordenada(self) -> AnalisarRequest:
