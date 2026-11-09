@@ -69,7 +69,7 @@ piloto.ultra-expansao.tech {
     # propria SPA servida por este host (`entrar.html`), entao o unico estado alcancavel
     # por quem nao tem sessao seria 401 em tela branca — sem formulario, sem saida.
     #
-    # As CINCO rotas de fora sao as MESMAS de `acesso.ROTAS_PUBLICAS_SEM_SESSAO`, e cada uma
+    # As SEIS rotas de fora sao as MESMAS de `acesso.ROTAS_PUBLICAS_SEM_SESSAO`, e cada uma
     # tem razao: `login` e' como se entra; `logout` e' idempotente de proposito (sair com a
     # sessao ja' vencida nao e' erro); `health` e' o healthcheck do container, que nao e'
     # gente; `verify` e' o forward_auth DESTE host — perguntar a ele exigindo sessao seria
@@ -78,7 +78,7 @@ piloto.ultra-expansao.tech {
     # `test_piloto_web_verify.py` compara as duas listas e falha se uma andar sem a outra.
     @protegido {
         path /api/*
-        not path /api/login /api/logout /api/health /api/verify /api/verify-sessao
+        not path /api/login /api/logout /api/health /api/verify /api/verify-sessao /api/sso/entrar
     }
 
     # A BORDA FICA (D4, aprovado por Vinicius em 25/09/2026). Muda so' o ALVO: do servico

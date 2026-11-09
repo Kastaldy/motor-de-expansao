@@ -115,7 +115,18 @@ def test_cartoes_sao_links_de_verdade() -> None:
     assert re.search(r"<a\b[^>]*href=", selecao, re.DOTALL), (
         "nenhum <a href=...> em SelecaoPais.tsx -- os cartoes precisam ser links"
     )
-    # Sem comentarios: a propria explicacao de "nunca <div onClick>" cita o padrao.
-    assert "onClick" not in _sem_comentarios(selecao), (
-        "SelecaoPais.tsx tem onClick -- cartao de pais e' <a href>, nunca <div onClick>"
+    # DEC-083: o cartao ganhou um handoff de SSO no clique SIMPLES (POST /api/sso/ticket ->
+    # navega para o host ja' logado), mas CONTINUA um <a href> -- o href e' o fallback sem-JS
+    # e o caminho de "abrir em nova aba". O anti-padrao proibido e' o <div onClick> (quebra
+    # teclado/nova aba/leitor de tela em silencio); um onClick NO <a> que deixa passar o clique
+    # com modificador preserva os tres. Entao: nada de <div onClick>, e o handoff TEM de checar
+    # os modificadores (metaKey/ctrlKey) para nao sequestrar o "abrir em nova aba".
+    corpo = _sem_comentarios(selecao)
+    assert not re.search(r"<div[^>]*onClick", corpo, re.DOTALL), (
+        "SelecaoPais.tsx tem <div onClick> -- cartao de pais e' <a href>, nunca <div>"
     )
+    if "onClick" in corpo:
+        assert "metaKey" in corpo and "ctrlKey" in corpo, (
+            "o onClick do handoff de SSO tem de deixar passar o clique com modificador "
+            "(nova aba), senao quebra o 'abrir em nova aba' do <a href>"
+        )

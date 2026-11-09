@@ -78,11 +78,12 @@ TABELAS_DO_MODELO = (
     "perfil_permissoes_historico",
     "sessoes",
     "usuario_paises",
+    "sso_tickets",
 )
 NUMEROS_DA_SECAO_ZERO = {
-    "indices": 50,  # 35 explicitos + 13 de PK + 2 de UNIQUE (a 021/DEC-081 somou o indice da PK de usuario_paises)
-    "constraints CHECK": 15,  # a 018 (D30), a 019 (`ck_usuarios_prazo_exige_troca`) e a 021/DEC-081 (`chk_usuario_paises_sigla`)
-    "chaves estrangeiras": 13,  # a 018 (D30): `sessoes.id_usuario`; a 021/DEC-081: `usuario_paises.id_usuario`
+    "indices": 53,  # 36 explicitos + 14 de PK + 3 de UNIQUE (a 022/DEC-083 somou 3 em sso_tickets: PK + UNIQUE do token + idx de id_usuario)
+    "constraints CHECK": 17,  # a 018 (D30), a 019 (`ck_usuarios_prazo_exige_troca`), a 021/DEC-081 (`chk_usuario_paises_sigla`) e a 022/DEC-083 (`chk_sso_ticket_sigla`, `chk_sso_ticket_expira_apos_criacao`)
+    "chaves estrangeiras": 15,  # a 018 (D30): `sessoes.id_usuario`; a 021/DEC-081: `usuario_paises.id_usuario`; a 022/DEC-083: `sso_tickets.id_usuario` e `sso_tickets.id_sessao_origem`
     "triggers": 7,  # 5 ate' a 016; a 017 (D29) somou a guarda de coerencia nas duas regioes
     "colunas geometricas": 7,
 }

@@ -1,5 +1,7 @@
 import type { ReactNode } from 'react'
 
+import { api } from '../lib/api'
+
 /**
  * Os cartoes do portal do apex: um por pais que a pessoa pode abrir.
  *
@@ -128,6 +130,34 @@ const HOST: React.CSSProperties = {
  * que ainda nao desenhamos) e' ignorada, com aviso discreto no console — a tabela e'
  * dado, e desenhar um pais e' acrescentar uma linha a ela, nunca um ramo de codigo.
  */
+
+/**
+ * Handoff de SSO (DEC-083): num clique simples, troca o link puro por um TICKET de uso unico
+ * e entra no host de destino JA' logado. Preserva o `<a>`: clique com modificador (nova aba,
+ * ctrl/meta/shift) ou botao nao-primario seguem o `href` puro -- la o SSO nao se aplica (abre
+ * o host e a pessoa loga), e e' tambem o fallback sem-JS. Falha no mint (sessao caiu, 403,
+ * rede) cai no mesmo link puro. `sigla`/`host` sao DADO, nunca literal de pais em condicional
+ * (fio de alarme da DEC-047).
+ */
+async function irParaPais(
+  e: React.MouseEvent<HTMLAnchorElement>,
+  sigla: string,
+  host: string,
+): Promise<void> {
+  if (e.defaultPrevented || e.button !== 0 || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) {
+    return
+  }
+  e.preventDefault()
+  try {
+    const { ticket } = await api.ssoTicket(sigla)
+    const alvo = `https://${host}/api/sso/entrar?t=${encodeURIComponent(ticket)}&rd=${encodeURIComponent('/')}`
+    window.location.assign(alvo)
+  } catch {
+    // Mint falhou: o link puro abre o host e a pessoa loga (mesmas credenciais).
+    window.location.assign(`https://${host}/`)
+  }
+}
+
 export default function SelecaoPais({ paises }: { paises: readonly string[] }) {
   const cartoes = paises.flatMap((sigla) => {
     const pais = PAISES[sigla]
@@ -159,7 +189,12 @@ export default function SelecaoPais({ paises }: { paises: readonly string[] }) {
         <li key={sigla} style={{ display: 'block' }}>
           {/* Cartao e' <a> de verdade, nunca <div onClick>: assim o teclado alcanca, o
               "abrir em nova aba" funciona e o leitor de tela anuncia como link. */}
-          <a className="portal-cartao" style={CARTAO} href={`https://${pais.host}/`}>
+          <a
+            className="portal-cartao"
+            style={CARTAO}
+            href={`https://${pais.host}/`}
+            onClick={(e) => void irParaPais(e, sigla, pais.host)}
+          >
             {/* `aria-hidden` porque o nome do pais esta' escrito ao lado — a bandeira
                 nao acrescenta informacao para quem usa leitor de tela. */}
             <svg

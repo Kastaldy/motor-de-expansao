@@ -47,12 +47,12 @@
 ultra-expansao.tech {
     import sec_headers
 
-    # As CINCO rotas publicas sao as MESMAS de `acesso.ROTAS_PUBLICAS_SEM_SESSAO` (igual BR/AR):
+    # As SEIS rotas publicas sao as MESMAS de `acesso.ROTAS_PUBLICAS_SEM_SESSAO` (igual BR/AR):
     # login/logout/health/verify/verify-sessao. A raiz e os estaticos (a tela React) ficam
     # publicos -- a tela de login/selecao nao pode ficar atras do login que ela existe para obter.
     @protegido {
         path /api/*
-        not path /api/login /api/logout /api/health /api/verify /api/verify-sessao
+        not path /api/login /api/logout /api/health /api/verify /api/verify-sessao /api/sso/entrar
     }
 
     # PAIS-NEUTRO: `uri /api/verify-sessao`, nao `/api/verify`. `copy_headers` lista o que a rota

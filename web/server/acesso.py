@@ -302,6 +302,11 @@ ROTAS_LIVRES = frozenset(
         # PAIS-NEUTRO (so' valida sessao, nunca o pais) -- o apex e' o seletor e tem de admitir
         # qualquer autenticado, inclusive quem nao tem o pais do processo que serve o apex.
         "/api/verify-sessao",
+        # DEC-083 (SSO por ticket, follow-up Opcao B da DEC-081): livres do gate de ABA.
+        # `/api/sso/ticket` so' estabelece o handoff para quem JA' tem sessao (a aba e' do
+        # DESTINO); `/api/sso/entrar` e' PRE-sessao (o ticket E' a credencial).
+        "/api/sso/ticket",
+        "/api/sso/entrar",
     }
 )
 
@@ -347,7 +352,7 @@ ROTAS_LIVRES = frozenset(
 #: Duas redacoes da mesma regra desencontram em SILENCIO (licao da DEC-044), entao
 #: `test_piloto_web_verify.py` compara as duas e falha se uma andar sem a outra.
 ROTAS_PUBLICAS_SEM_SESSAO = frozenset(
-    {"/api/login", "/api/logout", "/api/health", "/api/verify", "/api/verify-sessao"}
+    {"/api/login", "/api/logout", "/api/health", "/api/verify", "/api/verify-sessao", "/api/sso/entrar"}
 )
 
 #: Nome do cookie. `__Host-` e' o prefixo MAIS restritivo: o NAVEGADOR so' aceita o cookie com
@@ -407,7 +412,7 @@ def rota_publica_sem_sessao(path: str) -> bool:
 #: `/api/me` e nunca veria os cartoes dos paises dele. Elas resolvem a identidade do PROPRIO
 #: chamador (nao servem dado territorial de pais nenhum), entao sao seguras fora do gate.
 ROTAS_PAIS_NEUTRO = frozenset(
-    {"/api/me", "/api/me/senha", "/api/ciencia-confidencialidade"}
+    {"/api/me", "/api/me/senha", "/api/ciencia-confidencialidade", "/api/sso/ticket"}
 )
 
 
