@@ -268,13 +268,18 @@ function fontesDe(dir: string): string[] {
  * motivo escrito: exceção sem motivo é guarda furada com álibi.
  */
 const FORA_DA_GUARDA: Record<string, string> = {
-  /* VAZIO desde a DEC-081. A única exceção era `entrar.tsx`, que fazia um `fetch` à mão
+  /* Ficou VAZIO na DEC-081 (até o print do mapa, abaixo). A única exceção era `entrar.tsx`, que fazia um `fetch` à mão
      para o `firstfactor` do Authelia (o POST de reserva não devia anunciar sessão). O
      Authelia foi aposentado, a reserva saiu, e a tela entra só por `api.entrar()` — que já
      passa por `pedir`. Sem `fetch(` próprio, `entrar.tsx` sai do censo por conta, sem
      precisar de exceção. A regra "401 do login é SENHA ERRADA, não sessão" continua, agora
      só por CÓDIGO: `ehQuedaDeSessao('/api/login')` devolve `false` em `lib/login-motor.ts`,
      e `pedir` consulta antes de relatar. */
+  'lib/print-mapa-render.ts':
+    'O único fetch dali baixa o estilo-base do CARTO (basemaps.cartocdn.com), um terceiro que não ' +
+    'recebe o cookie da sessão: um 401/403 ou uma queda de rede lá não diz nada sobre a sessão do ' +
+    'piloto, e relatar faria a tela anunciar "sessão caiu" por causa do fornecedor do mapa. A falha ' +
+    'vira a mensagem de erro do próprio botão de print (pedido do Vinicius, 10/11/2026).',
 }
 
 const chamadoresProprios = fontesDe(RAIZ_SRC)
