@@ -37,7 +37,7 @@ PREFIXO_CHAVE = "obs-v1"
 #: lugar. O que ainda cruza res-5 a leitura por proximidade recupera.
 RES_CELULA_CHAVE = 5
 
-#: As faixas dos CHECK da 022, repetidas aqui para o erro sair legível (422) em vez de 500.
+#: As faixas dos CHECK da 023, repetidas aqui para o erro sair legível (422) em vez de 500.
 #: (campo, rótulo na tela, mínimo, máximo) dos inteiros.
 INTEIROS = (
     ("metragem_m2", "Metragem", 50, 20_000),
@@ -100,7 +100,7 @@ def _inteiro(valor: object, rotulo: str, minimo: int, maximo: int) -> int | None
 
 
 def normalizar_campos(**valores: object) -> CamposObservacao:
-    """Mesmas regras dos CHECK da 022, para o erro sair legível em vez de 500 do banco.
+    """Mesmas regras dos CHECK da 023, para o erro sair legível em vez de 500 do banco.
 
     Recebe os campos pelo nome de `CamposObservacao`; campo ausente vale vazio.
     """

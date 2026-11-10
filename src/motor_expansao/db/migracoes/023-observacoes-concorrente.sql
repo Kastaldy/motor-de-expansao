@@ -1,5 +1,5 @@
 -- ARQUIVO GERADO -- nao editar a mao.
--- Origem: banco-de-reservas/sql/022-observacoes-concorrente.md (primeiro bloco ```sql).
+-- Origem: banco-de-reservas/sql/023-observacoes-concorrente.md (primeiro bloco ```sql).
 -- sha256 do bloco extraido: c923e31513004d51c6c5cc7c9d981d20cd81d96cc20295e57ce51b061648e4f7
 -- Regenerar: python scripts/extrair_migracoes.py --origem <.../banco-de-reservas/sql>
 --

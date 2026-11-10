@@ -1,4 +1,4 @@
-/* Anotações do time sobre uma academia concorrente (migration 022).
+/* Anotações do time sobre uma academia concorrente (migration 023).
  *
  * Abre pelo clique no pino do concorrente, dentro de uma `JanelaFicha` à direita. O que cada
  * pessoa vê já vem decidido do servidor — este componente NÃO esconde nada:

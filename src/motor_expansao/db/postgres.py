@@ -617,7 +617,7 @@ SQL_FUNCAO_SECURITY_DEFINER_ALHEIA = (
     "WHERE n.nspname = 'public' AND p.prosecdef "
     "AND p.proname NOT IN ('registra_perfil_permissoes_historico', "
     "'registra_perfil_permissoes_truncate', "
-    # 022: a gravadora do historico das anotacoes de concorrente. Mesma especificacao das
+    # 023: a gravadora do historico das anotacoes de concorrente. Mesma especificacao das
     # duas do D20 -- guarda de alvo por `TG_RELID`, `search_path` fixo e `EXECUTE` fechado a
     # PUBLIC no `papeis-e-privilegios.md` --, e por isso sai por nome como elas.
     "'registra_observacao_concorrente')"

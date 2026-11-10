@@ -101,7 +101,7 @@ FUNCOES_ESPERADAS = {
     # D29: recusa UPDATE que muda a definicao da regiao sem gravar a forma nova. NAO e'
     # SECURITY DEFINER de proposito -- ela so' levanta excecao, nao escreve nada.
     "exige_geom_coerente": (False, "pg_catalog, pg_temp"),
-    # 022 (anotacoes de concorrente): so' a que GRAVA o historico e' SECURITY DEFINER; as outras
+    # 023 (anotacoes de concorrente): so' a que GRAVA o historico e' SECURITY DEFINER; as outras
     # duas so' levantam excecao ou ajustam NEW.
     "registra_observacao_concorrente": (True, "pg_catalog, public, pg_temp"),
     "guarda_observacao_concorrente": (False, "pg_catalog, pg_temp"),
@@ -761,7 +761,7 @@ def _checagens_negativas() -> list[tuple[str, str, str]]:
             "SELECT has_table_privilege(current_user, 'eventos', 'DELETE')",
             "mesma razao do UPDATE em eventos",
         ),
-        # As duas da 022 (anotacoes de concorrente): o produto promete que TUDO o que foi escrito
+        # As duas da 023 (anotacoes de concorrente): o produto promete que TUDO o que foi escrito
         # fica salvo -- apagar e' marcar, editar grava versao. Sem estas, a promessa seria so' das
         # triggers, e o dono pode desliga-las; o papel `app` nao pode nem tentar.
         (
@@ -770,7 +770,7 @@ def _checagens_negativas() -> list[tuple[str, str, str]]:
             "OR has_table_privilege(current_user, 'observacoes_concorrente_historico', 'UPDATE') "
             "OR has_any_column_privilege(current_user, 'observacoes_concorrente_historico', 'INSERT') "
             "OR has_any_column_privilege(current_user, 'observacoes_concorrente_historico', 'UPDATE')",
-            "o historico das anotacoes e' escrito SO' pela trigger da 022; com INSERT ou UPDATE "
+            "o historico das anotacoes e' escrito SO' pela trigger da 023; com INSERT ou UPDATE "
             "direto, a aplicacao forjaria ou reescreveria a versao anterior de uma anotacao",
         ),
         (
@@ -1127,7 +1127,7 @@ def cmd_privilegios(_args: argparse.Namespace) -> int:
         ).fetchone()[0]
         print(
             f"  {'ok   ' if not secdef else 'FALHA'} nenhuma funcao SECURITY DEFINER "
-            f"alem das tres previstas (D20 e 022){'' if not secdef else ': ' + secdef}"
+            f"alem das tres previstas (D20 e 023){'' if not secdef else ': ' + secdef}"
         )
         if secdef:
             print(

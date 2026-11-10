@@ -394,7 +394,7 @@ export interface Pin {
   oferta?: number | null
   dist_m?: number | null
   /**
-   * Âncora das ANOTAÇÕES do time nesta academia (migration 022): sha1 de rede + nome-base +
+   * Âncora das ANOTAÇÕES do time nesta academia (migration 023): sha1 de rede + nome-base +
    * célula H3 res-5, calculado pelo servidor. É a única coisa que o front devolve ao abrir ou
    * gravar uma anotação — rede, nome e coordenada saem do índice do servidor. `null` só para
    * coordenada inválida, e aí o pino não abre painel.

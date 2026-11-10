@@ -545,7 +545,7 @@ export default function MapScreen({
   const temRedes = (dados?.pins?.concorrentes.length ?? 0) > 0
   const pinsNoMapa = useMemo(() => pinsVisiveis(dados?.pins, verRedes), [dados?.pins, verRedes])
 
-  /* ANOTACOES do time nos pinos de concorrente (migration 022). O clique no pino abre a janela;
+  /* ANOTACOES do time nos pinos de concorrente (migration 023). O clique no pino abre a janela;
      a contagem alimenta o selo turquesa. A contagem e' pedida UMA vez por recorte de pinos e
      corrigida localmente quando alguem grava ou apaga no painel — sem refazer a chamada. Falha
      na contagem nao vira erro de tela: o selo e' enfeite, e o servidor ja' devolve `{}`. */
@@ -2531,7 +2531,7 @@ export default function MapScreen({
       </JanelaFicha>
 
       {/* ---------------- Janela das ANOTAÇÕES do concorrente ----------------
-          Aberta pelo clique no pino de concorrente (migration 022). À DIREITA, em degrau sobre
+          Aberta pelo clique no pino de concorrente (migration 023). À DIREITA, em degrau sobre
           as outras duas da direita (imóvel e unidade), para a barra delas seguir à vista. */}
       <JanelaFicha
         aberta={concorrenteAberto != null}

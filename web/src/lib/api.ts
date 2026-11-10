@@ -784,7 +784,7 @@ export const api = {
       `/api/rede/unidade/${encodeURIComponent(id)}${mes ? `?mes=${encodeURIComponent(mes)}` : ''}`,
     ),
 
-  /** Anotações do time sobre UMA academia concorrente (migration 022). O que vem no payload
+  /** Anotações do time sobre UMA academia concorrente (migration 023). O que vem no payload
    *  já é o que esta pessoa pode ver: nome do autor e histórico só para Growth. */
   observacoes: (chave: string) =>
     pedir<ObservacoesPayload>(

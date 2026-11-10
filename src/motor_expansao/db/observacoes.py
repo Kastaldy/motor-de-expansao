@@ -1,10 +1,10 @@
-"""Anotações de campo nas academias concorrentes (migration 022).
+"""Anotações de campo nas academias concorrentes (migration 023).
 
 O que o time vê numa visita — metragem, equipamentos, um comentário — e que a coleta não traz.
 É a segunda ESCRITA do piloto que qualquer perfil faz, e por isso as regras moram em dois
 lugares que se cobrem:
 
-* no BANCO (022): apagar é marcar, editar grava a versão anterior no histórico, e o histórico
+* no BANCO (023): apagar é marcar, editar grava a versão anterior no histórico, e o histórico
   só a trigger escreve. Nem o dono apaga linha sem desligar trigger.
 * AQUI: só o autor edita ou apaga a própria anotação; quem tem `concorrente.ver_autor`
   (Growth) apaga a de qualquer um, como moderação. A checagem é feita com a linha TRAVADA

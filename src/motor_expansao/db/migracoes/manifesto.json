@@ -164,11 +164,11 @@
       "sha256_arquivo": "f7a4726568aa0c5fd4dd797e92819a77bc95ab1456db47477a0ac4f7c916d534"
     },
     {
-      "versao": "022",
-      "arquivo": "022-observacoes-concorrente.sql",
-      "documento": "022-observacoes-concorrente.md",
+      "versao": "023",
+      "arquivo": "023-observacoes-concorrente.sql",
+      "documento": "023-observacoes-concorrente.md",
       "sha256_bloco": "c923e31513004d51c6c5cc7c9d981d20cd81d96cc20295e57ce51b061648e4f7",
-      "sha256_arquivo": "2532d2015adea3eece7fd4e52831ba99eb7813d80ca26d1889c6191468642dbe"
+      "sha256_arquivo": "b37d1bda76c486f9cff33e237f350c5e72098b77b9d1331f36638a88779d73ad"
     }
   ]
 }

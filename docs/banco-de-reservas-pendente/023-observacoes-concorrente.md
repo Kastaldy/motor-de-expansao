@@ -1,9 +1,9 @@
-# 022 — Anotações de campo nas academias concorrentes
+# 023 — Anotações de campo nas academias concorrentes
 
 > **Rascunho para o `banco-de-reservas`.** O desenho do esquema mora lá (convenções §7), e este
 > arquivo existe no motor só porque aquele repositório não estava ao alcance de quem escreveu a
 > mudança. O primeiro bloco ```sql abaixo é, byte a byte, o que `scripts/extrair_migracoes.py`
-> extraiu para `src/motor_expansao/db/migracoes/022-observacoes-concorrente.sql` — quem trouxer
+> extraiu para `src/motor_expansao/db/migracoes/023-observacoes-concorrente.sql` — quem trouxer
 > este documento para `banco-de-reservas/sql/` deve conferir com
 > `python scripts/extrair_migracoes.py --origem <.../banco-de-reservas/sql> --conferir` e então
 > apagar esta cópia.

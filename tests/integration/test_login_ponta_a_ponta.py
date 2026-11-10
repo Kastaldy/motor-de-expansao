@@ -345,7 +345,7 @@ PRIVILEGIOS_COMO_DONO_SEM_D20 = frozenset(
         "esvaziar perfil_permissoes",
         "alterar evento ja' gravado",
         "apagar evento",
-        # 022: o dono escreve no historico e apaga linha; o `app` nao (D20).
+        # 023: o dono escreve no historico e apaga linha; o `app` nao (D20).
         "escrever no historico de anotacoes de concorrente",
         "apagar anotacao de concorrente",
         "criar tabela temporaria",
@@ -820,12 +820,12 @@ def test_alinhar_e_IDEMPOTENTE_e_a_contagem_e_honesta(
 
 
 # ======================================================================================
-# 3. AS ANOTAÇÕES DE CONCORRENTE (022) — o que só o banco de verdade prova
+# 3. AS ANOTAÇÕES DE CONCORRENTE (023) — o que só o banco de verdade prova
 #
 # Aqui, e não num arquivo próprio, porque este é o arquivo que o passo do banco do CI roda
 # (`scripts/ci/banco_de_ensaio.sh`, `TESTE=`): um arquivo novo pularia no CI sem ninguém ver.
 # A promessa de produto é "nada do que foi escrito se perde" — e quem a cumpre são as triggers
-# e os CHECK da 022, que dublê nenhum exercita.
+# e os CHECK da 023, que dublê nenhum exercita.
 # ======================================================================================
 
 from motor_expansao.db import observacoes as db_obs  # noqa: E402
@@ -880,7 +880,7 @@ def _editar(id_obs: int, autor: int, versao: int, metragem: int) -> int:
     )
 
 
-def test_022_criar_e_editar_deixam_historico_com_o_autor(con: Any) -> None:
+def test_023_criar_e_editar_deixam_historico_com_o_autor(con: Any) -> None:
     autor = _pessoa_com_perfil(con, "expansao")
     id_obs, _ = _anotar(autor)
     assert _editar(id_obs, autor, versao=1, metragem=1450) == 2
@@ -895,7 +895,7 @@ def test_022_criar_e_editar_deixam_historico_com_o_autor(con: Any) -> None:
     assert [(h.campos.vagas, h.campos.nota_conservacao) for h in hist] == [(20, 8), (20, 8)]
 
 
-def test_022_nota_fora_de_1_a_10_e_recusada_pelo_banco(con: Any) -> None:
+def test_023_nota_fora_de_1_a_10_e_recusada_pelo_banco(con: Any) -> None:
     """O CHECK é a última linha: mesmo que a validação do piloto falhe, a nota 11 não entra."""
     autor = _pessoa_com_perfil(con, "expansao")
     id_obs, _ = _anotar(autor)
@@ -906,7 +906,7 @@ def test_022_nota_fora_de_1_a_10_e_recusada_pelo_banco(con: Any) -> None:
         )
 
 
-def test_022_so_o_autor_edita_e_a_versao_velha_e_recusada(con: Any) -> None:
+def test_023_so_o_autor_edita_e_a_versao_velha_e_recusada(con: Any) -> None:
     autor = _pessoa_com_perfil(con, "expansao")
     outro = _pessoa_com_perfil(con, "lideres")
     id_obs, _ = _anotar(autor)
@@ -917,7 +917,7 @@ def test_022_so_o_autor_edita_e_a_versao_velha_e_recusada(con: Any) -> None:
         _editar(id_obs, autor, versao=1, metragem=1400)
 
 
-def test_022_apagar_e_marcar_e_growth_modera(con: Any) -> None:
+def test_023_apagar_e_marcar_e_growth_modera(con: Any) -> None:
     autor = _pessoa_com_perfil(con, "expansao")
     outro = _pessoa_com_perfil(con, "lideres")
     growth = _pessoa_com_perfil(con, "growth")
@@ -941,7 +941,7 @@ def test_022_apagar_e_marcar_e_growth_modera(con: Any) -> None:
     assert (ultimo.acao, ultimo.registrado_por) == ("apagada", growth)
 
 
-def test_022_nem_o_dono_apaga_linha_nem_reescreve_o_historico(con: Any) -> None:
+def test_023_nem_o_dono_apaga_linha_nem_reescreve_o_historico(con: Any) -> None:
     """O `con` é o DONO: se ele não consegue, o `app` muito menos (e o D20 nem lhe dá DELETE)."""
     autor = _pessoa_com_perfil(con, "expansao")
     id_obs, _ = _anotar(autor)
@@ -963,7 +963,7 @@ def test_022_nem_o_dono_apaga_linha_nem_reescreve_o_historico(con: Any) -> None:
     assert restantes == 1
 
 
-def test_022_a_academia_e_o_autor_de_uma_anotacao_nao_mudam(con: Any) -> None:
+def test_023_a_academia_e_o_autor_de_uma_anotacao_nao_mudam(con: Any) -> None:
     autor = _pessoa_com_perfil(con, "expansao")
     outro = _pessoa_com_perfil(con, "lideres")
     id_obs, _ = _anotar(autor)
@@ -975,7 +975,7 @@ def test_022_a_academia_e_o_autor_de_uma_anotacao_nao_mudam(con: Any) -> None:
             )
 
 
-def test_022_leitura_acha_por_proximidade_e_respeita_o_pais(con: Any) -> None:
+def test_023_leitura_acha_por_proximidade_e_respeita_o_pais(con: Any) -> None:
     """A chave muda quando a coleta ajusta o nome; a anotação não pode sumir por isso."""
     autor = _pessoa_com_perfil(con, "expansao")
     id_obs, chave = _anotar(autor)
@@ -994,7 +994,7 @@ def test_022_leitura_acha_por_proximidade_e_respeita_o_pais(con: Any) -> None:
     assert id_obs not in ids("AR", chave, "smart_fit", -23.55, -46.63)
 
 
-def test_022_anotar_e_de_todos_os_perfis_e_ver_autor_so_de_growth(con: Any) -> None:
+def test_023_anotar_e_de_todos_os_perfis_e_ver_autor_so_de_growth(con: Any) -> None:
     linhas = con.execute(
         "SELECT p.nome_perfil, pe.chave FROM perfil_permissoes pp "
         "JOIN perfis p ON p.id_perfil = pp.id_perfil "

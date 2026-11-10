@@ -135,7 +135,7 @@ REGRAS_DE_ACESSO: tuple[tuple[str, frozenset[str]], ...] = (
     # proposito: e' o mesmo arquivo, servido em outra roupa — dar-lhe regra diferente
     # deixaria uma das duas portas mais larga que a outra sobre o mesmo dado.
     ("/api/pin-concorrente/", frozenset({"mapa", "oportunidades"})),
-    # Anotacoes do time no pino do concorrente (migration 022). MESMO gate da foto e do pino:
+    # Anotacoes do time no pino do concorrente (migration 023). MESMO gate da foto e do pino:
     # quem ve a academia no mapa pode ler e escrever sobre ela. Sem a barra no prefixo, cobre
     # tambem `/api/concorrente/observacoes/{id}` e `/contagem`.
     ("/api/concorrente/observacoes", frozenset({"mapa", "oportunidades"})),
@@ -700,7 +700,7 @@ REGRAS_POR_CAPACIDADE: tuple[tuple[str, tuple[str, ...] | None, str], ...] = (
     # todo perfil da D22 que tem o ranking tem tambem a exploracao.
     ("/api/foto-concorrente/", None, "territorio.explorar"),
     ("/api/pin-concorrente/", None, "territorio.explorar"),
-    # Anotacoes do pino (022): UMA capacidade para ler e escrever, porque a decisao de produto
+    # Anotacoes do pino (023): UMA capacidade para ler e escrever, porque a decisao de produto
     # (05/11/2026) da as duas a todos os perfis. O que muda por perfil -- ver o nome do autor e
     # moderar -- e' `concorrente.ver_autor`, conferida DENTRO da rota, nao no gate.
     ("/api/concorrente/observacoes", None, "concorrente.anotar"),
@@ -725,7 +725,7 @@ CAPACIDADES_SENSIVEIS = frozenset(
         "viabilidade.simular",
         "acesso.painel_ver",
         "acesso.usuario_gerir",
-        # 022: ESCRITA, e de texto livre de qualquer perfil. Com o banco fora ela nem teria
+        # 023: ESCRITA, e de texto livre de qualquer perfil. Com o banco fora ela nem teria
         # onde gravar; negar no gate da' o recado certo em vez de um 503 por clique.
         "concorrente.anotar",
     }

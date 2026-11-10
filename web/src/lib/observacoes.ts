@@ -1,9 +1,9 @@
-/* Funções puras do painel de anotações de concorrente (migration 022). Ficam fora do
+/* Funções puras do painel de anotações de concorrente (migration 023). Ficam fora do
  * componente para o vitest (ambiente `node`, sem DOM) alcançá-las. */
 import type { CamposDaObservacao, Observacao, ObservacaoCampos } from './types'
 
 /** Campos numéricos do formulário: (chave, rótulo, mínimo, máximo). As MESMAS faixas dos CHECK
- *  da 022 e de `web/server/observacoes.py`, para o erro aparecer antes de ir ao servidor. */
+ *  da 023 e de `web/server/observacoes.py`, para o erro aparecer antes de ir ao servidor. */
 export const NUMERICOS = [
   ['metragem_m2', 'Metragem', 50, 20000],
   ['vagas', 'Vagas de estacionamento', 0, 5000],
@@ -61,7 +61,7 @@ export function lerNumero(texto: string): number | null {
   return Number(limpo)
 }
 
-/** O corpo da requisição, ou a mensagem de erro (as MESMAS regras dos CHECK da 022). */
+/** O corpo da requisição, ou a mensagem de erro (as MESMAS regras dos CHECK da 023). */
 export function camposDoFormulario(f: Formulario): ObservacaoCampos | string {
   const numeros = {} as Record<ChaveNumerica, number | null>
   for (const [chave, rotulo, min, max] of NUMERICOS) {

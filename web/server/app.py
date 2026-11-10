@@ -83,7 +83,7 @@ if str(_SRC) not in sys.path:
 # export (`rede_export`) segue lazy, dentro das rotas: ele puxa fpdf2 e openpyxl.
 import acesso  # noqa: E402  (controle TEMPORARIO de acesso por aba, por Remote-User)
 import cobertura_1km  # noqa: E402  (PROTOTIPO — area coberta pelo raio, para desenhar)
-import observacoes  # noqa: E402  (anotacoes nos pinos de concorrentes, migration 022)
+import observacoes  # noqa: E402  (anotacoes nos pinos de concorrentes, migration 023)
 import praca_indice  # noqa: E402  (indice conjuntivo da camada 5 — DEC-041)
 import pressao_1km  # noqa: E402  (PROTOTIPO — chave de raio 2 km / 1 km por area)
 import rate_limit_login  # noqa: E402  (rate-limit por IP de /api/login -- solidificacao do pentest)
@@ -2706,7 +2706,7 @@ def _montar_pins(sel: pd.DataFrame) -> dict[str, Any]:
             # imensa maioria dos pinos, e a tela desenha sem a linha — nao inventar
             # zero, que afirmaria academia vazia.
             "alunos": _inteiro_ou_nulo(getattr(t, "alunos", None)),
-            # Ancora das ANOTACOES do time (migration 022): e' a unica coisa que o front devolve
+            # Ancora das ANOTACOES do time (migration 023): e' a unica coisa que o front devolve
             # ao servidor ao abrir ou gravar uma anotacao -- rede, nome e coordenada saem do
             # indice do servidor (`_indice_de_concorrentes`), nunca do corpo da requisicao.
             "chave": observacoes.chave_concorrente(t.rede, t.nome_unidade, t.lat, t.lng),
@@ -13382,7 +13382,7 @@ def rede_cadastro_atribuir(
 
 
 # ============================================================================
-# Anotações nos pinos de concorrentes (migration 022)
+# Anotações nos pinos de concorrentes (migration 023)
 #
 # Segunda escrita do piloto aberta a TODOS os perfis (decisão de produto de 05/11/2026). O que
 # cada pessoa enxerga — "Pessoa N" ou o nome, a anotação apagada, o histórico — é decidido em
@@ -13598,7 +13598,7 @@ def concorrente_observacoes_editar(
     body: ObservacaoEdicaoIn,
     remote_user: str | None = Header(default=None, alias="Remote-User"),
 ) -> dict[str, Any]:
-    """Edita a PRÓPRIA anotação. A versão anterior fica no histórico (trigger da 022)."""
+    """Edita a PRÓPRIA anotação. A versão anterior fica no histórico (trigger da 023)."""
     from motor_expansao.db import observacoes as db_obs
 
     alvo = _academia_da_chave(body.chave)

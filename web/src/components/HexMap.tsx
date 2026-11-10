@@ -529,7 +529,7 @@ export interface HexMapProps {
    *  carrega id — quem casa o ponto com a unidade da rede e' quem recebe o clique. */
   onUltra?: (p: Pin) => void
   /** Clique num pin de CONCORRENTE: o MapScreen abre o painel de anotacoes do time sobre
-   *  aquela academia (migration 022). O pino carrega a `chave` que o servidor lhe deu. */
+   *  aquela academia (migration 023). O pino carrega a `chave` que o servidor lhe deu. */
   onConcorrente?: (p: Pin) => void
   /** `chave -> anotacoes vivas`, para o selo turquesa no canto do pino. Ausente = sem selo. */
   contagemObservacoes?: Record<string, number>
@@ -1677,7 +1677,7 @@ export default function HexMap({
               : null,
           )
         },
-        // Abre o painel de ANOTACOES do time (migration 022). Mesma saida dos pins de imovel e
+        // Abre o painel de ANOTACOES do time (migration 023). Mesma saida dos pins de imovel e
         // da Ultra: com ferramenta ligada (regua, ponto, desenho) o clique e' da ferramenta.
         onClick: (info) => {
           if (cliqueOcupado) return
@@ -2897,7 +2897,7 @@ export default function HexMap({
             </>
           )}
 
-          {/* ANOTACOES do time (migration 022): o balao anuncia o clique, porque nada no pino
+          {/* ANOTACOES do time (migration 023): o balao anuncia o clique, porque nada no pino
               diria que ele abre alguma coisa. So' com `onConcorrente` (quem montou o mapa
               sabe abrir o painel) e com a `chave` (sem ela o servidor nao acha a academia). */}
           {pinHover.d?.chave && onConcorrente && (
