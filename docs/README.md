@@ -115,6 +115,7 @@ Mapa de navegação dos contratos e runbooks do Motor de Expansão. Legenda de s
 - [acesso_deploy_colaborador.md](acesso_deploy_colaborador.md) — **[canônico]** acesso SSH de deploy por pessoa (usuário `deploy`): onboarding, limites e revogação.
 - [archive/deploy_vps_streamlit.md](archive/deploy_vps_streamlit.md) — **[histórico]** runbook antigo de deploy do Streamlit (ver `infra_producao.md`).
 - [banco_conexao.md](banco_conexao.md) — **[canônico]** conexão com o banco PostgreSQL/PostGIS (`MOTOR_DATABASE_URL`): os três estados, leitura `READ ONLY` × escrita com `app.id_usuario`, e por que o diagnóstico não fica no `/api/health`.
+- [consultas_uteis.md](consultas_uteis.md) — registro dos **comandos reutilizáveis de leitura** (read-only). Parte A (banco, runner `motorq`): acessos, extração de documentos com quem/qual (`report_id`), movimentação de perfil, sessões, permissões, países. Parte B (operação): estado das migrations (`db estado`), revisão da imagem no ar, `/api/health` e onde ficam os monitores.
 - [banco_deploy.md](banco_deploy.md) — **[canônico]** runbook do banco: o **ensaio local** que precede qualquer
   subida, a ordem que evita trancar todo mundo para fora, provisionamento dos papéis do D20, backup/restore
   e o interruptor de rollback.
