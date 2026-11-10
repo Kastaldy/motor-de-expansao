@@ -14,6 +14,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { api, ApiError } from '../lib/api'
 import {
+  apenasDigitos,
   camposDoFormulario,
   dataHora,
   formularioDe,
@@ -405,9 +406,9 @@ function FormularioObservacao({
           <span style={label}>Metragem (m²)</span>
           <input
             inputMode="numeric"
-            placeholder="Ex.: 1.500"
+            placeholder="Ex.: 1500"
             value={form.metragem_m2}
-            onChange={(e) => setForm({ ...form, metragem_m2: e.target.value })}
+            onChange={(e) => setForm({ ...form, metragem_m2: apenasDigitos(e.target.value) })}
           />
         </label>
         <label style={{ display: 'block' }}>
@@ -416,7 +417,7 @@ function FormularioObservacao({
             inputMode="numeric"
             placeholder="Estacionamento"
             value={form.vagas}
-            onChange={(e) => setForm({ ...form, vagas: e.target.value })}
+            onChange={(e) => setForm({ ...form, vagas: apenasDigitos(e.target.value) })}
           />
         </label>
         <label style={{ display: 'block' }}>
@@ -425,7 +426,7 @@ function FormularioObservacao({
             inputMode="numeric"
             placeholder="Se souber"
             value={form.alunos_estimados}
-            onChange={(e) => setForm({ ...form, alunos_estimados: e.target.value })}
+            onChange={(e) => setForm({ ...form, alunos_estimados: apenasDigitos(e.target.value) })}
           />
         </label>
       </div>

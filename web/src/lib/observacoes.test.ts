@@ -1,6 +1,7 @@
 import { readFileSync } from 'node:fs'
 import { describe, expect, it } from 'vitest'
 import {
+  apenasDigitos,
   camposDoFormulario,
   chavesDosPinos,
   formularioDe,
@@ -44,7 +45,7 @@ describe('formulário de anotação', () => {
     expect(Number.isNaN(lerNumero('muito') as number)).toBe(true)
   })
 
-  it('aplica as regras dos CHECK da 022 antes de ir ao servidor', () => {
+  it('aplica as regras dos CHECK da 023 antes de ir ao servidor', () => {
     const base = formularioDe(null)
     expect(camposDoFormulario(base)).toMatch(/Preencha ao menos um campo/)
     expect(camposDoFormulario({ ...base, metragem_m2: '40' })).toMatch(/Metragem fora da faixa/)
@@ -126,6 +127,30 @@ describe('resumo do painel', () => {
       'a',
       'b',
     ])
+  })
+})
+
+describe('número só aceita dígito (prévia de 10/11: dava para digitar letra)', () => {
+  it('o filtro do input deixa só os dígitos', () => {
+    expect(apenasDigitos('12a3')).toBe('123')
+    expect(apenasDigitos('1.500')).toBe('1500')
+    expect(apenasDigitos('abc')).toBe('')
+    expect(apenasDigitos('')).toBe('')
+  })
+
+  it('número com letra diz que precisa ser número, não "fora da faixa"', () => {
+    const base = formularioDe(null)
+    expect(camposDoFormulario({ ...base, vagas: '12a' })).toBe(
+      'Vagas de estacionamento precisa ser um número inteiro.',
+    )
+    expect(camposDoFormulario({ ...base, metragem_m2: '1500,5' })).toBe(
+      'Metragem precisa ser um número inteiro.',
+    )
+  })
+
+  it('metragem, vagas e alunos estimados passam pelo filtro ao digitar', () => {
+    const fonte = readFileSync(new URL('../components/PainelObservacoes.tsx', import.meta.url), 'utf8')
+    expect(fonte.match(/apenasDigitos\(e\.target\.value\)/g)?.length).toBe(3)
   })
 })
 

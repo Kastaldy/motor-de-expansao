@@ -21,6 +21,8 @@ próprio servidor, nunca do corpo da requisição.
 from __future__ import annotations
 
 import hashlib
+import math
+import re
 from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import asdict
 from typing import Any
@@ -74,25 +76,47 @@ class CampoInvalido(ValueError):
     """Corpo bem formado com valor fora da regra (422)."""
 
 
+#: Texto que vale como inteiro: só dígitos ASCII (`str.isdigit` aceitaria "²" e outros).
+_SO_DIGITOS = re.compile(r"[0-9]+")
+
+
 def _texto(valor: object, limite: int, rotulo: str) -> str | None:
+    """Texto livre é `str`: número, booleano, lista ou objeto são recusados, nunca passados
+    por `str()` (que gravaria "12", "True" ou "{'a': 1}" como se alguém tivesse escrito)."""
     if valor is None:
         return None
-    texto = str(valor).strip()
+    if not isinstance(valor, str):
+        raise CampoInvalido(f"{rotulo} precisa ser texto.")
+    texto = valor.strip()
     if len(texto) > limite:
         raise CampoInvalido(f"{rotulo} passa de {limite:,} caracteres.".replace(",", "."))
     return texto or None
 
 
-def _inteiro(valor: object, rotulo: str, minimo: int, maximo: int) -> int | None:
-    if valor is None or str(valor).strip() == "":
+def _como_inteiro(valor: object) -> int | None:
+    """O inteiro que `valor` representa SEM conversão criativa, ou `None` se não for um.
+
+    Vale: `int` (bool não: em Python `True` é 1), `float` sem parte decimal (o `7.0` de um
+    cliente JSON) e texto só de dígitos (`" 1450 "`). Não vale: decimal, notação científica
+    ("1e3" virava 1.000), `inf`/`NaN` (o `int(round(inf))` derrubava a rota com 500) e letra.
+    """
+    if isinstance(valor, bool):
         return None
-    try:
-        numero = float(valor)  # type: ignore[arg-type]
-    except (TypeError, ValueError) as erro:
-        raise CampoInvalido(f"{rotulo} precisa ser um número.") from erro
-    if numero != numero:
-        raise CampoInvalido(f"{rotulo} precisa ser um número.")
-    inteiro = int(round(numero))
+    if isinstance(valor, int):
+        return valor
+    if isinstance(valor, float):
+        return int(valor) if math.isfinite(valor) and valor.is_integer() else None
+    if isinstance(valor, str) and _SO_DIGITOS.fullmatch(valor.strip()):
+        return int(valor.strip())
+    return None
+
+
+def _inteiro(valor: object, rotulo: str, minimo: int, maximo: int) -> int | None:
+    if valor is None or (isinstance(valor, str) and valor.strip() == ""):
+        return None
+    inteiro = _como_inteiro(valor)
+    if inteiro is None:
+        raise CampoInvalido(f"{rotulo} precisa ser um número inteiro.")
     if not minimo <= inteiro <= maximo:
         faixa = f"{minimo:,} a {maximo:,}".replace(",", ".")
         raise CampoInvalido(f"{rotulo} fora da faixa aceita ({faixa}).")

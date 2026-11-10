@@ -13514,18 +13514,22 @@ def _erro_de_observacao(erro: Exception) -> HTTPException:
 
 
 class _CamposObservacaoIn(BaseModel):
-    """Os campos da anotação, com os nomes de `CamposObservacao`. As faixas são conferidas em
-    `observacoes.normalizar_campos`, que devolve 422 com o rótulo da tela."""
+    """Os campos da anotação, com os nomes de `CamposObservacao`. TIPO e faixa são conferidos
+    em `observacoes.normalizar_campos`, que devolve 422 com o rótulo da tela.
 
-    metragem_m2: float | None = None
-    equipamentos: str | None = None
-    vagas: float | None = None
-    comodidades: str | None = None
-    nota_conservacao: float | None = None
-    nota_fachada: float | None = None
-    nota_atendimento: float | None = None
-    alunos_estimados: float | None = None
-    comentario: str | None = None
+    `Any` de propósito: com `float`, o Pydantic convertia ANTES da regra — "1e3" virava 1000,
+    `True` virava 1 e "inf" virava infinito (500 no `int()`) —, e com `str` o texto de tipo
+    errado saía como 422 em inglês, sem o rótulo. O valor cru do JSON chega inteiro à regra."""
+
+    metragem_m2: Any = None
+    equipamentos: Any = None
+    vagas: Any = None
+    comodidades: Any = None
+    nota_conservacao: Any = None
+    nota_fachada: Any = None
+    nota_atendimento: Any = None
+    alunos_estimados: Any = None
+    comentario: Any = None
 
     def campos(self) -> Any:
         return observacoes.normalizar_campos(

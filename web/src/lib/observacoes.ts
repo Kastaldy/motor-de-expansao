@@ -61,16 +61,26 @@ export function lerNumero(texto: string): number | null {
   return Number(limpo)
 }
 
-/** O corpo da requisição, ou a mensagem de erro (as MESMAS regras dos CHECK da 023). */
+/** O que os campos numéricos aceitam ao digitar ou colar: só dígitos. Letra, ponto, vírgula e
+ *  sinal somem na hora; metragem, vagas e alunos são sempre números inteiros. */
+export function apenasDigitos(texto: string): string {
+  return texto.replace(/\D/g, '')
+}
+
+/** O corpo da requisição, ou a mensagem de erro (as MESMAS regras dos CHECK da 023 e de
+ *  `web/server/observacoes.py`, com a mesma frase). */
 export function camposDoFormulario(f: Formulario): ObservacaoCampos | string {
   const numeros = {} as Record<ChaveNumerica, number | null>
   for (const [chave, rotulo, min, max] of NUMERICOS) {
     const n = lerNumero(f[chave])
-    if (n != null && (!Number.isFinite(n) || n < min || n > max)) {
+    if (n != null && !Number.isInteger(n)) {
+      return `${rotulo} precisa ser um número inteiro.`
+    }
+    if (n != null && (n < min || n > max)) {
       const faixa = `${min.toLocaleString('pt-BR')} a ${max.toLocaleString('pt-BR')}`
       return `${rotulo} fora da faixa aceita (${faixa}).`
     }
-    numeros[chave] = n == null ? null : Math.round(n)
+    numeros[chave] = n
   }
   const campos: ObservacaoCampos = {
     metragem_m2: numeros.metragem_m2,

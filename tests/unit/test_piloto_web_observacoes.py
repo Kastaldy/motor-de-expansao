@@ -1,4 +1,4 @@
-"""Anotações nos pinos de concorrentes (migration 022): âncora, privacidade do autor e rotas.
+"""Anotações nos pinos de concorrentes (migration 023): âncora, privacidade do autor e rotas.
 
 O banco (triggers, CHECK, histórico) é provado contra Postgres de verdade em
 `tests/integration/test_login_ponta_a_ponta.py`, seção 3. Aqui fica o que só existe na camada do
@@ -114,13 +114,13 @@ def test_chave_recusa_coordenada_invalida(lat: Any, lng: Any) -> None:
 
 
 # ---------------------------------------------------------------------------------------
-# Os campos (as mesmas regras dos CHECK da 022, com recado legível)
+# Os campos (as mesmas regras dos CHECK da 023, com recado legível)
 # ---------------------------------------------------------------------------------------
 
 
 def test_campos_normalizados() -> None:
     campos = observacoes.normalizar_campos(
-        metragem_m2=1450.4,
+        metragem_m2=1450,
         equipamentos="  Technogym  ",
         vagas="20",
         comodidades=" Spinning, pilates ",
@@ -169,6 +169,55 @@ def test_campos_normalizados() -> None:
 def test_campos_invalidos(campos: dict[str, Any]) -> None:
     with pytest.raises(observacoes.CampoInvalido):
         observacoes.normalizar_campos(**campos)
+
+
+# Número é número INTEIRO e texto é TEXTO (prévia de 10/11: a tela aceitava letra na metragem e
+# nas vagas, e o servidor convertia em silêncio o que não devia).
+
+
+@pytest.mark.parametrize(
+    "campo,valor",
+    [
+        ("vagas", True),  # bool é int no Python: virava 1 vaga
+        ("vagas", "1e3"),  # notação científica: virava 1.000
+        ("metragem_m2", "1.5"),  # decimal em texto: virava 2
+        ("metragem_m2", "12a"),
+        ("metragem_m2", 1450.4),  # número quebrado: era arredondado sem aviso
+        ("nota_fachada", 7.5),
+        ("alunos_estimados", "inf"),  # derrubava a rota com 500 (OverflowError no int())
+        ("alunos_estimados", float("inf")),
+        ("alunos_estimados", float("nan")),
+    ],
+)
+def test_numero_que_nao_e_inteiro_e_recusado_com_recado(campo: str, valor: Any) -> None:
+    with pytest.raises(observacoes.CampoInvalido, match="precisa ser um número inteiro"):
+        observacoes.normalizar_campos(**{campo: valor})
+
+
+@pytest.mark.parametrize(
+    "campo,valor",
+    [
+        ("comentario", 12),
+        ("equipamentos", {"marca": "Technogym"}),
+        ("comodidades", ["spinning"]),
+        ("comentario", True),
+    ],
+)
+def test_texto_que_nao_e_texto_e_recusado_com_recado(campo: str, valor: Any) -> None:
+    with pytest.raises(observacoes.CampoInvalido, match="precisa ser texto"):
+        observacoes.normalizar_campos(**{campo: valor})
+
+
+def test_inteiro_aceita_int_float_inteiro_e_texto_so_de_digitos() -> None:
+    campos = observacoes.normalizar_campos(
+        metragem_m2=" 1450 ", vagas=0, nota_fachada=7.0, alunos_estimados="2200"
+    )
+    assert (campos.metragem_m2, campos.vagas, campos.nota_fachada, campos.alunos_estimados) == (
+        1450,
+        0,
+        7,
+        2200,
+    )
 
 
 # ---------------------------------------------------------------------------------------
@@ -353,6 +402,32 @@ def test_criar_vazio_e_422(banco: dict[str, Any], monkeypatch: pytest.MonkeyPatc
             body=pilot_app.ObservacaoIn(chave=CHAVE), remote_user="carla"
         )
     assert erro.value.status_code == 422
+
+
+@pytest.mark.parametrize(
+    "corpo",
+    [
+        {"vagas": True},
+        {"vagas": "1e3"},
+        {"alunos_estimados": "inf"},
+        {"metragem_m2": "12a"},
+        {"comentario": 12},
+    ],
+)
+def test_rota_recusa_tipo_errado_com_422_em_portugues(
+    banco: dict[str, Any], monkeypatch: pytest.MonkeyPatch, corpo: dict[str, Any]
+) -> None:
+    """O modelo HTTP não pode converter antes da regra: com `float`, o Pydantic transformava
+    "1e3" em 1000, True em 1 e "inf" em infinito (500 no `int()`); texto errado saía como 422
+    em inglês, sem o rótulo da tela."""
+    _como(monkeypatch, EXPANSAO)
+    with pytest.raises(HTTPException) as erro:
+        pilot_app.concorrente_observacoes_criar(
+            body=pilot_app.ObservacaoIn.model_validate({"chave": CHAVE, **corpo}),
+            remote_user="carla",
+        )
+    assert erro.value.status_code == 422
+    assert "precisa ser" in erro.value.detail
 
 
 @pytest.mark.parametrize(
