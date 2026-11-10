@@ -21,7 +21,7 @@ Todo SQL fica em constante nomeada (convenção do pacote, `banco_conexao.md` §
 from __future__ import annotations
 
 from collections.abc import Iterable, Sequence
-from dataclasses import astuple, dataclass
+from dataclasses import dataclass
 from datetime import datetime
 from typing import Any
 
@@ -34,19 +34,23 @@ from .postgres import conexao, transacao
 #: o custo de juntá-las ser menor que o de perder a anotação.
 TOLERANCIA_GRAUS = 0.0015
 
-#: As colunas de CONTEUDO, na ordem de `CamposObservacao`. Uma lista so' para leitura, escrita e
+#: Campo de `CamposObservacao` -> coluna de CONTEUDO. Uma tabela so' para leitura, escrita e
 #: historico: esquecer uma coluna numa delas e' o defeito da DEC-038 (coluna existe, campo vazio).
-COLUNAS_CONTEUDO = (
-    "metragem_m2",
-    "equipamentos_observacao",
-    "vagas_estacionamento",
-    "comodidades_observacao",
-    "nota_conservacao",
-    "nota_fachada",
-    "nota_atendimento",
-    "alunos_estimados",
-    "comentario_observacao",
+#: A ligacao e' pelo NOME (revisao do PR #544): ate' entao a escrita fazia `zip` desta ordem com
+#: `astuple(self)` e a leitura montava `CamposObservacao(*linha)`, e reordenar um dos lados
+#: gravava a metragem na coluna de vagas sem erro nenhum. A ordem aqui so' decide a do SQL.
+CAMPO_PARA_COLUNA: tuple[tuple[str, str], ...] = (
+    ("metragem_m2", "metragem_m2"),
+    ("equipamentos", "equipamentos_observacao"),
+    ("vagas", "vagas_estacionamento"),
+    ("comodidades", "comodidades_observacao"),
+    ("nota_conservacao", "nota_conservacao"),
+    ("nota_fachada", "nota_fachada"),
+    ("nota_atendimento", "nota_atendimento"),
+    ("alunos_estimados", "alunos_estimados"),
+    ("comentario", "comentario_observacao"),
 )
+COLUNAS_CONTEUDO = tuple(coluna for _, coluna in CAMPO_PARA_COLUNA)
 _CONTEUDO = ", ".join(COLUNAS_CONTEUDO)
 
 COLUNAS = (
@@ -142,7 +146,8 @@ class ConflitoDeVersao(ValueError):
 
 @dataclass(frozen=True)
 class CamposObservacao:
-    """O que a pessoa escreve. Mesma ordem de `COLUNAS_CONTEUDO`. Notas de 1 a 10."""
+    """O que a pessoa escreve. Cada campo vai e volta da sua coluna pelo NOME, em
+    `CAMPO_PARA_COLUNA` (a ordem dos campos aqui nao importa). Notas de 1 a 5 estrelas."""
 
     metragem_m2: int | None = None
     equipamentos: str | None = None
@@ -155,7 +160,13 @@ class CamposObservacao:
     comentario: str | None = None
 
     def como_parametros(self) -> dict[str, Any]:
-        return dict(zip(COLUNAS_CONTEUDO, astuple(self), strict=True))
+        return {coluna: getattr(self, campo) for campo, coluna in CAMPO_PARA_COLUNA}
+
+    @classmethod
+    def da_linha(cls, valores: Sequence[Any]) -> CamposObservacao:
+        """Os valores do SELECT, na ordem de `COLUNAS_CONTEUDO`, de volta ao campo pelo nome."""
+        pares = zip(CAMPO_PARA_COLUNA, valores, strict=True)
+        return cls(**{campo: valor for (campo, _), valor in pares})
 
 
 @dataclass(frozen=True)
@@ -185,14 +196,14 @@ _N = len(COLUNAS_CONTEUDO)
 
 def _observacao(linha: Sequence[Any]) -> Observacao:
     ident, autor = linha[0], linha[1]
-    campos = CamposObservacao(*linha[2 : 2 + _N])
+    campos = CamposObservacao.da_linha(linha[2 : 2 + _N])
     versao, criada, atualizada, apagada_em, apagada_por = linha[2 + _N :]
     return Observacao(ident, autor, campos, versao, criada, atualizada, apagada_em, apagada_por)
 
 
 def _registro(linha: Sequence[Any]) -> RegistroHistorico:
     ident, acao, versao = linha[0], linha[1], linha[2]
-    campos = CamposObservacao(*linha[3 : 3 + _N])
+    campos = CamposObservacao.da_linha(linha[3 : 3 + _N])
     registrado_em, registrado_por = linha[3 + _N :]
     return RegistroHistorico(ident, acao, versao, campos, registrado_em, registrado_por)
 

@@ -221,6 +221,59 @@ def test_inteiro_aceita_int_float_inteiro_e_texto_so_de_digitos() -> None:
     )
 
 
+# Campo -> coluna pelo NOME (revisão do PR #544): o mapeamento era por POSIÇÃO, `zip` da tupla
+# `COLUNAS_CONTEUDO` com `astuple(self)` na escrita e `CamposObservacao(*linha)` na leitura.
+# Reordenar um dos dois lados não dava erro: gravava a metragem na coluna de vagas, calado.
+
+_UM_DE_CADA = CamposObservacao(
+    metragem_m2=1500,
+    equipamentos="Technogym",
+    vagas=30,
+    comodidades="Spinning",
+    nota_conservacao=5,
+    nota_fachada=4,
+    nota_atendimento=2,
+    alunos_estimados=2200,
+    comentario="ok",
+)
+_POR_COLUNA = {
+    "metragem_m2": 1500,
+    "equipamentos_observacao": "Technogym",
+    "vagas_estacionamento": 30,
+    "comodidades_observacao": "Spinning",
+    "nota_conservacao": 5,
+    "nota_fachada": 4,
+    "nota_atendimento": 2,
+    "alunos_estimados": 2200,
+    "comentario_observacao": "ok",
+}
+
+
+def test_escrita_liga_campo_a_coluna_pelo_nome(monkeypatch: pytest.MonkeyPatch) -> None:
+    assert _UM_DE_CADA.como_parametros() == _POR_COLUNA
+    # A ordem da lista de colunas não pode decidir para onde vai cada valor.
+    monkeypatch.setattr(db_obs, "COLUNAS_CONTEUDO", tuple(reversed(db_obs.COLUNAS_CONTEUDO)))
+    assert _UM_DE_CADA.como_parametros() == _POR_COLUNA
+
+
+def test_leitura_devolve_cada_coluna_ao_seu_campo() -> None:
+    agora = datetime(2026, 11, 10, tzinfo=UTC)
+    conteudo = [_POR_COLUNA[c] for c in db_obs.COLUNAS_CONTEUDO]  # a ordem do SELECT
+    obs = db_obs._observacao([7, 11, *conteudo, 1, agora, agora, None, None])
+    assert obs.campos == _UM_DE_CADA
+    reg = db_obs._registro([7, "criada", 1, *conteudo, agora, 11])
+    assert reg.campos == _UM_DE_CADA
+
+
+def test_todo_campo_tem_uma_coluna_e_toda_coluna_um_campo() -> None:
+    from dataclasses import fields
+
+    campos = [campo for campo, _ in db_obs.CAMPO_PARA_COLUNA]
+    assert sorted(campos) == sorted(f.name for f in fields(CamposObservacao))
+    assert db_obs.COLUNAS_CONTEUDO == tuple(coluna for _, coluna in db_obs.CAMPO_PARA_COLUNA)
+    assert len(set(db_obs.COLUNAS_CONTEUDO)) == len(db_obs.COLUNAS_CONTEUDO)
+
+
 # ---------------------------------------------------------------------------------------
 # O que cada pessoa enxerga
 # ---------------------------------------------------------------------------------------
