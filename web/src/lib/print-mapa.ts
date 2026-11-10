@@ -22,7 +22,7 @@
  * `print-mapa-render.ts`.
  */
 
-import { contornosDoItem, circuloGeoJson, type ItemComContorno } from './alcance'
+import { ROTULO_ALCANCE, contornosDoItem, circuloGeoJson, ehAlcance, type ItemComContorno } from './alcance'
 import { metrosPorPixel } from './captura-mapa'
 
 // ---------------------------------------------------------------------------
@@ -201,6 +201,16 @@ function semAcento(s: string): string {
 /** Pedaço seguro para nome de arquivo: sem acento, minúsculo, hífen no lugar do resto. */
 function slug(s: string): string {
   return semAcento(s).replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 60)
+}
+
+/**
+ * O recorte como ele entra no NOME DO ARQUIVO: só o alcance ("10 min de carro", "Raio de
+ * 2 km"). O rótulo da ficha traz "sem trânsito" e a área em km², que no nome do arquivo
+ * só atrapalham (pedido do Vinicius, 10/11/2026).
+ */
+export function recorteDoArquivoPrint(tipo: string | null | undefined): string | null {
+  if (tipo === 'poligono') return 'Área desenhada'
+  return ehAlcance(tipo) ? ROTULO_ALCANCE[tipo] : null
 }
 
 /**

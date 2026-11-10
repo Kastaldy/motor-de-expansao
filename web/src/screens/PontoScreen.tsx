@@ -17,6 +17,7 @@ import {
 import { FAIXAS_DEMANDA, FAIXAS_POTENCIAL } from '../lib/faixas'
 import PainelPontos from '../components/PainelPontos'
 import BotaoPrintMapa from '../components/BotaoPrintMapa'
+import { recorteDoArquivoPrint } from '../lib/print-mapa'
 import Recomendacao from '../components/Recomendacao'
 import { Aviso, Botao, Chip, Eyebrow, Glass, Spinner } from '../components/primitives'
 import { api, ApiError, baixar } from '../lib/api'
@@ -963,7 +964,7 @@ function Ficha({
           <BotaoPrintMapa
             ficha={ficha}
             nome={area ? null : nomeDoLugar(local)}
-            recorte={recorte}
+            recorte={recorteDoArquivoPrint(tipoDoRecorte(ficha))}
           />
         </div>
       </Glass>

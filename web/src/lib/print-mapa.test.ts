@@ -20,6 +20,7 @@ import {
   limparRotuloDigitado,
   MAX_ROTULO_PRINT,
   nomeDoArquivoPrint,
+  recorteDoArquivoPrint,
   primeiraCamadaDeRotulo,
   quadroDoPrint,
   realcarEstilo,
@@ -141,6 +142,17 @@ describe('rotuloDoPrint e nomeDoArquivoPrint', () => {
     expect(limparRotuloDigitado('  Av. Lúcio Meira,\n 923   - Várzea ')).toBe('Av. Lúcio Meira, 923 - Várzea')
     expect(limparRotuloDigitado('x'.repeat(200))).toHaveLength(MAX_ROTULO_PRINT)
     expect(limparRotuloDigitado('   ')).toBe('')
+  })
+
+  it('o recorte no nome do arquivo é só o alcance: sem "sem trânsito" nem área', () => {
+    expect(recorteDoArquivoPrint('carro_10min')).toBe('10 min de carro')
+    expect(recorteDoArquivoPrint('carro_5min')).toBe('5 min de carro')
+    expect(recorteDoArquivoPrint('raio_2km')).toBe('Raio de 2 km')
+    expect(recorteDoArquivoPrint('poligono')).toBe('Área desenhada')
+    expect(recorteDoArquivoPrint(null)).toBeNull()
+    expect(nomeDoArquivoPrint('Várzea · Teresópolis/RJ', recorteDoArquivoPrint('carro_10min'))).toBe(
+      'mapa-varzea-teresopolis-rj-10-min-de-carro.png',
+    )
   })
 
   it('nome do arquivo sem acento, com o recorte', () => {

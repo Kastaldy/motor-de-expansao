@@ -36,7 +36,7 @@ export default function BotaoPrintMapa({
    * carrega "(unidade Ultra)" e cai na coordenada, que não cabem numa imagem sem dados.
    */
   nome: string | null
-  /** O rótulo do recorte ("raio de 1 km", "10 min de carro"...), só para o nome do arquivo. */
+  /** O alcance ("Raio de 1 km", "10 min de carro"...), só para o nome do arquivo (`recorteDoArquivoPrint`). */
   recorte: string | null
 }) {
   const sugerido = rotuloDoPrint(nome, ficha.local.municipio, ficha.local.uf)
