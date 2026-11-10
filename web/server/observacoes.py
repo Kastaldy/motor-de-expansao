@@ -44,9 +44,9 @@ RES_CELULA_CHAVE = 5
 INTEIROS = (
     ("metragem_m2", "Metragem", 50, 20_000),
     ("vagas", "Vagas de estacionamento", 0, 5_000),
-    ("nota_conservacao", "A nota de conservação", 1, 10),
-    ("nota_fachada", "A nota de fachada", 1, 10),
-    ("nota_atendimento", "A nota de atendimento", 1, 10),
+    ("nota_conservacao", "A nota de conservação", 1, 5),
+    ("nota_fachada", "A nota de fachada", 1, 5),
+    ("nota_atendimento", "A nota de atendimento", 1, 5),
     ("alunos_estimados", "Alunos estimados", 1, 50_000),
 )
 #: (campo, rótulo, teto de caracteres) dos textos livres.

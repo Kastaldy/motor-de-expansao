@@ -1,6 +1,6 @@
 -- ARQUIVO GERADO -- nao editar a mao.
 -- Origem: banco-de-reservas/sql/023-observacoes-concorrente.md (primeiro bloco ```sql).
--- sha256 do bloco extraido: c923e31513004d51c6c5cc7c9d981d20cd81d96cc20295e57ce51b061648e4f7
+-- sha256 do bloco extraido: b41e61480c1fc3789998eed10948a90833c0d57dd48049679e4b952c6fe56fd2
 -- Regenerar: python scripts/extrair_migracoes.py --origem <.../banco-de-reservas/sql>
 --
 -- O `banco-de-reservas` e' a fonte da verdade do DESENHO (convencoes §7): mudanca de
@@ -30,7 +30,8 @@ CREATE TABLE observacoes_concorrente (
   vagas_estacionamento       INTEGER,
   -- Comodidades e aulas coletivas, em texto livre (decisao de produto: sem lista fixa).
   comodidades_observacao     TEXT,
-  -- Tres notas de 1 a 10 de quem visitou. OPINIAO de campo, nao medida: a tela as mostra como
+  -- Tres notas de 1 a 5 (estrelas) de quem visitou. OPINIAO de campo, nao medida: a tela as
+  -- mostra como
   -- media das anotacoes vivas e nada as leva a score, ranking ou residual.
   nota_conservacao           SMALLINT,
   nota_fachada               SMALLINT,
@@ -56,9 +57,9 @@ CREATE TABLE observacoes_concorrente (
     vagas_estacionamento IS NULL OR vagas_estacionamento BETWEEN 0 AND 5000
   ),
   CONSTRAINT chk_observacao_notas CHECK (
-    (nota_conservacao IS NULL OR nota_conservacao BETWEEN 1 AND 10)
-    AND (nota_fachada IS NULL OR nota_fachada BETWEEN 1 AND 10)
-    AND (nota_atendimento IS NULL OR nota_atendimento BETWEEN 1 AND 10)
+    (nota_conservacao IS NULL OR nota_conservacao BETWEEN 1 AND 5)
+    AND (nota_fachada IS NULL OR nota_fachada BETWEEN 1 AND 5)
+    AND (nota_atendimento IS NULL OR nota_atendimento BETWEEN 1 AND 5)
   ),
   CONSTRAINT chk_observacao_alunos CHECK (
     alunos_estimados IS NULL OR alunos_estimados BETWEEN 1 AND 50000

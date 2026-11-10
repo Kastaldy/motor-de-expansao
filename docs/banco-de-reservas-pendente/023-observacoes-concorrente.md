@@ -12,8 +12,8 @@
 
 O piloto passa a aceitar uma ESCRITA de qualquer perfil: ao clicar no pino de uma academia
 concorrente, a pessoa registra o que viu em campo — metragem, equipamentos, vagas de
-estacionamento, comodidades e aulas coletivas, três notas de 1 a 10 (conservação, fachada e
-atendimento), alunos estimados quando houver, e um comentário livre.
+estacionamento, comodidades e aulas coletivas, três notas de 1 a 5 estrelas (conservação,
+fachada e atendimento), alunos estimados quando houver, e um comentário livre.
 
 | Objeto | Para quê |
 |---|---|
@@ -45,7 +45,7 @@ atendimento), alunos estimados quando houver, e um comentário livre.
   do país do deploy que a recebeu (`PERFIL.pais`), e a leitura filtra por ele. Mesma regra e mesma
   exceção de sufixo da `usuario_paises` (021, convenções 1).
 - **Texto livre com teto.** `equipamentos` e `comodidades` até 1.000 caracteres e `comentario` até
-  2.000; metragem inteira de 50 a 20.000 m², vagas de 0 a 5.000, notas de 1 a 10 e alunos
+  2.000; metragem inteira de 50 a 20.000 m², vagas de 0 a 5.000, notas de 1 a 5 e alunos
   estimados de 1 a 50.000. Ao menos um dos campos preenchido.
 - **Notas e alunos estimados são opinião de campo, não medida.** A tela mostra a média das notas
   das anotações vivas; nada disso entra em score, ranking ou na capacidade do residual (DEC-057) —
@@ -116,7 +116,8 @@ CREATE TABLE observacoes_concorrente (
   vagas_estacionamento       INTEGER,
   -- Comodidades e aulas coletivas, em texto livre (decisao de produto: sem lista fixa).
   comodidades_observacao     TEXT,
-  -- Tres notas de 1 a 10 de quem visitou. OPINIAO de campo, nao medida: a tela as mostra como
+  -- Tres notas de 1 a 5 (estrelas) de quem visitou. OPINIAO de campo, nao medida: a tela as
+  -- mostra como
   -- media das anotacoes vivas e nada as leva a score, ranking ou residual.
   nota_conservacao           SMALLINT,
   nota_fachada               SMALLINT,
@@ -142,9 +143,9 @@ CREATE TABLE observacoes_concorrente (
     vagas_estacionamento IS NULL OR vagas_estacionamento BETWEEN 0 AND 5000
   ),
   CONSTRAINT chk_observacao_notas CHECK (
-    (nota_conservacao IS NULL OR nota_conservacao BETWEEN 1 AND 10)
-    AND (nota_fachada IS NULL OR nota_fachada BETWEEN 1 AND 10)
-    AND (nota_atendimento IS NULL OR nota_atendimento BETWEEN 1 AND 10)
+    (nota_conservacao IS NULL OR nota_conservacao BETWEEN 1 AND 5)
+    AND (nota_fachada IS NULL OR nota_fachada BETWEEN 1 AND 5)
+    AND (nota_atendimento IS NULL OR nota_atendimento BETWEEN 1 AND 5)
   ),
   CONSTRAINT chk_observacao_alunos CHECK (
     alunos_estimados IS NULL OR alunos_estimados BETWEEN 1 AND 50000

@@ -859,7 +859,7 @@ def _anotar(autor: int, *, chave: str | None = None) -> tuple[int, str]:
         lng=-46.63,
         autor=autor,
         campos=db_obs.CamposObservacao(
-            metragem_m2=1200, vagas=20, nota_conservacao=8, comentario="visita de ensaio"
+            metragem_m2=1200, vagas=20, nota_conservacao=4, comentario="visita de ensaio"
         ),
     )
     return id_obs, chave
@@ -874,7 +874,7 @@ def _editar(id_obs: int, autor: int, versao: int, metragem: int) -> int:
         campos=db_obs.CamposObservacao(
             metragem_m2=metragem,
             vagas=20,
-            nota_conservacao=8,
+            nota_conservacao=4,
             comentario=f"editada para {metragem} m²",
         ),
     )
@@ -892,16 +892,17 @@ def test_023_criar_e_editar_deixam_historico_com_o_autor(con: Any) -> None:
     # A versão anterior é a linha anterior: o 1.200 continua lá depois da edição, e os campos
     # novos (vagas, notas) viajam para o histórico pela trigger, não só os três primeiros.
     assert [h.campos.metragem_m2 for h in hist] == [1200, 1450]
-    assert [(h.campos.vagas, h.campos.nota_conservacao) for h in hist] == [(20, 8), (20, 8)]
+    assert [(h.campos.vagas, h.campos.nota_conservacao) for h in hist] == [(20, 4), (20, 4)]
 
 
-def test_023_nota_fora_de_1_a_10_e_recusada_pelo_banco(con: Any) -> None:
-    """O CHECK é a última linha: mesmo que a validação do piloto falhe, a nota 11 não entra."""
+def test_023_nota_fora_de_1_a_5_e_recusada_pelo_banco(con: Any) -> None:
+    """O CHECK é a última linha: mesmo que a validação do piloto falhe, a nota 6 não entra
+    (estrelas de 1 a 5 desde a prévia de 10/11; eram notas de 1 a 10)."""
     autor = _pessoa_com_perfil(con, "expansao")
     id_obs, _ = _anotar(autor)
     with pytest.raises(psycopg.errors.CheckViolation):
         con.execute(
-            "UPDATE observacoes_concorrente SET nota_fachada = 11 WHERE id_observacao = %s",
+            "UPDATE observacoes_concorrente SET nota_fachada = 6 WHERE id_observacao = %s",
             (id_obs,),
         )
 

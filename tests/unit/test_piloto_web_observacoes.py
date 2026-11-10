@@ -56,7 +56,7 @@ def _obs(
     return Observacao(
         id_observacao=id_obs,
         id_usuario_autor=autor,
-        campos=CamposObservacao(metragem_m2=1200, nota_conservacao=7, comentario=comentario),
+        campos=CamposObservacao(metragem_m2=1200, nota_conservacao=4, comentario=comentario),
         versao=versao,
         criada_em=T0 + timedelta(days=dias),
         atualizada_em=T0 + timedelta(days=dias, hours=versao - 1),
@@ -124,8 +124,8 @@ def test_campos_normalizados() -> None:
         equipamentos="  Technogym  ",
         vagas="20",
         comodidades=" Spinning, pilates ",
-        nota_conservacao=8,
-        nota_fachada=7.0,
+        nota_conservacao=4,
+        nota_fachada=4.0,
         nota_atendimento=None,
         alunos_estimados=2400,
         comentario="",
@@ -135,8 +135,8 @@ def test_campos_normalizados() -> None:
         equipamentos="Technogym",
         vagas=20,
         comodidades="Spinning, pilates",
-        nota_conservacao=8,
-        nota_fachada=7,
+        nota_conservacao=4,
+        nota_fachada=4,
         nota_atendimento=None,
         alunos_estimados=2400,
         comentario=None,
@@ -158,6 +158,7 @@ def test_campos_normalizados() -> None:
         {"vagas": 5_001},
         {"nota_conservacao": 0},
         {"nota_fachada": 11},
+        {"nota_conservacao": 6},  # estrelas: 1 a 5 (prévia de 10/11)
         {"nota_atendimento": "ótimo"},
         {"alunos_estimados": 0},
         {"alunos_estimados": 50_001},
@@ -210,12 +211,12 @@ def test_texto_que_nao_e_texto_e_recusado_com_recado(campo: str, valor: Any) -> 
 
 def test_inteiro_aceita_int_float_inteiro_e_texto_so_de_digitos() -> None:
     campos = observacoes.normalizar_campos(
-        metragem_m2=" 1450 ", vagas=0, nota_fachada=7.0, alunos_estimados="2200"
+        metragem_m2=" 1450 ", vagas=0, nota_fachada=4.0, alunos_estimados="2200"
     )
     assert (campos.metragem_m2, campos.vagas, campos.nota_fachada, campos.alunos_estimados) == (
         1450,
         0,
-        7,
+        4,
         2200,
     )
 
@@ -291,7 +292,7 @@ def test_todos_os_campos_chegam_ao_payload() -> None:
     item = resposta["observacoes"][0]
     for campo in observacoes.campos_json(CamposObservacao()):
         assert campo in item, campo
-    assert item["nota_conservacao"] == 7
+    assert item["nota_conservacao"] == 4
 
 
 def test_ids_para_nomes_cobre_autor_moderador_e_editor() -> None:
@@ -376,20 +377,20 @@ def test_criar_grava_a_academia_do_indice_e_nao_a_do_corpo(
     gravado: dict[str, Any] = {}
     monkeypatch.setattr(db_obs, "criar", lambda **k: gravado.update(k) or 99)
     corpo = pilot_app.ObservacaoIn(
-        chave=CHAVE, metragem_m2=1450, nota_fachada=9, vagas=30, comentario=" ampliaram "
+        chave=CHAVE, metragem_m2=1450, nota_fachada=5, vagas=30, comentario=" ampliaram "
     )
     pilot_app.concorrente_observacoes_criar(body=corpo, remote_user="carla")
     assert gravado["rede"] == "smart_fit" and gravado["lat"] == -23.55
     assert gravado["autor"] == CARLA and gravado["pais"] == pilot_app.PERFIL.pais
     c = gravado["campos"]
-    assert (c.metragem_m2, c.nota_fachada, c.vagas, c.comentario) == (1450, 9, 30, "ampliaram")
+    assert (c.metragem_m2, c.nota_fachada, c.vagas, c.comentario) == (1450, 5, 30, "ampliaram")
 
 
-def test_nota_fora_de_1_a_10_e_422(banco: dict[str, Any], monkeypatch: pytest.MonkeyPatch) -> None:
+def test_nota_fora_de_1_a_5_e_422(banco: dict[str, Any], monkeypatch: pytest.MonkeyPatch) -> None:
     _como(monkeypatch, EXPANSAO)
     with pytest.raises(HTTPException) as erro:
         pilot_app.concorrente_observacoes_criar(
-            body=pilot_app.ObservacaoIn(chave=CHAVE, nota_conservacao=11), remote_user="carla"
+            body=pilot_app.ObservacaoIn(chave=CHAVE, nota_conservacao=6), remote_user="carla"
         )
     assert erro.value.status_code == 422
     assert "conservação" in erro.value.detail

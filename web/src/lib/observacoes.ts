@@ -10,7 +10,18 @@ export const NUMERICOS = [
   ['alunos_estimados', 'Alunos estimados', 1, 50000],
 ] as const
 
-/** As três notas de 1 a 10: (chave, rótulo curto). */
+/** Teto das notas: estrelas de 1 a 5 (prévia de 10/11; eram notas de 1 a 10). O MESMO teto do
+ *  CHECK `chk_observacao_notas` da 023 e de `INTEIROS` em `web/server/observacoes.py`. */
+export const NOTA_MAXIMA = 5
+
+/** `3` -> `★★★☆☆`. A média arredonda para a estrela inteira (4,2 -> 4; 4,5 -> 5); o número
+ *  exato fica ao lado, no resumo. */
+export function estrelas(nota: number): string {
+  const cheias = Math.min(NOTA_MAXIMA, Math.max(0, Math.round(nota)))
+  return '★'.repeat(cheias) + '☆'.repeat(NOTA_MAXIMA - cheias)
+}
+
+/** As três notas, de 1 a 5 estrelas: (chave, rótulo curto). */
 export const NOTAS = [
   ['nota_conservacao', 'Conservação'],
   ['nota_fachada', 'Fachada'],
@@ -126,7 +137,7 @@ export function linhasDaObservacao(c: CamposDaObservacao): [string, string, bool
   if (c.metragem_m2 != null) linhas.push(['Metragem', `${fmt(c.metragem_m2)} m²`, true])
   if (c.vagas != null) linhas.push(['Vagas', c.vagas === 0 ? 'Sem estacionamento' : fmt(c.vagas), false])
   if (c.alunos_estimados != null) linhas.push(['Alunos est.', `~${fmt(c.alunos_estimados)}`, false])
-  const notas = NOTAS.filter(([k]) => c[k] != null).map(([k, r]) => `${r} ${c[k]}/10`)
+  const notas = NOTAS.filter(([k]) => c[k] != null).map(([k, r]) => `${r} ${estrelas(c[k] as number)}`)
   if (notas.length) linhas.push(['Notas', notas.join(' · '), false])
   if (c.equipamentos) linhas.push(['Equipamentos', c.equipamentos, false])
   if (c.comodidades) linhas.push(['Comodidades', c.comodidades, false])

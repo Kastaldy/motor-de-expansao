@@ -3,12 +3,14 @@ import { describe, expect, it } from 'vitest'
 import {
   apenasDigitos,
   camposDoFormulario,
+  estrelas,
   chavesDosPinos,
   formularioDe,
   lerNumero,
   linhasDaObservacao,
   mediaDaNota,
   metragemMaisRecente,
+  NOTA_MAXIMA,
   numeroDoRotulo,
 } from './observacoes'
 import type { Observacao } from './types'
@@ -60,7 +62,7 @@ describe('formulário de anotação', () => {
       metragem_m2: '1.450',
       vagas: '0',
       alunos_estimados: '2.400',
-      nota_fachada: 8,
+      nota_fachada: 4,
       comodidades: '  Spinning  ',
       comentario: '  ok  ',
     }
@@ -70,7 +72,7 @@ describe('formulário de anotação', () => {
       vagas: 0,
       comodidades: 'Spinning',
       nota_conservacao: null,
-      nota_fachada: 8,
+      nota_fachada: 4,
       nota_atendimento: null,
       alunos_estimados: 2400,
       comentario: 'ok',
@@ -84,8 +86,8 @@ describe('formulário de anotação', () => {
   })
 
   it('edição parte da versão que a pessoa viu (concorrência otimista)', () => {
-    const f = formularioDe(obs({ id: 7, versao: 3, metragem_m2: 1200, vagas: 20, nota_conservacao: 6 }))
-    expect(f).toMatchObject({ id: 7, versao: 3, metragem_m2: '1200', vagas: '20', nota_conservacao: 6 })
+    const f = formularioDe(obs({ id: 7, versao: 3, metragem_m2: 1200, vagas: 20, nota_conservacao: 3 }))
+    expect(f).toMatchObject({ id: 7, versao: 3, metragem_m2: '1200', vagas: '20', nota_conservacao: 3 })
   })
 })
 
@@ -101,19 +103,19 @@ describe('resumo do painel', () => {
   })
 
   it('a nota do resumo é a média de quem deu nota, com a contagem à vista', () => {
-    const ativas = [obs({ nota_fachada: 8 }), obs({ nota_fachada: 5 }), obs({ nota_fachada: null })]
-    expect(mediaDaNota(ativas, 'nota_fachada')).toEqual({ media: 6.5, n: 2 })
+    const ativas = [obs({ nota_fachada: 4 }), obs({ nota_fachada: 5 }), obs({ nota_fachada: null })]
+    expect(mediaDaNota(ativas, 'nota_fachada')).toEqual({ media: 4.5, n: 2 })
     expect(mediaDaNota(ativas, 'nota_atendimento')).toBeNull()
   })
 
   it('o cartão mostra cada campo preenchido, e zero vagas como "sem estacionamento"', () => {
     const linhas = linhasDaObservacao(
-      obs({ vagas: 0, nota_conservacao: 7, nota_atendimento: 9, alunos_estimados: 2400, comentario: null }),
+      obs({ vagas: 0, nota_conservacao: 4, nota_atendimento: 2, alunos_estimados: 2400, comentario: null }),
     )
     expect(linhas).toEqual([
       ['Vagas', 'Sem estacionamento', false],
       ['Alunos est.', '~2.400', false],
-      ['Notas', 'Conservação 7/10 · Atendimento 9/10', false],
+      ['Notas', 'Conservação ★★★★☆ · Atendimento ★★☆☆☆', false],
     ])
   })
 
@@ -151,6 +153,26 @@ describe('número só aceita dígito (prévia de 10/11: dava para digitar letra)
   it('metragem, vagas e alunos estimados passam pelo filtro ao digitar', () => {
     const fonte = readFileSync(new URL('../components/PainelObservacoes.tsx', import.meta.url), 'utf8')
     expect(fonte.match(/apenasDigitos\(e\.target\.value\)/g)?.length).toBe(3)
+  })
+})
+
+describe('notas em estrelas de 1 a 5 (prévia de 10/11; eram notas de 1 a 10)', () => {
+  it('a escala vai até 5', () => {
+    expect(NOTA_MAXIMA).toBe(5)
+  })
+
+  it('estrelas cheias até a nota, vazias no resto; média arredonda para a estrela inteira', () => {
+    expect(estrelas(3)).toBe('★★★☆☆')
+    expect(estrelas(5)).toBe('★★★★★')
+    expect(estrelas(1)).toBe('★☆☆☆☆')
+    expect(estrelas(4.2)).toBe('★★★★☆')
+    expect(estrelas(4.5)).toBe('★★★★★')
+  })
+
+  it('o painel não fala mais em nota de 1 a 10', () => {
+    const fonte = readFileSync(new URL('../components/PainelObservacoes.tsx', import.meta.url), 'utf8')
+    expect(fonte).not.toMatch(/1 a 10|\/10\b|length: 10/)
+    expect(fonte).toMatch(/NOTA_MAXIMA/)
   })
 })
 

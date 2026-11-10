@@ -17,10 +17,12 @@ import {
   apenasDigitos,
   camposDoFormulario,
   dataHora,
+  estrelas,
   formularioDe,
   linhasDaObservacao,
   mediaDaNota,
   metragemMaisRecente,
+  NOTA_MAXIMA,
   NOTAS,
   numeroDoRotulo,
   type Formulario,
@@ -330,8 +332,9 @@ function divergencia(ativas: Observacao[]): string | null {
   return valores.length > 1 ? valores.map((m) => `${fmt.format(m)} m²`).join(', ') : null
 }
 
-/** As três notas de 1 a 10, como MÉDIA das anotações vivas que as deram. Opinião de campo:
- *  o "de N" fica à vista para uma nota só não se passar por consenso. */
+/** As três notas (estrelas de 1 a NOTA_MAXIMA), como MÉDIA das anotações vivas que as deram:
+ *  a média em estrelas inteiras e o número exato ao lado. Opinião de campo: o "de N" fica à
+ *  vista para uma nota só não se passar por consenso. */
 function MediasDasNotas({ ativas }: { ativas: Observacao[] }) {
   const medias = NOTAS.map(([chave, rotulo]) => ({ rotulo, m: mediaDaNota(ativas, chave) })).filter(
     (x) => x.m != null,
@@ -342,7 +345,7 @@ function MediasDasNotas({ ativas }: { ativas: Observacao[] }) {
       {medias.map(({ rotulo, m }) => (
         <Kpi
           key={rotulo}
-          valor={`${m!.media.toLocaleString('pt-BR', { maximumFractionDigits: 1 })}/10`}
+          valor={`${estrelas(m!.media)} ${m!.media.toLocaleString('pt-BR', { minimumFractionDigits: 1, maximumFractionDigits: 1 })}`}
           rotulo={`${rotulo} · média de ${m!.n}`}
         />
       ))}
@@ -438,6 +441,9 @@ function FormularioObservacao({
           onMudar={(v) => setForm({ ...form, [chave]: v } as Formulario)}
         />
       ))}
+      <p style={{ margin: '0 0 10px', color: 'var(--tx-off)', font: '400 11px/1.3 var(--f-ui)' }}>
+        Tocar de novo na mesma estrela apaga a nota.
+      </p>
       <label style={{ display: 'block', marginBottom: 10, marginTop: 2 }}>
         <span style={label}>Equipamentos</span>
         <textarea
@@ -506,8 +512,8 @@ function FormularioObservacao({
   )
 }
 
-/** Nota de 1 a 10 em botões: um toque, sem digitar, e sem valor fora da faixa por construção.
- *  Tocar de novo na nota escolhida a desmarca (nota é opcional). */
+/** Nota em estrelas, de 1 a NOTA_MAXIMA: um toque, sem digitar, e sem valor fora da faixa por
+ *  construção. Tocar de novo na estrela escolhida apaga a nota (nota é opcional). */
 function SeletorNota({
   rotulo,
   valor,
@@ -518,49 +524,47 @@ function SeletorNota({
   onMudar: (v: number | null) => void
 }) {
   return (
-    <div style={{ marginBottom: 8 }} role="group" aria-label={`${rotulo}, nota de 1 a 10`}>
-      <div
-        style={{
-          display: 'flex',
-          justifyContent: 'space-between',
-          color: 'var(--tx-label)',
-          font: '500 11.5px/1.2 var(--f-ui)',
-          marginBottom: 4,
-        }}
-      >
-        <span>{rotulo} (1 a 10)</span>
-        <span style={{ color: valor != null ? 'var(--ac-text)' : 'var(--tx-off)' }}>
-          {valor != null ? `${valor}/10` : 'sem nota'}
-        </span>
-      </div>
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(10, 1fr)', gap: 3 }}>
-        {Array.from({ length: 10 }, (_, i) => i + 1).map((n) => {
-          const ativo = valor === n
+    <div
+      style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 6 }}
+      role="group"
+      aria-label={`${rotulo}, de 1 a ${NOTA_MAXIMA} estrelas`}
+    >
+      <span style={{ flex: '0 0 92px', color: 'var(--tx-label)', font: '500 11.5px/1.2 var(--f-ui)' }}>
+        {rotulo}
+      </span>
+      <div style={{ display: 'flex', gap: 2 }}>
+        {Array.from({ length: NOTA_MAXIMA }, (_, i) => i + 1).map((n) => {
+          const cheia = valor != null && n <= valor
           return (
             <button
               key={n}
               type="button"
-              aria-pressed={ativo}
-              onClick={() => onMudar(ativo ? null : n)}
+              aria-pressed={valor === n}
+              aria-label={`${n} de ${NOTA_MAXIMA}`}
+              title={valor === n ? 'Tocar de novo apaga a nota' : `${n} de ${NOTA_MAXIMA}`}
+              onClick={() => onMudar(valor === n ? null : n)}
               style={{
-                padding: '5px 0',
-                borderRadius: 'var(--r-sm)',
+                padding: '0 2px',
+                border: 'none',
+                background: 'transparent',
                 cursor: 'pointer',
-                font: `${ativo ? 700 : 500} 11.5px/1 var(--f-ui)`,
-                border: `1px solid ${ativo ? 'var(--ac)' : 'var(--line-strong)'}`,
-                background: ativo
-                  ? 'var(--ac)'
-                  : valor != null && n < valor
-                    ? 'var(--ac-a10)'
-                    : 'var(--surf-input)',
-                color: ativo ? 'var(--ac-on)' : 'var(--tx-soft)',
+                font: '400 22px/1 var(--f-ui)',
+                color: cheia ? 'var(--ac)' : 'var(--line-strong)',
               }}
             >
-              {n}
+              {cheia ? '★' : '☆'}
             </button>
           )
         })}
       </div>
+      <span
+        style={{
+          font: '500 11.5px/1.2 var(--f-ui)',
+          color: valor != null ? 'var(--ac-text)' : 'var(--tx-off)',
+        }}
+      >
+        {valor != null ? `${valor} de ${NOTA_MAXIMA}` : 'sem nota'}
+      </span>
     </div>
   )
 }

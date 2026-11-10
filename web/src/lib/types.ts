@@ -414,7 +414,7 @@ export interface ObservacaoHistorico {
 
 /**
  * O que a pessoa registra sobre a academia. Mesmos nomes no envio e na leitura, e na mesma
- * ordem do servidor (`CamposObservacao`). As três notas vão de 1 a 10 e são OPINIÃO de campo:
+ * ordem do servidor (`CamposObservacao`). As três notas vão de 1 a 5 estrelas e são OPINIÃO de campo:
  * a tela mostra a média, nada disso entra em score. `alunos_estimados` não é o `alunos` real
  * das planilhas das redes.
  */
