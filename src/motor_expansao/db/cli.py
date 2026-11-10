@@ -79,12 +79,14 @@ TABELAS_DO_MODELO = (
     "sessoes",
     "usuario_paises",
     "sso_tickets",
+    "observacoes_concorrente",
+    "observacoes_concorrente_historico",
 )
 NUMEROS_DA_SECAO_ZERO = {
-    "indices": 53,  # 36 explicitos + 14 de PK + 3 de UNIQUE (a 022/DEC-083 somou 3 em sso_tickets: PK + UNIQUE do token + idx de id_usuario)
-    "constraints CHECK": 17,  # a 018 (D30), a 019 (`ck_usuarios_prazo_exige_troca`), a 021/DEC-081 (`chk_usuario_paises_sigla`) e a 022/DEC-083 (`chk_sso_ticket_sigla`, `chk_sso_ticket_expira_apos_criacao`)
-    "chaves estrangeiras": 15,  # a 018 (D30): `sessoes.id_usuario`; a 021/DEC-081: `usuario_paises.id_usuario`; a 022/DEC-083: `sso_tickets.id_usuario` e `sso_tickets.id_sessao_origem`
-    "triggers": 7,  # 5 ate' a 016; a 017 (D29) somou a guarda de coerencia nas duas regioes
+    "indices": 60,  # 41 explicitos + 16 de PK + 3 de UNIQUE (a 022/DEC-083 somou 3 em sso_tickets: PK + UNIQUE do token + idx de id_usuario; a 023, 5 explicitos e 2 PK)
+    "constraints CHECK": 27,  # a 018 (D30), a 019 (`ck_usuarios_prazo_exige_troca`), a 021/DEC-081 (`chk_usuario_paises_sigla`), a 022/DEC-083 (`chk_sso_ticket_sigla`, `chk_sso_ticket_expira_apos_criacao`) e os 10 da 023
+    "chaves estrangeiras": 17,  # a 018 (D30): `sessoes.id_usuario`; a 021/DEC-081: `usuario_paises.id_usuario`; a 022/DEC-083: `sso_tickets.id_usuario` e `sso_tickets.id_sessao_origem`; a 023: autor e `apagada_por`
+    "triggers": 13,  # 5 ate' a 016; a 017 (D29) somou a guarda de coerencia nas duas regioes; a 023, seis
     "colunas geometricas": 7,
 }
 #: `prosecdef` e `proconfig` esperados por funcao, apos a migration 011 (D21) e a 017 (D29).
@@ -99,6 +101,11 @@ FUNCOES_ESPERADAS = {
     # D29: recusa UPDATE que muda a definicao da regiao sem gravar a forma nova. NAO e'
     # SECURITY DEFINER de proposito -- ela so' levanta excecao, nao escreve nada.
     "exige_geom_coerente": (False, "pg_catalog, pg_temp"),
+    # 022 (anotacoes de concorrente): so' a que GRAVA o historico e' SECURITY DEFINER; as outras
+    # duas so' levantam excecao ou ajustam NEW.
+    "registra_observacao_concorrente": (True, "pg_catalog, public, pg_temp"),
+    "guarda_observacao_concorrente": (False, "pg_catalog, pg_temp"),
+    "recusa_remover_observacao": (False, "pg_catalog, pg_temp"),
 }
 
 SQL_CONTAGENS = """
@@ -754,6 +761,26 @@ def _checagens_negativas() -> list[tuple[str, str, str]]:
             "SELECT has_table_privilege(current_user, 'eventos', 'DELETE')",
             "mesma razao do UPDATE em eventos",
         ),
+        # As duas da 022 (anotacoes de concorrente): o produto promete que TUDO o que foi escrito
+        # fica salvo -- apagar e' marcar, editar grava versao. Sem estas, a promessa seria so' das
+        # triggers, e o dono pode desliga-las; o papel `app` nao pode nem tentar.
+        (
+            "escrever no historico de anotacoes de concorrente",
+            "SELECT has_table_privilege(current_user, 'observacoes_concorrente_historico', 'INSERT') "
+            "OR has_table_privilege(current_user, 'observacoes_concorrente_historico', 'UPDATE') "
+            "OR has_any_column_privilege(current_user, 'observacoes_concorrente_historico', 'INSERT') "
+            "OR has_any_column_privilege(current_user, 'observacoes_concorrente_historico', 'UPDATE')",
+            "o historico das anotacoes e' escrito SO' pela trigger da 022; com INSERT ou UPDATE "
+            "direto, a aplicacao forjaria ou reescreveria a versao anterior de uma anotacao",
+        ),
+        (
+            "apagar anotacao de concorrente",
+            "SELECT has_table_privilege(current_user, 'observacoes_concorrente', 'DELETE') "
+            "OR has_table_privilege(current_user, 'observacoes_concorrente_historico', 'DELETE')",
+            "apagar e' MARCAR `apagada_em_observacao`, nunca DELETE: o que foi escrito fica salvo "
+            "por decisao de produto (05/11/2026). DELETE aqui significa que o "
+            "`papeis-e-privilegios.md` foi afrouxado sem que a decisao acompanhasse",
+        ),
         (
             "criar tabela temporaria",
             "SELECT has_database_privilege(current_user, current_database(), 'TEMP')",
@@ -870,6 +897,22 @@ def _checagens_positivas() -> list[tuple[str, str, str]]:
             "SELECT has_sequence_privilege(current_user, 'sessoes_id_sessao_seq', 'USAGE')",
             "mesma armadilha da sequence de eventos: `GRANT INSERT` na tabela NAO a cobre, e "
             "o login morre so' em runtime",
+        ),
+        # 022: a mesma armadilha que a `sessoes` pagou -- tabela criada por migration DEPOIS do
+        # D20 so' herda GRANT pelo `ALTER DEFAULT PRIVILEGES`, e ninguem percebe que faltou.
+        (
+            "escrever anotacoes de concorrente",
+            "SELECT has_table_privilege(current_user, 'observacoes_concorrente', 'INSERT') "
+            "AND has_table_privilege(current_user, 'observacoes_concorrente', 'UPDATE') "
+            "AND has_table_privilege(current_user, 'observacoes_concorrente', 'SELECT') "
+            "AND has_table_privilege(current_user, 'observacoes_concorrente_historico', 'SELECT')",
+            "sem isto o painel do pino de concorrente nao abre nem salva",
+        ),
+        (
+            "usar a sequence de observacoes_concorrente",
+            "SELECT has_sequence_privilege(current_user, "
+            "'observacoes_concorrente_id_observacao_seq', 'USAGE')",
+            "mesma armadilha da sequence de eventos: `GRANT INSERT` na tabela NAO a cobre",
         ),
     ]
 
@@ -1084,7 +1127,7 @@ def cmd_privilegios(_args: argparse.Namespace) -> int:
         ).fetchone()[0]
         print(
             f"  {'ok   ' if not secdef else 'FALHA'} nenhuma funcao SECURITY DEFINER "
-            f"alem das duas do D20{'' if not secdef else ': ' + secdef}"
+            f"alem das tres previstas (D20 e 022){'' if not secdef else ': ' + secdef}"
         )
         if secdef:
             print(

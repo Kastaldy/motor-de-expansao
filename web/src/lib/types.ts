@@ -393,7 +393,77 @@ export interface Pin {
   n_cadeias_feed?: number | null
   oferta?: number | null
   dist_m?: number | null
+  /**
+   * Âncora das ANOTAÇÕES do time nesta academia (migration 022): sha1 de rede + nome-base +
+   * célula H3 res-5, calculado pelo servidor. É a única coisa que o front devolve ao abrir ou
+   * gravar uma anotação — rede, nome e coordenada saem do índice do servidor. `null` só para
+   * coordenada inválida, e aí o pino não abre painel.
+   */
+  chave?: string | null
 }
+
+/** Uma versão do histórico de uma anotação — só chega a quem é Growth. */
+export interface ObservacaoHistorico {
+  acao: 'criada' | 'editada' | 'apagada'
+  versao: number
+  por: string
+  em: string | null
+  moderacao: boolean
+  versao_anterior: CamposDaObservacao | null
+}
+
+/**
+ * O que a pessoa registra sobre a academia. Mesmos nomes no envio e na leitura, e na mesma
+ * ordem do servidor (`CamposObservacao`). As três notas vão de 1 a 10 e são OPINIÃO de campo:
+ * a tela mostra a média, nada disso entra em score. `alunos_estimados` não é o `alunos` real
+ * das planilhas das redes.
+ */
+export interface CamposDaObservacao {
+  metragem_m2: number | null
+  equipamentos: string | null
+  vagas: number | null
+  comodidades: string | null
+  nota_conservacao: number | null
+  nota_fachada: number | null
+  nota_atendimento: number | null
+  alunos_estimados: number | null
+  comentario: string | null
+}
+
+/**
+ * Uma anotação de campo sobre a academia concorrente.
+ *
+ * `autor_nome`, `autor_perfil`, `apagada` e `historico` só EXISTEM no payload de quem tem
+ * `concorrente.ver_autor` (Growth): o servidor os omite para os demais, que veem `autor_rotulo`
+ * ("Pessoa 1", "Pessoa 2"…, numerado por academia). Não esconder nada aqui: o que não pode
+ * aparecer nem chega.
+ */
+export interface Observacao extends CamposDaObservacao {
+  id: number
+  autor_rotulo: string
+  minha: boolean
+  criada_em: string | null
+  atualizada_em: string | null
+  editada: boolean
+  versao: number
+  pode_editar: boolean
+  pode_apagar: boolean
+  autor_nome?: string
+  autor_perfil?: string
+  apagada?: { por: string; em: string | null; moderacao: boolean } | null
+  historico?: ObservacaoHistorico[]
+}
+
+export interface ObservacoesPayload {
+  chave: string
+  academia: { rede: string; nome: string }
+  pode_anotar: boolean
+  pode_moderar: boolean
+  observacoes: Observacao[]
+}
+
+/** O que o formulário manda. Texto vazio vira `null` no servidor. */
+export type ObservacaoCampos = CamposDaObservacao
 
 /** Pins do município + ícones quadrados por rede (data URI SVG). */
 /** PROTOTIPO — area coberta pelo raio de 1 km, ja recortada DENTRO dos hexagonos.

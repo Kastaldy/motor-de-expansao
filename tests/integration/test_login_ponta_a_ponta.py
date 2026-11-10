@@ -345,6 +345,9 @@ PRIVILEGIOS_COMO_DONO_SEM_D20 = frozenset(
         "esvaziar perfil_permissoes",
         "alterar evento ja' gravado",
         "apagar evento",
+        # 022: o dono escreve no historico e apaga linha; o `app` nao (D20).
+        "escrever no historico de anotacoes de concorrente",
+        "apagar anotacao de concorrente",
         "criar tabela temporaria",
         "ser dono das tabelas auditadas",
         # Seção 2 do D20: os `REVOKE ... FROM PUBLIC`, que nenhum default do Postgres faz.
@@ -814,3 +817,190 @@ def test_alinhar_e_IDEMPOTENTE_e_a_contagem_e_honesta(
 
     segunda, _ = _hash_de(con, pessoa["id"])
     assert segunda == primeira, "a segunda passada reescreveu o hash"
+
+
+# ======================================================================================
+# 3. AS ANOTAÇÕES DE CONCORRENTE (022) — o que só o banco de verdade prova
+#
+# Aqui, e não num arquivo próprio, porque este é o arquivo que o passo do banco do CI roda
+# (`scripts/ci/banco_de_ensaio.sh`, `TESTE=`): um arquivo novo pularia no CI sem ninguém ver.
+# A promessa de produto é "nada do que foi escrito se perde" — e quem a cumpre são as triggers
+# e os CHECK da 022, que dublê nenhum exercita.
+# ======================================================================================
+
+from motor_expansao.db import observacoes as db_obs  # noqa: E402
+
+
+def _pessoa_com_perfil(con: Any, perfil: str) -> int:
+    sufixo = f"obs-{perfil}-{uuid.uuid4().hex[:8]}"
+    linha = con.execute(
+        "INSERT INTO usuarios (login_usuario, nome_usuario, email, senha_hash, id_perfil) "
+        "VALUES (%s, %s, %s, %s, (SELECT id_perfil FROM perfis WHERE nome_perfil = %s)) "
+        "RETURNING id_usuario",
+        (
+            sufixo,
+            f"Ensaio {sufixo}",
+            f"{sufixo}@ensaio.local",
+            db_senhas.gerar(SENHA_ESCOLHIDA),
+            perfil,
+        ),
+    ).fetchone()
+    return int(linha[0])
+
+
+def _anotar(autor: int, *, chave: str | None = None) -> tuple[int, str]:
+    chave = chave or uuid.uuid4().hex
+    id_obs = db_obs.criar(
+        pais="BR",
+        chave=chave,
+        rede="smart_fit",
+        nome="Smart Fit Ensaio",
+        lat=-23.55,
+        lng=-46.63,
+        autor=autor,
+        campos=db_obs.CamposObservacao(
+            metragem_m2=1200, vagas=20, nota_conservacao=8, comentario="visita de ensaio"
+        ),
+    )
+    return id_obs, chave
+
+
+def _editar(id_obs: int, autor: int, versao: int, metragem: int) -> int:
+    return db_obs.editar(
+        id_obs,
+        pais="BR",
+        autor=autor,
+        versao=versao,
+        campos=db_obs.CamposObservacao(
+            metragem_m2=metragem,
+            vagas=20,
+            nota_conservacao=8,
+            comentario=f"editada para {metragem} m²",
+        ),
+    )
+
+
+def test_022_criar_e_editar_deixam_historico_com_o_autor(con: Any) -> None:
+    autor = _pessoa_com_perfil(con, "expansao")
+    id_obs, _ = _anotar(autor)
+    assert _editar(id_obs, autor, versao=1, metragem=1450) == 2
+    hist = db_obs.historico([id_obs])
+    assert [(h.acao, h.versao, h.registrado_por) for h in hist] == [
+        ("criada", 1, autor),
+        ("editada", 2, autor),
+    ]
+    # A versão anterior é a linha anterior: o 1.200 continua lá depois da edição, e os campos
+    # novos (vagas, notas) viajam para o histórico pela trigger, não só os três primeiros.
+    assert [h.campos.metragem_m2 for h in hist] == [1200, 1450]
+    assert [(h.campos.vagas, h.campos.nota_conservacao) for h in hist] == [(20, 8), (20, 8)]
+
+
+def test_022_nota_fora_de_1_a_10_e_recusada_pelo_banco(con: Any) -> None:
+    """O CHECK é a última linha: mesmo que a validação do piloto falhe, a nota 11 não entra."""
+    autor = _pessoa_com_perfil(con, "expansao")
+    id_obs, _ = _anotar(autor)
+    with pytest.raises(psycopg.errors.CheckViolation):
+        con.execute(
+            "UPDATE observacoes_concorrente SET nota_fachada = 11 WHERE id_observacao = %s",
+            (id_obs,),
+        )
+
+
+def test_022_so_o_autor_edita_e_a_versao_velha_e_recusada(con: Any) -> None:
+    autor = _pessoa_com_perfil(con, "expansao")
+    outro = _pessoa_com_perfil(con, "lideres")
+    id_obs, _ = _anotar(autor)
+    with pytest.raises(db_obs.NaoEhOAutor):
+        _editar(id_obs, outro, versao=1, metragem=900)
+    _editar(id_obs, autor, versao=1, metragem=1300)
+    with pytest.raises(db_obs.ConflitoDeVersao):
+        _editar(id_obs, autor, versao=1, metragem=1400)
+
+
+def test_022_apagar_e_marcar_e_growth_modera(con: Any) -> None:
+    autor = _pessoa_com_perfil(con, "expansao")
+    outro = _pessoa_com_perfil(con, "lideres")
+    growth = _pessoa_com_perfil(con, "growth")
+    id_obs, chave = _anotar(autor)
+    assert db_obs.contar(pais="BR", chaves=[chave]) == {chave: 1}
+
+    with pytest.raises(db_obs.NaoEhOAutor):
+        db_obs.apagar(id_obs, pais="BR", autor=outro, pode_moderar=False)
+    assert db_obs.apagar(id_obs, pais="BR", autor=growth, pode_moderar=True) is True
+
+    apagada_por, marcada = con.execute(
+        "SELECT apagada_por, apagada_em_observacao IS NOT NULL "
+        "FROM observacoes_concorrente WHERE id_observacao = %s",
+        (id_obs,),
+    ).fetchone()
+    assert (apagada_por, marcada) == (growth, True)
+    with pytest.raises(db_obs.ObservacaoApagada):
+        _editar(id_obs, autor, versao=1, metragem=1000)
+    assert db_obs.contar(pais="BR", chaves=[chave]) == {}
+    ultimo = db_obs.historico([id_obs])[-1]
+    assert (ultimo.acao, ultimo.registrado_por) == ("apagada", growth)
+
+
+def test_022_nem_o_dono_apaga_linha_nem_reescreve_o_historico(con: Any) -> None:
+    """O `con` é o DONO: se ele não consegue, o `app` muito menos (e o D20 nem lhe dá DELETE)."""
+    autor = _pessoa_com_perfil(con, "expansao")
+    id_obs, _ = _anotar(autor)
+    for sql in (
+        "DELETE FROM observacoes_concorrente WHERE id_observacao = %s",
+        "UPDATE observacoes_concorrente_historico SET comentario_observacao = 'forjado' "
+        "WHERE id_observacao = %s",
+        "DELETE FROM observacoes_concorrente_historico WHERE id_observacao = %s",
+    ):
+        with pytest.raises(psycopg.errors.InsufficientPrivilege):
+            con.execute(sql, (id_obs,))
+    for tabela in ("observacoes_concorrente", "observacoes_concorrente_historico"):
+        with pytest.raises(psycopg.errors.InsufficientPrivilege):
+            con.execute(f"TRUNCATE {tabela}")
+    restantes = con.execute(
+        "SELECT count(*) FROM observacoes_concorrente_historico WHERE id_observacao = %s",
+        (id_obs,),
+    ).fetchone()[0]
+    assert restantes == 1
+
+
+def test_022_a_academia_e_o_autor_de_uma_anotacao_nao_mudam(con: Any) -> None:
+    autor = _pessoa_com_perfil(con, "expansao")
+    outro = _pessoa_com_perfil(con, "lideres")
+    id_obs, _ = _anotar(autor)
+    for coluna, valor in (("id_usuario_autor", outro), ("rede_concorrente", "bluefit")):
+        with pytest.raises(psycopg.errors.CheckViolation):
+            con.execute(
+                f"UPDATE observacoes_concorrente SET {coluna} = %s WHERE id_observacao = %s",
+                (valor, id_obs),
+            )
+
+
+def test_022_leitura_acha_por_proximidade_e_respeita_o_pais(con: Any) -> None:
+    """A chave muda quando a coleta ajusta o nome; a anotação não pode sumir por isso."""
+    autor = _pessoa_com_perfil(con, "expansao")
+    id_obs, chave = _anotar(autor)
+
+    def ids(pais: str, chave_lida: str, rede: str, lat: float, lng: float) -> set[int]:
+        lista = db_obs.listar(pais=pais, chave=chave_lida, rede=rede, lat=lat, lng=lng)
+        return {o.id_observacao for o in lista}
+
+    # ~90 m de distância e chave diferente, mesma rede: acha.
+    assert id_obs in ids("BR", "chave-nova", "smart_fit", -23.5508, -46.6305)
+    # ~1,1 km: outra unidade, ainda que da mesma rede.
+    assert id_obs not in ids("BR", "chave-nova", "smart_fit", -23.56, -46.63)
+    # Outra rede no mesmo endereço não é a mesma academia.
+    assert id_obs not in ids("BR", "chave-nova", "bluefit", -23.55, -46.63)
+    # A anotação é do país do deploy que a recebeu.
+    assert id_obs not in ids("AR", chave, "smart_fit", -23.55, -46.63)
+
+
+def test_022_anotar_e_de_todos_os_perfis_e_ver_autor_so_de_growth(con: Any) -> None:
+    linhas = con.execute(
+        "SELECT p.nome_perfil, pe.chave FROM perfil_permissoes pp "
+        "JOIN perfis p ON p.id_perfil = pp.id_perfil "
+        "JOIN permissoes pe ON pe.id_permissao = pp.id_permissao "
+        "WHERE pe.chave LIKE 'concorrente.%%'"
+    ).fetchall()
+    todos = {r[0] for r in con.execute("SELECT nome_perfil FROM perfis").fetchall()}
+    assert {p for p, c in linhas if c == "concorrente.anotar"} == todos
+    assert {p for p, c in linhas if c == "concorrente.ver_autor"} == {"growth"}

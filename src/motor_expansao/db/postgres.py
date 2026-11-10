@@ -616,7 +616,11 @@ SQL_FUNCAO_SECURITY_DEFINER_ALHEIA = (
     "FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace "
     "WHERE n.nspname = 'public' AND p.prosecdef "
     "AND p.proname NOT IN ('registra_perfil_permissoes_historico', "
-    "'registra_perfil_permissoes_truncate')"
+    "'registra_perfil_permissoes_truncate', "
+    # 022: a gravadora do historico das anotacoes de concorrente. Mesma especificacao das
+    # duas do D20 -- guarda de alvo por `TG_RELID`, `search_path` fixo e `EXECUTE` fechado a
+    # PUBLIC no `papeis-e-privilegios.md` --, e por isso sai por nome como elas.
+    "'registra_observacao_concorrente')"
 )
 #: Os papeis que TEM ACL no schema -- a porta principal, que nunca teve consulta de
 #: universo derivado. Medido em 07/10/2026:

@@ -83,6 +83,7 @@ if str(_SRC) not in sys.path:
 # export (`rede_export`) segue lazy, dentro das rotas: ele puxa fpdf2 e openpyxl.
 import acesso  # noqa: E402  (controle TEMPORARIO de acesso por aba, por Remote-User)
 import cobertura_1km  # noqa: E402  (PROTOTIPO — area coberta pelo raio, para desenhar)
+import observacoes  # noqa: E402  (anotacoes nos pinos de concorrentes, migration 022)
 import praca_indice  # noqa: E402  (indice conjuntivo da camada 5 — DEC-041)
 import pressao_1km  # noqa: E402  (PROTOTIPO — chave de raio 2 km / 1 km por area)
 import rate_limit_login  # noqa: E402  (rate-limit por IP de /api/login -- solidificacao do pentest)
@@ -2628,6 +2629,11 @@ def _montar_pins(sel: pd.DataFrame) -> dict[str, Any]:
                 "n_cadeias_feed": _inteiro_ou_nulo(getattr(t, "n_cadeias_do_feed_no_raio", None)),
                 "oferta": _num(getattr(t, "oferta_ponderada", None), 2),
                 "dist_m": _num(getattr(t, "dist_concorrente_mais_proximo_m", None), 0),
+                # Mesma ancora do pino do cadastro (ver `_linha_conc`): academia de rede do
+                # agregador tambem recebe anotacao.
+                "chave": observacoes.chave_concorrente(
+                    getattr(t, "rede", None), getattr(t, "nome", None), t.lat, t.lng
+                ),
             }
             for t in no_recorte.itertuples(index=False)
         ]
@@ -2700,6 +2706,10 @@ def _montar_pins(sel: pd.DataFrame) -> dict[str, Any]:
             # imensa maioria dos pinos, e a tela desenha sem a linha — nao inventar
             # zero, que afirmaria academia vazia.
             "alunos": _inteiro_ou_nulo(getattr(t, "alunos", None)),
+            # Ancora das ANOTACOES do time (migration 022): e' a unica coisa que o front devolve
+            # ao servidor ao abrir ou gravar uma anotacao -- rede, nome e coordenada saem do
+            # indice do servidor (`_indice_de_concorrentes`), nunca do corpo da requisicao.
+            "chave": observacoes.chave_concorrente(t.rede, t.nome_unidade, t.lat, t.lng),
         }
 
     return {
@@ -13369,6 +13379,293 @@ def rede_cadastro_atribuir(
         "versao": cadastro.versao,
         "valores": {c: registro.get(c) or "" for c in rede_cadastro.CAMPOS_EDITAVEIS},
     }
+
+
+# ============================================================================
+# Anotações nos pinos de concorrentes (migration 022)
+#
+# Segunda escrita do piloto aberta a TODOS os perfis (decisão de produto de 05/11/2026). O que
+# cada pessoa enxerga — "Pessoa N" ou o nome, a anotação apagada, o histórico — é decidido em
+# `observacoes.montar_resposta`; aqui ficam a identidade, a âncora da academia e a tradução dos
+# erros. Camada VISUAL de apoio (CLAUDE.md §2): nada daqui toca score, residual nem M1.
+# ============================================================================
+
+CAPACIDADE_ANOTAR = "concorrente.anotar"
+CAPACIDADE_VER_AUTOR = "concorrente.ver_autor"
+
+
+@functools.lru_cache(maxsize=1)
+def _indice_de_concorrentes() -> dict[str, dict[str, Any]]:
+    """`chave -> {rede, nome, lat, lng}` dos DOIS universos de pino, o do mapa.
+
+    É o que torna a âncora confiável: o front manda só a `chave` que o servidor lhe deu, e a
+    foto da academia que vai para o banco sai daqui. Uma chave que não está no índice é academia
+    que este deploy não desenha — 404, sem anotação órfã. Mesmo ciclo de vida das duas bases
+    (`lru_cache`, renovado no restart que segue a coleta semanal).
+    """
+    indice: dict[str, dict[str, Any]] = {}
+    conc = _carregar_concorrentes()
+    for t in conc.itertuples(index=False):
+        chave = observacoes.chave_concorrente(t.rede, t.nome_unidade, t.lat, t.lng)
+        if chave:
+            indice.setdefault(
+                chave,
+                {
+                    "rede": str(t.rede),
+                    "nome": _clean(t.nome_unidade),
+                    "lat": float(t.lat),
+                    "lng": float(t.lng),
+                },
+            )
+    diag = carregar_redes()
+    if diag is not None and len(diag):
+        for t in diag.itertuples(index=False):
+            rede, nome = getattr(t, "rede", None), getattr(t, "nome", None)
+            chave = observacoes.chave_concorrente(rede, nome, t.lat, t.lng)
+            if chave:
+                indice.setdefault(
+                    chave,
+                    {
+                        "rede": str(rede or ""),
+                        "nome": _clean(nome or ""),
+                        "lat": float(t.lat),
+                        "lng": float(t.lng),
+                    },
+                )
+    return indice
+
+
+def _academia_da_chave(chave: str) -> dict[str, Any]:
+    alvo = _indice_de_concorrentes().get(str(chave or "").strip())
+    if alvo is None:
+        raise HTTPException(
+            404,
+            "Esta academia não está na base atual de concorrentes. Recarregue o mapa: a coleta "
+            "semanal pode ter atualizado a lista.",
+        )
+    return alvo
+
+
+def _identidade_para_anotar(remote_user: str | None) -> Any:
+    """Quem está anotando. Sem banco não há onde gravar nem de quem é a anotação: 503."""
+    from motor_expansao.db import BancoIndisponivel, BancoNaoConfigurado, rbac
+
+    try:
+        eu = rbac.identidade(acesso.login_da_requisicao(remote_user))
+    except BancoNaoConfigurado as erro:
+        _LOG_FALHA.warning("anotacao de concorrente pedida em deploy sem banco configurado")
+        raise HTTPException(
+            503,
+            "As anotações de concorrentes precisam do banco, e este deploy está sem banco "
+            "configurado. Avise o time de tecnologia.",
+        ) from erro
+    except BancoIndisponivel as erro:
+        _LOG_FALHA.warning("anotacao de concorrente: banco indisponivel", exc_info=True)
+        raise HTTPException(
+            503, "Banco indisponível no momento. Tente novamente em instantes."
+        ) from erro
+    if eu is None:
+        raise HTTPException(403, "Seu usuário não tem cadastro no banco do piloto.")
+    return eu
+
+
+def _payload_observacoes(chave: str, alvo: dict[str, Any], eu: Any) -> dict[str, Any]:
+    from motor_expansao.db import observacoes as db_obs
+
+    lista = db_obs.listar(
+        pais=PERFIL.pais, chave=chave, rede=alvo["rede"], lat=alvo["lat"], lng=alvo["lng"]
+    )
+    ver_autor = eu.pode(CAPACIDADE_VER_AUTOR)
+    historico: list[Any] = []
+    nomes: dict[int, tuple[str, str]] = {}
+    if ver_autor and lista:
+        historico = db_obs.historico([o.id_observacao for o in lista])
+        nomes = db_obs.nomes_dos_autores(observacoes.ids_para_nomes(lista, historico))
+    resposta = observacoes.montar_resposta(
+        lista,
+        id_viewer=eu.id_usuario,
+        ver_autor=ver_autor,
+        pode_anotar=eu.pode(CAPACIDADE_ANOTAR),
+        historico=historico,
+        nomes=nomes,
+    )
+    return {"chave": chave, "academia": {"rede": alvo["rede"], "nome": alvo["nome"]}, **resposta}
+
+
+def _erro_de_observacao(erro: Exception) -> HTTPException:
+    from motor_expansao.db import BancoIndisponivel, BancoNaoConfigurado
+    from motor_expansao.db import observacoes as db_obs
+
+    if isinstance(erro, HTTPException):
+        return erro
+    if isinstance(erro, observacoes.CampoInvalido):
+        return HTTPException(422, str(erro))
+    if isinstance(erro, db_obs.ObservacaoDesconhecida):
+        return HTTPException(404, str(erro))
+    if isinstance(erro, db_obs.NaoEhOAutor):
+        return HTTPException(403, str(erro))
+    if isinstance(erro, (db_obs.ObservacaoApagada, db_obs.ConflitoDeVersao)):
+        return HTTPException(409, str(erro))
+    if isinstance(erro, (BancoIndisponivel, BancoNaoConfigurado)):
+        _LOG_FALHA.warning("anotacao de concorrente: banco indisponivel", exc_info=True)
+        return HTTPException(503, "Banco indisponível no momento. Tente novamente em instantes.")
+    _LOG_FALHA.error("anotacao de concorrente: falha inesperada", exc_info=True)
+    return HTTPException(500, "Não foi possível concluir a anotação. Tente novamente.")
+
+
+class _CamposObservacaoIn(BaseModel):
+    """Os campos da anotação, com os nomes de `CamposObservacao`. As faixas são conferidas em
+    `observacoes.normalizar_campos`, que devolve 422 com o rótulo da tela."""
+
+    metragem_m2: float | None = None
+    equipamentos: str | None = None
+    vagas: float | None = None
+    comodidades: str | None = None
+    nota_conservacao: float | None = None
+    nota_fachada: float | None = None
+    nota_atendimento: float | None = None
+    alunos_estimados: float | None = None
+    comentario: str | None = None
+
+    def campos(self) -> Any:
+        return observacoes.normalizar_campos(
+            **self.model_dump(exclude={"chave", "versao"})
+        )
+
+
+class ObservacaoIn(_CamposObservacaoIn):
+    """Anotação nova. A academia vai pela `chave` do pino; o resto sai do índice do servidor."""
+
+    chave: str = Field(min_length=1, max_length=64)
+
+
+class ObservacaoEdicaoIn(_CamposObservacaoIn):
+    """Edição da PRÓPRIA anotação. `versao` é a concorrência otimista (409 se mudou)."""
+
+    chave: str = Field(min_length=1, max_length=64)
+    versao: int
+
+
+class ContagemObservacoesIn(BaseModel):
+    """Chaves dos pinos visíveis, para o selo de quantas anotações cada um tem."""
+
+    chaves: list[str] = Field(default_factory=list, max_length=COMPETITOR_PIN_LIMIT)
+
+
+@app.get("/api/concorrente/observacoes")
+def concorrente_observacoes(
+    chave: str,
+    remote_user: str | None = Header(default=None, alias="Remote-User"),
+) -> dict[str, Any]:
+    """As anotações de uma academia, do jeito que ESTA pessoa pode vê-las."""
+    alvo = _academia_da_chave(chave)
+    eu = _identidade_para_anotar(remote_user)
+    try:
+        return _payload_observacoes(chave, alvo, eu)
+    except Exception as erro:  # noqa: BLE001 - traduzido logo abaixo
+        raise _erro_de_observacao(erro) from erro
+
+
+@app.post("/api/concorrente/observacoes")
+def concorrente_observacoes_criar(
+    body: ObservacaoIn,
+    remote_user: str | None = Header(default=None, alias="Remote-User"),
+) -> dict[str, Any]:
+    """Grava uma anotação nova e devolve a lista atualizada."""
+    from motor_expansao.db import observacoes as db_obs
+
+    alvo = _academia_da_chave(body.chave)
+    eu = _identidade_para_anotar(remote_user)
+    try:
+        db_obs.criar(
+            pais=PERFIL.pais,
+            chave=body.chave,
+            rede=alvo["rede"],
+            nome=alvo["nome"],
+            lat=alvo["lat"],
+            lng=alvo["lng"],
+            autor=eu.id_usuario,
+            campos=body.campos(),
+        )
+        return _payload_observacoes(body.chave, alvo, eu)
+    except Exception as erro:  # noqa: BLE001 - traduzido logo abaixo
+        raise _erro_de_observacao(erro) from erro
+
+
+@app.patch("/api/concorrente/observacoes/{id_observacao}")
+def concorrente_observacoes_editar(
+    id_observacao: int,
+    body: ObservacaoEdicaoIn,
+    remote_user: str | None = Header(default=None, alias="Remote-User"),
+) -> dict[str, Any]:
+    """Edita a PRÓPRIA anotação. A versão anterior fica no histórico (trigger da 022)."""
+    from motor_expansao.db import observacoes as db_obs
+
+    alvo = _academia_da_chave(body.chave)
+    eu = _identidade_para_anotar(remote_user)
+    try:
+        db_obs.editar(
+            id_observacao,
+            pais=PERFIL.pais,
+            autor=eu.id_usuario,
+            versao=body.versao,
+            campos=body.campos(),
+        )
+        return _payload_observacoes(body.chave, alvo, eu)
+    except Exception as erro:  # noqa: BLE001 - traduzido logo abaixo
+        raise _erro_de_observacao(erro) from erro
+
+
+@app.delete("/api/concorrente/observacoes/{id_observacao}")
+def concorrente_observacoes_apagar(
+    id_observacao: int,
+    chave: str,
+    remote_user: str | None = Header(default=None, alias="Remote-User"),
+) -> dict[str, Any]:
+    """Marca como apagada — a própria, ou a de outra pessoa se for Growth (moderação).
+
+    Nada sai do banco: a anotação some para quem não é Growth, e o histórico registra quem
+    apagou e quando.
+    """
+    from motor_expansao.db import observacoes as db_obs
+
+    alvo = _academia_da_chave(chave)
+    eu = _identidade_para_anotar(remote_user)
+    try:
+        db_obs.apagar(
+            id_observacao,
+            pais=PERFIL.pais,
+            autor=eu.id_usuario,
+            pode_moderar=eu.pode(CAPACIDADE_VER_AUTOR),
+        )
+        return _payload_observacoes(chave, alvo, eu)
+    except Exception as erro:  # noqa: BLE001 - traduzido logo abaixo
+        raise _erro_de_observacao(erro) from erro
+
+
+@app.post("/api/concorrente/observacoes/contagem")
+def concorrente_observacoes_contagem(
+    body: ContagemObservacoesIn,
+    remote_user: str | None = Header(default=None, alias="Remote-User"),
+) -> dict[str, int]:
+    """Quantas anotações VIVAS cada pino tem — o selo turquesa do mapa.
+
+    Degrada para `{}` com o banco fora: o selo é enfeite, e a falta dele não pode derrubar o
+    desenho do mapa nem encher a tela de erro. O painel, esse sim, diz que está indisponível.
+    """
+    from motor_expansao.db import observacoes as db_obs
+
+    chaves = [c for c in dict.fromkeys(body.chaves) if c]
+    if not chaves:
+        return {}
+    try:
+        _identidade_para_anotar(remote_user)
+        return db_obs.contar(pais=PERFIL.pais, chaves=chaves)
+    except HTTPException:
+        raise
+    except Exception:  # noqa: BLE001 - selo e' enfeite: degrada para vazio
+        _LOG_FALHA.warning("contagem de anotacoes indisponivel", exc_info=True)
+        return {}
 
 
 @app.get("/api/executiva/{uf}")
