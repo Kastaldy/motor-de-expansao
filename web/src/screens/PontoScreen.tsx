@@ -16,6 +16,8 @@ import {
 } from '../components/LeiturasVisuais'
 import { FAIXAS_DEMANDA, FAIXAS_POTENCIAL } from '../lib/faixas'
 import PainelPontos from '../components/PainelPontos'
+import BotaoPrintMapa from '../components/BotaoPrintMapa'
+import { recorteDoArquivoPrint } from '../lib/print-mapa'
 import Recomendacao from '../components/Recomendacao'
 import { Aviso, Botao, Chip, Eyebrow, Glass, Spinner } from '../components/primitives'
 import { api, ApiError, baixar } from '../lib/api'
@@ -957,6 +959,13 @@ function Ficha({
           >
             {area ? 'Abrir o ponto central no Google Maps ↗' : 'Abrir no Google Maps ↗'}
           </a>
+          {/* O PRINT LIMPO do mapa (pedido do Vinicius, 10/11/2026): imagem 16:9 só com o
+              fundo de ruas, o alcance e o pin, para apresentação. */}
+          <BotaoPrintMapa
+            ficha={ficha}
+            nome={area ? null : nomeDoLugar(local)}
+            recorte={recorteDoArquivoPrint(tipoDoRecorte(ficha))}
+          />
         </div>
       </Glass>
 
