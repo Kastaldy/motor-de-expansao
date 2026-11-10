@@ -17,6 +17,8 @@ import {
   classeDaVia,
   escalaDoPrint,
   geojsonDoAlcance,
+  limparRotuloDigitado,
+  MAX_ROTULO_PRINT,
   nomeDoArquivoPrint,
   primeiraCamadaDeRotulo,
   quadroDoPrint,
@@ -133,6 +135,12 @@ describe('rotuloDoPrint e nomeDoArquivoPrint', () => {
 
   it('sem bairro (área desenhada), fica só a cidade', () => {
     expect(rotuloDoPrint(null, 'Teresópolis', 'RJ')).toBe('Teresópolis/RJ')
+  })
+
+  it('nome digitado: espaços e quebras viram um espaço, com teto de tamanho; vazio vale', () => {
+    expect(limparRotuloDigitado('  Av. Lúcio Meira,\n 923   - Várzea ')).toBe('Av. Lúcio Meira, 923 - Várzea')
+    expect(limparRotuloDigitado('x'.repeat(200))).toHaveLength(MAX_ROTULO_PRINT)
+    expect(limparRotuloDigitado('   ')).toBe('')
   })
 
   it('nome do arquivo sem acento, com o recorte', () => {
@@ -271,7 +279,19 @@ describe('alcance desenhado', () => {
     expect(c.halo.paint?.['line-color']).toBe(PALETA_PRINT.halo)
   })
 
-  it('o véu entra antes do primeiro rótulo', () => {
-    expect(primeiraCamadaDeRotulo(realcarEstilo(voyagerMinimo()))).toBe('waterway_label')
+  it('o contorno entra no início do BLOCO FINAL de rótulos, nunca abaixo das ruas', () => {
+    const base = voyagerMinimo()
+    // Como no Voyager real: um nome de rio ANTES das ruas.
+    base.layers.splice(4, 0, { id: 'rotulo_cedo', type: 'symbol', source: 'protomaps', 'source-layer': 'water', layout: {}, paint: {} })
+    const estilo = realcarEstilo(base)
+    const id = primeiraCamadaDeRotulo(estilo)
+    expect(id).toBe('waterway_label')
+    const i = estilo.layers.findIndex((c) => c.id === id)
+    expect(estilo.layers.slice(i).every((c) => c.type === 'symbol')).toBe(true)
+    expect(estilo.layers.slice(0, i).some((c) => c.id === 'road_pri_fill_noramp')).toBe(true)
+  })
+
+  it('sem rótulo no fim, a linha vai para o topo', () => {
+    expect(primeiraCamadaDeRotulo({ version: 8, sources: {}, layers: [{ id: 'background', type: 'background' }] })).toBeUndefined()
   })
 })

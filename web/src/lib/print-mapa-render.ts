@@ -153,9 +153,12 @@ export async function gerarPrintDoMapa(pedido: PedidoPrint, tetoMs: number = TET
 
     const camadas = camadasDoAlcance()
     mapa.addSource(FONTE_ALCANCE, { type: 'geojson', data: geojsonDoAlcance(pedido.poligonos) as GeoJSON.FeatureCollection })
-    mapa.addLayer(camadas.veu as unknown as maplibregl.LayerSpecification, primeiraCamadaDeRotulo(estilo))
-    mapa.addLayer(camadas.halo as unknown as maplibregl.LayerSpecification)
-    mapa.addLayer(camadas.linha as unknown as maplibregl.LayerSpecification)
+    /* Véu, halo e linha ABAIXO dos nomes do mapa: por cima, o halo branco da linha comia
+       as letras de quem ela cruzava ("BI IGA" no lugar de "BIXIGA", 10/11/2026). */
+    const antesDosNomes = primeiraCamadaDeRotulo(estilo)
+    mapa.addLayer(camadas.veu as unknown as maplibregl.LayerSpecification, antesDosNomes)
+    mapa.addLayer(camadas.halo as unknown as maplibregl.LayerSpecification, antesDosNomes)
+    mapa.addLayer(camadas.linha as unknown as maplibregl.LayerSpecification, antesDosNomes)
     mapa.addImage(IMAGEM_PIN, imagemDoPin(), { pixelRatio: DENSIDADE_PRINT })
     mapa.addSource(FONTE_PONTO, { type: 'geojson', data: geojsonDoPonto(pedido.lat, pedido.lng, pedido.rotulo) })
     mapa.addLayer(camadaDoPonto(fonteDeRotulo(estilo)) as unknown as maplibregl.LayerSpecification)

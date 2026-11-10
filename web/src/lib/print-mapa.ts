@@ -182,8 +182,20 @@ export function rotuloDoPrint(nome: string | null | undefined, municipio: string
   return partes.join(' · ')
 }
 
+/** Tamanho máximo do nome sob o pin: acima disso o rótulo cobre meio quadro. */
+export const MAX_ROTULO_PRINT = 80
+
+/**
+ * O nome que o OPERADOR digitou para o pin, pronto para desenhar: espaços repetidos e
+ * quebras de linha viram um espaço e o texto é cortado em `MAX_ROTULO_PRINT`. Vazio vale:
+ * é o print só com o pin, sem nome.
+ */
+export function limparRotuloDigitado(texto: string): string {
+  return texto.replace(/\s+/g, ' ').trim().slice(0, MAX_ROTULO_PRINT).trim()
+}
+
 function semAcento(s: string): string {
-  return s.normalize('NFD').replace(/[̀-ͯ]/g, '').trim().toLowerCase()
+  return s.normalize('NFD').replace(/[\u0300-\u036f]/g, '').trim().toLowerCase()
 }
 
 /** Pedaço seguro para nome de arquivo: sem acento, minúsculo, hífen no lugar do resto. */
@@ -502,9 +514,9 @@ export function realcarEstilo(base: EstiloMapa): EstiloMapa {
 export const FONTE_ALCANCE = 'print_alcance'
 
 /**
- * As camadas do contorno: um véu azul quase transparente por dentro (só para a isócrona,
- * de forma irregular, ler como "área"), um halo branco e a linha azul — a do mapa de
- * referência. O véu entra ABAIXO dos rótulos (`antesDe`); as linhas, no topo.
+ * As camadas do contorno: um véu azul quase transparente por dentro (para a isócrona, de
+ * forma irregular, ler como "área"), um halo branco e a linha azul — a do mapa de
+ * referência. As três entram ABAIXO dos rótulos do mapa: por cima, o halo cortava letras.
  */
 export function camadasDoAlcance(): { veu: CamadaEstilo; halo: CamadaEstilo; linha: CamadaEstilo } {
   return {
@@ -614,7 +626,18 @@ export function camadaDoPonto(fonte: string[]): CamadaEstilo {
   }
 }
 
-/** Id da primeira camada de rótulo: o véu do alcance entra antes dela. */
+/**
+ * Id da camada que abre o BLOCO FINAL de rótulos — o contorno do alcance entra antes dela,
+ * por cima de ruas e prédios e por baixo dos nomes.
+ *
+ * Não é a primeira camada `symbol` do estilo: no Voyager, o nome dos rios vem ANTES das
+ * ruas, e inserir ali deixava a linha embaixo das ruas e dos prédios, picotada (medido em
+ * 10/11/2026). `undefined` = estilo sem rótulo no fim, a linha vai para o topo.
+ */
 export function primeiraCamadaDeRotulo(estilo: EstiloMapa): string | undefined {
-  return estilo.layers.find((c) => c.type === 'symbol')?.id
+  let ultimaNaoRotulo = -1
+  estilo.layers.forEach((c, i) => {
+    if (c.type !== 'symbol') ultimaNaoRotulo = i
+  })
+  return estilo.layers[ultimaNaoRotulo + 1]?.id
 }
