@@ -164,7 +164,11 @@ def _sql_do_codigo() -> list[tuple[str, str]]:
 
 
 def _sem_marcadores(sql: str) -> str:
-    """`%s` do psycopg vira `$1`, `$2`... O parser recusa o marcador do driver."""
+    """`%s` e `%(nome)s` do psycopg viram `$1`, `$2`... O parser recusa o marcador do driver.
+
+    O nomeado entrou com as anotações de concorrente (DEC-084): sem ele, o `SQL_APAGAR` de
+    `db/observacoes.py` nem parseava, e a coluna citada ali ficava sem conferência nenhuma.
+    """
     contador = 0
 
     def _trocar(_m: re.Match[str]) -> str:
@@ -172,7 +176,7 @@ def _sem_marcadores(sql: str) -> str:
         contador += 1
         return f"${contador}"
 
-    return re.sub(r"%s", _trocar, sql)
+    return re.sub(r"%\([A-Za-z_][A-Za-z0-9_]*\)s|%s", _trocar, sql)
 
 
 def _referencias(pglast, sql: str) -> tuple[dict[str, str], set[str], list[tuple[str | None, str]]]:

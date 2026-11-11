@@ -157,6 +157,16 @@ FEATURES_ROTULOS: tuple[tuple[str | None, str, str], ...] = (
     # Juntar os dois na mesma linha faria a trilha somar desenho de tela com interesse
     # declarado, que é exatamente a diferença que se quer enxergar.
     (None, "/api/pin-concorrente/", "Carregou pinos com foto no mapa"),
+    # Anotações nos pinos de concorrente (DEC-084). A CONTAGEM vem antes do POST de criar
+    # (first-match por prefixo): é o mapa pedindo, sozinho, quantas anotações cada pino tem,
+    # e somá-la a "anotou" misturaria desenho de tela com escrita, a mesma distinção da foto
+    # e do pino acima. Abrir, anotar, editar e apagar são gestos e têm rótulo cada um.
+    ("POST", "/api/concorrente/observacoes/contagem", "Carregou a contagem de anotações no mapa"),
+    ("GET", "/api/concorrente/observacoes", "Abriu as anotações de uma concorrente"),
+    ("POST", "/api/concorrente/observacoes", "Anotou uma unidade concorrente"),
+    ("PATCH", "/api/concorrente/observacoes/", "Editou uma anotação de concorrente"),
+    ("DELETE", "/api/concorrente/observacoes/", "Apagou uma anotação de concorrente"),
+    (None, "/api/concorrente/observacoes", "Anotações de concorrente"),
     # --- Gestão de acesso (D25/D26) -----------------------------------------
     # Entravam TODAS em "Outras ações", e a assimetria era gritante: a trilha
     # descrevia com precisão quem olhou um imóvel, e resumia a "Outras ações" quem

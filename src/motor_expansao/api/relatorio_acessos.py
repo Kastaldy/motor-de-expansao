@@ -79,6 +79,9 @@ AGRUPAMENTO_ABAS: tuple[tuple[str, str], ...] = (
     # relatorio pontual, atribuido a viabilidade).
     ("/api/foto-concorrente/", "mapa"),
     ("/api/pin-concorrente/", "mapa"),
+    # Anotacoes no pino de concorrente (DEC-084): mesmo gate e mesmo lugar de uso da foto
+    # acima -- o painel abre pelo clique no pino, no Mapa.
+    ("/api/concorrente/observacoes", "mapa"),
 )
 
 #: Camada de LABEL (CLAUDE.md §2): valor bruto sem acento; exibição acentuada.

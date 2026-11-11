@@ -162,6 +162,13 @@
       "documento": "022-sso-tickets.md",
       "sha256_bloco": "1f9451927659914410117186913b92fdd9295aaadb14457deebd2f195463852f",
       "sha256_arquivo": "f7a4726568aa0c5fd4dd797e92819a77bc95ab1456db47477a0ac4f7c916d534"
+    },
+    {
+      "versao": "023",
+      "arquivo": "023-observacoes-concorrente.sql",
+      "documento": "023-observacoes-concorrente.md",
+      "sha256_bloco": "b41e61480c1fc3789998eed10948a90833c0d57dd48049679e4b952c6fe56fd2",
+      "sha256_arquivo": "9f03376da08ddeda85298a583cfe49bdd7bc91dbb5e5f0e3a72391b7684a971e"
     }
   ]
 }

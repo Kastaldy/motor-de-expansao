@@ -26,6 +26,7 @@ import JanelaFicha from '../components/JanelaFicha'
 import MethodologyPanel from '../components/MethodologyPanel'
 import NarrativePanel from '../components/NarrativePanel'
 import PainelComparacao from '../components/PainelComparacao'
+import { PainelObservacoes } from '../components/PainelObservacoes'
 import ScoreLegend, { LegendaCalor } from '../components/ScoreLegend'
 import { alternarCalor, alternarCoresHex, type ModoCalor } from '../lib/camadas-calor'
 import Select from '../components/Select'
@@ -79,6 +80,8 @@ import {
   paraGeoJson,
 } from '../lib/geometria-desenho'
 import type { Coord } from '../lib/medicao'
+import { chavesDosPinos } from '../lib/observacoes'
+import type { Pin } from '../lib/types'
 import { assinarJanelas, deslocamentoDoTrilho, janelasAbertas } from '../lib/ocupacao-janelas'
 import { degrauSobreFichaDePonto, janelaDoHexVisivel, pontoSeleciona } from '../lib/janela-hex'
 import { selecaoMarcadaNoMapa } from '../lib/alcance'
@@ -541,6 +544,32 @@ export default function MapScreen({
   const [verRedes, setVerRedes] = useState(REDES_LIGADAS_POR_PADRAO)
   const temRedes = (dados?.pins?.concorrentes.length ?? 0) > 0
   const pinsNoMapa = useMemo(() => pinsVisiveis(dados?.pins, verRedes), [dados?.pins, verRedes])
+
+  /* ANOTACOES do time nos pinos de concorrente (migration 023). O clique no pino abre a janela;
+     a contagem alimenta o selo turquesa. A contagem e' pedida UMA vez por recorte de pinos e
+     corrigida localmente quando alguem grava ou apaga no painel — sem refazer a chamada. Falha
+     na contagem nao vira erro de tela: o selo e' enfeite, e o servidor ja' devolve `{}`. */
+  const [concorrenteAberto, setConcorrenteAberto] = useState<Pin | null>(null)
+  const [contagemObs, setContagemObs] = useState<Record<string, number>>({})
+  useEffect(() => {
+    const chaves = chavesDosPinos(pinsNoMapa?.concorrentes ?? [])
+    if (!chaves.length) {
+      setContagemObs({})
+      return
+    }
+    let vivo = true
+    api
+      .observacoesContagem(chaves)
+      .then((c) => vivo && setContagemObs(c))
+      .catch(() => vivo && setContagemObs({}))
+    return () => {
+      vivo = false
+    }
+  }, [pinsNoMapa])
+  const aoContarObservacoes = useCallback(
+    (chave: string, n: number) => setContagemObs((c) => ({ ...c, [chave]: n })),
+    [],
+  )
 
   /* Camada de OPORTUNIDADES IMOBILIARIAS (a oferta da aba, sobre o territorio).
      Comeca DESLIGADA pela mesma razao das outras chaves: o piloto abre identico ao
@@ -1807,6 +1836,8 @@ export default function MapScreen({
                 }
               : undefined
           }
+          onConcorrente={setConcorrenteAberto}
+          contagemObservacoes={contagemObs}
           cobertura1k={cobertura}
           heatmapSetores={heatmap?.setores}
           modoCalor={modoCalor}
@@ -2495,6 +2526,27 @@ export default function MapScreen({
             unidadeId={unidadeAberta.id}
             semRede={unidadeAberta.semRede ?? false}
             onEstudarRegiao={estudarRegiaoDaUnidade}
+          />
+        )}
+      </JanelaFicha>
+
+      {/* ---------------- Janela das ANOTAÇÕES do concorrente ----------------
+          Aberta pelo clique no pino de concorrente (migration 023). À DIREITA, em degrau sobre
+          as outras duas da direita (imóvel e unidade), para a barra delas seguir à vista. */}
+      <JanelaFicha
+        aberta={concorrenteAberto != null}
+        ancora="direita"
+        degrau={(imovelAberto != null ? 1 : 0) + (unidadeAberta != null ? 1 : 0)}
+        titulo={concorrenteAberto?.nome || 'Concorrente'}
+        subtitulo={`${concorrenteAberto?.label ?? concorrenteAberto?.rede ?? 'Concorrente'} · anotações do time`}
+        onFechar={() => setConcorrenteAberto(null)}
+        recuoInferior={96}
+      >
+        {concorrenteAberto && (
+          <PainelObservacoes
+            key={concorrenteAberto.chave ?? ''}
+            pin={concorrenteAberto}
+            onContagem={aoContarObservacoes}
           />
         )}
       </JanelaFicha>

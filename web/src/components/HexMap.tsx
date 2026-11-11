@@ -528,6 +528,11 @@ export interface HexMapProps {
   /** Clique num pin da ULTRA: o MapScreen abre a ficha da unidade em janela. O pin nao
    *  carrega id — quem casa o ponto com a unidade da rede e' quem recebe o clique. */
   onUltra?: (p: Pin) => void
+  /** Clique num pin de CONCORRENTE: o MapScreen abre o painel de anotacoes do time sobre
+   *  aquela academia (migration 023). O pino carrega a `chave` que o servidor lhe deu. */
+  onConcorrente?: (p: Pin) => void
+  /** `chave -> anotacoes vivas`, para o selo turquesa no canto do pino. Ausente = sem selo. */
+  contagemObservacoes?: Record<string, number>
   /** PROTOTIPO: area coberta pelo raio, ja recortada dentro dos hexagonos. */
   cobertura1k?: Cobertura1k | null
   /** Bloco D — poligonos de setor censitario para o mapa de calor opcional. */
@@ -646,6 +651,8 @@ export default function HexMap({
   imoveis,
   onImovel,
   onUltra,
+  onConcorrente,
+  contagemObservacoes,
   cobertura1k,
   heatmapSetores,
   modoCalor = null,
@@ -1670,7 +1677,42 @@ export default function HexMap({
               : null,
           )
         },
+        // Abre o painel de ANOTACOES do time (migration 023). Mesma saida dos pins de imovel e
+        // da Ultra: com ferramenta ligada (regua, ponto, desenho) o clique e' da ferramenta.
+        onClick: (info) => {
+          if (cliqueOcupado) return
+          const p = info.object as Pin | undefined
+          if (p?.chave) onConcorrente?.(p)
+        },
       }),
+
+      // Selo de ANOTACOES: quantas o time deixou nesta academia, no canto superior direito do
+      // pino. Nao e' pickable: o clique continua sendo do pino, e o selo so' informa.
+      ...(contagemObservacoes && Object.keys(contagemObservacoes).length
+        ? [
+            new TextLayer<Pin>({
+              id: 'conc-selo-anotacoes',
+              data: (pinsEfetivos?.concorrentes ?? []).filter(
+                (d) => !!d.chave && (contagemObservacoes[d.chave] ?? 0) > 0,
+              ),
+              getPosition: (d) => [d.lng, d.lat],
+              getText: (d) => String(contagemObservacoes[d.chave ?? ''] ?? ''),
+              getSize: 10,
+              sizeUnits: 'pixels',
+              getPixelOffset: [14, -14],
+              getColor: [6, 35, 42, 255],
+              fontWeight: 700,
+              fontFamily: 'Barlow, system-ui, sans-serif',
+              background: true,
+              getBackgroundColor: [48, 207, 194, 255],
+              backgroundPadding: [4, 2, 4, 2],
+              getBorderColor: [8, 11, 16, 255],
+              getBorderWidth: 1.5,
+              pickable: false,
+              updateTriggers: { getText: [contagemObservacoes] },
+            }),
+          ]
+        : []),
 
       new IconLayer<Pin>({
         id: 'ultra-pins',
@@ -2166,6 +2208,10 @@ export default function HexMap({
     imoveis,
     onImovel,
     onUltra,
+    // Sem estas duas, o clique no pino chamaria um handler velho e o selo nao acompanharia
+    // a anotacao recem-gravada (a lista de camadas e' memorizada).
+    onConcorrente,
+    contagemObservacoes,
     cobertura1k,
     heatmapSetores,
     modoCalor,
@@ -2849,6 +2895,26 @@ export default function HexMap({
                 churn medem negociação da marca, não fragilidade desta unidade.
               </div>
             </>
+          )}
+
+          {/* ANOTACOES do time (migration 023): o balao anuncia o clique, porque nada no pino
+              diria que ele abre alguma coisa. So' com `onConcorrente` (quem montou o mapa
+              sabe abrir o painel) e com a `chave` (sem ela o servidor nao acha a academia). */}
+          {pinHover.d?.chave && onConcorrente && (
+            <div
+              style={{
+                font: '500 11px/1.3 var(--f-ui)',
+                color: 'var(--ac-text)',
+                marginTop: 6,
+              }}
+            >
+              {(() => {
+                const n = contagemObservacoes?.[pinHover.d.chave] ?? 0
+                return n
+                  ? `${n} ${n === 1 ? 'anotação' : 'anotações'} do time · clique para ver`
+                  : 'Clique para anotar metragem e equipamentos'
+              })()}
+            </div>
           )}
         </div>
       )}

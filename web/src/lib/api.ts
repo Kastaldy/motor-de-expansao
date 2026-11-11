@@ -41,6 +41,8 @@ import type {
   SetoresHeatmapPayload,
   ViabilidadeIn,
   ViabilidadeOut,
+  ObservacaoCampos,
+  ObservacoesPayload,
 } from './types'
 import type { Alcance } from './alcance'
 import { ehQuedaDeSessao, entradaDoPayload, type EntradaAceita } from './login-motor'
@@ -780,6 +782,58 @@ export const api = {
   redeUnidade: (id: string, mes?: string) =>
     pedir<RedeFicha>(
       `/api/rede/unidade/${encodeURIComponent(id)}${mes ? `?mes=${encodeURIComponent(mes)}` : ''}`,
+    ),
+
+  /** Anotações do time sobre UMA academia concorrente (migration 023). O que vem no payload
+   *  já é o que esta pessoa pode ver: nome do autor e histórico só para Growth. */
+  observacoes: (chave: string) =>
+    pedir<ObservacoesPayload>(
+      `/api/concorrente/observacoes?chave=${encodeURIComponent(chave)}`,
+      {},
+      30_000,
+    ),
+
+  observacaoCriar: (chave: string, campos: ObservacaoCampos) =>
+    pedir<ObservacoesPayload>(
+      '/api/concorrente/observacoes',
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ chave, ...campos }),
+      },
+      30_000,
+    ),
+
+  /** Edita a PRÓPRIA anotação. `versao` faz a concorrência otimista: 409 = mudou desde que abriu. */
+  observacaoEditar: (id: number, chave: string, versao: number, campos: ObservacaoCampos) =>
+    pedir<ObservacoesPayload>(
+      `/api/concorrente/observacoes/${id}`,
+      {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ chave, versao, ...campos }),
+      },
+      30_000,
+    ),
+
+  /** Marca como apagada (nada sai do banco). Growth apaga a de qualquer um: moderação. */
+  observacaoApagar: (id: number, chave: string) =>
+    pedir<ObservacoesPayload>(
+      `/api/concorrente/observacoes/${id}?chave=${encodeURIComponent(chave)}`,
+      { method: 'DELETE' },
+      30_000,
+    ),
+
+  /** Quantas anotações vivas cada pino tem (o selo do mapa). Vazio quando o banco não responde. */
+  observacoesContagem: (chaves: string[]) =>
+    pedir<Record<string, number>>(
+      '/api/concorrente/observacoes/contagem',
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ chaves }),
+      },
+      30_000,
     ),
 
   /** Atribuição de consultor / master franqueado. Única escrita do piloto.
