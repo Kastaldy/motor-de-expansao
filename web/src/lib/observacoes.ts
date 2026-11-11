@@ -10,6 +10,21 @@ export const NUMERICOS = [
   ['alunos_estimados', 'Alunos estimados', 1, 50000],
 ] as const
 
+/** Quantos dígitos cabem nas caixas de metragem, vagas e alunos (pedido de 11/11). Trava de
+ *  DIGITAÇÃO: quem decide o que vale continua sendo a faixa de `NUMERICOS`, que cabe nela. */
+export const DIGITOS_MAXIMOS = 5
+
+/** Teto de caracteres de equipamentos, comodidades e comentário (pedido de 11/11; eram 1.000,
+ *  1.000 e 2.000). O MESMO `TEXTO_MAXIMO` de `web/server/observacoes.py` — um teste amarra os dois. */
+export const TEXTO_MAXIMO = 250
+
+/** Os textos livres: (chave, rótulo com a MESMA frase do servidor). */
+const TEXTOS = [
+  ['equipamentos', 'O campo de equipamentos'],
+  ['comodidades', 'O campo de comodidades e aulas coletivas'],
+  ['comentario', 'O comentário'],
+] as const
+
 /** Teto das notas: estrelas de 1 a 5 (prévia de 10/11; eram notas de 1 a 10). O MESMO teto do
  *  CHECK `chk_observacao_notas` da 023 e de `INTEIROS` em `web/server/observacoes.py`. */
 export const NOTA_MAXIMA = 5
@@ -72,10 +87,11 @@ export function lerNumero(texto: string): number | null {
   return Number(limpo)
 }
 
-/** O que os campos numéricos aceitam ao digitar ou colar: só dígitos. Letra, ponto, vírgula e
- *  sinal somem na hora; metragem, vagas e alunos são sempre números inteiros. */
+/** O que os campos numéricos aceitam ao digitar ou colar: só dígitos, até `DIGITOS_MAXIMOS`.
+ *  Letra, ponto, vírgula e sinal somem na hora; o que passa do 5º dígito é cortado (o colar não
+ *  respeita o `maxLength` do jeito que a digitação respeita). */
 export function apenasDigitos(texto: string): string {
-  return texto.replace(/\D/g, '')
+  return texto.replace(/\D/g, '').slice(0, DIGITOS_MAXIMOS)
 }
 
 /** O corpo da requisição, ou a mensagem de erro (as MESMAS regras dos CHECK da 023 e de
@@ -92,6 +108,11 @@ export function camposDoFormulario(f: Formulario): ObservacaoCampos | string {
       return `${rotulo} fora da faixa aceita (${faixa}).`
     }
     numeros[chave] = n
+  }
+  // O maxLength trava a digitação, mas não corta o texto de uma anotação antiga que já passa do
+  // teto: a edição dela tem de ouvir a mesma frase que o servidor daria.
+  for (const [chave, rotulo] of TEXTOS) {
+    if (f[chave].trim().length > TEXTO_MAXIMO) return `${rotulo} passa de ${TEXTO_MAXIMO} caracteres.`
   }
   const campos: ObservacaoCampos = {
     metragem_m2: numeros.metragem_m2,
