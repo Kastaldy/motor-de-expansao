@@ -2043,6 +2043,7 @@ def _praca_da_cidade(
 
     from motor_expansao.dashboard import relatorio_praca as rp
     from motor_expansao.dashboard import relatorio_praca_mapas as rpm
+    from motor_expansao.dashboard.constants import DENSIDADE_POP_BANDS, RENDA_MEDIA_DOMICILIAR_BANDS
     from motor_expansao.dashboard.relatorio_municipal import (
         _hexes_do_municipio,
         filtrar_pins_do_municipio,
@@ -2122,7 +2123,14 @@ def _praca_da_cidade(
             return f"{v:.1f}".replace(".", ",")
         return f"{int(round(v)):,}".replace(",", ".")
 
-    def _calor(coluna: str, titulo: str, legenda: str, formatar, paleta):
+    def _calor(coluna: str, titulo: str, legenda: str, formatar, paleta, faixas):
+        # Brasil (pedido de 2026-11-10): a regua FIXA do piloto, para a cor do relatorio bater com
+        # a do mapa de calor do piloto. A Argentina, sem regua de recomendacao, segue nos quintis.
+        if regra is not None:
+            return lambda fundo: rpm.render_calor_cidade(
+                hexes, coluna, titulo=titulo, legenda_titulo=legenda, faixas=faixas,
+                subtitulo="Por hexagono, cidade inteira", basemap=fundo,
+            )
         return lambda fundo: rpm.render_calor_cidade(
             hexes, coluna, titulo=titulo, legenda_titulo=legenda, formatar=formatar, paleta=paleta,
             subtitulo="Por hexagono, cidade inteira", basemap=fundo,
@@ -2145,8 +2153,10 @@ def _praca_da_cidade(
         return rpm.render_onde_crescer_duas_listas(hexes, top_residual, top_socio, basemap=fundo)
 
     desenhos = [
-        ("calor_cidade_renda_domiciliar", _calor("renda_domiciliar", "Renda media domiciliar", f"{simbolo} por domicilio", _moeda, rpm.PALETA_RENDA)),
-        ("pressao_cidade", lambda fundo: rpm.render_pressao_cidade(hexes, conc, ult, basemap=fundo)),
+        ("calor_cidade_renda_domiciliar", _calor("renda_domiciliar", "Renda media domiciliar", f"{simbolo} por domicilio", _moeda, rpm.PALETA_RENDA, RENDA_MEDIA_DOMICILIAR_BANDS)),
+        # Brasil (2026-11-10): a independente sem o disco de 1 km no mapa; segue na contagem.
+        ("pressao_cidade", lambda fundo: rpm.render_pressao_cidade(
+            hexes, conc, ult, basemap=fundo, raio_independente=regra is None)),
         ("onde_crescer", _onde_crescer),
     ]
     if not pop_municipal:
@@ -2157,7 +2167,7 @@ def _praca_da_cidade(
             1,
             (
                 "calor_cidade_densidade",
-                _calor("densidade_hab_km2", "Densidade demografica", "Habitantes por km2", _inteiro, rpm.PALETA_DENSIDADE),
+                _calor("densidade_hab_km2", "Densidade demografica", "Habitantes por km2", _inteiro, rpm.PALETA_DENSIDADE, DENSIDADE_POP_BANDS),
             ),
         )
 
