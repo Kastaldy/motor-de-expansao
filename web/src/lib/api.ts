@@ -353,6 +353,10 @@ export const NOVAS_TENTATIVAS_503 = 2
  * segue `null` ("não sei", o mesmo de sem `/api/me`), e o backend continua barrando rota a
  * rota. `vivo` corta as novas tentativas se quem pediu desmontou no meio da espera; desistir
  * devolve o último 503, para quem chama tratar como sempre tratou.
+ *
+ * `repetirSe` ALARGA o critério para quem precisa: a camada de imóveis do Mapa repete também a
+ * falha de rede (status 0) e o 408, porque ali um corpo cortado no meio (medido em 10/11/2026:
+ * 1,52 de 2,37 MB) escondia a camada pelo resto da sessão. O default continua só 503.
  */
 export async function repetirEm503<T>(
   pedido: () => Promise<T>,
@@ -361,11 +365,13 @@ export async function repetirEm503<T>(
     esperaMs = ESPERA_NOVA_TENTATIVA_503_MS,
     esperar = (ms: number) => new Promise<void>((resolver) => setTimeout(resolver, ms)),
     vivo = () => true,
+    repetirSe = (e: ApiError) => e.status === 503,
   }: {
     tentativas?: number
     esperaMs?: number
     esperar?: (ms: number) => Promise<void>
     vivo?: () => boolean
+    repetirSe?: (e: ApiError) => boolean
   } = {},
 ): Promise<T> {
   let ultimo: unknown
@@ -377,7 +383,7 @@ export async function repetirEm503<T>(
     try {
       return await pedido()
     } catch (e) {
-      if (!(e instanceof ApiError) || e.status !== 503) throw e
+      if (!(e instanceof ApiError) || !repetirSe(e)) throw e
       ultimo = e
     }
   }

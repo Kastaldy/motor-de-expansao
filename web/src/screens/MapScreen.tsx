@@ -32,7 +32,7 @@ import { alternarCalor, alternarCoresHex, type ModoCalor } from '../lib/camadas-
 import Select from '../components/Select'
 import StepperBar from '../components/StepperBar'
 import { Botao } from '../components/primitives'
-import { api, ApiError, baixar } from '../lib/api'
+import { api, ApiError, baixar, repetirEm503 } from '../lib/api'
 import { relatarAcessoNegado, relatarFalhaDeRede } from '../lib/sessao'
 import { parseCoordinate } from '../lib/coord'
 import { alunos, coord, num } from '../lib/format'
@@ -618,6 +618,13 @@ export default function MapScreen({
     setImovelAberto(o)
   }, [viagem])
 
+  /* Uma lista que FALHOU nao pode esconder a camada pelo resto da sessao. Em 10/11/2026
+     o corpo chegou cortado ao navegador de um usuario (1,52 de 2,37 MB, log do Caddy), a
+     lista virou vazia e a pilula sumiu tambem no municipio seguinte, que tinha 47 imoveis.
+     Por isso: repete na hora (rede e 408 tambem, nao so' 503) e, se ainda assim falhar,
+     guarda a UF que falhou e busca de novo no proximo gesto de recorte (`municipio`). */
+  const [recargaImoveis, setRecargaImoveis] = useState(0)
+  const imoveisFalhouEm = useRef<string | null>(null)
   useEffect(() => {
     if (!uf) {
       setImoveisUf(null)
@@ -627,8 +634,11 @@ export default function MapScreen({
     /* Zera ANTES de buscar: sem isto, trocar de UF com a camada ligada deixava os
        pontinhos (e a contagem da pilula) da UF ANTERIOR na tela ate' a resposta nova. */
     setImoveisUf(null)
-    api
-      .oportunidades(uf, 3000)
+    imoveisFalhouEm.current = null
+    repetirEm503(() => api.oportunidades(uf, 3000), {
+      vivo: () => vivo,
+      repetirSe: (e) => e.status === 0 || e.status === 408 || e.status >= 500,
+    })
       .then((r) => {
         if (vivo) setImoveisUf(r.itens)
       })
@@ -637,12 +647,19 @@ export default function MapScreen({
            chave — com null, um fetch falho deixava `verImoveis` ligado invisivel e a
            camada reacendia sozinha na UF seguinte. Vazia, o efeito abaixo desliga.
            Sem a camada o mapa segue como antes — a pilula nem aparece. */
-        if (vivo) setImoveisUf([])
+        if (!vivo) return
+        imoveisFalhouEm.current = uf
+        setImoveisUf([])
       })
     return () => {
       vivo = false
     }
-  }, [uf])
+  }, [uf, recargaImoveis])
+
+  /* A segunda chance: trocar de municipio na UF que falhou busca a lista de novo. */
+  useEffect(() => {
+    if (uf && imoveisFalhouEm.current === uf) setRecargaImoveis((n) => n + 1)
+  }, [municipio, uf])
 
   /* O recorte da camada acompanha o drill-down: na visao da UF desenha a UF inteira,
      no municipio so' o municipio (mesma chave de nome que o `onVerNoMapa` da aba ja

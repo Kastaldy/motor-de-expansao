@@ -54,6 +54,12 @@
 piloto.ultra-expansao.tech {
     import sec_headers
 
+    # COMPRESSAO (10/11/2026). A lista de imoveis de SP sai com 2,37 MB de JSON e ia CRUA:
+    # nesse dia o corpo chegou cortado a um usuario (1,52 MB, log do host BR) e a camada de
+    # imoveis sumiu do Mapa. Comprimir encolhe a janela em que a conexao pode cair. Nao ha'
+    # rota de streaming no `web` (medido), entao o `encode` nao segura nenhuma resposta.
+    encode zstd gzip
+
     # O QUE A BORDA PROTEGE — e o matcher nao e' refinamento, e' o que impede a tela de
     # login de ficar atras da autenticacao que ela existe para obter.
     #
