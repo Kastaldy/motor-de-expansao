@@ -254,12 +254,17 @@ GOLDEN: dict[str, dict[str, str]] = {
         "resumo": "5915c0e5374b6b72",
         "uf": "a62498dcf95a6b05",
     },
+    # Regerado em 2026-11-11 (PR #549, camada 4 pintada como as outras camadas): so' `*` e
+    # `camadas[4]` mudam -- o chip "cores do mapa" do passo 4 (`_legenda_mapa_crescimento`)
+    # troca o `tom` (Estavel blue -> green, Sem obra nova gray -> red) e ganha o `cor` exato da
+    # rampa (faixas 90-100 / 70-80 / 10-20). O chip e' o mesmo nos dois paises (DEC-047: sem
+    # `if pais`), como o mapa do piloto; municipio e UF da AR seguem byte a byte o legado.
     "metodologia": {
-        "*": "48906d459ad27acbe6a8da389f63d4d800d626b9cb8781f99c3d77e4b763c288",
+        "*": "c31b3e540aa784f9d6494047f3a7284501caa044218f412a9b3d174ef950132f",
         "camadas[1]": "989d03bbfd2219d8",
         "camadas[2]": "6f6d4544f8432859",
         "camadas[3]": "3b4783a10bcee93e",
-        "camadas[4]": "b97b8937bf9cc66d",
+        "camadas[4]": "657c5c8b53a57345",
         "camadas[5]": "d2c87b637caa3864",
         "fontes": "10269c20bcf24fe3",
         "intro": "476d56331aae6e27",
