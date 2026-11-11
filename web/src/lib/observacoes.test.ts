@@ -5,13 +5,16 @@ import {
   camposDoFormulario,
   estrelas,
   chavesDosPinos,
+  DIGITOS_MAXIMOS,
   formularioDe,
   lerNumero,
   linhasDaObservacao,
   mediaDaNota,
   metragemMaisRecente,
   NOTA_MAXIMA,
+  NUMERICOS,
   numeroDoRotulo,
+  TEXTO_MAXIMO,
 } from './observacoes'
 import type { Observacao } from './types'
 
@@ -153,6 +156,52 @@ describe('número só aceita dígito (prévia de 10/11: dava para digitar letra)
   it('metragem, vagas e alunos estimados passam pelo filtro ao digitar', () => {
     const fonte = readFileSync(new URL('../components/PainelObservacoes.tsx', import.meta.url), 'utf8')
     expect(fonte.match(/apenasDigitos\(e\.target\.value\)/g)?.length).toBe(3)
+  })
+})
+
+describe('caixas com teto (pedido de 11/11: 5 dígitos nos números, 250 caracteres nos textos)', () => {
+  const fonte = readFileSync(new URL('../components/PainelObservacoes.tsx', import.meta.url), 'utf8')
+
+  it('os tetos são 5 dígitos e 250 caracteres', () => {
+    expect(DIGITOS_MAXIMOS).toBe(5)
+    expect(TEXTO_MAXIMO).toBe(250)
+  })
+
+  it('o teto de dígitos nunca barra um valor que a faixa aceita', () => {
+    for (const [, , , max] of NUMERICOS) expect(String(max).length).toBeLessThanOrEqual(DIGITOS_MAXIMOS)
+  })
+
+  it('o filtro do número corta no 5º dígito, também ao colar', () => {
+    expect(apenasDigitos('1234567')).toBe('12345')
+    expect(apenasDigitos('1.234.567')).toBe('12345')
+    expect(apenasDigitos('12345')).toBe('12345')
+  })
+
+  it('texto acima de 250 caracteres é recusado com a frase do servidor', () => {
+    // A anotação antiga maior que 250 abre no formulário: o maxLength não corta o que já existe.
+    const base = formularioDe(null)
+    const longo = 'x'.repeat(251)
+    expect(camposDoFormulario({ ...base, equipamentos: longo })).toBe(
+      'O campo de equipamentos passa de 250 caracteres.',
+    )
+    expect(camposDoFormulario({ ...base, comodidades: longo })).toBe(
+      'O campo de comodidades e aulas coletivas passa de 250 caracteres.',
+    )
+    expect(camposDoFormulario({ ...base, comentario: longo })).toBe('O comentário passa de 250 caracteres.')
+  })
+
+  it('250 caracteres passam, contados depois de tirar os espaços das pontas, como no servidor', () => {
+    const base = formularioDe(null)
+    expect(camposDoFormulario({ ...base, comentario: 'x'.repeat(250) })).toMatchObject({ comentario: 'x'.repeat(250) })
+    expect(camposDoFormulario({ ...base, comentario: `  ${'x'.repeat(250)}  ` })).toMatchObject({
+      comentario: 'x'.repeat(250),
+    })
+  })
+
+  it('as caixas usam os tetos do lib, sem número solto', () => {
+    expect(fonte.match(/maxLength=\{DIGITOS_MAXIMOS\}/g)?.length).toBe(3)
+    expect(fonte.match(/maxLength=\{TEXTO_MAXIMO\}/g)?.length).toBe(3)
+    expect(fonte).not.toMatch(/maxLength=\{\d/)
   })
 })
 
