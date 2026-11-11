@@ -142,7 +142,8 @@ export function fundoDoSwatch(cores: string[]): string {
 export function faixasDoPasso(passoN: number): FaixaNomeada[] | null {
   if (passoN === 1) return FAIXAS_POTENCIAL
   if (passoN === 2 || passoN === 3) return FAIXAS_DEMANDA
-  // 4 = crescimento: nao usa rampa de score, tem legenda propria (LegendaCrescimento).
+  // 4 = crescimento: tres classes (nao faixas de score) nas cores da rampa; a lista
+  // fica em LegendaCrescimento, desenhada com o mesmo Bloco destas faixas.
   return null
 }
 

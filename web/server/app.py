@@ -6969,10 +6969,17 @@ def _legenda_mapa_crescimento() -> list[dict[str, Any]]:
     """As cores do MAPA na camada 4 (`cres_hex_classe`) — outra coisa que a etiqueta.
 
     Continua publicada, mas fora do slot de ranking: ela explica por que um hexagono
-    esta turquesa, verde ou cinza, e vale nos dois escopos (o mapa pinta nos dois).
-    Tres estados, nao uma rampa: aqui nao ha nota, ha direcao. Os cortes saem da
-    distribuicao real dos hexes medidos (p50 = +19,2%, p75 = +30,6%), e por isso
-    "Estável" nao e' um alarme — e' a maioria.
+    esta verde-escuro, verde-claro ou vermelho, e vale nos dois escopos (o mapa pinta nos dois).
+    Tres estados, nao uma nota: aqui ha direcao. Os cortes saem da distribuicao real
+    dos hexes medidos (p50 = +19,2%, p75 = +30,6%), e por isso "Estável" nao e' um
+    alarme — e' a maioria.
+
+    Desde 2026-11-10/11 o mapa pinta as tres classes como as camadas 1-3 pintam uma faixa
+    de score (`CRESC_*_HEX` em web/src/lib/colors.ts = faixas 90-100 / 70-80 / 10-20, com
+    a opacidade do tema). O `cor`
+    sai dos MESMOS indices de RESIDUAL_SCORE_BANDS (a copia TS e' travada por
+    tests/unit/test_paridade_paleta_web.py): o chip promete a cor exata do hexagono, que
+    a paleta de 5 `tom` nomeados nao garante sozinha.
 
     DERIVA de `_ROTULO_CLASSE`, a mesma traducao que o payload do mapa usa. Escrita a
     mao, esta lista repetiria num campo novo o defeito de que as `faixas` acabaram de
@@ -6986,8 +6993,14 @@ def _legenda_mapa_crescimento() -> list[dict[str, Any]]:
         "Estável": "área construída cresceu, mas abaixo de 30%",
         "Sem obra nova": "área construída parou de crescer no período",
     }
-    tom = {"Em alta": "green", "Estável": "blue", "Sem obra nova": "gray"}
-    saida = [_fx(r, condicao[r], tom[r]) for r in _ROTULO_CLASSE.values()]
+    from motor_expansao.dashboard.constants import RESIDUAL_SCORE_BANDS
+
+    tom = {"Em alta": "green", "Estável": "green", "Sem obra nova": "red"}
+    faixa = {"Em alta": 9, "Estável": 7, "Sem obra nova": 1}
+    saida = [
+        _fx(r, condicao[r], tom[r], cor=RESIDUAL_SCORE_BANDS[faixa[r]][1])
+        for r in _ROTULO_CLASSE.values()
+    ]
     saida.append(
         _fx("Sem medição", "fora da mancha urbana medida ou fora das 12 UFs", "gray")
     )

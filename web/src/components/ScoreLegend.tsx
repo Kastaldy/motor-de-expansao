@@ -106,16 +106,22 @@ function Bloco({ fundo, nome, sub }: { fundo: string; nome: string; sub?: string
 }
 
 /* Camada 4 do funil — a taxa de crescimento da area construida do hexagono
-   (BLK-TRAJ-01). Tres estados, nao uma rampa: nao ha nota aqui, ha direcao.
-   Sem amarelo de proposito — no meio de uma escala vermelho-verde ele le como
-   ALERTA, e "estavel" nao e alerta. Cortes na distribuicao real dos 41.135 hexes
-   medidos (p50 = +19,2%, p75 = +30,6%). */
-const CLASSES_CRESCIMENTO: [string, string][] = [
-  [CRESC_ALTA_HEX, 'em alta (+30%)'],
-  [CRESC_ESTAVEL_HEX, 'estável'],
-  [CRESC_PARADO_HEX, 'sem obra nova'],
-  ['rgba(120,120,140,.45)', 'sem medição'],
+   (BLK-TRAJ-01). Tres estados, nao uma nota: aqui ha direcao. Desde 2026-11-10/11 os
+   tres sao pintados como as camadas 1-3 pintam uma faixa (verde-escuro / verde-claro /
+   vermelho, faixas 90-100 / 70-80 / 10-20 de SCORE_BANDS_HEX, ver `CRESC_*_HEX` em
+   lib/colors.ts), com a opacidade do tema: o mais claro na legenda e' o mais claro no mapa.
+   Cortes na distribuicao real dos 41.135 hexes medidos (p50 = +19,2%, p75 = +30,6%).
+
+   Desenho IGUAL ao das outras legendas (pedido de 2026-11-10): o mesmo `Bloco` (swatch
+   14x9, nome com inicial maiuscula), o corte na SUBLINHA — como os alunos das camadas
+   2/3 — e "Sem medicao" atras do filete, como o "< 5k hab". Cor unica por swatch, como
+   na camada 5: a classe e' categorica e o mapa pinta a cor cheia. */
+const CLASSES_CRESCIMENTO: { cor: string; nome: string; sub: string }[] = [
+  { cor: CRESC_ALTA_HEX, nome: 'Em alta', sub: '30%+' },
+  { cor: CRESC_ESTAVEL_HEX, nome: 'Estável', sub: '0–30%' },
+  { cor: CRESC_PARADO_HEX, nome: 'Sem obra nova', sub: '< 0%' },
 ]
+const SEM_MEDICAO_CRESCIMENTO = { cor: 'rgba(120,120,140,.45)', nome: 'Sem medição' }
 
 /* O aro indigo que marca a academia com número de alunos informado pela rede.
 
@@ -159,14 +165,14 @@ function MarcaAlunos() {
 function LegendaCrescimento({ comAlunos }: { comAlunos?: boolean }) {
   return (
     <div style={CAIXA}>
-      <div style={TITULO}>Área construída 2016–2023</div>
+      <div style={TITULO}>{tituloDaLegenda(4)}</div>
       <div style={LINHA}>
-        {CLASSES_CRESCIMENTO.map(([cor, rotulo]) => (
-          <span key={rotulo} style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
-            <span style={{ width: 8, height: 8, borderRadius: 2, background: cor }} />
-            <span style={NOME}>{rotulo}</span>
-          </span>
+        {CLASSES_CRESCIMENTO.map((c) => (
+          <Bloco key={c.nome} fundo={c.cor} nome={c.nome} sub={c.sub} />
         ))}
+        <span style={SEPARADOR}>
+          <Bloco fundo={SEM_MEDICAO_CRESCIMENTO.cor} nome={SEM_MEDICAO_CRESCIMENTO.nome} />
+        </span>
         {comAlunos ? <MarcaAlunos /> : null}
       </div>
     </div>

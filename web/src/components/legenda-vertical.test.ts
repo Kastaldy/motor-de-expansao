@@ -14,7 +14,8 @@ describe('legenda do mapa na vertical', () => {
   })
 
   it('o filete de separação segue a orientação (nenhum borderLeft cravado)', () => {
-    expect(fonte.match(/\.\.\.SEPARADOR|style=\{SEPARADOR\}/g)).toHaveLength(3)
+    // 4 filetes: < 5k hab, nº de alunos, sem leitura (calor) e sem medição (crescimento).
+    expect(fonte.match(/\.\.\.SEPARADOR|style=\{SEPARADOR\}/g)).toHaveLength(4)
     expect(fonte.split("borderLeft: '1px solid var(--line-mid)'")).toHaveLength(2)
   })
 })
@@ -38,7 +39,7 @@ describe('legenda vertical: positivo em cima, negativo embaixo', () => {
 
   it('as duas rampas da legenda passam pela inversão; M1 e crescimento já nascem do melhor', () => {
     expect(fonte.match(/doPositivoAoNegativo\(faixas\)\.map/g)).toHaveLength(2)
-    expect(fonte).toContain("[CRESC_ALTA_HEX, 'em alta (+30%)'],")
+    expect(fonte).toContain("{ cor: CRESC_ALTA_HEX, nome: 'Em alta', sub: '30%+' },")
   })
 })
 
