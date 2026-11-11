@@ -34,7 +34,10 @@ template GeoFusion/Ultra (turquesa + magenta + laranja; capa escura com hexágon
 > concorrencial e Como a cidade está indo) → oportunidade (Visão Geral com os bairros aprovados,
 > Resumo e a conta do espaço) → estratégia (Expansão de Domínio, Bairros por Zona e, com a praça,
 > Onde crescer) → Síntese → Espaço e academias. As cores seguem o ordinal
-> de `_tema_bicolor` de cada página, não a posição.
+> de `_tema_bicolor` de cada página, não a posição. **No Brasil, desde 2026-11-10:** Como a cidade
+> está indo vem ANTES de Pressão concorrencial e, desde 2026-11-11, com a praça, "Como chegamos ao
+> Espaço para academias" vem logo DEPOIS de Pressão concorrencial, antes do Resumo (sem a praça
+> não há Pressão, e ela segue depois do Resumo). A Argentina segue na ordem acima.
 
 ### No Brasil: resposta única de "onde expandir" (DEC-077, desde 2026-10-22)
 
@@ -47,13 +50,15 @@ onde expandir: a do "Onde crescer", que é o Top 10 do módulo único
 | Página | No Brasil |
 |---|---|
 | Capa | Subtítulo "Mapeamento competitivo por região - Ultra, concorrência e capacidade não atendida" (sem "espaço disponível para novas academias"). |
-| Bairros Oficiais | Município sem bairro na base: a nota não promete mais "as zonas geométricas" das páginas seguintes, que saíram. |
+| Bairros Oficiais | Município sem bairro na base: a nota não promete mais "as zonas geométricas" das páginas seguintes, que saíram. **Desde 2026-11-10:** (a) cada parte ganha o nome da **direção** do seu centro em relação ao centro do município (Norte, Nordeste, ..., Noroeste; "Centro" a menos de 25% da distância mediana dos bairros ao centro, suposição de desenho — `rumo_da_parte`; com a distância máxima, em São Paulo a Zona Leste inteira saía "Centro"), a linha do painel vira "Parte k - Norte" (sem "n de N bairros (nº a a b)") e o painel fecha com a observação "Como cada parte foi nomeada"; a banda da página da parte e o PNG dela levam o rumo; (b) as notas sob os mapas saem curtas, uma ideia por linha com 4 pt de respiro (`_draw_notas`); (c) **sem a reserva do IBGE** (emenda 1 da DEC-076): com o artefato do CNEFE, o setor que o CNEFE não nomeia fica sem cor e sem número, a contagem e a cobertura são só do CNEFE, e a nota diz que o CNEFE não nomeia todos os setores. Só esta página lê essa leitura (`bairros_geo["sem_reserva_ibge"]`, `bairros_geo_da_pagina`); os mapas temáticos por bairro, o nome do hexágono e o Onde crescer seguem com a reserva. |
+| Mapas de calor da cidade | **Desde 2026-11-10:** faixas **fixas**, as mesmas do mapa de calor do piloto (`RENDA_MEDIA_DOMICILIAR_BANDS` 2.000/4.000/8.000/14.000; `DENSIDADE_POP_BANDS` 1.000/5.000/10.000/25.000 hab/km²), com a régua inteira na legenda; antes, quintis da própria cidade. O mapa segue por hexágono: a densidade do hexágono inclui área vazia e tende a sair mais clara que a do setor no piloto, e a nota diz isso. |
+| Pressão concorrencial | **Desde 2026-11-10:** a academia independente sai só com a marca, **sem o disco de 1 km** (`render_pressao_cidade(raio_independente=False)`); legenda "Independente, sem raio". Ela segue na contagem ("das quais independentes") e no residual, e a nota diz isso. O Relatório Pontual não muda. |
 | Visão Geral do Município | **Fora** (Juan, 22/10/2026). Sem o verde de aprovado e sem a tabela "BAIRROS APROVADOS" ela ficou neutra e repetia o mapa do Resumo; o mapa `cobertura` nem é desenhado no Brasil. |
 | Resumo da Região | Mapa neutro só com as unidades Ultra (`TOP_REDES_NO_MAPA = 0` desde 2026-09-18; o rodapé do PNG remete as concorrentes a Pressão concorrencial e Espaço e academias), no enquadramento de Score e Residual (sem foco em escolhidos). Painel com os números da cidade; "Como calculamos o espaço" fala em "regiões com 2.000 ou mais". |
-| Como chegamos ao Espaço | Fica, com os números por hexágono em laranja (não no verde do aprovado) e sem o quadro "ONDE CABEM MAIS" (Felipe, 22/10); o texto diz "regiões com residual a partir de 2.000 alunos (capacidade não atendida)" em vez de "aprovadas". |
+| Como chegamos ao Espaço | Fica, com os números por hexágono em laranja (não no verde do aprovado) e sem o quadro "ONDE CABEM MAIS" (Felipe, 22/10); o texto diz "regiões com residual a partir de 2.000 alunos (capacidade não atendida)" em vez de "aprovadas". Desde 2026-11-11, com a praça, vem logo depois de Pressão concorrencial. |
 | Expansão de Domínio e Bairros por Zona | Fora, até chegarem os dados do gestor. |
-| Como a cidade está indo | Sem a frase de veredito ("É praça para entrar", `v_frase`): a caixa do topo fica só com o nome da cidade. Os outros números continuam; "Sem dado" só quando não sobra nenhum. |
-| Onde crescer | Tabela **Mata Virgem** (5, em ordem de residual) e tabela **Premium** (5, em ordem de população), colunas #, Região, Residual, População e Renda domiciliar. Vaga sem candidato: "Vaga vazia: …" com o motivo do módulo; sem o carimbo k da malha, ou com a base recusada pelo módulo, uma linha "… indisponível …" por segmento, sem número. Nome = bairro de mais moradores (`rotulos_das_regioes`); o "A / B" que não cabe vai em duas linhas; sem bairro, o município, e a nota avisa. Mapa: verde = Mata Virgem, azul = Premium, subtítulo com as vagas preenchidas e o teto da régua; sem nenhuma região, a cidade em cinza ("Nenhuma regiao da cidade atende a regua", sem acento como todo texto dos mapas da praça). Nota com os números e os critérios da régua. |
+| Como a cidade está indo | Sem a frase de veredito ("É praça para entrar", `v_frase`): a caixa do topo fica só com o nome da cidade. Os outros números continuam; "Sem dado" só quando não sobra nenhum. Desde 2026-11-10, vem antes de Pressão concorrencial. |
+| Onde crescer | Tabela **Mata Virgem** (5, em ordem de residual) e tabela **Premium** (5, em ordem de população), colunas #, Região, Residual, População e Renda domiciliar. Vaga sem candidato: **não vira linha** desde 2026-11-10 (antes, "Vaga vazia: …"); a tabela tem só as regiões que atendem à régua e a nota diz "Menos de 5 linhas = só essas regiões atendem à régua". **Desde 2026-11-11, o segmento sem nenhuma região fica SEM TABELA** (antes, uma linha "Nenhuma região atende à régua neste recorte"), e o mesmo vale sem o carimbo k da malha ou com a base recusada pelo módulo (antes, uma linha "… indisponível …" por segmento): o motivo vai para a nota, uma vez ("Mata Virgem sem tabela: …"). **Sem tabela nenhuma**, um aviso em destaque ocupa o lugar delas (`_aviso_sem_tabela`) e a nota não repete: "SEM REGIÃO VIÁVEL — Nenhuma região de <cidade> tem métricas viáveis para expansão neste recorte." quando nenhuma região atende à régua; "RECOMENDAÇÃO INDISPONÍVEL" e o motivo quando falta dado (falta de dado não vira veredito sobre a cidade). Nome = bairro de mais moradores (`rotulos_das_regioes`); o "A / B" que não cabe vai em duas linhas; sem bairro, o município, e a nota avisa. Mapa: verde = Mata Virgem, azul = Premium, subtítulo com as vagas preenchidas e o teto da régua; sem nenhuma região, a cidade em cinza ("Nenhuma regiao da cidade atende a regua", sem acento como todo texto dos mapas da praça). Nota com os números e os critérios da régua. |
 | Síntese | Título "Síntese - Diagnóstico". Dois cards (penetração e residual); o de zonas sai. O residual diz quanto dele está "nas regiões com residual a partir de 2.000 alunos". |
 | Espaço e academias | O número sai como "Espaço para academias: capacidade não atendida nas regiões com residual a partir de 2.000 alunos". |
 
@@ -102,6 +107,9 @@ Base: o bot/API lê a partição enriquecida da UF (a da tela), com a coluna `uf
   IBGE como reserva (`nome_bairro` → `nome_subdistrito` → `nome_distrito`). O limite é o dos
   setores censitários do **IBGE Censo 2022** (`geometry_wkb`) **dissolvidos** por esse bairro
   (`carregar_bairros_geo`). Sem o artefato do CNEFE no `staging/`, volta à malha do IBGE.
+  **No Brasil, desde 2026-11-10, esta página não usa a reserva** (emenda 1 da DEC-076): com o
+  artefato, o setor que o CNEFE não nomeia fica sem cor (a leitura `sem_reserva_ibge`, montada na
+  mesma passada; o dissolve só se repete nos grupos que mudam).
 - Coluna da direita: índice **"BAIRROS (N)"** (município numa parte só) ou **"PARTES DO
   MUNICÍPIO"** (faixa de números e três bairros de exemplo por parte).
 - **Cobertura medida (2026-08-18, varredura dos 5.571 municípios com a cascata REAL do

@@ -188,14 +188,13 @@ def test_onde_crescer_mostra_mata_virgem_e_premium_do_modulo():
     assert "Maior residual" not in onde and "Maior socioeconômico" not in onde
     assert onde.index("Mata Virgem (ordem: residual)") < onde.index("Premium (ordem: população)")
     # Cada vaga sob o seu segmento, na ordem do modulo, com os numeros do proprio item. Sem rotulo
-    # (pr4), o municipio. As vagas 4 e 5 do Mata Virgem saem SINALIZADAS, com o motivo do modulo.
+    # (pr4), o municipio. Desde 2026-11-10 as vagas 4 e 5 do Mata Virgem, vazias, NAO viram linha:
+    # a tabela tem so' as regioes que atendem a regua.
     assert _linhas_por_segmento(onde) == {
         "mata_virgem": [
             ("1", "Bosque dos Eucaliptos", "4.155", "21.000", "R$ 6.200"),
             ("2", "Vila São Geraldo", "4.055", "21.000", "R$ 6.300"),
             ("3", "Jardim Colonial", "3.955", "21.000", "R$ 6.400"),
-            ("4", _VAGA),
-            ("5", _VAGA),
         ],
         "premium": [
             ("1", "Parque Industrial", "900", "38.685", "R$ 5.100"),
@@ -235,12 +234,15 @@ def test_nota_le_numeros_e_criterios_da_regua():
     assert "Régua 2099-01_v9 (DEC-077)" in nota
 
 
-def test_onde_crescer_sem_k_da_malha_diz_indisponivel_numa_linha_so():
+def test_onde_crescer_sem_k_da_malha_diz_indisponivel_num_aviso_so():
+    """Desde 2026-11-11 a recomendacao indisponivel fica sem tabela e o motivo sai uma vez, no aviso
+    "RECOMENDAÇÃO INDISPONÍVEL" (antes: uma linha por segmento com o motivo)."""
     onde = _onde_crescer(_praca(_df_cidade(2), recomendacao=_rec(indisponivel=True)))
     motivo = "Renda indisponível: recomendação suspensa até a base ser corrigida"
-    assert onde.count(motivo) == 2  # uma linha por segmento, nao cinco
-    assert f"1\n{motivo}" not in onde  # sem o "1": o motivo vale para a lista toda
-    assert "Vaga vazia:" not in onde  # nenhuma linha de vaga vazia (a nota explica o termo)
+    texto = " ".join(onde.split())
+    assert texto.count(motivo) == 1 and "RECOMENDAÇÃO INDISPONÍVEL" in texto
+    assert motivo not in _nota(onde)
+    assert "Vaga vazia:" not in onde
     assert "No mapa," not in _nota(onde)  # o mapa nao tem regiao a explicar
 
 
@@ -396,8 +398,13 @@ def test_cidade_sem_nenhuma_regiao_mostra_a_cidade_em_cinza(tmp_path, monkeypatc
     assert subtitulos["Onde crescer"] == "Nenhuma regiao da cidade atende a regua"
     onde = _onde_crescer(praca, df)
     assert "Mapa indisponível" not in onde
-    assert onde.count(_VAGA) == 10
+    # Desde 2026-11-11: sem nenhuma regiao, as duas tabelas saem e um aviso diz que nao ha
+    # regiao viavel; a nota nao repete.
+    assert _VAGA not in onde
+    assert _linhas_por_segmento(onde) == {}
+    assert "Nenhuma região de São Paulo tem métricas viáveis para expansão neste recorte." in " ".join(onde.split())
     nota = _nota(onde)
+    assert "sem tabela" not in nota
     assert "verde = Mata Virgem" not in nota and "a cidade em cinza: nenhuma região atende à régua" in nota
 
 
@@ -424,7 +431,13 @@ def test_base_recusada_pelo_modulo_deixa_o_onde_crescer_indisponivel(tmp_path, m
     for titulo in _TITULOS:
         assert any(t.startswith(titulo) for t in titulos), titulo
     onde = _pagina(paginas, "Onde crescer")
-    assert onde.count("Recomendação indisponível: a base desta cidade não passou na checagem") == 2
+    # Desde 2026-11-11: as tabelas saem e o motivo aparece uma vez, no aviso -- sem repetir o
+    # "Recomendação indisponível" que ja' e' o titulo dele.
+    texto = " ".join(onde.split())
+    assert "RECOMENDAÇÃO INDISPONÍVEL" in texto
+    assert texto.count("A base desta cidade não passou na checagem.") == 1
+    assert "Recomendação indisponível: a base" not in texto
+    assert _linhas_por_segmento(onde) == {}
     assert "Maior residual" not in onde and "Vaga vazia:" not in onde
 
 

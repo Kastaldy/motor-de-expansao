@@ -298,18 +298,31 @@ def render_calor_cidade(
     lng: float | None = None,
     titulo: str,
     legenda_titulo: str,
-    formatar: Callable[[float], str],
-    paleta: Sequence[tuple[int, int, int]],
+    formatar: Callable[[float], str] | None = None,
+    paleta: Sequence[tuple[int, int, int]] | None = None,
+    faixas: Sequence[tuple[float, str, tuple[int, ...]]] | None = None,
     subtitulo: str | None = None,
     basemap: bool = True,
 ) -> bytes | None:
-    """Mapa de calor do municipio por hexagono, com faixas por quantil da propria cidade.
+    """Mapa de calor do municipio por hexagono.
+
+    Com `faixas` (Brasil, pedido de 2026-11-10): a REGUA FIXA do piloto -- `(limite, rotulo, rgba)`
+    de `constants.RENDA_MEDIA_DOMICILIAR_BANDS`/`DENSIDADE_POP_BANDS`, as mesmas que o mapa de
+    calor do piloto espelha (`test_paridade_paleta_web`) --, com a legenda inteira mesmo quando a
+    cidade nao tem hexagono numa faixa: a mesma cor quer dizer o mesmo valor em qualquer cidade.
+    Sem elas (Argentina), as faixas por quantil da propria cidade, com `paleta` e `formatar`.
 
     `None` quando nao ha hexagono com valor -- a pagina cai no fallback textual da grade.
     """
     if hexes is None or hexes.empty or value_col not in hexes.columns or "hex_id" not in hexes.columns:
         return None
     valores = pd.to_numeric(hexes[value_col], errors="coerce")
+    if faixas is not None:
+        return _render_calor_faixas_fixas(hexes, valores, faixas, lat=lat, lng=lng, titulo=titulo,
+                                          legenda_titulo=legenda_titulo, subtitulo=subtitulo,
+                                          basemap=basemap)
+    if paleta is None or formatar is None:
+        raise ValueError("render_calor_cidade: sem `faixas`, `paleta` e `formatar` sao obrigatorios")
     limites = quebras_por_quantil(valores, n_classes=len(paleta))
     if not limites:
         return None
@@ -356,6 +369,52 @@ def render_calor_cidade(
     itens.append(("Sem dado", _SEM_DADO))
     yy = _legenda(draw, legenda_titulo, itens)
     _draw_text(draw, (_W - _LEGEND_W + 24, yy + 8), "Faixas: quintis da cidade", font=_font(20), fill=_TINTA_SUAVE)
+    return _fechar(image, draw, quadro, desenhou)
+
+
+def _render_calor_faixas_fixas(
+    hexes: pd.DataFrame,
+    valores: pd.Series,
+    faixas: Sequence[tuple[float, str, tuple[int, ...]]],
+    *,
+    lat: float | None,
+    lng: float | None,
+    titulo: str,
+    legenda_titulo: str,
+    subtitulo: str | None,
+    basemap: bool,
+) -> bytes | None:
+    """O mapa de calor na regua fixa: cada valor na primeira faixa cujo limite ele nao passa
+    (`v <= limite`, o mesmo corte do Relatorio Pontual e do piloto). Rotulos da propria faixa --
+    ja sem acento, que o font do PNG nao desenha."""
+    if not (valores > 0).any():
+        return None
+    lats, lngs = _centroides(hexes)
+    if not lats:
+        return None
+    quadro = _Quadro(_bounds_de_pontos(*_com_ponto(lats, lngs, lat, lng)), _W, _H)
+    image, draw, desenhou = _base(quadro, titulo, subtitulo, basemap=basemap)
+    cores = [(*tuple(int(c) for c in rgba[:3]), _ALPHA_CALOR) for _limite, _rotulo, rgba in faixas]
+
+    def cor(v: float) -> tuple[int, ...]:
+        if pd.isna(v) or v <= 0:
+            return _SEM_DADO
+        for (limite, _rotulo, _rgba), c in zip(faixas, cores, strict=True):
+            if v <= limite:
+                return c
+        return cores[-1]
+
+    for h, v in zip(hexes["hex_id"].astype(str), valores, strict=True):
+        _desenhar_hex(draw, quadro, h, cor(float(v)))
+
+    _pin_do_ponto(draw, quadro, lat, lng, 1.3)
+    itens: list[tuple[str, tuple[int, ...]]] = [
+        (str(rotulo), c) for (_limite, rotulo, _rgba), c in zip(faixas, cores, strict=True)
+    ]
+    itens.append(("Sem dado", _SEM_DADO))
+    yy = _legenda(draw, legenda_titulo, itens)
+    _draw_text(draw, (_W - _LEGEND_W + 24, yy + 8), "Faixas fixas, as mesmas do piloto",
+               font=_font(20), fill=_TINTA_SUAVE)
     return _fechar(image, draw, quadro, desenhou)
 
 
@@ -425,10 +484,15 @@ def render_pressao_cidade(
     *,
     raio_m: float = RAIO_INFLUENCIA_M,
     basemap: bool = True,
+    raio_independente: bool = True,
 ) -> bytes | None:
     """Os discos de `raio_m` de TODAS as academias do municipio, sobre a cidade inteira.
 
     `concorrentes`/`ultra` chegam ja' recortados ao municipio. `None` sem hexagono para enquadrar.
+
+    `raio_independente=False` (Brasil, pedido de 2026-11-10): a academia independente sai so' com
+    a marca, sem o disco. E' DESENHO: ela segue em `concorrentes` (enquadramento, contagem e o
+    residual, que vem do pipeline), e a legenda diz que ela esta' ali sem raio.
     """
     if hexes_cidade is None or hexes_cidade.empty or "hex_id" not in hexes_cidade.columns:
         return None
@@ -438,6 +502,7 @@ def render_pressao_cidade(
     conc = _com_coordenada(concorrentes)
     ult = _com_coordenada(ultra)
     raio_txt = rotulo_raio(raio_m)
+    quem = "academia" if raio_independente else "rede e Ultra"
     # Zoom nas ACADEMIAS (Juan, 2026-10-20: "com mais zoom"): o quadro fecha nos pontos mais o
     # raio de influencia, em vez da cidade inteira -- em Sao Paulo o sul rural, sem academia,
     # ocupava metade do quadro e espremia onde a disputa acontece. Sem academia, a cidade.
@@ -465,19 +530,19 @@ def render_pressao_cidade(
         quadro = _Quadro(_bounds_de_pontos(
             [lat_lo - folga_lat, lat_hi + folga_lat], [lng_lo - folga_lng, lng_hi + folga_lng], margem=0.01,
         ), _W, _H)
-        subtitulo = f"Area de influencia de {raio_txt} por academia" + (
+        subtitulo = f"Area de influencia de {raio_txt} por {quem}" + (
             f" - {fora} academias isoladas ficam fora do quadro" if fora else ""
         )
     else:
         quadro = _Quadro(_bounds_de_pontos(lats, lngs), _W, _H)
-        subtitulo = f"Area de influencia de {raio_txt} por academia, cidade inteira"
+        subtitulo = f"Area de influencia de {raio_txt} por {quem}, cidade inteira"
     image, draw, desenhou = _base(quadro, "Pressao concorrencial", subtitulo, basemap=basemap)
     n = (0 if conc is None else len(conc)) + (0 if ult is None else len(ult))
     draw = _discos_sobre(
         image, quadro, conc, ult, raio_m=raio_m, lat_ref=float(np.nanmean(lats)), logos=n <= LOGOS_MAX_CIDADE,
-        realce=True,
+        realce=True, sem_raio_independente=not raio_independente,
     )
-    _legenda_discos(draw)
+    _legenda_discos(draw, raio_independente=raio_independente)
     return _fechar(image, draw, quadro, desenhou)
 
 
@@ -515,12 +580,14 @@ def _discos_sobre(
     lat_ref: float,
     logos: bool = True,
     realce: bool = False,
+    sem_raio_independente: bool = False,
 ) -> ImageDraw.ImageDraw:
     """Pinta os discos (e as logos) sobre `image` e devolve um `draw` novo da imagem composta.
 
     `realce` (mapa da cidade): discos desenhados por tipo, independente por baixo e Ultra por
     cima, com a borda de rede e Ultra mais forte, e marcadores maiores (`_DISCO_REALCE`). Sem
-    ele (pressao do ponto), o desenho de antes.
+    ele (pressao do ponto), o desenho de antes. `sem_raio_independente`: a independente fica so'
+    com a marca (logo ou ponto), sem disco -- so' o mapa da cidade do Brasil pede isso.
     """
     # Discos numa camada propria, recortada a caixa do mapa: disco de academia fora do quadro
     # nao pode pintar a legenda.
@@ -544,6 +611,8 @@ def _discos_sobre(
     _pintar(ultra, lambda _row: _COR_ULTRA, lambda _row: "__ultra__")
     # Sem `realce` a ordem e' a das linhas (o desenho de antes); com ele, por tipo (sort estavel).
     for ordem, px, py, _chave, c in (sorted(marcas, key=lambda t: t[0]) if realce else marcas):
+        if sem_raio_independente and ordem == 0:
+            continue
         if realce:
             a_disco, a_borda, espessura, _r = _DISCO_REALCE[ordem]
         else:
@@ -576,13 +645,16 @@ def _discos_sobre(
     return ImageDraw.Draw(image, "RGBA")
 
 
-def _legenda_discos(draw: ImageDraw.ImageDraw) -> int:
+def _legenda_discos(draw: ImageDraw.ImageDraw, *, raio_independente: bool = True) -> int:
     yy = _legenda(
         draw,
         "Legenda",
         [
             ("Rede concorrente", (*_COR_CADEIA, 255)),
-            ("Academia independente", (*_COR_INDEPENDENTE, 255)),
+            # Sem o disco, a independente continua no mapa como marca: a legenda diz isso, para o
+            # leitor nao achar que ela saiu da conta.
+            ("Academia independente" if raio_independente else "Independente, sem raio",
+             (*_COR_INDEPENDENTE, 255)),
             ("Unidade Ultra", (*_COR_ULTRA, 255)),
         ],
     )

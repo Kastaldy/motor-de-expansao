@@ -120,6 +120,21 @@ def _resposta_unica(result: dict[str, Any] | None) -> bool:
     return bool((result or {}).get(CHAVE_RESPOSTA_UNICA))
 
 
+#: Chave da leitura dos bairros SEM a reserva do IBGE, dentro de `bairros_geo` (emenda 1 da
+#: DEC-076, pedido de 2026-11-10). So' existe quando o artefato do CNEFE nomeou algum setor.
+CHAVE_SEM_RESERVA_IBGE = "sem_reserva_ibge"
+
+
+def bairros_geo_da_pagina(result: dict[str, Any] | None) -> dict[str, Any]:
+    """Os bairros que a pagina Bairros Oficiais desenha. No Brasil, a leitura sem a reserva do IBGE
+    (setor que o CNEFE nao nomeia fica sem cor), quando ela existe; fora dele, ou sem o artefato
+    do CNEFE, a leitura de sempre -- a mesma que o resto do relatorio usa."""
+    geo = (result or {}).get("bairros_geo") or {}
+    if _resposta_unica(result) and geo.get(CHAVE_SEM_RESERVA_IBGE):
+        return geo[CHAVE_SEM_RESERVA_IBGE]
+    return geo
+
+
 def _rotulo_espaco_leitura() -> str:
     """Rotulo do Espaco para academias na resposta unica (DEC-077): leitura de capacidade, sem
     sugerir onde abrir (pedido do Felipe, 2026-10-21)."""
@@ -816,13 +831,16 @@ def carregar_bairros_geo(
     # troca: a populacao do setor diz que fracao de cada hexagono pertence a cada bairro.
     import h3 as _h3
 
+    # Uma passada pelos setores: geometria, medidas, hexagono e os DOIS nomes -- o de sempre
+    # (CNEFE com a malha do IBGE como reserva, DEC-076) e, com o artefato do CNEFE, o SEM a
+    # reserva (emenda 1 da DEC-076, pedido de 2026-11-10): o setor que o CNEFE nao nomeia vai para
+    # a sobra. Sem o artefato a malha e' a FONTE, nao a reserva, e so' existe a leitura de sempre.
+    fontes = (
+        list(setores["fonte_bairro"]) if usou_cnefe and "fonte_bairro" in setores.columns else None
+    )
+    validos: list[dict[str, Any]] = []
     pop_por_hex: dict[str, float] = {}
-    pop_por_bairro_hex: dict[str, dict[str, float]] = {}
-
-    # Agrupa geometria + medidas por localidade numa passada.
-    grupos: dict[str, dict[str, Any]] = {}
-    sem_localidade = 0
-    for _, row in setores.iterrows():
+    for pos, (_, row) in enumerate(setores.iterrows()):
         bruto = row.get("geometry_wkb")
         if bruto is None:
             continue
@@ -832,38 +850,14 @@ def carregar_bairros_geo(
             continue
         if geom is None or geom.is_empty:
             continue
-        nome = _localidade_do_setor(row)
-        if not nome:
-            sem_localidade += 1
-            nome = rotulo_sobra
+        nome = _localidade_do_setor(row) or None
         pop = _safe_float(row.get("pop_total_setor_2022"))
         pop = 0.0 if math.isnan(pop) or pop < 0 else pop
         area = _safe_float(row.get("area_setor_km2_ibge"))
         area = 0.0 if math.isnan(area) or area < 0 else area
-        renda = _safe_float(row.get("renda_per_capita_setor_2022_calibrada"))
-        score = _safe_float(row.get("score_setor_2022_calibrado"))
 
-        alvo = grupos.setdefault(
-            nome,
-            {
-                "geoms": [], "pop": 0.0, "area": 0.0,
-                "renda_num": 0.0, "renda_peso": 0.0,
-                "score_num": 0.0, "score_peso": 0.0,
-            },
-        )
-        alvo["geoms"].append(geom)
-        alvo["pop"] += pop
-        alvo["area"] += area
-        if not math.isnan(renda) and pop > 0:
-            alvo["renda_num"] += renda * pop
-            alvo["renda_peso"] += pop
-        # Score do bairro = media dos setores PONDERADA POR POPULACAO, nao media simples: um
-        # setor de 12 moradores nao pode pesar o mesmo que um de 3.000 na cor do bairro.
-        if not math.isnan(score) and pop > 0:
-            alvo["score_num"] += score * pop
-            alvo["score_peso"] += pop
-
-        # Peso deste setor no par (hexagono, bairro), para repartir metrica de mercado depois.
+        # Hexagono do setor, para repartir metrica de mercado depois (so' setor com gente pesa).
+        hid = ""
         if pop > 0:
             minx_h = _safe_float(row.get("bbox_minx"))
             miny_h = _safe_float(row.get("bbox_miny"))
@@ -880,86 +874,150 @@ def carregar_bairros_geo(
                     hid = ""
                 if hid:
                     pop_por_hex[hid] = pop_por_hex.get(hid, 0.0) + pop
-                    balde = pop_por_bairro_hex.setdefault(nome, {})
-                    balde[hid] = balde.get(hid, 0.0) + pop
+        validos.append({
+            "geom": geom,
+            "pop": pop,
+            "area": area,
+            # Renda per capita calibrada do SETOR: insumo que so' vira o `renda_pc` do bairro
+            # (media ponderada por populacao), como antes desta passada unica.
+            "rpc": _safe_float(row.get("renda_per_capita_setor_2022_calibrada")),
+            "score": _safe_float(row.get("score_setor_2022_calibrado")),
+            "hid": hid,
+            "nome": nome,
+            "nome_cnefe": nome if fontes is None or fontes[pos] == FONTE_CNEFE else None,
+        })
 
-    bairros: list[dict[str, Any]] = []
-    dissolvidos: list[Any] = []
-    for nome, dados in grupos.items():
-        try:
-            unido = unary_union(dados["geoms"])
+    # O dissolve e' o passo caro: um grupo com os MESMOS setores nas duas leituras (todo bairro que
+    # o CNEFE nomeia por inteiro) e' dissolvido uma vez so'.
+    dissolvidos_cache: dict[tuple[int, ...], Any] = {}
+
+    def _dissolver(membros: tuple[int, ...]) -> Any:
+        if membros not in dissolvidos_cache:
+            unido = unary_union([validos[i]["geom"] for i in membros])
             if _BAIRRO_SIMPLIFY_GRAUS > 0:
                 unido = unido.simplify(_BAIRRO_SIMPLIFY_GRAUS, preserve_topology=True)
-        except Exception:
-            continue
-        dissolvidos.append(unido)
-        partes = _partes_desenhaveis(unido)
-        if not partes:
-            continue
-        # So o anel EXTERNO de cada parte: o PIL desenha poligono sem furo, e ilha interna de
-        # bairro e rara o bastante para nao justificar composicao por mascara aqui.
-        aneis = [
-            [_lonlat_to_mercator(float(lon), float(lat)) for lon, lat in p.exterior.coords]
-            for p in partes
-        ]
-        try:
-            ponto = partes[0].representative_point()
-            rotulo_xy = _lonlat_to_mercator(float(ponto.x), float(ponto.y))
-        except Exception:
-            continue
-        peso = dados["renda_peso"]
-        peso_score = dados["score_peso"]
-        area = dados["area"]
-        bairros.append(
-            {
-                "nome": nome,
-                "aneis": aneis,
-                "rotulo_xy": rotulo_xy,
-                "pop": dados["pop"],
-                "area_km2": area,
-                "densidade": (dados["pop"] / area) if area > 0 else float("nan"),
-                "renda_pc": (dados["renda_num"] / peso) if peso > 0 else float("nan"),
-                "score": (dados["score_num"] / peso_score) if peso_score > 0 else float("nan"),
-                # `hex_id -> fracao do hexagono que pertence a este bairro` (por populacao).
-                # As fracoes de um mesmo hexagono somam 1 entre os bairros que o dividem, entao
-                # repartir uma metrica EXTENSIVA (alunos) por elas preserva o total do municipio.
-                "pesos_hex": {
-                    hid: (p / pop_por_hex[hid])
-                    for hid, p in (pop_por_bairro_hex.get(nome) or {}).items()
-                    if pop_por_hex.get(hid, 0.0) > 0
+            dissolvidos_cache[membros] = unido
+        return dissolvidos_cache[membros]
+
+    def _leitura(chave_nome: str) -> dict[str, Any]:
+        # Agrupa geometria + medidas por localidade.
+        grupos: dict[str, dict[str, Any]] = {}
+        sem_localidade = 0
+        for i, s in enumerate(validos):
+            nome = s[chave_nome]
+            if not nome:
+                sem_localidade += 1
+                nome = rotulo_sobra
+            alvo = grupos.setdefault(
+                nome,
+                {
+                    "membros": [], "pop": 0.0, "area": 0.0,
+                    "renda_num": 0.0, "renda_peso": 0.0,
+                    "score_num": 0.0, "score_peso": 0.0,
+                    "pop_hex": {},
                 },
-                "sobra": nome == rotulo_sobra,
-            }
-        )
+            )
+            alvo["membros"].append(i)
+            pop = s["pop"]
+            alvo["pop"] += pop
+            alvo["area"] += s["area"]
+            if not math.isnan(s["rpc"]) and pop > 0:
+                alvo["renda_num"] += s["rpc"] * pop
+                alvo["renda_peso"] += pop
+            # Score do bairro = media dos setores PONDERADA POR POPULACAO, nao media simples: um
+            # setor de 12 moradores nao pode pesar o mesmo que um de 3.000 na cor do bairro.
+            if not math.isnan(s["score"]) and pop > 0:
+                alvo["score_num"] += s["score"] * pop
+                alvo["score_peso"] += pop
+            # Peso deste setor no par (hexagono, bairro), para repartir metrica de mercado depois.
+            if s["hid"]:
+                alvo["pop_hex"][s["hid"]] = alvo["pop_hex"].get(s["hid"], 0.0) + pop
 
-    # Divisa do MUNICIPIO = uniao dos proprios setores desenhados (nao a malha IBGE): assim o
-    # contorno preto fecha exatamente sobre os bairros vermelhos, sem fresta de reprojecao.
-    contorno: list[list[tuple[float, float]]] = []
-    try:
-        borda = unary_union(dissolvidos)
-        contorno = [
-            [_lonlat_to_mercator(float(lon), float(lat)) for lon, lat in p.exterior.coords]
-            for p in _partes_desenhaveis(borda)
-        ]
-    except Exception:
-        contorno = []
+        bairros: list[dict[str, Any]] = []
+        dissolvidos: list[Any] = []
+        for nome, dados in grupos.items():
+            try:
+                unido = _dissolver(tuple(dados["membros"]))
+            except Exception:
+                continue
+            dissolvidos.append(unido)
+            partes = _partes_desenhaveis(unido)
+            if not partes:
+                continue
+            # So o anel EXTERNO de cada parte: o PIL desenha poligono sem furo, e ilha interna de
+            # bairro e rara o bastante para nao justificar composicao por mascara aqui.
+            aneis = [
+                [_lonlat_to_mercator(float(lon), float(lat)) for lon, lat in p.exterior.coords]
+                for p in partes
+            ]
+            try:
+                ponto = partes[0].representative_point()
+                rotulo_xy = _lonlat_to_mercator(float(ponto.x), float(ponto.y))
+            except Exception:
+                continue
+            peso = dados["renda_peso"]
+            peso_score = dados["score_peso"]
+            area = dados["area"]
+            bairros.append(
+                {
+                    "nome": nome,
+                    "aneis": aneis,
+                    "rotulo_xy": rotulo_xy,
+                    "pop": dados["pop"],
+                    "area_km2": area,
+                    "densidade": (dados["pop"] / area) if area > 0 else float("nan"),
+                    "renda_pc": (dados["renda_num"] / peso) if peso > 0 else float("nan"),
+                    "score": (dados["score_num"] / peso_score) if peso_score > 0 else float("nan"),
+                    # `hex_id -> fracao do hexagono que pertence a este bairro` (por populacao).
+                    # As fracoes de um mesmo hexagono somam 1 entre os bairros que o dividem, entao
+                    # repartir uma metrica EXTENSIVA (alunos) por elas preserva o total do municipio.
+                    "pesos_hex": {
+                        hid: (p / pop_por_hex[hid])
+                        for hid, p in dados["pop_hex"].items()
+                        if pop_por_hex.get(hid, 0.0) > 0
+                    },
+                    "sobra": nome == rotulo_sobra,
+                }
+            )
 
-    bairros.sort(key=lambda b: (-float(b["pop"]), str(b["nome"])))
-    n_setores = int(len(setores))
-    return {
-        "bairros": bairros,
-        "contorno": contorno,
-        # A sobra "(demais setores)" e area, nao bairro: nao entra na contagem exibida.
-        "n_bairros": sum(1 for b in bairros if not b["sobra"]),
-        "n_setores": n_setores,
-        "sem_localidade": sem_localidade,
-        # Fracao de setores COM bairro/distrito: e o que diz se a contagem acima representa o
-        # municipio ou so um pedaco dele. Quem exibe tem de olhar isto antes do numero.
-        "cobertura": ((n_setores - sem_localidade) / n_setores) if n_setores else 0.0,
-        # DEC-076: a chave so' entra quando o CNEFE nomeou algum setor (sem o artefato, o dict
-        # e' o de antes). E' o que a Pagina 6 le para citar a fonte certa.
-        **({"fonte_bairro": FONTE_CNEFE} if usou_cnefe else {}),
-    }
+        # Divisa do MUNICIPIO = uniao dos proprios setores desenhados (nao a malha IBGE): assim o
+        # contorno preto fecha exatamente sobre os bairros vermelhos, sem fresta de reprojecao.
+        contorno: list[list[tuple[float, float]]] = []
+        try:
+            borda = unary_union(dissolvidos)
+            contorno = [
+                [_lonlat_to_mercator(float(lon), float(lat)) for lon, lat in p.exterior.coords]
+                for p in _partes_desenhaveis(borda)
+            ]
+        except Exception:
+            contorno = []
+
+        bairros.sort(key=lambda b: (-float(b["pop"]), str(b["nome"])))
+        n_setores = int(len(setores))
+        return {
+            "bairros": bairros,
+            "contorno": contorno,
+            # A sobra "(demais setores)" e area, nao bairro: nao entra na contagem exibida.
+            "n_bairros": sum(1 for b in bairros if not b["sobra"]),
+            "n_setores": n_setores,
+            "sem_localidade": sem_localidade,
+            # Fracao de setores COM bairro/distrito: e o que diz se a contagem acima representa o
+            # municipio ou so um pedaco dele. Quem exibe tem de olhar isto antes do numero.
+            "cobertura": ((n_setores - sem_localidade) / n_setores) if n_setores else 0.0,
+        }
+
+    leitura = _leitura("nome")
+    if not usou_cnefe:
+        return leitura
+    # DEC-076: a chave so' entra quando o CNEFE nomeou algum setor (sem o artefato, o dict e' o de
+    # antes). E' o que a Pagina 6 le para citar a fonte certa.
+    leitura["fonte_bairro"] = FONTE_CNEFE
+    sem_reserva = _leitura("nome_cnefe")
+    sem_reserva["fonte_bairro"] = FONTE_CNEFE
+    # A divisa e' a do municipio, a mesma nas duas leituras (os mesmos setores).
+    sem_reserva["contorno"] = leitura["contorno"]
+    leitura[CHAVE_SEM_RESERVA_IBGE] = sem_reserva
+    return leitura
 
 
 def aplicar_metricas_hex_nos_bairros(
@@ -2540,7 +2598,66 @@ def dividir_bairros_em_partes(
             perto = min(refs, key=lambda n: ((ponto[n][0] - bx) ** 2 + (ponto[n][1] - by) ** 2, numero[n]))
             parte_de[nome] = parte_de[perto]
     return {"partes": partes, "avulsos": avulsos, "numero": numero, "ponto": ponto,
-            "fora": fora, "parte_de": parte_de, "n_total": len(todos_bairros)}
+            "fora": fora, "parte_de": parte_de, "n_total": len(todos_bairros),
+            "rumo": _rumos_das_partes(todos_bairros, partes, parte_de, ponto)}
+
+
+#: Rumos da rosa de 8 pontas, a partir do Norte no sentido horario. Sem acento nenhum: o nome vai
+#: tambem no PNG da parte, cujo font nao desenha acento.
+_RUMOS = ("Norte", "Nordeste", "Leste", "Sudeste", "Sul", "Sudoeste", "Oeste", "Noroeste")
+#: Parte cujo centro fica a menos desta fracao do raio do municipio (a distancia MEDIANA dos
+#: bairros ao centro, ver `_rumos_das_partes`) e' "Centro". SUPOSICAO DE DESENHO (pedido de
+#: 2026-11-10), nao medicao: um quarto do raio separa o miolo das bordas.
+_FRACAO_CENTRO = 0.25
+
+
+def rumo_da_parte(ponto: tuple[float, float], centro: tuple[float, float], raio: float,
+                  *, fracao_centro: float = _FRACAO_CENTRO) -> str:
+    """Nome da parte pela DIRECAO do seu centro em relacao ao centro do municipio. PURA.
+
+    Coordenadas em EPSG:3857 (x para leste, y para norte; a projecao conserva o angulo). A menos
+    de `fracao_centro` do `raio` do municipio, "Centro"; senao o rumo mais proximo dos oito.
+    """
+    dx, dy = float(ponto[0]) - float(centro[0]), float(ponto[1]) - float(centro[1])
+    if raio <= 0 or math.hypot(dx, dy) < fracao_centro * raio:
+        return "Centro"
+    angulo = math.degrees(math.atan2(dx, dy)) % 360.0  # 0 = norte, 90 = leste
+    return _RUMOS[int((angulo + 22.5) // 45.0) % 8]
+
+
+def _xy_do_bairro(b: dict[str, Any]) -> tuple[float, float] | None:
+    xy = b.get("rotulo_xy")
+    if xy is not None:
+        return float(xy[0]), float(xy[1])
+    pts = [p for a in b.get("aneis") or [] for p in a]
+    if not pts:
+        return None
+    return sum(p[0] for p in pts) / len(pts), sum(p[1] for p in pts) / len(pts)
+
+
+def _rumos_das_partes(todos_bairros: list[dict[str, Any]], partes: list[list[str]],
+                      parte_de: dict[str, int], ponto: dict[str, tuple[float, float]]) -> list[str]:
+    """Um rumo por parte: o centro da parte (media dos centros de TODOS os bairros dela, numerados
+    ou nao) contra o centro do municipio (media dos centros de todos os bairros reais), com o raio
+    = distancia MEDIANA de um bairro ao centro do municipio.
+
+    Mediana, e nao a maior distancia: medido na previa de 2026-11-10, em Sao Paulo o distrito mais
+    longe (Marsilac, extremo sul rural) da' 46 km, e um quarto disso engolia como "Centro" a parte
+    da Zona Leste inteira; com a mediana (13 km) ela sai "Leste" e as outras tres nao mudam."""
+    xy_de = {str(b["nome"]): xy for b in todos_bairros if (xy := _xy_do_bairro(b)) is not None}
+    if not xy_de:
+        return ["Centro"] * len(partes)
+    cx = sum(x for x, _y in xy_de.values()) / len(xy_de)
+    cy = sum(y for _x, y in xy_de.values()) / len(xy_de)
+    distancias = sorted(math.hypot(x - cx, y - cy) for x, y in xy_de.values())
+    raio = distancias[len(distancias) // 2]
+    rumos: list[str] = []
+    for k, parte in enumerate(partes):
+        pts = [xy_de[n] for n, kk in parte_de.items() if kk == k and n in xy_de] or [ponto[n] for n in parte]
+        px = sum(x for x, _y in pts) / len(pts)
+        py = sum(y for _x, y in pts) / len(pts)
+        rumos.append(rumo_da_parte((px, py), (cx, cy), raio))
+    return rumos
 
 
 def _render_mapa_bairros(
@@ -3176,14 +3293,18 @@ def render_mapas_municipio(
     # Desde 2026-10-20 os bairros saem NUMERADOS e, quando nao cabem num quadro so', repartidos:
     # "bairros" vira a visao geral das partes e cada parte ganha "bairros_parte_<k>" (zoom so'
     # nela). A pagina refaz a mesma divisao (`dividir_bairros_em_partes` e' pura) para o indice.
-    divisao = dividir_bairros_em_partes(bairros_geo)
+    # No Brasil a pagina le a leitura SEM a reserva do IBGE (pedido de 2026-11-10); o resto do
+    # relatorio (temas por bairro, metricas) segue com `bairros_geo` de sempre.
+    geo_pagina = bairros_geo_da_pagina(municipio_result)
+    brasil = _resposta_unica(municipio_result)
+    divisao = dividir_bairros_em_partes(geo_pagina)
     if divisao is None:
         mapas["bairros"] = _render_mapa_bairros(
-            bairros_geo, basemap=basemap, width=width, height=height,
+            geo_pagina, basemap=basemap, width=width, height=height,
         )
     elif len(divisao["partes"]) == 1 and not divisao["avulsos"]:
         mapas["bairros"] = _render_mapa_bairros(
-            bairros_geo, basemap=basemap, width=width, height=height,
+            geo_pagina, basemap=basemap, width=width, height=height,
             numeros=divisao["numero"], pontos=divisao["ponto"], apagados=set(divisao["fora"]),
         )
     else:
@@ -3200,7 +3321,7 @@ def render_mapas_municipio(
             marcadores.append((sum(xs) / len(xs), sum(ys) / len(ys), str(k + 1),
                                _PARTE_CORES[k % len(_PARTE_CORES)]))
         mapas["bairros"] = _render_mapa_bairros(
-            bairros_geo, basemap=basemap, width=width, height=height,
+            geo_pagina, basemap=basemap, width=width, height=height,
             numeros={n: divisao["numero"][n] for n in divisao["avulsos"]}, pontos=divisao["ponto"],
             cor_por_bairro=cor_de, marcadores=marcadores,
             apagados=set(divisao["fora"]) - set(divisao["parte_de"]),
@@ -3208,14 +3329,15 @@ def render_mapas_municipio(
             # Francisco Xavier sozinho tem 357 km2) nao pode pesar mais que a cidade no slide.
             cor_clara=set(divisao["fora"]),
         )
-        por_nome = {str(b["nome"]): b for b in bairros_geo["bairros"] if not b.get("sobra")}
+        por_nome = {str(b["nome"]): b for b in geo_pagina["bairros"] if not b.get("sobra")}
         for k, parte in enumerate(divisao["partes"]):
             # A parte inteira (numerados + os sem numero que caem nela) em cor; o zoom segue so'
             # nos numerados, para a zona rural da parte nao afastar o quadro.
             nomes = {n for n, kk in divisao["parte_de"].items() if kk == k}
             minx, miny, maxx, maxy = _bbox_bairros([por_nome[n] for n in parte], pad_frac=0.06)
+            rumo = f" - {divisao['rumo'][k]}" if brasil else ""
             mapas[f"bairros_parte_{k + 1}"] = _render_mapa_bairros(
-                bairros_geo, titulo=f"Bairros oficiais - parte {k + 1}",
+                geo_pagina, titulo=f"Bairros oficiais - parte {k + 1}{rumo}",
                 bounds=(minx, miny, maxx, maxy), basemap=basemap, width=width, height=height,
                 numeros={n: divisao["numero"][n] for n in parte}, pontos=divisao["ponto"],
                 apagados=set(por_nome) - nomes,
@@ -3553,6 +3675,22 @@ def _draw_note(pdf: _UltraPDF, x: float, y: float, w: float, text: str) -> None:
     pdf.set_font("Helvetica", "", 8)
     pdf.set_xy(x, y)
     pdf.multi_cell(w, _NOTA_LINHA_H, _ascii(text))
+
+
+#: Respiro entre as linhas de `_draw_notas` (pedido de 2026-11-10: "dar os espacamentos").
+_NOTAS_RESPIRO = 4.0
+
+
+def _draw_notas(pdf: _UltraPDF, x: float, y: float, w: float, linhas: list[str],
+                *, respiro: float = _NOTAS_RESPIRO) -> float:
+    """Nota em IDEIAS SEPARADAS: cada item comeca numa linha nova, com `respiro` pt entre eles, no
+    mesmo cinza pequeno de `_draw_note`. Devolve o y do fim."""
+    for k, linha in enumerate(linhas):
+        if k:
+            y += respiro
+        _draw_note(pdf, x, y, w, linha)
+        y += _altura_note(pdf, w, linha)
+    return y
 
 
 def _altura_note(pdf: _UltraPDF, w: float, text: str) -> float:
@@ -4526,7 +4664,8 @@ def _bairros_mapa_page(pdf: _UltraPDF, result: dict[str, Any], mapa: bytes | Non
     _draw_framed_map(pdf, mapa, max_w=540.0, max_h=380.0, x_anchor=34.0, y_anchor=100.0,
                      border_rgb=primary)
 
-    geo = result.get("bairros_geo") or {}
+    # No Brasil, a leitura sem a reserva do IBGE (emenda 1 da DEC-076); fora dele, a de sempre.
+    geo = bairros_geo_da_pagina(result)
     bairros = [b for b in (geo.get("bairros") or []) if not b.get("sobra")]
     n_bairros = int(geo.get("n_bairros", len(bairros)) or 0)
     cobertura = float(geo.get("cobertura", 1.0) or 0.0)
@@ -4540,7 +4679,7 @@ def _bairros_mapa_page(pdf: _UltraPDF, result: dict[str, Any], mapa: bytes | Non
     if divisao is not None:
         _bairros_numerados(pdf, result, divisao, assets, px=px, pw=pw, parcial=parcial,
                            cobertura=cobertura, primary=primary, secondary=secondary,
-                           mapas_partes=mapas_partes or {})
+                           mapas_partes=mapas_partes or {}, geo=geo)
         return
     head_h = 100.0
     topo = bairros[:5]
@@ -4625,18 +4764,48 @@ def _nota_bairros_oficiais(parcial: bool, cobertura: float, *, cnefe: bool = Fal
     )
 
 
+def _linha_fonte_bairros_br(geo: dict[str, Any], parcial: bool, cobertura: float) -> str:
+    """De onde vem o limite do bairro, numa frase (Brasil, pedido de 2026-11-10). Com o CNEFE, sem a
+    reserva da malha (emenda 1 da DEC-076): o setor que o CNEFE nao nomeia fica sem cor, e a nota
+    diz isso em vez de prometer o municipio inteiro."""
+    instituto = _instituto_censo()
+    if geo.get("fonte_bairro") == FONTE_CNEFE:
+        if parcial:
+            return (f"Bairro = setores do {instituto} 2022 agrupados pelo bairro do CNEFE, que só nomeia "
+                    f"{cobertura * 100:.0f}% dos setores deste município; os demais ficam sem cor.")
+        return (f"Bairro = setores do {instituto} 2022 agrupados pelo bairro do CNEFE. O CNEFE não nomeia "
+                "todos os setores: os que ele não nomeia ficam sem cor.")
+    if parcial:
+        return (f"A malha do {instituto} 2022 só nomeia bairro ou distrito em {cobertura * 100:.0f}% dos "
+                "setores deste município; os demais ficam sem cor.")
+    return (f"Bairro = setores do {instituto} 2022 agrupados pelo bairro da malha (sem bairro, o "
+            "subdistrito ou o distrito).")
+
+
 def _bairros_numerados(pdf: _UltraPDF, result: dict[str, Any], divisao: dict[str, Any],
                        assets: dict[str, bytes | None], *, px: float, pw: float, parcial: bool,
                        cobertura: float, primary: tuple[int, int, int],
-                       secondary: tuple[int, int, int], mapas_partes: dict[str, bytes]) -> None:
-    """Lado direito da pagina Bairros Oficiais (o mapa ja' foi desenhado) + as paginas das partes."""
+                       secondary: tuple[int, int, int], mapas_partes: dict[str, bytes],
+                       geo: dict[str, Any] | None = None) -> None:
+    """Lado direito da pagina Bairros Oficiais (o mapa ja' foi desenhado) + as paginas das partes.
+
+    No Brasil (pedido de 2026-11-10): cada parte com o nome da direcao (`divisao["rumo"]`), uma
+    observacao no painel dizendo como as partes foram cortadas e nomeadas, e as notas curtas, uma
+    ideia por linha (`_draw_notas`). A Argentina segue com o desenho de antes."""
+    if geo is None:
+        geo = result.get("bairros_geo") or {}
+    if _resposta_unica(result):
+        _bairros_numerados_br(pdf, result, divisao, assets, px=px, pw=pw, parcial=parcial,
+                              cobertura=cobertura, primary=primary, secondary=secondary,
+                              mapas_partes=mapas_partes, geo=geo)
+        return
     numero = divisao["numero"]
     partes = divisao["partes"]
     avulsos = divisao["avulsos"]
     n_total = int(divisao.get("n_total", len(numero)))
     aviso = f"cobrem só {cobertura * 100:.0f}% dos setores do município" if parcial else None
     nota = _nota_bairros_oficiais(
-        parcial, cobertura, cnefe=(result.get("bairros_geo") or {}).get("fonte_bairro") == FONTE_CNEFE,
+        parcial, cobertura, cnefe=geo.get("fonte_bairro") == FONTE_CNEFE,
     )
     # Paginas das partes: bairro so' com CONTORNO na cor da parte (o limite e' o que se le ali).
     nota_parte = (
@@ -4678,7 +4847,7 @@ def _bairros_numerados(pdf: _UltraPDF, result: dict[str, Any], divisao: dict[str
         pdf.set_xy(px + 14, y - 4)
         pdf.cell(pw - 28, 12, _ascii(aviso))
         y += 10.0
-    por_nome = {str(b["nome"]): b for b in (result.get("bairros_geo") or {}).get("bairros") or []}
+    por_nome = {str(b["nome"]): b for b in geo.get("bairros") or []}
     passo = min(44.0, (330.0 - (14.0 * len(avulsos) + 20.0 if avulsos else 0.0)) / max(len(partes), 1))
     for k, parte in enumerate(partes):
         cor = _PARTE_CORES[k % len(_PARTE_CORES)]
@@ -4735,6 +4904,121 @@ def _bairros_numerados(pdf: _UltraPDF, result: dict[str, Any], divisao: dict[str
         _indice_bairros(pdf, px, 90.0, pw, 400.0, f"BAIRROS DA PARTE {k + 1} ({len(parte)})",
                         [(numero[n], n) for n in parte], cor=cor)
         _draw_note(pdf, 34.0, 490.0, 540.0, nota_parte)
+
+
+def _bairros_numerados_br(pdf: _UltraPDF, result: dict[str, Any], divisao: dict[str, Any],
+                          assets: dict[str, bytes | None], *, px: float, pw: float, parcial: bool,
+                          cobertura: float, primary: tuple[int, int, int],
+                          secondary: tuple[int, int, int], mapas_partes: dict[str, bytes],
+                          geo: dict[str, Any]) -> None:
+    """`_bairros_numerados` do Brasil: partes com rumo, observacao e notas curtas (2026-11-10)."""
+    numero = divisao["numero"]
+    partes = divisao["partes"]
+    avulsos = divisao["avulsos"]
+    rumos = divisao.get("rumo") or ["Centro"] * len(partes)
+    n_total = int(divisao.get("n_total", len(numero)))
+    fora = bool(divisao.get("fora"))
+    aviso = f"cobrem só {cobertura * 100:.0f}% dos setores do município" if parcial else None
+    fonte = _linha_fonte_bairros_br(geo, parcial, cobertura)
+    numerados = (f"Numerados os {len(numero)} bairros mais populosos de {_format_number(n_total, 0)}; "
+                 "os demais, sem número, no tom claro da parte.")
+    if len(partes) == 1 and not avulsos:
+        titulo = (f"BAIRROS ({len(numero)} mais populosos de {_format_number(n_total, 0)})"
+                  if fora else f"BAIRROS ({len(numero)})")
+        _indice_bairros(pdf, px, 90.0, pw, 400.0, titulo,
+                        [(numero[n], n) for n in partes[0]], cor=secondary,
+                        subtitulo=aviso, subtitulo_rgb=ULTRA_LARANJA)
+        _draw_notas(pdf, 34.0, 490.0, 540.0, ([numerados] if fora else []) + [fonte])
+        return
+
+    # Visao geral: as partes, cada uma com o nome da direcao e tres bairros de exemplo.
+    _rounded_panel(pdf, px, 90.0, pw, 400.0, border_rgb=secondary)
+    pdf.set_text_color(*secondary)
+    pdf.set_font("Helvetica", "B", 12)
+    pdf.set_xy(px + 14, 102.0)
+    pdf.cell(pw - 28, 14, _ascii(
+        f"PARTES DO MUNICÍPIO ({len(numero)} de {_format_number(n_total, 0)} bairros)"
+        if fora else f"PARTES DO MUNICÍPIO ({len(numero)} bairros)"
+    ))
+    y = 124.0
+    if aviso:
+        pdf.set_text_color(*ULTRA_LARANJA)
+        pdf.set_font("Helvetica", "", 9)
+        pdf.set_xy(px + 14, y - 4)
+        pdf.cell(pw - 28, 12, _ascii(aviso))
+        y += 10.0
+    observacao = (
+        "Como cada parte foi nomeada: pela direção do seu centro em relação ao centro do município "
+        "(Centro, quando fica perto dele). O corte segue o eixo mais longo do município, até cada "
+        f"parte ter no máximo {_BAIRROS_POR_PARTE} bairros."
+    )
+    pdf.set_font("Helvetica", "", 8)
+    linhas_obs = pdf.multi_cell(pw - 28, _NOTA_LINHA_H, _ascii(observacao), dry_run=True, output="LINES")
+    assert isinstance(linhas_obs, list)  # output="LINES" devolve a lista de linhas (como em `_draw_note`)
+    altura_obs = len(linhas_obs) * _NOTA_LINHA_H
+    espaco = 490.0 - 12.0 - altura_obs - 6.0 - y
+    por_nome = {str(b["nome"]): b for b in geo.get("bairros") or []}
+    passo = min(44.0, (espaco - (14.0 * len(avulsos) + 20.0 if avulsos else 0.0)) / max(len(partes), 1))
+    for k, parte in enumerate(partes):
+        cor = _PARTE_CORES[k % len(_PARTE_CORES)]
+        pdf.set_fill_color(*cor)
+        pdf.ellipse(px + 14, y + 1, 16, 16, style="F")
+        pdf.set_text_color(*_BRANCO)
+        pdf.set_font("Helvetica", "B", 9)
+        pdf.set_xy(px + 14, y + 3)
+        pdf.cell(16, 12, _ascii(str(k + 1)), align="C")
+        pdf.set_text_color(45, 45, 45)
+        pdf.set_font("Helvetica", "B", 10)
+        pdf.set_xy(px + 36, y + 2)
+        pdf.cell(pw - 50, 12, _ascii(f"Parte {k + 1} - {rumos[k]}"))
+        maiores = sorted(parte, key=lambda n: -_safe_float((por_nome.get(n) or {}).get("pop")))[:3]
+        pdf.set_text_color(*_CINZA_TEXTO)
+        pdf.set_font("Helvetica", "", 8)
+        pdf.set_xy(px + 36, y + 15)
+        pdf.cell(pw - 50, 10, _ascii(_encurtar(pdf, "ex.: " + ", ".join(maiores), pw - 52)))
+        y += passo
+    if avulsos:
+        y += 6.0
+        pdf.set_text_color(*primary)
+        pdf.set_font("Helvetica", "B", 10)
+        pdf.set_xy(px + 14, y)
+        pdf.cell(pw - 28, 12, _ascii("NUMERADOS NO MAPA AO LADO"))
+        y += 16.0
+        for n in avulsos:
+            pdf.set_text_color(*ULTRA_MAGENTA)
+            pdf.set_font("Helvetica", "B", 9)
+            pdf.set_xy(px + 14, y)
+            pdf.cell(22, 12, _ascii(str(numero[n])))
+            pdf.set_text_color(45, 45, 45)
+            pdf.set_font("Helvetica", "", 9)
+            pdf.set_xy(px + 36, y)
+            pdf.cell(pw - 50, 12, _ascii(_encurtar(pdf, n, pw - 52)))
+            y += 14.0
+    # A observacao fecha o painel, colada no rodape dele.
+    pdf.set_text_color(*_CINZA_TEXTO)
+    pdf.set_font("Helvetica", "", 8)
+    pdf.set_xy(px + 14, max(y + 6.0, 490.0 - 12.0 - altura_obs))
+    pdf.multi_cell(pw - 28, _NOTA_LINHA_H, _ascii(observacao))
+    _draw_notas(pdf, 34.0, 490.0, 540.0,
+                [f"{len(partes)} partes, cada uma com página própria e zoom."]
+                + ([numerados] if fora else []) + [fonte])
+
+    contorno = ("Contorno na cor da parte (grosso = numerado, fino = demais); em cinza, as outras "
+                "partes; o mini-mapa mostra onde a parte fica." if fora else
+                "Contorno na cor da parte; em cinza, as outras partes; o mini-mapa mostra onde a parte fica.")
+    for k, parte in enumerate(partes):
+        cor = _PARTE_CORES[k % len(_PARTE_CORES)]
+        pdf.add_page()
+        _draw_full_page_background(pdf, assets.get("conteudo"), ULTRA_BRANCO_GELO)
+        _draw_title_band(
+            pdf, f"Bairros Oficiais - {_local_label(result)} - Parte {k + 1} de {len(partes)} - {rumos[k]}",
+            rgb=primary,
+        )
+        _draw_framed_map(pdf, mapas_partes.get(f"bairros_parte_{k + 1}"), max_w=540.0, max_h=380.0,
+                         x_anchor=34.0, y_anchor=100.0, border_rgb=primary)
+        _indice_bairros(pdf, px, 90.0, pw, 400.0, f"BAIRROS DA PARTE {k + 1} - {rumos[k].upper()} ({len(parte)})",
+                        [(numero[n], n) for n in parte], cor=cor)
+        _draw_notas(pdf, 34.0, 490.0, 540.0, [contorno, fonte])
 
 
 def _nota_fonte_bairro(result: dict[str, Any]) -> str:
@@ -4877,12 +5161,23 @@ def _praca_calor_page(pdf: _UltraPDF, result: dict[str, Any], praca: Any,
     tem_densidade = "calor_cidade_densidade" in praca.mapas
     largura = _PRACA_MAPA_W if tem_densidade else _PRACA_MAPA_W * 1.4
     altura = largura * 1000.0 / 1400.0
-    legenda = (
-        f"{praca.n_hexagonos_cidade} hexágonos de {praca.municipio}. Renda média domiciliar "
-        + ("e densidade (habitantes por km² do hexágono), " if tem_densidade else "")
-        + "com as cores do slide Mapas de calor e as faixas pelos quintis da própria cidade: "
-        "o mapa compara bairros da mesma praça, não cidades."
-    )
+    if _resposta_unica(result):
+        # Brasil (pedido de 2026-11-10): a regua fixa do piloto, no lugar dos quintis da cidade.
+        legenda = (
+            f"{praca.n_hexagonos_cidade} hexágonos de {praca.municipio}. Renda média domiciliar "
+            + ("e densidade (habitantes por km² do hexágono), " if tem_densidade else "")
+            + "com as faixas fixas, as mesmas do piloto: a mesma cor quer dizer o mesmo valor em "
+            "qualquer cidade."
+            + (" A densidade é a do hexágono, que inclui área vazia, por isso tende a sair mais "
+               "clara que a do setor no mapa do piloto." if tem_densidade else "")
+        )
+    else:
+        legenda = (
+            f"{praca.n_hexagonos_cidade} hexágonos de {praca.municipio}. Renda média domiciliar "
+            + ("e densidade (habitantes por km² do hexágono), " if tem_densidade else "")
+            + "com as cores do slide Mapas de calor e as faixas pelos quintis da própria cidade: "
+            "o mapa compara bairros da mesma praça, não cidades."
+        )
     if praca.renda_municipal:
         legenda += " Nesta base a renda é a do município inteiro, então o mapa de renda sai de uma cor só."
     if praca.populacao_municipal:
@@ -4945,12 +5240,20 @@ def _praca_pressao_page(pdf: _UltraPDF, result: dict[str, Any], praca: Any,
             pdf.set_xy(px + pw - 40, y + 1)
             pdf.cell(40, 13, _ascii(_format_number(n, 0)), align="R")
             y += 18.0
-    _draw_note(
-        pdf, px, max(y + 8.0, _PAGE_H - 76.0), pw,
+    nota = (
         f"Cada círculo é a área de influência de {raio_txt} km que o motor usa para descontar a "
         "concorrência do residual. Onde os círculos se sobrepõem a cor escurece: mais academias "
-        "disputando o mesmo público. Conta o centro de cada hexágono.",
+        "disputando o mesmo público. Conta o centro de cada hexágono."
     )
+    if _resposta_unica(result):
+        # Brasil (pedido de 2026-11-10): a independente sem o disco no mapa. A nota diz que ela
+        # continua na conta, senao o mapa mostraria menos concorrencia do que o modelo desconta.
+        nota = (
+            f"Cada círculo é a área de influência de {raio_txt} km de uma rede ou da Ultra; onde se "
+            "sobrepõem, a cor escurece. As independentes aparecem sem círculo, mas seguem na conta "
+            "do residual e no total acima."
+        )
+    _draw_note(pdf, px, max(y + 8.0, _PAGE_H - 76.0), pw, nota)
 
 
 def _praca_crescimento_page(pdf: _UltraPDF, result: dict[str, Any], praca: Any,
@@ -5057,14 +5360,52 @@ def _linhas_da_regiao(pdf: _UltraPDF, nome: str, largura: float) -> list[str]:
         pdf.set_font_size(tamanho)
 
 
+#: Prefixo que alguns motivos ja' trazem e que o titulo do aviso sem tabela ja' diz.
+_PREFIXO_INDISPONIVEL = "recomendação indisponível: "
+
+
+def _aviso_sem_tabela(pdf: _UltraPDF, x: float, y: float, w: float, cidade: str | None,
+                      motivo: str | None) -> float:
+    """Aviso em destaque no "Onde crescer" quando nenhuma tabela sobra (pedido de 2026-11-11).
+
+    `motivo` None = nenhuma regiao atende a regua: "SEM REGIÃO VIÁVEL". Com motivo (recomendacao
+    indisponivel por falta de dado), "RECOMENDAÇÃO INDISPONÍVEL" e o motivo -- falta de dado nao
+    vira veredito sobre a cidade. Devolve o `y` de baixo da caixa.
+    """
+    if motivo is None:
+        titulo, cor = "SEM REGIÃO VIÁVEL", ULTRA_MAGENTA
+        texto = (f"Nenhuma região de {cidade or 'esta cidade'} tem métricas viáveis para expansão "
+                 "neste recorte.")
+    else:
+        titulo, cor = "RECOMENDAÇÃO INDISPONÍVEL", ULTRA_LARANJA
+        if motivo.casefold().startswith(_PREFIXO_INDISPONIVEL):
+            motivo = motivo[len(_PREFIXO_INDISPONIVEL):]
+        texto = f"{motivo[:1].upper()}{motivo[1:]}."
+    pdf.set_font("Helvetica", "", 11)
+    linhas = pdf.multi_cell(w - 32, 15, _ascii(texto), dry_run=True, output="LINES")
+    assert isinstance(linhas, list)  # output="LINES" devolve a lista de linhas
+    altura = 14.0 + 18.0 + 6.0 + 15.0 * len(linhas) + 14.0
+    _rounded_panel(pdf, x, y, w, altura, border_rgb=cor)
+    pdf.set_text_color(*cor)
+    pdf.set_font("Helvetica", "B", 13)
+    pdf.set_xy(x + 16, y + 14)
+    pdf.cell(w - 32, 18, _ascii(titulo))
+    pdf.set_text_color(45, 45, 45)
+    pdf.set_font("Helvetica", "", 11)
+    pdf.set_xy(x + 16, y + 38)
+    pdf.multi_cell(w - 32, 15, _ascii(texto))
+    pdf.set_font("Helvetica", "", 9)
+    return y + altura
+
+
 def _onde_crescer_recomendacao(pdf: _UltraPDF, rec: Any, rotulos: dict[str, str],
                                x: float, w: float) -> None:
     """As duas tabelas da recomendacao unica (DEC-077, Brasil), no lugar das listas por coluna.
 
     Mata Virgem em ordem de residual e Premium em ordem de populacao, `vagas_por_segmento` vagas
-    cada, como o modulo devolve -- nada e' reordenado aqui. Vaga sem candidato sai sinalizada com
-    o motivo do modulo; segmento indisponivel (sem o carimbo k da malha, ou base recusada) vira uma
-    linha so' com o motivo, sem numero. Nome = `rotulos_das_regioes` (o bairro com mais moradores);
+    cada, como o modulo devolve -- nada e' reordenado aqui. Vaga sem candidato e segmento
+    indisponivel (sem o carimbo k da malha, ou base recusada) saem como linha EM BRANCO, e o motivo
+    vai para a nota (pedido de 2026-11-11). Nome = `rotulos_das_regioes` (o bairro com mais moradores);
     sem bairro, o municipio, e a nota diz isso. Numeros e criterios da nota saem da regua
     (`rec.regra`); a frase do mapa, das vagas preenchidas.
     """
@@ -5080,41 +5421,40 @@ def _onde_crescer_recomendacao(pdf: _UltraPDF, rec: Any, rotulos: dict[str, str]
     def _motivo(motivo: str) -> str:
         return ROTULO_MOTIVO.get(motivo) or _ROTULO_MOTIVO_DO_PDF.get(motivo, motivo)
 
-    def _linha(y: float, i: int, valores: tuple[str | list[str], ...] | None, texto: str | None = None,
-               numero: str | None = None) -> float:
+    def _linha(y: float, i: int, valores: tuple[str | list[str], ...]) -> float:
         pdf.set_fill_color(*((255, 255, 255) if i % 2 == 0 else (240, 242, 245)))
         pdf.set_text_color(45, 45, 45)
-        if valores is not None:
-            xx = x
-            for valor, lw in zip(valores, larguras, strict=True):
-                pdf.set_xy(xx, y)
-                if isinstance(valor, list) and len(valor) > 1:
-                    # Nome em duas linhas (`_linhas_da_regiao`), na mesma altura de linha.
-                    pdf.cell(lw, 20, "", fill=True)
-                    tamanho = pdf.font_size_pt
-                    pdf.set_font_size(_FONTE_REGIAO_2_LINHAS)
-                    for k, parte in enumerate(valor):
-                        pdf.set_xy(xx, y + 2.0 + 8.0 * k)
-                        pdf.cell(lw, 8, _ascii(parte), align="C")
-                    pdf.set_font_size(tamanho)
-                else:
-                    pdf.cell(lw, 20, _ascii(valor[0] if isinstance(valor, list) else valor),
-                             align="C", fill=True)
-                xx += lw
-        else:
-            # Vaga vazia: posicao + o motivo numa celula so', para nao parecer regiao sem dado. O
-            # segmento indisponivel vem sem numero (`numero=""`): o motivo vale para a lista toda.
-            pdf.set_xy(x, y)
-            pdf.cell(larguras[0], 20, _ascii(str(i + 1) if numero is None else numero), align="C", fill=True)
-            resto = w - larguras[0]
-            pdf.set_font("Helvetica", "I", 8)
-            pdf.set_xy(x + larguras[0], y)
-            pdf.cell(resto, 20, _ascii(_encurtar(pdf, texto or "", resto - 6)), align="L", fill=True)
-            pdf.set_font("Helvetica", "", 9)
+        xx = x
+        for valor, lw in zip(valores, larguras, strict=True):
+            pdf.set_xy(xx, y)
+            if isinstance(valor, list) and len(valor) > 1:
+                # Nome em duas linhas (`_linhas_da_regiao`), na mesma altura de linha.
+                pdf.cell(lw, 20, "", fill=True)
+                tamanho = pdf.font_size_pt
+                pdf.set_font_size(_FONTE_REGIAO_2_LINHAS)
+                for k, parte in enumerate(valor):
+                    pdf.set_xy(xx, y + 2.0 + 8.0 * k)
+                    pdf.cell(lw, 8, _ascii(parte), align="C")
+                pdf.set_font_size(tamanho)
+            else:
+                pdf.cell(lw, 20, _ascii(valor[0] if isinstance(valor, list) else valor),
+                         align="C", fill=True)
+            xx += lw
         return y + 20.0
 
     def _tabela(y: float, seg: Any, titulo: str, cor: tuple[int, int, int]) -> float:
+        """Desenha a tabela do segmento e devolve o `y` de baixo. So' as regioes que atendem a regua
+        viram linha (pedido de 2026-11-10; a vaga sem candidato nao vira "Vaga vazia" nem linha em
+        branco). O segmento SEM NENHUMA regiao -- ou indisponivel (sem o carimbo k da malha, ou base
+        recusada) -- nao tem tabela (pedido de 2026-11-11). Nos dois casos o motivo vai para a nota."""
         nonlocal renda_municipal, sem_bairro
+        if seg.status == "indisponivel":
+            sem_tabela.append((seg.segmento, seg.vagas[0].motivo if seg.vagas else "renda_indisponivel"))
+            return y
+        preenchidas = [v for v in seg.vagas if isinstance(v, ItemRecomendado)]
+        if not preenchidas:
+            sem_tabela.append((seg.segmento, None))
+            return y
         pdf.set_text_color(*cor)
         pdf.set_font("Helvetica", "B", 11)
         pdf.set_xy(x, y)
@@ -5132,32 +5472,41 @@ def _onde_crescer_recomendacao(pdf: _UltraPDF, rec: Any, rotulos: dict[str, str]
             xx += lw
         y += 28.0
         pdf.set_font("Helvetica", "", 9)
-        if seg.status == "indisponivel":
-            motivo = seg.vagas[0].motivo if seg.vagas else "renda_indisponivel"
-            return _linha(y, 0, None, _motivo(motivo), numero="")
-        for i, vaga in enumerate(seg.vagas):
-            if isinstance(vaga, ItemRecomendado):
-                nome = rotulos.get(vaga.hex_id)
-                if not nome:
-                    sem_bairro = True
-                    nome = vaga.nome_municipio or rec.recorte.nome or TEXTO_SEM_DADO
-                renda = _renda(vaga.renda_domiciliar)
-                if vaga.renda_municipal:
-                    renda_municipal = True
-                    renda += "*"
-                y = _linha(y, i, (
-                    str(vaga.posicao),
-                    _linhas_da_regiao(pdf, str(nome), larguras[1] - 4),
-                    _format_number(vaga.residual, 0),
-                    _format_number(vaga.populacao, 0),
-                    renda,
-                ))
-            else:
-                y = _linha(y, i, None, f"Vaga vazia: {_motivo(vaga.motivo)}")
+        desenhadas.append(seg.segmento)
+        if len(preenchidas) < rec.regra.vagas_por_segmento:
+            encurtadas.append(seg.segmento)
+        for i, vaga in enumerate(preenchidas):
+            nome = rotulos.get(vaga.hex_id)
+            if not nome:
+                sem_bairro = True
+                nome = vaga.nome_municipio or rec.recorte.nome or TEXTO_SEM_DADO
+            renda = _renda(vaga.renda_domiciliar)
+            if vaga.renda_municipal:
+                renda_municipal = True
+                renda += "*"
+            y = _linha(y, i, (
+                str(vaga.posicao),
+                _linhas_da_regiao(pdf, str(nome), larguras[1] - 4),
+                _format_number(vaga.residual, 0),
+                _format_number(vaga.populacao, 0),
+                renda,
+            ))
         return y
 
+    #: (segmento, motivo) de quem ficou sem tabela; motivo None = nenhuma regiao atende a regua.
+    sem_tabela: list[tuple[str, str | None]] = []
+    desenhadas: list[str] = []
+    encurtadas: list[str] = []
+
     y = _tabela(80.0, rec.mata_virgem, f"{ROTULO_SEGMENTO['mata_virgem']} (ordem: residual)", _COR_LISTA_1)
-    y = _tabela(y + 14.0, rec.premium, f"{ROTULO_SEGMENTO['premium']} (ordem: população)", _COR_LISTA_2)
+    y = _tabela(y + 14.0 if desenhadas else y, rec.premium,
+                f"{ROTULO_SEGMENTO['premium']} (ordem: população)", _COR_LISTA_2)
+    # Pedido de 2026-11-11: sem tabela NENHUMA, um aviso em destaque no lugar delas. Falta de dado
+    # (segmento indisponivel) nao e' veredito sobre a cidade -- ai' o aviso diz "indisponivel" e o
+    # motivo; so' a cidade sem regiao na regua leva o "sem regiao viavel".
+    if not desenhadas:
+        y = _aviso_sem_tabela(pdf, x, y, w, rec.recorte.nome,
+                              next((_motivo(m) for _s, m in sem_tabela if m is not None), None))
     mv, pr = rec.regra.mata_virgem, rec.regra.premium
 
     def _criterio_premium(regua: Any) -> str:
@@ -5179,6 +5528,23 @@ def _onde_crescer_recomendacao(pdf: _UltraPDF, rec: Any, rotulos: dict[str, str]
         mapa = ""
     else:
         mapa = "No mapa, a cidade em cinza: nenhuma região atende à régua. "
+    # O motivo da tabela curta e da tabela que falta mora aqui. Tabela curta = vaga sem regiao na
+    # regua; segmento sem tabela = nenhuma regiao, ou falta de dado (os dois segmentos numa frase so'
+    # quando o motivo e' o mesmo).
+    brancos = []
+    if encurtadas:
+        brancos.append(f"Menos de {rec.regra.vagas_por_segmento} linhas = só essas regiões atendem à régua.")
+
+    def _por_que(motivo: str | None) -> str:
+        return "nenhuma região atende à régua neste recorte" if motivo is None else _motivo(motivo)
+
+    if not desenhadas:
+        pass  # o aviso no lugar das tabelas ja' diz por que; a nota nao repete
+    elif len(sem_tabela) == 2 and sem_tabela[0][1] == sem_tabela[1][1]:
+        brancos.append(f"{ROTULO_SEGMENTO['mata_virgem']} e {ROTULO_SEGMENTO['premium']} sem tabela: "
+                       f"{_por_que(sem_tabela[0][1])}.")
+    else:
+        brancos.extend(f"{ROTULO_SEGMENTO[s]} sem tabela: {_por_que(m)}." for s, m in sem_tabela)
     _draw_note(
         pdf, x, y + 10.0, w,
         f"Mata Virgem = renda domiciliar a partir de {_renda(mv.renda_domiciliar_min)} e "
@@ -5188,7 +5554,7 @@ def _onde_crescer_recomendacao(pdf: _UltraPDF, rec: Any, rotulos: dict[str, str]
         f"{' e residual medido' if pr.exige_residual_medido else ''}, em ordem de população. Região = "
         "hexágono de ~5 km², com o nome do bairro de mais moradores"
         + (" (sem bairro mapeado, o do município)" if sem_bairro else "")
-        + f". Vaga vazia = nenhuma outra região da cidade atende à régua. {mapa}"
+        + f". {' '.join(brancos)} {mapa}"
         f"Régua {rec.regra.versao} ({rec.regra.dec})."
         + (" * Renda do município: a região não tem renda por setor." if renda_municipal else ""),
     )
@@ -5552,20 +5918,31 @@ def gerar_pdf_relatorio_municipal(
     )
     _score_page(pdf, municipio_result, mapas.get("score"), assets, primary=p6, secondary=s6)
     _residual_page(pdf, municipio_result, mapas.get("residual"), assets, primary=p7, secondary=s7)
+    # Brasil com a praca (pedido de 2026-11-11): a conta do espaco vem logo depois da Pressao,
+    # antes do Resumo. Sem a praca nao ha Pressao, e ela fica onde sempre esteve.
+    espaco_depois_da_pressao = praca is not None and _resposta_unica(municipio_result)
     if praca is not None:
         p12, s12 = _tema_bicolor(12)
         _praca_calor_page(pdf, municipio_result, praca, assets, primary=p12, secondary=s12)
         p13, s13 = _tema_bicolor(13)
-        _praca_pressao_page(pdf, municipio_result, praca, assets, primary=p13, secondary=s13)
         p15, s15 = _tema_bicolor(15)
-        _praca_crescimento_page(pdf, municipio_result, praca, assets, primary=p15, secondary=s15)
+        if _resposta_unica(municipio_result):
+            # Brasil (pedido de 2026-11-10): "Como a cidade esta indo" antes da Pressao. As cores
+            # seguem o ordinal de cada pagina, entao a troca nao muda cor nenhuma.
+            _praca_crescimento_page(pdf, municipio_result, praca, assets, primary=p15, secondary=s15)
+            _praca_pressao_page(pdf, municipio_result, praca, assets, primary=p13, secondary=s13)
+            _espaco_explicado_page(pdf, municipio_result, mapas.get("espaco"), assets, primary=s5)
+        else:
+            _praca_pressao_page(pdf, municipio_result, praca, assets, primary=p13, secondary=s13)
+            _praca_crescimento_page(pdf, municipio_result, praca, assets, primary=p15, secondary=s15)
     if not _resposta_unica(municipio_result):
         # Brasil (Juan, 2026-10-22): a Visao Geral saiu. Com a resposta unica ela ficou neutra --
         # sem o verde de aprovado e sem a tabela -- e repetia o mapa do Resumo. A Argentina, sem
         # regua, segue com ela (a tabela BAIRROS APROVADOS mora nela).
         _cobertura_page(pdf, municipio_result, mapas.get("cobertura"), assets, primary=p1, secondary=s1)
     _resumo_page(pdf, municipio_result, mapas.get("resumo"), assets, primary=p5, secondary=s5)
-    _espaco_explicado_page(pdf, municipio_result, mapas.get("espaco"), assets, primary=s5)
+    if not espaco_depois_da_pressao:
+        _espaco_explicado_page(pdf, municipio_result, mapas.get("espaco"), assets, primary=s5)
     if not _resposta_unica(municipio_result):
         # DEC-077 (Brasil): Expansao de Dominio e Bairros por Zona ficam fora ate' chegarem os
         # dados do gestor (Felipe, 2026-10-21); eram outras listas de "onde expandir". A
