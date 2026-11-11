@@ -36,7 +36,7 @@ import type {
   RedeQuery,
   RedeSetoresEntorno,
   RedeUnidadeInteligencia,
-  RedeUnidadeSemRede,
+  MapaUnidade,
   RedeUnidadeSemRedeFicha,
   SetoresHeatmapPayload,
   ViabilidadeIn,
@@ -899,13 +899,29 @@ export const api = {
   redeInteligencia: (q: RedeQuery = {}) =>
     pedir<RedeInteligencia>(`/api/rede/inteligencia${queryRede(q)}`),
 
-  /** Unidades do cadastro das Ultra sem dado na Growth (a busca do Mapa as lista também). */
-  redeUnidadesSemRede: () =>
-    pedir<{ unidades: RedeUnidadeSemRede[] }>('/api/rede/unidades-sem-rede'),
+  /* UNIDADES NO MAPA (11/11/2026): o seletor do cabeçalho, a ficha em janela e o PDF de
+     concorrência pela porta do MAPA, para quem não tem a Executiva. Só território: nome,
+     cidade, UF, ponto e concorrência — nada de aluno nem faturamento. */
 
-  /** A ficha de uma delas: só o raio com as concorrentes, sem aluno nem faturamento. */
-  redeUnidadeSemRede: (id: string) =>
-    pedir<RedeUnidadeSemRedeFicha>(`/api/rede/unidade-sem-rede/${encodeURIComponent(id)}`),
+  /** As unidades da rede e as do cadastro sem dado na Growth, para o seletor do mapa. */
+  mapaUnidades: () => pedir<{ unidades: MapaUnidade[] }>('/api/mapa/unidades'),
+
+  /** A ficha da unidade no mapa: o ponto e o raio com as concorrentes. */
+  mapaUnidade: (id: string) =>
+    pedir<RedeUnidadeSemRedeFicha>(`/api/mapa/unidade/${encodeURIComponent(id)}`),
+
+  /** O PDF de concorrência da unidade, pela porta do mapa (o mesmo arquivo da Executiva). */
+  mapaUnidadeConcorrenciaPdf: (id: string) =>
+    pedirArquivo(
+      `/api/mapa/unidade/${encodeURIComponent(id)}/concorrencia.pdf`,
+      { method: 'GET' },
+      `concorrencia_${id}.pdf`,
+      {
+        falha: 'Falha ao gerar o relatório da unidade',
+        timeout: 'A geração demorou demais e o pedido foi cancelado.',
+        rede: 'Não foi possível gerar o relatório da unidade.',
+      },
+    ),
 
   /** Território, retenção, rampa e sinais de UMA unidade. */
   redeUnidadeInteligencia: (id: string, mes?: string) =>

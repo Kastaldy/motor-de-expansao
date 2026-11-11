@@ -2086,6 +2086,12 @@ export interface RedeUnidadeSemRede {
   lng: number | null
 }
 
+/** Uma unidade no seletor do mapa (`/api/mapa/unidades`): só território. `sem_rede` = unidade
+ *  do cadastro que a Growth ainda não tem. */
+export interface MapaUnidade extends RedeUnidadeSemRede {
+  sem_rede: boolean
+}
+
 export interface RedeUnidadeSemRedeFicha {
   unidade: RedeUnidadeSemRede
   mapa: RedeUnidadeMapa | null

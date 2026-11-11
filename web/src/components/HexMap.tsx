@@ -384,15 +384,15 @@ function fillDoHex(
      geometria real da intersecao. Assim o hexagono segue verde/livre por baixo e a
      parte tomada aparece recortada — que e' a leitura do estudo de ponto: "meu imovel
      cai no lado coberto ou no livre?". */
-  // Passo 4 — taxa de crescimento DESTE hexagono. Categorico, fora da rampa de
-  // score, e ANTES do corte de pop<5k: um hexagono com pouca gente pode ser
-  // justamente onde a obra esta, e escondê-lo apagaria o sinal.
-  if (passoN === 4) {
-    const c = crescClasseToColor(h.cres_hex_classe)
-    // O holofote do funil vale aqui tambem: sem ele os hexes do passo ficavam
-    // visualmente iguais aos vizinhos e os rotulos de rank pousavam no nada.
-    return noPasso ? c : [c[0], c[1], c[2], Math.round(c[3] * DIM_FORA_DO_PASSO)]
-  }
+  // Passo 4 — classe de crescimento DESTE hexagono, pintada como as camadas 1-3 pintam
+  // uma faixa de score: a cor da faixa com o `alphaHex` do tema (pedidos de 2026-11-10/11).
+  // ANTES do corte de pop<5k: um hexagono com pouca gente pode ser justamente onde a obra
+  // esta, e escondê-lo apagaria o sinal.
+  //
+  // SEM o holofote do funil, de proposito (pedido de 2026-11-10): esmaecer o que esta fora
+  // do recorte fazia um verde de 47% sair mais forte que um de 50% ao lado. O recorte do
+  // passo continua no painel e na contagem de areas.
+  if (passoN === 4) return crescClasseToColor(h.cres_hex_classe, alphaHex)
 
   /* Camada 5 com o Top 10: os 10 na cor do SEGMENTO (Mata Virgem / Premium) e o resto no
      "fora do Top 10", esmaecido. Vem ANTES do corte de pop < 5k: o Top 10 le o recorte
@@ -1290,12 +1290,11 @@ export default function HexMap({
           // paleta tem 5 cores e `corDeIdentidade` cicla: o 6º hexágono sairia com a cor
           // idêntica à do 1º, que é exatamente o que a paleta existe para impedir.
           //
-          // Acima do teto vai um CINZA neutro. Não o turquesa `--ac`: ele é o mesmo
-          // `CRESC_ALTA_HEX` que preenche os hexágonos "Em alta" no passo 4, então usá-lo
-          // aqui faria o contorno de "está no cenário" colidir com um significado que a
-          // camada já dá àquela matiz — no passo 4, um hex do cenário que também fosse
-          // "Em alta" ficaria com contorno e preenchimento da mesma cor. Cinza não afirma
-          // nada, e a largura de 42 m (getLineWidth) já marca a seleção.
+          // Acima do teto vai um CINZA neutro. Não o turquesa `--ac`: ele é a identidade
+          // da camada 4 (cabeçalho, stepper) e já preencheu os hexágonos "Em alta" até
+          // 2026-11-10, quando o passo 4 passou para a rampa vermelho -> verde. Nem uma
+          // cor da rampa, que colidiria com o preenchimento de qualquer camada. Cinza não
+          // afirma nada, e a largura de 42 m (getLineWidth) já marca a seleção.
           // As CORES_IDENTIDADE não seguem o tema, e isso é deliberado: são as mesmas
           // cores das barras do painel de comparação, e é essa igualdade que liga a
           // barra ao hexágono. Fazê-las mudar de valor no claro quebraria o par. São de

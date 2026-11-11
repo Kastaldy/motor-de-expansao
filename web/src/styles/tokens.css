@@ -113,7 +113,8 @@
      Desde 2026-09-09 a matiz e' a do turquesa Ultra #00A99E (~176°), aclarada para o
      fundo escuro — era o ~186° do #35c9d6 herdado do prototipo. Pedido do Juan: "a
      visao escura tambem deve seguir as cores padrao da ultra". O par do mapa
-     (CRESC_ALTA_HEX em lib/colors.ts) acompanhou. */
+     (CRESC_ALTA_HEX em lib/colors.ts) acompanhou ate 2026-11-10; desde entao o
+     "Em alta" do passo 4 e' o verde da rampa e o turquesa nao pinta hexagono. */
   --ac: #30cfc2;
   --ac-text: #4ad8cb;
   --ac-chip: #82e6dc;
@@ -219,14 +220,15 @@
   --l3-a60: rgba(233, 192, 122, 0.6);
 
   /* Camada 4 · "Como a cidade esta indo" (crescimento da area construida).
-     Herda o TURQUESA que a propria camada ja' usa no mapa para "Em alta"
-     (CRESC_ALTA_HEX em lib/colors.ts): dar outra matiz ao cabecalho faria ele brigar
-     com o hexagono logo ao lado.
+     TURQUESA. Nasceu do "Em alta" que a camada usava no mapa; desde 2026-11-10 os
+     hexagonos do passo 4 seguem a rampa vermelho -> verde (CRESC_*_HEX em
+     lib/colors.ts) e o turquesa ficou so' como identidade de chrome, como as demais
+     --lN.
 
-     E' o MESMO valor de --ac (#30cfc2), e isso e' deliberado, nao descuido: aqui a
-     convergencia com a cor de acao e' aceita porque a camada ja' escolheu esse
-     turquesa no mapa. Trocar --ac muda esta camada junto — se um dia isso incomodar,
-     separe os dois valores em vez de reescrever a paleta da camada. */
+     E' o MESMO valor de --ac (#30cfc2), e isso e' deliberado, nao descuido: a
+     convergencia com a cor de acao foi aceita quando a camada escolheu esse turquesa.
+     Trocar --ac muda esta camada junto — se um dia isso incomodar, separe os dois
+     valores em vez de reescrever a paleta da camada. */
   --l4: #30cfc2;
   --l4-a10: rgba(48, 207, 194, 0.1);
   --l4-a24: rgba(48, 207, 194, 0.24);

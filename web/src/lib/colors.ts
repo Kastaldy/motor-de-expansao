@@ -137,33 +137,41 @@ export function faixaM1ToColor(faixa: string | null | undefined, alpha = HEX_FIL
 }
 
 /* ---------------------------------------------------------------------------
-   Passo 4 — taxa de crescimento da area construida do hexagono.
+   Passo 4 — crescimento da area construida do hexagono.
 
-   NAO usa a rampa de score: aqui nao ha nota, ha tres estados. E nao usa amarelo
-   — amarelo no meio de uma escala vermelho-verde le como ALERTA, e "estavel" nao
-   e alerta (pedido do Juan). Em alta recebe o turquesa da identidade do piloto,
-   estavel recebe verde, em queda recebe vermelho.
+   Continua sendo tres estados (nao ha nota aqui, ha direcao), mas eles sao pintados
+   EXATAMENTE como as camadas 1-3 pintam uma faixa de score (pedidos de 2026-11-10 e
+   2026-11-11, "tem que estar como esta nas outras camadas"): Em alta = verde da faixa
+   90-100, Estavel = verde da faixa 70-80 (o mais claro), Sem obra nova = vermelho da
+   faixa 10-20, todas com a MESMA opacidade do tema (o `alphaHex` das outras camadas).
+   As cores sao DERIVADAS de SCORE_BANDS_HEX por indice, nunca literal proprio — a
+   paridade da rampa com o Python ja' e' travada, e o chip "cores do mapa" da metodologia
+   (`app._legenda_mapa_crescimento`) deriva dos mesmos indices de RESIDUAL_SCORE_BANDS.
+
+   Uma tentativa do mesmo dia dava a cada classe uma opacidade propria, variando com a
+   taxa: no tema escuro o Estavel transparente saia MAIS ESCURO que o Em alta, enquanto a
+   legenda (cor cheia) mostrava o Estavel como o verde mais claro — mapa e legenda se
+   contradiziam. Com uma opacidade so', a ordem de claridade da legenda vale no mapa.
+   O que a cor NAO diz segue na ressalva da metodologia: "Sem obra nova" nao e' demolicao,
+   e' obra encerrada mais ruido de medicao (ou saturacao, no centro denso).
    --------------------------------------------------------------------------- */
 
-export const CRESC_ALTA_HEX = '#30CFC2'
-export const CRESC_ESTAVEL_HEX = '#19A832'
-export const CRESC_PARADO_HEX = '#6E7686'
+export const CRESC_ALTA_HEX: string = SCORE_BANDS_HEX[9]
+export const CRESC_ESTAVEL_HEX: string = SCORE_BANDS_HEX[7]
+export const CRESC_PARADO_HEX: string = SCORE_BANDS_HEX[1]
 
-const CRESC_ALTA: RGBA = [48, 207, 194, 150]
-const CRESC_ESTAVEL: RGBA = [25, 168, 50, 120]
-/* "Sem obra nova" e cinza, nao vermelho. O vermelho fazia o leitor entender que
-   os predios foram DERRUBADOS; o que a medida diz e outra coisa — a area
-   construida parou de crescer e a variacao ficou ligeiramente negativa, que nessa
-   escala e obra encerrada mais ruido de medicao. Ausencia de obra nao e alarme. */
-const CRESC_PARADO: RGBA = [110, 118, 134, 110]
 /** Sem medicao de satelite (fora das 12 UFs ou fora da mancha urbana). */
 const CRESC_SEM: RGBA = [120, 120, 140, 45]
 
-/** Cor por classe de crescimento do hexágono. Categórica, sem ordenação de nota. */
-export function crescClasseToColor(classe: string | null | undefined): RGBA {
-  if (classe === 'Em alta') return [...CRESC_ALTA]
-  if (classe === 'Estável') return [...CRESC_ESTAVEL]
-  if (classe === 'Sem obra nova') return [...CRESC_PARADO]
+/** Cor por classe de crescimento do hexágono: a cor da faixa com a opacidade do tema
+ *  (`alpha`, o mesmo `alphaHex` das camadas 1-3), igual para as três classes. */
+export function crescClasseToColor(
+  classe: string | null | undefined,
+  alpha: number = HEX_FILL_ALPHA,
+): RGBA {
+  if (classe === 'Em alta') return [...hexToRgb(CRESC_ALTA_HEX), alpha]
+  if (classe === 'Estável') return [...hexToRgb(CRESC_ESTAVEL_HEX), alpha]
+  if (classe === 'Sem obra nova') return [...hexToRgb(CRESC_PARADO_HEX), alpha]
   return [...CRESC_SEM]
 }
 
@@ -223,10 +231,10 @@ const CAMADA_CORES: Record<1 | 2 | 3 | 4 | 5, CamadaCor> = {
     conector: 'var(--l3-a60)',
     rgb: [233, 192, 122],
   },
-  // Camada 4 = "Como a cidade esta indo" (crescimento por satelite). Herda o
-  // TURQUESA que a propria camada ja' usa no mapa para "Em alta"
-  // (`CRESC_ALTA_HEX`), decidido junto com o Juan: dar-lhe outra matiz aqui faria
-  // o cabecalho do painel brigar com o hexagono logo ao lado.
+  // Camada 4 = "Como a cidade esta indo" (crescimento por satelite). TURQUESA,
+  // decidido junto com o Juan. Nasceu do "Em alta" do mapa; desde 2026-11-10 os
+  // hexagonos do passo 4 seguem a rampa vermelho -> verde (`CRESC_*_HEX`) e o
+  // turquesa ficou so' como identidade da camada (cabecalho, stepper, chip de rank).
   4: {
     fg: 'var(--l4)',
     bg: 'var(--l4-a10)',

@@ -6969,10 +6969,17 @@ def _legenda_mapa_crescimento() -> list[dict[str, Any]]:
     """As cores do MAPA na camada 4 (`cres_hex_classe`) — outra coisa que a etiqueta.
 
     Continua publicada, mas fora do slot de ranking: ela explica por que um hexagono
-    esta turquesa, verde ou cinza, e vale nos dois escopos (o mapa pinta nos dois).
-    Tres estados, nao uma rampa: aqui nao ha nota, ha direcao. Os cortes saem da
-    distribuicao real dos hexes medidos (p50 = +19,2%, p75 = +30,6%), e por isso
-    "Estável" nao e' um alarme — e' a maioria.
+    esta verde-escuro, verde-claro ou vermelho, e vale nos dois escopos (o mapa pinta nos dois).
+    Tres estados, nao uma nota: aqui ha direcao. Os cortes saem da distribuicao real
+    dos hexes medidos (p50 = +19,2%, p75 = +30,6%), e por isso "Estável" nao e' um
+    alarme — e' a maioria.
+
+    Desde 2026-11-10/11 o mapa pinta as tres classes como as camadas 1-3 pintam uma faixa
+    de score (`CRESC_*_HEX` em web/src/lib/colors.ts = faixas 90-100 / 70-80 / 10-20, com
+    a opacidade do tema). O `cor`
+    sai dos MESMOS indices de RESIDUAL_SCORE_BANDS (a copia TS e' travada por
+    tests/unit/test_paridade_paleta_web.py): o chip promete a cor exata do hexagono, que
+    a paleta de 5 `tom` nomeados nao garante sozinha.
 
     DERIVA de `_ROTULO_CLASSE`, a mesma traducao que o payload do mapa usa. Escrita a
     mao, esta lista repetiria num campo novo o defeito de que as `faixas` acabaram de
@@ -6986,8 +6993,14 @@ def _legenda_mapa_crescimento() -> list[dict[str, Any]]:
         "Estável": "área construída cresceu, mas abaixo de 30%",
         "Sem obra nova": "área construída parou de crescer no período",
     }
-    tom = {"Em alta": "green", "Estável": "blue", "Sem obra nova": "gray"}
-    saida = [_fx(r, condicao[r], tom[r]) for r in _ROTULO_CLASSE.values()]
+    from motor_expansao.dashboard.constants import RESIDUAL_SCORE_BANDS
+
+    tom = {"Em alta": "green", "Estável": "green", "Sem obra nova": "red"}
+    faixa = {"Em alta": 9, "Estável": 7, "Sem obra nova": 1}
+    saida = [
+        _fx(r, condicao[r], tom[r], cor=RESIDUAL_SCORE_BANDS[faixa[r]][1])
+        for r in _ROTULO_CLASSE.values()
+    ]
     saida.append(
         _fx("Sem medição", "fora da mancha urbana medida ou fora das 12 UFs", "gray")
     )
@@ -12141,8 +12154,6 @@ def rede_unidade_concorrencia_pdf(unidade_id: str, mes: str | None = None) -> Re
     O censo é o único bloco que pode faltar sem derrubar o relatório: o PDF diz que não leu,
     como a tela.
     """
-    from motor_expansao.dashboard import rede_export
-
     if unidade_id.startswith(_PREFIXO_SEM_REDE):
         # unidade do cadastro sem dado na rede: o PDF só usa nome, UF e o raio
         sem_rede = rede_unidade_sem_rede(unidade_id)
@@ -12151,6 +12162,16 @@ def rede_unidade_concorrencia_pdf(unidade_id: str, mes: str | None = None) -> Re
     else:
         ficha = _rede_ficha_payload(unidade_id, mes)
         inteligencia = rede_unidade_inteligencia(unidade_id, mes)
+    return _concorrencia_pdf_da_unidade(unidade_id, ficha, inteligencia)
+
+
+def _concorrencia_pdf_da_unidade(
+    unidade_id: str, ficha: dict[str, Any], inteligencia: dict[str, Any]
+) -> Response:
+    """O PDF de concorrência a partir do que ele de fato lê: nome, UF e ponto da `ficha`, e o
+    `mapa` da `inteligencia`. As duas portas (`/api/rede/` e `/api/mapa/`) passam por aqui."""
+    from motor_expansao.dashboard import rede_export
+
     lat, lng = ficha.get("unidade", {}).get("lat"), ficha.get("unidade", {}).get("lng")
     censo_do_ponto: dict[str, Any] | None = None
     if lat is not None and lng is not None:
@@ -12656,6 +12677,57 @@ def rede_unidade_sem_rede(unidade_id: str) -> dict[str, Any]:
     if unidade["lat"] is not None and unidade["lng"] is not None:
         mapa = _rede_mapa_do_ponto(float(unidade["lat"]), float(unidade["lng"]))
     return {"unidade": unidade, "mapa": mapa}
+
+
+# --- Unidades da rede NO MAPA, para quem tem o mapa (pedido do Felipe, 2026-11-11) ---------
+# O seletor UNIDADES do cabeçalho do mapa e a ficha da unidade em janela liam `/api/rede/*`,
+# que é da aba `executiva` -- então quem só tinha o mapa via o filtro antigo "Faixa M1" no
+# lugar do seletor e não conseguia tirar o relatório de concorrência das unidades. A regra
+# do Felipe: quem tem o MAPA vê as unidades e extrai os relatórios delas, SEM ganhar a
+# Visão Executiva. Por isso rotas PRÓPRIAS e ENXUTAS, e não `/api/rede/` aberta ao mapa: a
+# carteira e a ficha da rede levam aluno, faturamento, franqueado e consultor. Aqui sai só o
+# que é do território -- nome, cidade, UF, ponto e a concorrência a 2 km -- e o PDF de
+# concorrência, que por construção não leva aluno nem faturamento.
+_CAMPOS_UNIDADE_NO_MAPA = ("id", "nome", "uf", "cidade", "lat", "lng")
+
+
+def _mapa_unidades_da_rede() -> list[dict[str, Any]]:
+    """As unidades da base da Growth, só com os campos de território (sem base = nenhuma)."""
+    try:
+        carteira = _rede_carteira_payload(
+            None, None, None, None, None, None, None, None, None, "prioridade", "desc"
+        )
+    except HTTPException:
+        return []
+    return [{campo: u.get(campo) for campo in _CAMPOS_UNIDADE_NO_MAPA} for u in carteira.get("unidades", [])]
+
+
+@app.get("/api/mapa/unidades")
+def mapa_unidades() -> dict[str, Any]:
+    """O seletor UNIDADES do mapa: as unidades da rede e as do cadastro sem dado na Growth."""
+    rede = [{**u, "sem_rede": False} for u in _mapa_unidades_da_rede()]
+    cadastro = [{**u, "sem_rede": True} for u in _rede_unidades_sem_rede()]
+    return {"unidades": rede + cadastro}
+
+
+@app.get("/api/mapa/unidade/{unidade_id}")
+def mapa_unidade(unidade_id: str) -> dict[str, Any]:
+    """A ficha da unidade no mapa para quem não tem a Executiva: território e concorrência."""
+    if unidade_id.startswith(_PREFIXO_SEM_REDE):
+        return rede_unidade_sem_rede(unidade_id)
+    unidade = next((u for u in _mapa_unidades_da_rede() if u["id"] == unidade_id), None)
+    if unidade is None:
+        raise HTTPException(404, f"Unidade {unidade_id} fora da base da rede.")
+    return {"unidade": unidade, "mapa": _rede_mapa_unidade(unidade_id)}
+
+
+@app.get("/api/mapa/unidade/{unidade_id}/concorrencia.pdf")
+def mapa_unidade_concorrencia_pdf(unidade_id: str) -> Response:
+    """O mesmo PDF de concorrência da Executiva, montado só com o território da unidade."""
+    ficha = mapa_unidade(unidade_id)
+    return _concorrencia_pdf_da_unidade(
+        unidade_id, {"unidade": ficha["unidade"], "mes": ""}, {"mapa": ficha["mapa"]}
+    )
 
 
 def _rede_mapa_do_ponto(lat: float, lng: float) -> dict[str, Any]:

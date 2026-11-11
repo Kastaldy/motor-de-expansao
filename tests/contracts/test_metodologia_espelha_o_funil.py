@@ -626,3 +626,29 @@ def test_as_clausulas_condicionais_seguem_as_flags_da_regua(regra_br):
     residual = next(m for m in c5["metricas"] if m["coluna"] == "oferta_efetiva_disponivel")
     assert "na Mata Virgem" in residual["regra"]
     assert "nunca entra no Top" not in residual["regra"]
+
+
+def test_cores_do_mapa_da_camada_4_seguem_a_rampa_padrao(metodologia: dict) -> None:
+    """Os chips "cores do mapa" da camada 4 prometem a MESMA cor que o hexagono recebe.
+
+    Desde 2026-11-10/11 o passo 4 pinta as tres classes como as camadas 1-3 pintam uma faixa
+    de score: Em alta = faixa 90-100 (verde), Estavel = 70-80 (o verde mais claro), Sem obra
+    nova = 10-20 (vermelho). O `cor` sai de RESIDUAL_SCORE_BANDS (a copia TS e travada por
+    test_paridade_paleta_web), e nao de literal proprio: mudar so' o mapa deixaria o manual
+    prometendo outra cor. `Sem medicao` nao corresponde a faixa nenhuma da rampa — fica cinza
+    e sem `cor`.
+    """
+    from motor_expansao.dashboard.constants import RESIDUAL_SCORE_BANDS
+
+    c4 = _camada(metodologia, 4)
+    por_etiqueta = {f["etiqueta"]: f for f in c4.get("legenda_mapa", [])}
+    esperado = {
+        "Em alta": ("green", RESIDUAL_SCORE_BANDS[9][1]),
+        "Estável": ("green", RESIDUAL_SCORE_BANDS[7][1]),
+        "Sem obra nova": ("red", RESIDUAL_SCORE_BANDS[1][1]),
+    }
+    for etiqueta, (tom, cor) in esperado.items():
+        assert por_etiqueta[etiqueta]["tom"] == tom, etiqueta
+        assert por_etiqueta[etiqueta].get("cor") == cor, etiqueta
+    assert por_etiqueta["Sem medição"]["tom"] == "gray"
+    assert por_etiqueta["Sem medição"].get("cor") is None

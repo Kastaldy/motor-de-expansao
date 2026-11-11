@@ -39,9 +39,10 @@ describe('App: um ramo só para as duas entradas do mapa', () => {
 
   it('a busca vira ponto e o cabeçalho mostra UNIDADES nas duas entradas', () => {
     expect(app).toContain('onPontoBuscado={pedirPonto}')
-    // `telaLiberada` e não `true`: quem não tem a aba executiva segue no MELHORES, porque
-    // `/api/rede/*` responderia 403.
-    expect(app).toContain("verUnidades={telaLiberada('executiva', abas)}")
+    // O seletor UNIDADES é de todos que têm o mapa (`/api/mapa/*`, 11/11/2026); a aba
+    // executiva só decide os ALUNOS na ficha da unidade (`/api/rede/*`).
+    expect(app).toContain("verRede={telaLiberada('executiva', abas)}")
+    expect(app).not.toContain('verUnidades')
   })
 
   it('a entrada decide só o hero da tela vazia', () => {

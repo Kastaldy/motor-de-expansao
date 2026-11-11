@@ -328,10 +328,17 @@ Idênticas ao dashboard Streamlit (CLAUDE.md §5): faixas de 10 pontos via
 `RESIDUAL_SCORE_BANDS` (vermelho→verde), corte de `<5k hab` em cinza e score NaN
 com fill próprio — porte 1:1 de `dashboard/utils.score_band_to_color`. O score que
 colore muda por passo, espelhando os modos do dashboard: passo 1 → censitário,
-passo 2 → residual (modelo de 2 km), passo 3 → residual do modelo de 1 km (padrão da camada desde 2026-09-02), passo 5 → faixa de oportunidade do M1 — no Brasil, a cor do segmento do Top 10 (DEC-077). O **passo 4 é a
-exceção**: ele não usa a rampa de score, e sim três classes categóricas de
-crescimento da área construída do hexágono (`crescClasseToColor`) — não há nota
-ali, há direção. Os hexágonos **do passo atual ficam em opacidade cheia e os de
+passo 2 → residual (modelo de 2 km), passo 3 → residual do modelo de 1 km (padrão da camada desde 2026-09-02), passo 5 → faixa de oportunidade do M1 — no Brasil, a cor do segmento do Top 10 (DEC-077). O **passo 4** não
+pinta por nota, e sim por três classes de crescimento da área construída do
+hexágono (`crescClasseToColor`) — ali há direção, não nota. Desde 2026-11-10/11 as
+três classes são pintadas **como as camadas 1-3 pintam uma faixa de score**: em alta =
+verde da faixa 90-100, estável = verde da faixa 70-80 (o mais claro), sem obra nova =
+vermelho da faixa 10-20, todas com a opacidade do tema (`alphaHex`), e sem medição fica
+cinza. Uma opacidade só, de propósito: a tentativa de dar à classe intensidade própria
+pela taxa deixava, no tema escuro, o estável mais escuro que o em alta, enquanto a
+legenda (cor cheia) mostrava o contrário. O passo 4 **não usa o holofote** do funil:
+esmaecer o que está fora do recorte deixava um verde de 47% mais forte que um de 50% ao
+lado. Nos demais passos, os hexágonos **do passo atual ficam em opacidade cheia e os de
 fora esmaecem** — um holofote no funil, sem contorno colorido (as 10 aberturas do
 passo 5 precisam se destacar no meio do mapa). Só o hex selecionado ganha um
 contorno claro.

@@ -71,12 +71,15 @@ describe('fotoAplicavel', () => {
     expect(fotoAplicavel(undefined, 'SP', 'São Paulo')).toBe(ESTADO_MAPA_VAZIO)
   })
 
-  it('preserva o cenario multi-hex e o filtro de faixa', () => {
-    const f = foto({ modoCenario: true, cenario: ['87a', '87b'], filtroFaixa: 'alta' })
+  it('preserva o cenario multi-hex', () => {
+    const f = foto({ modoCenario: true, cenario: ['87a', '87b'] })
     const out = fotoAplicavel(f, 'SP', 'São Paulo')
     expect(out.modoCenario).toBe(true)
     expect(out.cenario).toEqual(['87a', '87b'])
-    expect(out.filtroFaixa).toBe('alta')
+  })
+
+  it('o filtro "Faixa M1" saiu da foto (11/11/2026): o mapa não guarda filtro de hexes', () => {
+    expect(Object.keys(ESTADO_MAPA_VAZIO)).not.toContain('filtroFaixa')
   })
 })
 

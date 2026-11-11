@@ -808,10 +808,10 @@ export default function App() {
                  ele a ficha reabriria a cada volta ao mapa, mesmo fechada de propósito. */
               imovelInicial={imovelDestino}
               onImovelAberto={() => setImovelDestino(null)}
-              /* Seletor de unidades e ficha da unidade em janela: leem `/api/rede/*`, que é
-                 da aba `executiva`. Sem ela o cabeçalho do mapa fica com o MELHORES — nas
-                 DUAS entradas, já que o seletor de unidades só responderia 403. */
-              verUnidades={telaLiberada('executiva', abas)}
+              /* Só os ALUNOS na ficha da unidade dependem da Executiva (`/api/rede/*`). O
+                 seletor de unidades, a ficha de território e o PDF de concorrência são de
+                 todos que têm o mapa (`/api/mapa/*`, 11/11/2026). */
+              verRede={telaLiberada('executiva', abas)}
               /* `undefined` quando a aba é vetada: o contrato do MapScreen é "ausente =
                  o botão não aparece" — passar sempre deixaria um botão primário morto. */
               onVerImovelNaAba={
