@@ -172,16 +172,15 @@ describe('HexMap: o Top 10 na camada 5', () => {
 })
 
 describe('MapScreen: as 10 regiões sempre no mapa', () => {
-  it('o filtro de faixa M1 passa por `hexesComTop10`, e o mapa recebe o Top 10', () => {
-    expect(mapScreen).toContain('return hexesComTop10(filtradosPelaFaixa, hs, top10?.ids ?? [])')
+  it('sem o filtro de faixa M1 (11/11/2026) o mapa desenha todos os hexes, e recebe o Top 10', () => {
+    expect(mapScreen).toContain('const hexesFiltrados = useMemo(() => dados?.hexes ?? [], [dados])')
+    expect(mapScreen).not.toContain('filtroFaixa')
     expect(mapScreen).toContain('top10={top10}')
     expect(mapScreen).toContain('recomendacao={dados.recomendacao ?? null}')
     expect(mapScreen).toContain('passo.n === 5 && dados.recomendacao ? legendaTop10(dados.recomendacao) : null')
   })
 
   it('os textos de front que mudam com o Top 10 vêm da TABELA por país, com o legado de reserva', () => {
-    expect(mapScreen).toContain("textosTop10()?.filtroFaixaRotulo ?? 'MELHORES'")
-    expect(mapScreen).toContain("textosTop10()?.filtroFaixaLabel ?? 'Filtrar pelos melhores hexes'")
     expect(mapScreen).toContain('textosTop10()?.landingMapa ??')
   })
 })

@@ -82,6 +82,10 @@ FEATURES_ROTULOS: tuple[tuple[str | None, str, str], ...] = (
     (None, "/api/rede/unidades-sem-rede", "Navegou pelo mapa"),
     (None, "/api/rede/unidade-sem-rede/", "Abriu ficha de unidade"),
     (None, "/api/rede/carteira", "Consultou carteira da rede"),
+    # As mesmas leituras pela porta do Mapa (11/11/2026): a lista vem sozinha ao montar.
+    (None, "/api/mapa/unidades", "Navegou pelo mapa"),
+    (None, "/api/mapa/unidade/", "Abriu ficha de unidade"),
+    (None, "/api/mapa/", "Navegou pelo mapa"),
     (None, "/api/rede/", "Visão executiva da rede"),
     (None, "/api/executiva/", "Visão executiva da rede"),
     (None, "/api/relatorio/pontual", "Gerou relatório pontual"),

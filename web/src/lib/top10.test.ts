@@ -771,7 +771,7 @@ describe('textosTop10 — tabela por país, nunca ramo', () => {
     const t = textosTop10('BR')
     expect(t).not.toBeNull()
     for (const v of Object.values(t!)) expect(v.trim()).not.toBe('')
-    expect(t!.filtroFaixaRotulo).toBe('FAIXA M1')
+    expect(t!.seloFaixaPrefixo).toBe('Faixa M1 · ')
   })
 
   it('o corte das camadas na metodologia é régua de leitura (1 a 4) e régua do Top 10 (5)', () => {

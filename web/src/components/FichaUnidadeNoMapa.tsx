@@ -37,10 +37,12 @@ import { Botao } from './primitives'
  * está, por quanto, e o que ela oferece. A ficha completa (série, funil, diagnóstico)
  * continua sendo a página da Visão Executiva; esta não a substitui.
  *
- * NÃO HÁ ROTA NOVA. Tudo sai de três leituras que já existiam: a ficha da rede
- * (`/api/rede/unidade/{id}`), a inteligência dela (`.../inteligencia`) e o censo do ponto
- * (`/api/ponto`). Cada bloco carrega e falha SOZINHO: a rede fora do ar não apaga o
- * entorno, e vice-versa.
+ * Quem vê a REDE (aba `executiva`, `verRede`) lê a ficha da rede (`/api/rede/unidade/{id}`)
+ * e a inteligência dela (`.../inteligencia`), com os alunos. Quem só tem o mapa lê a porta
+ * do MAPA (`/api/mapa/unidade/{id}`, 11/11/2026): o ponto e a concorrência, sem aluno — a
+ * mesma leitura da unidade sem dado na Growth. O censo do ponto (`/api/ponto`) vale para
+ * todos. Cada bloco carrega e falha SOZINHO: a rede fora do ar não apaga o entorno, e
+ * vice-versa.
  *
  * DOIS RAIOS na mesma janela, e cada número diz o seu: o entorno (renda, densidade) é o
  * raio de 1 km do Relatório Pontual; a concorrência é o de 2 km da ficha da rede.
@@ -48,14 +50,20 @@ import { Botao } from './primitives'
 export default function FichaUnidadeNoMapa({
   unidadeId,
   semRede = false,
+  verRede = false,
   onEstudarRegiao,
 }: {
   unidadeId: string
   /** unidade do cadastro sem dado na Growth: a ficha é só território (pedido do Juan, 14/10) */
   semRede?: boolean
+  /** quem vê a REDE (aba `executiva`): a ficha ganha os alunos. Sem ela, só território. */
+  verRede?: boolean
   /** "Estudar a região desta unidade" (emenda da DEC-070). Ausente = o botão não aparece. */
   onEstudarRegiao?: (lat: number, lng: number) => void
 }) {
+  /* Só território quando não há dado da rede OU quando quem olha não vê a rede: as duas
+     leem a mesma porta do mapa e desenham o mesmo raio. */
+  const soTerritorio = semRede || !verRede
   const [ficha, setFicha] = useState<RedeFicha | null>(null)
   const [cadastro, setCadastro] = useState<RedeUnidadeSemRedeFicha | null>(null)
   const [intel, setIntel] = useState<RedeUnidadeInteligencia | null>(null)
@@ -72,7 +80,11 @@ export default function FichaUnidadeNoMapa({
     setBaixando(true)
     setErroPdf(null)
     try {
-      const { blob, filename } = await api.redeUnidadeConcorrenciaPdf(unidadeId)
+      /* A porta do MAPA serve o mesmo PDF (que não leva aluno nem faturamento) a todos
+         que têm o mapa; a da rede fica para quem tem a Executiva, como sempre foi. */
+      const { blob, filename } = soTerritorio
+        ? await api.mapaUnidadeConcorrenciaPdf(unidadeId)
+        : await api.redeUnidadeConcorrenciaPdf(unidadeId)
       baixar(blob, filename)
     } catch (e) {
       setErroPdf((e as ApiError).message)
@@ -119,10 +131,10 @@ export default function FichaUnidadeNoMapa({
         .catch(() => vivo && setErroPonto(true))
     }
 
-    if (semRede) {
-      // Sem dado na Growth não há ficha da rede nem inteligência: só o cadastro e o raio.
+    if (soTerritorio) {
+      // Sem dado na Growth, ou sem a Executiva: só o ponto e o raio, pela porta do mapa.
       api
-        .redeUnidadeSemRede(unidadeId)
+        .mapaUnidade(unidadeId)
         .then((c) => {
           if (!vivo) return
           setCadastro(c)
@@ -156,11 +168,11 @@ export default function FichaUnidadeNoMapa({
     return () => {
       vivo = false
     }
-  }, [unidadeId, semRede])
+  }, [unidadeId, soTerritorio])
 
   // o que as duas origens têm em comum: nome, cidade, UF e o ponto; e o raio de concorrência
-  const unidade = semRede ? cadastro?.unidade : ficha?.unidade
-  const mapa = semRede ? (cadastro ? cadastro.mapa : undefined) : intel ? intel.mapa : undefined
+  const unidade = soTerritorio ? cadastro?.unidade : ficha?.unidade
+  const mapa = soTerritorio ? (cadastro ? cadastro.mapa : undefined) : intel ? intel.mapa : undefined
   const semPonto = unidade != null && (unidade.lat == null || unidade.lng == null)
   const concorrentes = mapa?.concorrentes ?? []
 
@@ -225,7 +237,7 @@ export default function FichaUnidadeNoMapa({
           Sem dados da rede: a unidade está no cadastro das Ultra, mas a base da Growth ainda
           não tem movimento dela. A ficha mostra só a região e a concorrência.
         </Nota>
-      ) : (
+      ) : !verRede ? null : (
         <section>
           <TituloSecao titulo="Alunos" nota={ficha ? `ref. ${ficha.referencia}` : undefined} />
           {erroFicha ? (
