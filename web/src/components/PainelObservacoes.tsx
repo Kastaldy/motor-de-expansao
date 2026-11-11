@@ -17,6 +17,7 @@ import {
   apenasDigitos,
   camposDoFormulario,
   dataHora,
+  DIGITOS_MAXIMOS,
   estrelas,
   formularioDe,
   linhasDaObservacao,
@@ -25,6 +26,7 @@ import {
   NOTA_MAXIMA,
   NOTAS,
   numeroDoRotulo,
+  TEXTO_MAXIMO,
   type Formulario,
 } from '../lib/observacoes'
 import type { Observacao, ObservacoesPayload, Pin } from '../lib/types'
@@ -409,6 +411,7 @@ function FormularioObservacao({
           <span style={label}>Metragem (m²)</span>
           <input
             inputMode="numeric"
+            maxLength={DIGITOS_MAXIMOS}
             placeholder="Ex.: 1500"
             value={form.metragem_m2}
             onChange={(e) => setForm({ ...form, metragem_m2: apenasDigitos(e.target.value) })}
@@ -418,6 +421,7 @@ function FormularioObservacao({
           <span style={label}>Vagas</span>
           <input
             inputMode="numeric"
+            maxLength={DIGITOS_MAXIMOS}
             placeholder="Estacionamento"
             value={form.vagas}
             onChange={(e) => setForm({ ...form, vagas: apenasDigitos(e.target.value) })}
@@ -427,6 +431,7 @@ function FormularioObservacao({
           <span style={label}>Alunos estimados</span>
           <input
             inputMode="numeric"
+            maxLength={DIGITOS_MAXIMOS}
             placeholder="Se souber"
             value={form.alunos_estimados}
             onChange={(e) => setForm({ ...form, alunos_estimados: apenasDigitos(e.target.value) })}
@@ -448,7 +453,7 @@ function FormularioObservacao({
         <span style={label}>Equipamentos</span>
         <textarea
           rows={2}
-          maxLength={1000}
+          maxLength={TEXTO_MAXIMO}
           placeholder="Marca, quantidade, estado de conservação…"
           value={form.equipamentos}
           onChange={(e) => setForm({ ...form, equipamentos: e.target.value })}
@@ -459,7 +464,7 @@ function FormularioObservacao({
         <span style={label}>Comodidades e aulas coletivas</span>
         <textarea
           rows={2}
-          maxLength={1000}
+          maxLength={TEXTO_MAXIMO}
           placeholder="Vestiário, sauna, piscina, spinning, pilates, grade de aulas…"
           value={form.comodidades}
           onChange={(e) => setForm({ ...form, comodidades: e.target.value })}
@@ -470,7 +475,7 @@ function FormularioObservacao({
         <span style={label}>Comentário</span>
         <textarea
           rows={3}
-          maxLength={2000}
+          maxLength={TEXTO_MAXIMO}
           placeholder="O que você viu ou ouviu sobre esta unidade"
           value={form.comentario}
           onChange={(e) => setForm({ ...form, comentario: e.target.value })}

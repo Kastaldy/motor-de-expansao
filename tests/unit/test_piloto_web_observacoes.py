@@ -162,14 +162,41 @@ def test_campos_normalizados() -> None:
         {"nota_atendimento": "ótimo"},
         {"alunos_estimados": 0},
         {"alunos_estimados": 50_001},
-        {"equipamentos": "x" * 1001},
-        {"comodidades": "x" * 1001},
-        {"comentario": "x" * 2001},
+        {"equipamentos": "x" * 251},
+        {"comodidades": "x" * 251},
+        {"comentario": "x" * 251},
     ],
 )
 def test_campos_invalidos(campos: dict[str, Any]) -> None:
     with pytest.raises(observacoes.CampoInvalido):
         observacoes.normalizar_campos(**campos)
+
+
+# Teto de 250 caracteres nos três textos (pedido de 11/11; eram 1.000, 1.000 e 2.000). O CHECK da
+# 023 segue em 1.000/2.000: o banco mais largo que a aplicação é o lado seguro, sem migration.
+
+
+@pytest.mark.parametrize("campo", ["equipamentos", "comodidades", "comentario"])
+def test_texto_de_250_caracteres_passa_e_o_251_recebe_o_recado(campo: str) -> None:
+    assert getattr(observacoes.normalizar_campos(**{campo: "x" * 250}), campo) == "x" * 250
+    # Conta depois de tirar os espaços das pontas, como a tela.
+    assert getattr(observacoes.normalizar_campos(**{campo: f"  {'x' * 250}  "}), campo) == "x" * 250
+    with pytest.raises(observacoes.CampoInvalido, match="passa de 250 caracteres"):
+        observacoes.normalizar_campos(**{campo: "x" * 251})
+
+
+def test_teto_de_texto_e_o_mesmo_na_tela_e_no_servidor() -> None:
+    """O 250 vive em dois lugares (servidor e `web/src/lib/observacoes.ts`); este teste os amarra."""
+    import re
+
+    fonte = (_REPO / "web" / "src" / "lib" / "observacoes.ts").read_text(encoding="utf-8")
+    achado = re.search(r"export const TEXTO_MAXIMO = (\d+)", fonte)
+    assert achado, "TEXTO_MAXIMO sumiu de web/src/lib/observacoes.ts"
+    assert (
+        {limite for _campo, _rotulo, limite in observacoes.TEXTOS}
+        == {int(achado.group(1))}
+        == {250}
+    )
 
 
 # Número é número INTEIRO e texto é TEXTO (prévia de 10/11: a tela aceitava letra na metragem e
