@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 
 import AvisoConfidencialidade from './components/AvisoConfidencialidade'
 import AvisoSessao from './components/AvisoSessao'
+import ProgressoDownload from './components/ProgressoDownload'
 import TrocaDeSenha from './components/TrocaDeSenha'
 import Dock from './components/Dock'
 import type { SearchPin } from './components/HexMap'
@@ -1022,6 +1023,9 @@ export default function App() {
           />
         )}
 
+      {/* Progresso dos downloads (11/11/2026): diz que o arquivo ainda está chegando, para
+          ninguém recarregar a página no meio de um estudo pesado. */}
+      <ProgressoDownload />
       {/* POR ÚLTIMO de propósito, e não por acaso da resolução do merge: com o mesmo
           `zIndex` dos outros dois, quem é o último filho fica por cima. Sessão caída tem
           de cobrir a troca de senha — sem sessão a chamada morre em 401 de qualquer

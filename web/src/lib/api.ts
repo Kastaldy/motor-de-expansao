@@ -221,6 +221,51 @@ interface TextosDownload {
  * de erro faláveis. Era `pedirPdf`; virou genérico quando entrou o simulador em Excel
  * — o corpo é idêntico, só os textos mudam.
  */
+/**
+ * PROGRESSO DE DOWNLOAD (11/11/2026). O Estudo pontual chegava a ~6 MB e, numa conexão
+ * lenta, levava minutos; o botão só dizia "Gerando…" e a pessoa recarregava a página achando
+ * que travou, o que cortava o download no meio (Daniele, 11/11). Agora todo `pedirArquivo`
+ * publica em que pé está: `recebidos = 0` é o servidor ainda gerando; depois, os bytes que
+ * já chegaram contra o `Content-Length`. Quem desenha é `components/ProgressoDownload`.
+ */
+export interface ProgressoDownload {
+  recebidos: number
+  /** `null` quando o servidor não mandou `Content-Length`: aí só os bytes recebidos. */
+  total: number | null
+}
+
+const ouvintesDownload = new Set<(p: ProgressoDownload | null) => void>()
+
+/** Assina o progresso dos downloads; `null` = nenhum em andamento. Devolve o cancelamento. */
+export function assinarProgressoDownload(fn: (p: ProgressoDownload | null) => void): () => void {
+  ouvintesDownload.add(fn)
+  return () => {
+    ouvintesDownload.delete(fn)
+  }
+}
+
+function avisarDownload(p: ProgressoDownload | null) {
+  for (const fn of ouvintesDownload) fn(p)
+}
+
+/** Lê o corpo em partes para publicar o progresso; sem stream (navegador antigo), `blob()`. */
+async function lerComProgresso(r: Response): Promise<Blob> {
+  const cl = Number(r.headers.get('Content-Length'))
+  const total = Number.isFinite(cl) && cl > 0 ? cl : null
+  if (!r.body) return r.blob()
+  const leitor = r.body.getReader()
+  const partes: Uint8Array[] = []
+  let recebidos = 0
+  for (;;) {
+    const { done, value } = await leitor.read()
+    if (done) break
+    partes.push(value)
+    recebidos += value.byteLength
+    avisarDownload({ recebidos, total })
+  }
+  return new Blob(partes as BlobPart[], { type: r.headers.get('Content-Type') ?? '' })
+}
+
 async function pedirArquivo(
   url: string,
   init: RequestInit,
@@ -229,6 +274,7 @@ async function pedirArquivo(
 ): Promise<{ blob: Blob; filename: string }> {
   const ctrl = new AbortController()
   const t = setTimeout(() => ctrl.abort(), TIMEOUT_ARQUIVO)
+  avisarDownload({ recebidos: 0, total: null })
   try {
     const r = await fetch(url, { ...init, signal: ctrl.signal })
     if (!r.ok) {
@@ -252,7 +298,7 @@ async function pedirArquivo(
     // O header vem como `attachment; filename="..."`; se faltar, usa o sugerido.
     const cd = r.headers.get('Content-Disposition') ?? ''
     const m = /filename="?([^";]+)"?/.exec(cd)
-    return { blob: await r.blob(), filename: m?.[1] ?? nomeSugerido }
+    return { blob: await lerComProgresso(r), filename: m?.[1] ?? nomeSugerido }
   } catch (e) {
     if (e instanceof ApiError) throw e
     if (e instanceof DOMException && e.name === 'AbortError') {
@@ -266,6 +312,7 @@ async function pedirArquivo(
     throw new ApiError(textos.rede ?? 'Não foi possível gerar o relatório.', 0)
   } finally {
     clearTimeout(t)
+    avisarDownload(null)
   }
 }
 

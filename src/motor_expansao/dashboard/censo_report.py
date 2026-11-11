@@ -784,6 +784,55 @@ def _png_dimensions(raw: bytes) -> tuple[int, int] | None:
 # ---------------------------------------------------------------------------
 
 
+# IMAGENS GRANDES EM JPEG (11/11/2026). O Estudo pontual saía com ~6 MB, e 99% disso eram os
+# mapas em PNG (1280x760 com transparência, ~600 KB cada). Numa conexão lenta o download
+# levava minutos e a pessoa recarregava achando que travou (Daniele, Guará I/DF: 5,95 MB, 105 s
+# para chegar). Em JPEG o mesmo estudo cai para ~2,9 MB, com diferença visual média <= 1 nível
+# de cor por página (medido renderizando as 11 páginas).
+#
+# A TRANSPARÊNCIA É PRESERVADA, e é o ponto delicado: os mapas são cartões translúcidos sobre o
+# fundo do slide (97% dos pixels com alfa < 255). O `set_image_filter("DCTDecode")` do fpdf2
+# DESCARTA o canal alfa de propósito, e os cartões viravam retângulos brancos; a paleta de 256
+# cores mantinha o alfa mas desbotava as cores das legendas. Por isso o alfa vai como uma
+# imagem CINZA em JPEG no `smask` -- o fpdf2 grava a máscara com o filtro da imagem dela.
+_JPEG_MIN_PIXELS = 200_000
+_JPEG_QUALIDADE_COR = 85
+_JPEG_QUALIDADE_ALFA = 92
+
+
+def _jpeg(img: Image.Image, qualidade: int) -> bytes:
+    buf = BytesIO()
+    img.save(buf, format="JPEG", quality=qualidade, optimize=True)
+    return buf.getvalue()
+
+
+def _imagem_em_jpeg(fonte: object) -> tuple[bytes, bytes | None] | None:
+    """(cor em JPEG, alfa em JPEG ou None) de um PNG grande; None = usar a imagem como veio.
+
+    Só mexe em PNG de pelo menos `_JPEG_MIN_PIXELS`: ícone, logo e pino ficam como estão, e o
+    que já é JPEG (fotos do imóvel, satélite) não é recomprimido.
+    """
+    if isinstance(fonte, BytesIO):
+        bruto = fonte.getvalue()
+    elif isinstance(fonte, (bytes, bytearray)):
+        bruto = bytes(fonte)
+    else:
+        return None
+    try:
+        img = Image.open(BytesIO(bruto))
+        if img.format != "PNG" or img.width * img.height < _JPEG_MIN_PIXELS:
+            return None
+        rgba = img.convert("RGBA")
+    except Exception:  # noqa: BLE001 -- imagem que o PIL não lê segue para o fpdf2 como veio
+        return None
+    alfa = rgba.getchannel("A")
+    opaca = alfa.getextrema()[0] == 255
+    return (
+        _jpeg(rgba.convert("RGB"), _JPEG_QUALIDADE_COR),
+        None if opaca else _jpeg(alfa, _JPEG_QUALIDADE_ALFA),
+    )
+
+
 class _UltraPDF(FPDF):
     """FPDF com compressao desativada (auditabilidade anti-PII + asserts de texto cru)."""
 
@@ -795,6 +844,17 @@ class _UltraPDF(FPDF):
         self.set_compression(False)
         self.set_auto_page_break(False)
         self.set_margins(0, 0, 0)
+
+    def image(self, name: Any, *args: Any, **kwargs: Any) -> Any:  # type: ignore[override]
+        """O `FPDF.image` com os PNG grandes trocados por JPEG (ver `_imagem_em_jpeg`)."""
+        convertida = _imagem_em_jpeg(name)
+        if convertida is None:
+            return super().image(name, *args, **kwargs)
+        cor, alfa = convertida
+        info = super().image(BytesIO(cor), *args, **kwargs)
+        if alfa is not None:
+            info["smask"] = alfa
+        return info
 
 
 def _draw_full_page_background(
