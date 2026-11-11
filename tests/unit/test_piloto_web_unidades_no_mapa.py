@@ -22,7 +22,7 @@ import acesso  # noqa: E402
 import app as pilot  # noqa: E402
 
 from tests.unit.test_piloto_web_rede import rede  # noqa: E402,F401  (fixture)
-from tests.unit.test_piloto_web_unidades_sem_rede import cadastro_ultra  # noqa: E402,F401  (fixture)
+from tests.unit.test_piloto_web_unidades_sem_rede import cadastro_ultra  # noqa: E402,F401,I001
 
 CAMPOS = {"id", "nome", "uf", "cidade", "lat", "lng", "sem_rede"}
 
