@@ -87,11 +87,10 @@ import { degrauSobreFichaDePonto, janelaDoHexVisivel, pontoSeleciona } from '../
 import { selecaoMarcadaNoMapa } from '../lib/alcance'
 import type { PinDoPonto } from '../lib/pontos-estado'
 import type { Tema } from '../lib/tema'
-import { hexesComTop10, legendaTop10, mapaTop10, textosTop10 } from '../lib/top10'
+import { legendaTop10, mapaTop10, textosTop10 } from '../lib/top10'
 import type {
   Cobertura1k,
-  RedeUnidade,
-  RedeUnidadeSemRede,
+  MapaUnidade,
   Hex,
   MunicipioItem,
   MunicipioPayload,
@@ -109,13 +108,6 @@ import type {
    este portao e o `PASSOS_DA_PRESSAO` do `HexMap`. Mudar um sem o outro deixa o mapa
    pintando por uma regua e desenhando o recorte por outra. */
 const CAMADA_DO_RAIO = 3
-
-/** Filtro global "melhores hexes": faixas M1 permitidas por nível. */
-const FAIXA_FILTROS: Record<string, Set<string>> = {
-  prioridade: new Set(['Prioridade máxima']),
-  alta: new Set(['Prioridade máxima', 'Alta']),
-  media: new Set(['Prioridade máxima', 'Alta', 'Média']),
-}
 
 export interface MapScreenProps {
   ufs: string[]
@@ -235,12 +227,12 @@ export interface MapScreenProps {
   /** Avisa que a intenção acima foi consumida, para não reabrir a cada volta ao mapa. */
   onImovelAberto?: () => void
   /**
-   * Se o usuário pode ver as UNIDADES da rede aqui: o seletor de unidades do cabeçalho e a
-   * ficha da unidade em janela (2026-10-01). Os dois leem `/api/rede/*`, que o backend só
-   * serve a quem tem a aba `executiva` — quem decide é o App, pelo mesmo `telaLiberada` do
-   * resto. `false` = o cabeçalho fica como sempre foi, com o filtro "Melhores".
+   * Se o usuário vê a REDE (aba `executiva`): só muda a ficha da unidade, que ganha os alunos
+   * dela (`/api/rede/*`). O seletor UNIDADES, a ficha de território e o PDF de concorrência
+   * são de todos que têm o mapa (`/api/mapa/*`, 11/11/2026) — quem decide é o App, pelo mesmo
+   * `telaLiberada` do resto.
    */
-  verUnidades?: boolean
+  verRede?: boolean
   /**
    * Publica a função de CAPTURA do mapa para quem está fora deste componente.
    *
@@ -292,7 +284,7 @@ export default function MapScreen({
   semLanding = false,
   imovelInicial = null,
   onImovelAberto,
-  verUnidades = false,
+  verRede = false,
   onVerImovelNaAba,
   tema,
 }: MapScreenProps) {
@@ -322,8 +314,6 @@ export default function MapScreen({
   const [buscaErro, setBuscaErro] = useState<string | null>(null)
   const [buscando, setBuscando] = useState(false)
 
-  // Filtro global: mostra só os melhores hexes (por faixa M1).
-  const [filtroFaixa, setFiltroFaixa] = useState(foto.filtroFaixa)
   // Cenário multi-hex: seleção de vários hexes para somar.
   const [modoCenario, setModoCenario] = useState(foto.modoCenario)
   const [cenario, setCenario] = useState<string[]>(foto.cenario)
@@ -718,37 +708,27 @@ export default function MapScreen({
    * unidades do ESTADO aberto, e escolher uma (ou clicar no pin dela) leva a câmera até lá e
    * abre a ficha em janela.
    *
-   * A carteira é buscada UMA vez, e só para quem pode vê-la (`verUnidades`): é a rede
-   * inteira (~230 KB), e o recorte por estado é feito aqui, sem nova ida ao servidor a cada
-   * troca de UF. Falha vira lista VAZIA, não `null`: `null` é "carregando", e uma rota que
-   * negou não pode deixar o seletor esperando para sempre.
+   * A lista é buscada UMA vez, pela porta do MAPA (`/api/mapa/unidades`, 11/11/2026): vale
+   * para todos que têm o mapa, com ou sem a Executiva, e traz só território. Junto vêm as
+   * unidades do CADASTRO que a Growth ainda não tem (em contrato, em pré-venda: Santana),
+   * pedido do Juan em 14/10. Falha vira lista VAZIA, não `null`: `null` é "carregando", e
+   * uma rota que negou não pode deixar o seletor esperando para sempre.
    */
-  const [unidadesRede, setUnidadesRede] = useState<RedeUnidade[] | null>(null)
-  /* As unidades do CADASTRO que a Growth ainda não tem (em contrato, em pré-venda: Santana),
-     pedido do Juan em 14/10. Lista à parte e opcional: falhar aqui não esvazia o seletor. */
-  const [unidadesSemRede, setUnidadesSemRede] = useState<RedeUnidadeSemRede[]>([])
+  const [unidades, setUnidades] = useState<MapaUnidade[] | null>(null)
   useEffect(() => {
-    if (!verUnidades) {
-      setUnidadesRede(null)
-      setUnidadesSemRede([])
-      return
-    }
     let vivo = true
     api
-      .redeCarteira()
-      .then((c) => vivo && setUnidadesRede(c.unidades))
-      .catch(() => vivo && setUnidadesRede([]))
-    api
-      .redeUnidadesSemRede()
-      .then((r) => vivo && setUnidadesSemRede(r.unidades))
-      .catch(() => vivo && setUnidadesSemRede([]))
+      .mapaUnidades()
+      .then((r) => vivo && setUnidades(r.unidades))
+      .catch(() => vivo && setUnidades([]))
     return () => {
       vivo = false
     }
-  }, [verUnidades])
+  }, [])
+  const unidadesRede = useMemo(() => (unidades ?? []).filter((u) => !u.sem_rede), [unidades])
   const opcoesUnidades = useMemo(
-    () => unidadesDaBusca(unidadesRede ?? [], unidadesSemRede, uf),
-    [unidadesRede, unidadesSemRede, uf],
+    () => unidadesDaBusca(unidadesRede, (unidades ?? []).filter((u) => u.sem_rede), uf),
+    [unidades, unidadesRede, uf],
   )
 
   const [unidadeAberta, setUnidadeAberta] = useState<UnidadeNoMapa | null>(null)
@@ -1025,7 +1005,6 @@ export default function MapScreen({
     setPin(null)
     setBuscaErro(null)
     setBuscando(false)
-    setFiltroFaixa('')
     setModoCenario(false)
     setCenario([])
     setImovelAberto(null)
@@ -1109,7 +1088,6 @@ export default function MapScreen({
       selecionado,
       pin,
       busca,
-      filtroFaixa,
       modoCenario,
       cenario,
     }
@@ -1181,18 +1159,9 @@ export default function MapScreen({
     [dados],
   )
 
-  // Filtro global de "melhores hexes" por faixa M1 (aplicado ao mapa).
-  /* As 10 regiões do Top 10 voltam para o mapa mesmo que o filtro as tire
-     (`hexesComTop10`): um Premium de faixa "Média" sumiria do território enquanto o painel
-     o lista. Sem Top 10 o resultado é exatamente o filtro de sempre. */
-  const hexesFiltrados = useMemo(() => {
-    const hs = dados?.hexes ?? []
-    const permitidas = FAIXA_FILTROS[filtroFaixa]
-    const filtradosPelaFaixa = permitidas
-      ? hs.filter((h) => h.faixa != null && permitidas.has(h.faixa))
-      : hs
-    return hexesComTop10(filtradosPelaFaixa, hs, top10?.ids ?? [])
-  }, [dados, filtroFaixa, top10])
+  /* O filtro "Faixa M1" do cabeçalho SAIU (11/11/2026): o seletor UNIDADES ocupa o lugar
+     dele para todos que têm o mapa, então o mapa desenha todos os hexes da camada. */
+  const hexesFiltrados = useMemo(() => dados?.hexes ?? [], [dados])
 
   /**
    * Os hexes a COMPARAR: de 2 a 5 selecionados.
@@ -1845,14 +1814,10 @@ export default function MapScreen({
              Contra a REDE INTEIRA, e não só a do estado aberto (21/10/2026): o pin de uma
              unidade do outro lado da divisa não abria nada, e agora abre a ficha e leva o
              mapa à UF e ao município dela (`abrirUnidade`). */
-          onUltra={
-            verUnidades
-              ? (p) => {
-                  const u = unidadeDoPin(p, unidadesRede ?? [])
-                  if (u) abrirUnidade(u)
-                }
-              : undefined
-          }
+          onUltra={(p) => {
+            const u = unidadeDoPin(p, unidadesRede)
+            if (u) abrirUnidade(u)
+          }}
           onConcorrente={setConcorrenteAberto}
           contagemObservacoes={contagemObs}
           cobertura1k={cobertura}
@@ -2052,11 +2017,9 @@ export default function MapScreen({
           )}
         </div>
 
-        {/* UNIDADES no lugar do MELHORES (pedido do Juan, 2026-10-01), para quem pode ver a
-            rede: as unidades do estado aberto, por nome; escolher uma abre a ficha dela.
-            Quem não tem a aba da rede segue com o filtro de sempre — trocar para ele também
-            deixaria um seletor que só responde 403. */}
-        {verUnidades ? (
+        {/* UNIDADES no lugar do MELHORES (pedido do Juan, 2026-10-01): as unidades do estado
+            aberto, por nome; escolher uma abre a ficha dela. Para TODOS que têm o mapa desde
+            11/11/2026 — o filtro antigo ("Faixa M1") saiu do código. */}
           <label style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
             <span className="num" style={{ font: '600 11px/1 var(--f-num)', color: 'var(--tx-strong)' }}>
               UNIDADES
@@ -2071,7 +2034,7 @@ export default function MapScreen({
               maxWidth={190}
               buscavel
               placeholder={
-                unidadesRede === null
+                unidades === null
                   ? 'Carregando…'
                   : opcoesUnidades.length === 0
                     ? `Nenhuma em ${uf}`
@@ -2080,28 +2043,6 @@ export default function MapScreen({
               options={opcoesUnidades.map((u) => ({ value: u.id, label: u.rotulo }))}
             />
           </label>
-        ) : (
-        <label style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-          {/* A faixa M1 é LEITURA, não recomendação: onde há o Top 10 o filtro se chama
-              pelo que ele é ("FAIXA M1"). Os identificadores (`prioridade|alta|media`,
-              `FAIXA_FILTROS`) não mudam; fora da tabela de textos (AR), o rótulo de sempre. */}
-          <span className="num" style={{ font: '600 11px/1 var(--f-num)', color: 'var(--tx-strong)' }}>
-            {textosTop10()?.filtroFaixaRotulo ?? 'MELHORES'}
-          </span>
-          <Select
-            label={textosTop10()?.filtroFaixaLabel ?? 'Filtrar pelos melhores hexes'}
-            value={filtroFaixa}
-            onChange={setFiltroFaixa}
-            maxWidth={150}
-            options={[
-              { value: '', label: 'Todos os hexes' },
-              { value: 'prioridade', label: 'Prioridade máxima' },
-              { value: 'alta', label: 'Alta ou +' },
-              { value: 'media', label: 'Média ou +' },
-            ]}
-          />
-        </label>
-        )}
 
         {/* Manual do funil. Ao lado do MELHORES e ANTES do `flex:1`: ocupa a folga do
             meio, entao o bloco de metricas segue ancorado na borda direita.
@@ -2542,6 +2483,7 @@ export default function MapScreen({
           <FichaUnidadeNoMapa
             unidadeId={unidadeAberta.id}
             semRede={unidadeAberta.semRede ?? false}
+            verRede={verRede}
             onEstudarRegiao={estudarRegiaoDaUnidade}
           />
         )}

@@ -615,8 +615,6 @@ export function legendaTop10(b: RecomendacaoTop10): LegendaTop10 {
 export interface TextosTop10Front {
   regiaoLinha: string
   landingMapa: string
-  filtroFaixaRotulo: string
-  filtroFaixaLabel: string
   seloFaixaPrefixo: string
   seloFaixaTitulo: string
   metodologiaTitulo: string
@@ -631,8 +629,6 @@ export const TEXTOS_TOP10_POR_PAIS: Readonly<Record<string, TextosTop10Front>> =
     regiaoLinha: 'Camadas de leitura e o Top 10 por hexágono, do estado ao município.',
     landingMapa:
       'O mapa lê o território em camadas — potencial, demanda, concorrência e crescimento — e mostra o Top 10 por hexágono do recorte.',
-    filtroFaixaRotulo: 'FAIXA M1',
-    filtroFaixaLabel: 'Filtrar pela faixa M1',
     seloFaixaPrefixo: 'Faixa M1 · ',
     seloFaixaTitulo:
       'Faixa do M1: percentil de renda e população. Não considera a concorrência instalada — isso é o bloco “Quanto de mercado sobra”.',

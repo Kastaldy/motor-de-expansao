@@ -33,8 +33,6 @@ export interface EstadoMapa {
   pin: SearchPin | null
   /** Texto cru da caixa de busca, para o operador reler o que digitou. */
   busca: string
-  /** Filtro global "melhores hexes" (faixa M1). */
-  filtroFaixa: string
   /** Cenario multi-hex: modo ligado e hexes somados. */
   modoCenario: boolean
   cenario: string[]
@@ -59,7 +57,6 @@ export const ESTADO_MAPA_VAZIO: EstadoMapa = Object.freeze({
   selecionado: null,
   pin: null,
   busca: '',
-  filtroFaixa: '',
   modoCenario: false,
   cenario: Object.freeze([]) as readonly string[] as string[],
   camera: null,

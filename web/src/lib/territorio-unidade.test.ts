@@ -176,7 +176,7 @@ describe('a fiação no MapScreen', () => {
   })
 
   it('o pin da Ultra casa contra a rede inteira (unidade do outro lado da divisa)', () => {
-    expect(mapa).toContain('const u = unidadeDoPin(p, unidadesRede ?? [])')
+    expect(mapa).toContain('const u = unidadeDoPin(p, unidadesRede)')
     expect(mapa).not.toContain('unidadesUf')
   })
 

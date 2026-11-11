@@ -66,7 +66,7 @@ export interface OpcaoUnidade {
  * juntas e por nome -- a pergunta continua sendo "onde esta' a unidade X".
  */
 export function unidadesDaBusca(
-  rede: readonly RedeUnidade[],
+  rede: readonly RedeUnidadeSemRede[],
   semRede: readonly RedeUnidadeSemRede[],
   uf: string,
 ): OpcaoUnidade[] {
@@ -107,12 +107,12 @@ export const TOLERANCIA_PIN_UNIDADE_M = 150
  * `null`: o mapa desenha unidades que ainda nao estao na base da rede, e para elas nao ha'
  * ficha a abrir.
  */
-export function unidadeDoPin(
+export function unidadeDoPin<T extends Pick<RedeUnidade, 'lat' | 'lng'>>(
   pin: Coord,
-  unidades: readonly RedeUnidade[],
+  unidades: readonly T[],
   toleranciaM: number = TOLERANCIA_PIN_UNIDADE_M,
-): RedeUnidade | null {
-  let melhor: RedeUnidade | null = null
+): T | null {
+  let melhor: T | null = null
   let menor = Infinity
   for (const u of unidades) {
     if (u.lat == null || u.lng == null) continue

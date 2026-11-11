@@ -139,6 +139,10 @@ REGRAS_DE_ACESSO: tuple[tuple[str, frozenset[str]], ...] = (
     # quem ve a academia no mapa pode ler e escrever sobre ela. Sem a barra no prefixo, cobre
     # tambem `/api/concorrente/observacoes/{id}` e `/contagem`.
     ("/api/concorrente/observacoes", frozenset({"mapa", "oportunidades"})),
+    # Unidades da rede NO MAPA (11/11/2026): o seletor UNIDADES do cabecalho, a ficha da
+    # unidade em janela e o PDF de concorrencia dela, para quem tem o mapa SEM ganhar a
+    # Executiva. Rotas enxutas (so' territorio e concorrencia), e por isso FORA de `/api/rede/`.
+    ("/api/mapa/", frozenset({"mapa"})),
 )
 
 
@@ -196,6 +200,7 @@ SUPERFICIE_DA_ROTA: tuple[tuple[str, frozenset[str]], ...] = (
     ("/api/foto-concorrente/", frozenset({"mapa"})),
     ("/api/pin-concorrente/", frozenset({"mapa"})),
     ("/api/concorrente/observacoes", frozenset({"mapa"})),
+    ("/api/mapa/", frozenset({"mapa"})),
 )
 
 # `/api/ponto`, `/api/resolver-ponto`, `/api/municipio-do-ponto`,
@@ -704,6 +709,9 @@ REGRAS_POR_CAPACIDADE: tuple[tuple[str, tuple[str, ...] | None, str], ...] = (
     # (05/11/2026) da as duas a todos os perfis. O que muda por perfil -- ver o nome do autor e
     # moderar -- e' `concorrente.ver_autor`, conferida DENTRO da rota, nao no gate.
     ("/api/concorrente/observacoes", None, "concorrente.anotar"),
+    # Unidades da rede no mapa (11/11/2026): territorio e concorrencia, sem financeiro --
+    # a capacidade do mapa, e nao `rede.ver`.
+    ("/api/mapa/", None, "territorio.explorar"),
     ("/api/oportunidades/", None, "imovel.dossie_ver"),
     ("/api/oportunidades", None, "imovel.listar"),
     ("/api/imobiliaria/evento/", None, "imovel.registrar_gesto"),
