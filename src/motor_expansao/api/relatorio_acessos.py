@@ -82,6 +82,8 @@ AGRUPAMENTO_ABAS: tuple[tuple[str, str], ...] = (
     # Anotacoes no pino de concorrente (DEC-084): mesmo gate e mesmo lugar de uso da foto
     # acima -- o painel abre pelo clique no pino, no Mapa.
     ("/api/concorrente/observacoes", "mapa"),
+    # Unidades da rede no Mapa (11/11/2026): seletor, ficha e PDF de concorrencia.
+    ("/api/mapa/", "mapa"),
 )
 
 #: Camada de LABEL (CLAUDE.md §2): valor bruto sem acento; exibição acentuada.
