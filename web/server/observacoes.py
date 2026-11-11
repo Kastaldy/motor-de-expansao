@@ -49,11 +49,16 @@ INTEIROS = (
     ("nota_atendimento", "A nota de atendimento", 1, 5),
     ("alunos_estimados", "Alunos estimados", 1, 50_000),
 )
+#: Teto de caracteres dos três textos livres (pedido de 11/11/2026; eram 1.000, 1.000 e 2.000).
+#: Mais justo que o CHECK `chk_observacao_tamanho_texto` da 023, que segue em 1.000/2.000: o banco
+#: mais largo que a aplicação é o lado seguro e dispensa migration. O MESMO número de
+#: `TEXTO_MAXIMO` em `web/src/lib/observacoes.ts` (teste amarra os dois).
+TEXTO_MAXIMO = 250
 #: (campo, rótulo, teto de caracteres) dos textos livres.
 TEXTOS = (
-    ("equipamentos", "O campo de equipamentos", 1_000),
-    ("comodidades", "O campo de comodidades e aulas coletivas", 1_000),
-    ("comentario", "O comentário", 2_000),
+    ("equipamentos", "O campo de equipamentos", TEXTO_MAXIMO),
+    ("comodidades", "O campo de comodidades e aulas coletivas", TEXTO_MAXIMO),
+    ("comentario", "O comentário", TEXTO_MAXIMO),
 )
 
 
