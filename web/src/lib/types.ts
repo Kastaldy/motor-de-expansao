@@ -433,14 +433,16 @@ export interface CamposDaObservacao {
 /**
  * Uma anotação de campo sobre a academia concorrente.
  *
- * `autor_nome`, `autor_perfil`, `apagada` e `historico` só EXISTEM no payload de quem tem
- * `concorrente.ver_autor` (Growth): o servidor os omite para os demais, que veem `autor_rotulo`
- * ("Pessoa 1", "Pessoa 2"…, numerado por academia). Não esconder nada aqui: o que não pode
- * aparecer nem chega.
+ * `autor_nome` (quem escreveu) chega para todos desde a emenda 1 da DEC-084 (11/11/2026);
+ * `autor_perfil`, `apagada` e `historico` só EXISTEM no payload de quem tem
+ * `concorrente.ver_autor` (Growth): o servidor os omite para os demais. `autor_rotulo`
+ * ("Pessoa 1", "Pessoa 2"…, numerado por academia) segue para dar a cor do avatar. Não esconder
+ * nada aqui: o que não pode aparecer nem chega.
  */
 export interface Observacao extends CamposDaObservacao {
   id: number
   autor_rotulo: string
+  autor_nome: string
   minha: boolean
   criada_em: string | null
   atualizada_em: string | null
@@ -448,7 +450,6 @@ export interface Observacao extends CamposDaObservacao {
   versao: number
   pode_editar: boolean
   pode_apagar: boolean
-  autor_nome?: string
   autor_perfil?: string
   apagada?: { por: string; em: string | null; moderacao: boolean } | null
   historico?: ObservacaoHistorico[]

@@ -7,6 +7,7 @@ import {
   chavesDosPinos,
   DIGITOS_MAXIMOS,
   formularioDe,
+  iniciais,
   lerNumero,
   linhasDaObservacao,
   mediaDaNota,
@@ -22,6 +23,7 @@ function obs(p: Partial<Observacao>): Observacao {
   return {
     id: 1,
     autor_rotulo: 'Pessoa 1',
+    autor_nome: 'Diego Ramos',
     minha: false,
     metragem_m2: null,
     equipamentos: null,
@@ -125,6 +127,16 @@ describe('resumo do painel', () => {
   it('o número da pessoa vem do rótulo, para a cor do avatar ficar estável', () => {
     expect(numeroDoRotulo('Pessoa 3')).toBe(3)
     expect(numeroDoRotulo('???')).toBe(1)
+  })
+
+  it('o avatar mostra as iniciais de quem escreveu, para todos (emenda 1 da DEC-084)', () => {
+    expect(iniciais('Diego Ramos')).toBe('DR')
+    expect(iniciais('  carla   de souza mendes ')).toBe('CM')
+    expect(iniciais('Ícaro')).toBe('Í')
+    // Sem nome utilizável, volta vazio e o cartão usa o número da pessoa.
+    expect(iniciais('(sem cadastro)')).toBe('SC')
+    expect(iniciais('')).toBe('')
+    expect(iniciais(undefined)).toBe('')
   })
 
   it('a contagem pede cada chave uma vez e ignora pino sem âncora', () => {

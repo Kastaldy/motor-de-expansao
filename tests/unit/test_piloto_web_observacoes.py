@@ -2,8 +2,10 @@
 
 O banco (triggers, CHECK, histórico) é provado contra Postgres de verdade em
 `tests/integration/test_login_ponta_a_ponta.py`, seção 3. Aqui fica o que só existe na camada do
-piloto — e a regra mais cara de errar: **o nome do autor não sai do servidor para quem não é
-Growth.** Esconder no front não bastaria; o nome apareceria no F12 → Rede.
+piloto — e a regra mais cara de errar: **o que é só de Growth (histórico, anotação apagada e quem
+moderou) não sai do servidor para os demais.** Esconder no front não bastaria; apareceria no
+F12 → Rede. O NOME de quem escreveu uma anotação viva é de todos desde a emenda 1 da DEC-084
+(11/11/2026).
 
 Chama as funções de rota DIRETO (sem TestClient), no padrão de `test_piloto_web_admin_usuarios.py`.
 """
@@ -311,27 +313,31 @@ def test_pessoa_n_e_por_ordem_da_primeira_anotacao_e_conta_as_apagadas() -> None
     assert rotulos == {DIEGO: "Pessoa 1", CARLA: "Pessoa 2", BRUNO: "Pessoa 3"}
 
 
-def test_quem_nao_e_growth_nao_recebe_nome_historico_nem_apagada() -> None:
+def test_quem_nao_e_growth_ve_o_nome_do_autor_mas_nao_historico_nem_apagada() -> None:
+    """Emenda 1 da DEC-084 (11/11/2026): quem escreveu, quando e a que horas é de todos;
+    histórico, anotação apagada e quem moderou seguem só de Growth."""
     resposta = observacoes.montar_resposta(
         CENARIO,
         id_viewer=CARLA,
         ver_autor=False,
         pode_anotar=True,
-        # Mesmo que o chamador entregue nome e histórico por engano, nada disso sai.
+        # Mesmo que o chamador entregue o histórico e o nome da moderadora por engano, nada sai.
         historico=HISTORICO,
         nomes=NOMES,
     )
     texto = json.dumps(resposta, ensure_ascii=False)
-    for nome, _perfil in NOMES.values():
-        assert nome not in texto
+    assert "Marina Souza" not in texto  # só moderou a obs 2 (apagada): o nome dela não sai
     assert "(11) 9xxxx" not in texto  # a apagada some inteira
-    assert {"autor_nome", "historico", "apagada"}.isdisjoint(
+    assert {"autor_perfil", "historico", "apagada"}.isdisjoint(
         chave for item in resposta["observacoes"] for chave in item
     )
     itens = {i["id"]: i for i in resposta["observacoes"]}
     assert sorted(itens) == [1, 3, 4]
-    assert itens[1]["autor_rotulo"] == "Pessoa 1"
-    assert itens[3]["autor_rotulo"] == "Pessoa 2" and itens[3]["minha"] is True
+    assert itens[1]["autor_nome"] == "Diego Ramos" and itens[1]["autor_rotulo"] == "Pessoa 1"
+    assert itens[1]["criada_em"] == T0.isoformat()  # data e hora, como já era
+    assert itens[3]["autor_nome"] == "Carla Mendes" and itens[3]["minha"] is True
+    assert itens[3]["autor_rotulo"] == "Pessoa 2"
+    assert itens[4]["autor_nome"] == "Bruno Alves"
     assert itens[3]["pode_editar"] and itens[3]["pode_apagar"] and itens[3]["editada"]
     # Na anotação dos outros: nem editar nem apagar.
     assert not itens[4]["pode_editar"] and not itens[4]["pode_apagar"]
@@ -362,6 +368,23 @@ def test_growth_ve_nome_historico_apagada_e_modera() -> None:
     assert edicao["versao_anterior"]["vagas"] == 20
     assert set(edicao["versao_anterior"]) == set(observacoes.campos_json(CamposObservacao()))
     assert resposta["pode_moderar"] is True
+
+
+def test_autor_que_so_tem_anotacao_apagada_nao_aparece_para_quem_nao_e_growth() -> None:
+    resposta = observacoes.montar_resposta(
+        [_obs(2, DIEGO, 1, apagada_por=MARINA)],
+        id_viewer=CARLA,
+        ver_autor=False,
+        pode_anotar=True,
+        nomes=NOMES,
+    )
+    assert resposta["observacoes"] == []
+    assert "Diego Ramos" not in json.dumps(resposta, ensure_ascii=False)
+
+
+def test_ids_dos_autores_visiveis_deixa_fora_moderador_e_autor_so_de_apagada() -> None:
+    assert observacoes.ids_dos_autores_visiveis(CENARIO) == {DIEGO, CARLA, BRUNO}
+    assert observacoes.ids_dos_autores_visiveis([_obs(2, DIEGO, 1, apagada_por=MARINA)]) == set()
 
 
 def test_todos_os_campos_chegam_ao_payload() -> None:
@@ -424,13 +447,27 @@ def _como(monkeypatch: pytest.MonkeyPatch, eu: _Eu) -> None:
     monkeypatch.setattr(pilot_app, "_identidade_para_anotar", lambda _u: eu)
 
 
-def test_rota_nem_consulta_nome_para_quem_nao_e_growth(
+def test_rota_de_quem_nao_e_growth_busca_so_os_nomes_dos_autores_visiveis(
     banco: dict[str, Any], monkeypatch: pytest.MonkeyPatch
 ) -> None:
     _como(monkeypatch, EXPANSAO)
+    pedidos: list[set[int]] = []
+
+    def _nomes(ids: Any) -> dict[int, tuple[str, str]]:
+        pedidos.append(set(ids))
+        return dict(NOMES)  # devolve até a moderadora: a resposta ainda não pode trazê-la
+
+    monkeypatch.setattr(db_obs, "nomes_dos_autores", _nomes)
     resposta = pilot_app.concorrente_observacoes(chave=CHAVE, remote_user="carla")
-    assert banco == {"nomes": 0, "historico": 0}
-    assert "Carla Mendes" not in json.dumps(resposta, ensure_ascii=False)
+    assert pedidos == [{DIEGO, CARLA, BRUNO}]  # MARINA só moderou: nem é pedida ao banco
+    assert banco["historico"] == 0
+    texto = json.dumps(resposta, ensure_ascii=False)
+    assert "Marina Souza" not in texto
+    assert {i["autor_nome"] for i in resposta["observacoes"]} == {
+        "Diego Ramos",
+        "Carla Mendes",
+        "Bruno Alves",
+    }
     assert resposta["academia"] == {"rede": "smart_fit", "nome": "Smart Fit Jardim América"}
 
 

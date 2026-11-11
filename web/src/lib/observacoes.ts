@@ -151,6 +151,19 @@ export function numeroDoRotulo(rotulo: string): number {
   return Number.isFinite(n) && n > 0 ? n : 1
 }
 
+/** `"Carla de Souza Mendes"` -> `"CM"`: 1ª letra do primeiro e do último nome, para o avatar.
+ *  Só letras contam (`"(sem cadastro)"` -> `"SC"`); sem nenhuma, volta `""` e o cartão usa o
+ *  número da pessoa. */
+export function iniciais(nome: string | null | undefined): string {
+  const palavras = (nome ?? '')
+    .split(/\s+/)
+    .map((p) => p.replace(/[^\p{L}]/gu, ''))
+    .filter(Boolean)
+  if (!palavras.length) return ''
+  const letras = palavras.length > 1 ? [palavras[0], palavras[palavras.length - 1]] : [palavras[0]]
+  return letras.map((p) => p[0].toLocaleUpperCase('pt-BR')).join('')
+}
+
 /** As linhas do cartão de uma anotação, na ordem da tela: (rótulo, valor, destaque). */
 export function linhasDaObservacao(c: CamposDaObservacao): [string, string, boolean][] {
   const fmt = (n: number) => n.toLocaleString('pt-BR')
