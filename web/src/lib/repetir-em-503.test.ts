@@ -24,6 +24,26 @@ afterEach(() => {
 })
 
 describe('repetirEm503', () => {
+  it('`repetirSe` alarga o critério: a camada de imóveis repete a falha de rede (0)', async () => {
+    /* 10/11/2026: o corpo da lista chegou cortado (1,52 de 2,37 MB) e a camada sumiu pelo
+       resto da sessão. Repetir a falha de rede é o que devolve a camada. */
+    const r = roteiro(0, 'ok')
+    const saida = await repetirEm503(r.pedido, {
+      esperar: semEspera,
+      repetirSe: (e) => e.status === 0 || e.status === 408 || e.status >= 500,
+    })
+    expect(saida).toBe('payload')
+    expect(r.chamadas).toHaveLength(2)
+  })
+
+  it('com `repetirSe`, o que fica fora do critério continua definitivo (403)', async () => {
+    const r = roteiro(403, 'ok')
+    await expect(
+      repetirEm503(r.pedido, { esperar: semEspera, repetirSe: (e) => e.status === 0 }),
+    ).rejects.toMatchObject({ status: 403 })
+    expect(r.chamadas).toHaveLength(1)
+  })
+
   it('repete o 503 e devolve o primeiro sucesso', async () => {
     const r = roteiro(503, 503, 'ok')
     const esperas: number[] = []
