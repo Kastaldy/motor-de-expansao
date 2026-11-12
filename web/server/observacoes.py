@@ -1,16 +1,19 @@
 """Anotações nos pinos de concorrentes: a âncora da academia e o que cada pessoa enxerga.
 
-Três regras de produto (Juan, 05/11/2026) vivem aqui, e não no banco, porque são de
-APRESENTAÇÃO — o banco guarda tudo, sempre:
+Três regras de produto (Juan, 05/11/2026; a 1ª emendada em 11/11/2026) vivem aqui, e não no
+banco, porque são de APRESENTAÇÃO — o banco guarda tudo, sempre:
 
-1. **O nome do autor só sai para quem tem `concorrente.ver_autor` (Growth).** Os demais recebem
-   `Pessoa 1`, `Pessoa 2`… O filtro é no SERVIDOR: esconder no front deixaria o nome no JSON, e
-   qualquer um o leria no F12 → Rede.
-2. **A numeração é por ACADEMIA e estável.** Ordem da primeira anotação de cada autor, contando
-   as apagadas — senão "Pessoa 2" viraria "Pessoa 1" quando alguém apagasse. Numeração global
-   (entre academias) deixaria cruzar anotações e descobrir quem é quem.
-3. **Apagada some para quem não é Growth.** Growth vê a anotação apagada, por quem e quando, e o
-   histórico de versões de cada uma.
+1. **O nome de quem escreveu cada anotação VIVA sai para todos** (emenda 1 da DEC-084; até
+   11/11/2026 era só de Growth, e os demais liam "Pessoa N"). Para quem não tem
+   `concorrente.ver_autor`, a rota busca no banco só os nomes desses autores
+   (`ids_dos_autores_visiveis`): quem só moderou, só editou ou só tem anotação apagada não é nem
+   consultado. O filtro é no SERVIDOR: esconder no front deixaria o dado no JSON, e qualquer um o
+   leria no F12 → Rede.
+2. **O rótulo "Pessoa N" segue no payload, por ACADEMIA e estável** — dá a cor do avatar e a
+   contagem de pessoas. Ordem da primeira anotação de cada autor, contando as apagadas — senão a
+   cor de uma pessoa mudaria quando alguém apagasse.
+3. **Apagada some para quem não é Growth.** Growth vê a anotação apagada, por quem e quando, o
+   histórico de versões de cada uma e o perfil de quem escreveu.
 
 A âncora (`chave_concorrente`) é calculada aqui para os DOIS universos de pino — o cadastro de
 cadeias (`concorrentes_mapeados`) e as unidades de rede do agregador —, e é a única coisa que o
@@ -170,13 +173,15 @@ def montar_resposta(
     historico: Iterable[RegistroHistorico] = (),
     nomes: Mapping[int, tuple[str, str]] | None = None,
 ) -> dict[str, Any]:
-    """O payload do painel. Quem não é Growth NUNCA recebe nome, histórico nem apagada.
+    """O payload do painel. Todos recebem o nome de quem escreveu cada anotação viva; quem não é
+    Growth NUNCA recebe histórico, anotação apagada, perfil do autor nem quem moderou.
 
-    `historico` e `nomes` só são consultados pela rota quando `ver_autor` é verdadeiro; se
-    chegarem sem ele, são ignorados aqui também — a regra não depende da disciplina do chamador.
+    Sem `ver_autor`, a rota só busca os nomes de `ids_dos_autores_visiveis` e não consulta o
+    `historico`; se chegarem mais nomes ou um histórico, são ignorados aqui também — só o nome do
+    autor de um item que SAI é lido. A regra não depende da disciplina do chamador.
     """
     rotulos = rotulos_por_autor(observacoes)
-    nomes = dict(nomes or {}) if ver_autor else {}
+    nomes = dict(nomes or {})
     por_obs: dict[int, list[RegistroHistorico]] = {}
     if ver_autor:
         for registro in historico:
@@ -188,9 +193,11 @@ def montar_resposta(
         if apagada and not ver_autor:
             continue
         minha = obs.id_usuario_autor == id_viewer
+        nome_autor, perfil_autor = nomes.get(obs.id_usuario_autor, ("(sem cadastro)", ""))
         item: dict[str, Any] = {
             "id": obs.id_observacao,
             "autor_rotulo": rotulos[obs.id_usuario_autor],
+            "autor_nome": nome_autor,
             "minha": minha,
             **campos_json(obs.campos),
             "criada_em": _iso(obs.criada_em),
@@ -201,9 +208,7 @@ def montar_resposta(
             "pode_apagar": not apagada and pode_anotar and (minha or ver_autor),
         }
         if ver_autor:
-            nome, perfil = nomes.get(obs.id_usuario_autor, ("(sem cadastro)", ""))
-            item["autor_nome"] = nome
-            item["autor_perfil"] = perfil
+            item["autor_perfil"] = perfil_autor
             item["apagada"] = (
                 {
                     "por": nomes.get(obs.apagada_por or -1, ("(sem cadastro)", ""))[0],
@@ -235,6 +240,14 @@ def montar_resposta(
         saida.append(item)
 
     return {"pode_anotar": pode_anotar, "pode_moderar": ver_autor, "observacoes": saida}
+
+
+def ids_dos_autores_visiveis(observacoes: Sequence[Observacao]) -> set[int]:
+    """Os `id_usuario` que o payload de quem NÃO é Growth nomeia: autores de anotação viva.
+
+    Quem só moderou, só editou ou só tem anotação apagada fica de fora — o nome dessa pessoa não
+    é nem pedido ao banco."""
+    return {o.id_usuario_autor for o in observacoes if o.apagada_em is None}
 
 
 def ids_para_nomes(

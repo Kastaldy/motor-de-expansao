@@ -3,8 +3,9 @@
  * Abre pelo clique no pino do concorrente, dentro de uma `JanelaFicha` à direita. O que cada
  * pessoa vê já vem decidido do servidor — este componente NÃO esconde nada:
  *
- *   - quem não é Growth recebe "Pessoa 1, Pessoa 2…" e nunca o nome (nem no JSON);
- *   - Growth recebe o nome, o histórico de versões e as anotações apagadas;
+ *   - todos recebem o nome de quem escreveu, com data e hora (emenda 1 da DEC-084, 11/11/2026);
+ *   - só Growth recebe o histórico de versões, as anotações apagadas e quem as apagou (quem não
+ *     é Growth não as recebe nem no JSON);
  *   - `pode_editar`/`pode_apagar` vêm por anotação: só o autor edita, e Growth também apaga a
  *     dos outros (moderação).
  *
@@ -20,6 +21,7 @@ import {
   DIGITOS_MAXIMOS,
   estrelas,
   formularioDe,
+  iniciais,
   linhasDaObservacao,
   mediaDaNota,
   metragemMaisRecente,
@@ -599,13 +601,7 @@ function CartaoObservacao({
 }) {
   const n = numeroDoRotulo(o.autor_rotulo)
   const cor = CORES_AVATAR[(n - 1 + CORES_AVATAR.length) % CORES_AVATAR.length]
-  const avatar = o.autor_nome
-    ? o.autor_nome
-        .split(' ')
-        .map((p) => p[0])
-        .slice(0, 2)
-        .join('')
-    : String(n)
+  const avatar = iniciais(o.autor_nome) || String(n)
   const linhas = linhasDaObservacao(o)
   const botaoMini: React.CSSProperties = {
     borderRadius: 'var(--r-sm)',
@@ -653,14 +649,7 @@ function CartaoObservacao({
         </div>
         <div style={{ flex: 1, minWidth: 0 }}>
           <div style={{ font: '600 12.5px/1.25 var(--f-ui)', color: 'var(--tx-max)' }}>
-            {o.autor_nome ? (
-              <>
-                {o.autor_nome}{' '}
-                <span style={{ color: 'var(--tx-sub)', fontWeight: 400 }}>· {o.autor_rotulo}</span>
-              </>
-            ) : (
-              o.autor_rotulo
-            )}
+            {o.autor_nome || o.autor_rotulo}
             {o.minha && <span style={{ color: 'var(--ac-text)', fontWeight: 500 }}> (você)</span>}
           </div>
           <div style={{ color: 'var(--tx-sub)', font: '400 11px/1.3 var(--f-ui)' }}>

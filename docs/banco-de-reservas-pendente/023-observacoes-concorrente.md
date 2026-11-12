@@ -23,7 +23,7 @@ fachada e atendimento), alunos estimados quando houver, e um comentário livre.
 | `guarda_observacao_concorrente()` | Trigger `BEFORE UPDATE`: fixa o que não pode mudar e numera a versão. |
 | `recusa_remover_observacao()` | Recusa `DELETE`/`TRUNCATE` nas duas tabelas e `UPDATE` no histórico. |
 | `concorrente.anotar` | Capacidade nova, concedida a TODOS os perfis. |
-| `concorrente.ver_autor` | Capacidade nova, só `growth`: ver o nome do autor, o histórico e as apagadas, e apagar a anotação de outra pessoa (moderação). |
+| `concorrente.ver_autor` | Capacidade nova, só `growth`: ver o histórico, as apagadas e o perfil do autor, e apagar a anotação de outra pessoa (moderação). O nome de quem escreveu uma anotação viva é de todos desde a emenda 1 da DEC-084 (11/11/2026), sem mudança nesta migration. |
 
 ## Decisões de desenho
 

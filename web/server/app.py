@@ -13457,9 +13457,11 @@ def rede_cadastro_atribuir(
 # Anotações nos pinos de concorrentes (migration 023)
 #
 # Segunda escrita do piloto aberta a TODOS os perfis (decisão de produto de 05/11/2026). O que
-# cada pessoa enxerga — "Pessoa N" ou o nome, a anotação apagada, o histórico — é decidido em
-# `observacoes.montar_resposta`; aqui ficam a identidade, a âncora da academia e a tradução dos
-# erros. Camada VISUAL de apoio (CLAUDE.md §2): nada daqui toca score, residual nem M1.
+# cada pessoa enxerga — o nome de quem escreveu é de todos (emenda 1 da DEC-084, 11/11/2026);
+# a anotação apagada, o histórico e quem moderou, só de Growth — é decidido em
+# `observacoes.montar_resposta`; aqui ficam a identidade, a âncora da academia, QUAIS nomes
+# pedir ao banco e a tradução dos erros. Camada VISUAL de apoio (CLAUDE.md §2): nada daqui toca
+# score, residual nem M1.
 # ============================================================================
 
 CAPACIDADE_ANOTAR = "concorrente.anotar"
@@ -13553,6 +13555,11 @@ def _payload_observacoes(chave: str, alvo: dict[str, Any], eu: Any) -> dict[str,
     if ver_autor and lista:
         historico = db_obs.historico([o.id_observacao for o in lista])
         nomes = db_obs.nomes_dos_autores(observacoes.ids_para_nomes(lista, historico))
+    elif lista:
+        # Sem `ver_autor`, só os autores de anotação viva: moderador e editor nem são consultados.
+        visiveis = observacoes.ids_dos_autores_visiveis(lista)
+        if visiveis:
+            nomes = db_obs.nomes_dos_autores(visiveis)
     resposta = observacoes.montar_resposta(
         lista,
         id_viewer=eu.id_usuario,
