@@ -260,6 +260,9 @@ echo ">> [$(date -u +%FT%TZ)] passo 2 - montando o rascunho em ${RASCUNHO_DATA}"
 # a lista e' a mesma usada na publicacao do passo 5.
 ARTEFATOS_ESCRITOS=(
   "staging/concorrentes_mapeados.parquet"
+  # O cadastro das unidades Ultra (DEC-085): o passo 2b acrescenta as unidades incluidas pelo
+  # site. COPIA REAL, como todo alvo de escrita -- e e' o `mapeadas` que o Bloco 3 le.
+  "staging/unidades_ultra_mapeadas.parquet"
   "staging/hexagonos_mercado_mapeado.parquet"
   "outputs/oportunidades_expansao_hibrido.parquet"
   "outputs/carteira_expansao_acionavel.parquet"
@@ -308,6 +311,39 @@ for rel in "${ARTEFATOS_ESCRITOS[@]}"; do
 done
 
 echo ">> rascunho montado: $(du -sh "$RASCUNHO_DATA" 2>/dev/null | cut -f1) (o hardlink nao ocupa disco novo)"
+
+# --------------------------------------------------------------------------
+# Passo 2b - UNIDADES ULTRA INCLUIDAS PELO SITE (DEC-085)
+#
+# Growth e lideres incluem unidade pelo Mapa; ela mora no banco (`unidades_ultra_site`,
+# migration 024) e pode mudar por 1 dia. Passado o prazo a linha congela, e e' AQUI que ela
+# entra no `unidades_ultra_mapeadas.parquet` -- e dele no Bloco 3 (rede propria do residual)
+# e, depois da publicacao, no PDF da API.
+#
+# Roda no container do SITE (`docker compose run ... web`): e' ele que tem a URL do banco no
+# ambiente do compose, entao este script nao toca credencial nenhuma. Grava SO' na copia do
+# rascunho (montada em /rascunho), por temporario + rename, sem mexer em linha que ja estava.
+# `-u 0:0` porque o rascunho e' do root e o container do site roda como `appuser`.
+#
+# Banco fora (ou imagem antiga, sem o subcomando) NAO para a regeneracao: o cadastro fica o
+# da semana anterior, a cadeia segue, e o chat de ops fica sabendo. Nunca verde calado.
+# --------------------------------------------------------------------------
+echo ">> [$(date -u +%FT%TZ)] passo 2b - unidades Ultra incluidas pelo site"
+set +e
+docker compose -f "$COMPOSE_FILE" run --rm --no-deps -T -u 0:0 \
+  -v "${RASCUNHO_DATA}/staging:/rascunho" \
+  web python -m motor_expansao.db.cli compor-unidades-ultra \
+  --arquivo /rascunho/unidades_ultra_mapeadas.parquet
+COMPOR_RC=$?
+set -e
+if [ "$COMPOR_RC" -ne 0 ]; then
+  echo "!! unidades do site FORA desta rodada (rc=${COMPOR_RC}); o cadastro segue o da semana anterior"
+  _avisar <<EOF || true
+⚠️ [Motor] As unidades Ultra incluídas pelo site ficaram FORA da regeneração de mercado desta semana (rc=${COMPOR_RC}).
+O cadastro segue o da semana anterior e a regeneração continua; elas entram na próxima rodada em que o banco responder.
+Log: ${LOG}
+EOF
+fi
 
 # --------------------------------------------------------------------------
 # Passo 3 - CADEIA, em container efemero, TODA com `&&`
@@ -557,6 +593,21 @@ if vivo_mercado.exists():
     except (OSError, KeyError, ValueError) as exc:
         print(f">> antes->depois indisponivel ({type(exc).__name__}); segue sem ele")
 
+# Cadastro das unidades Ultra (DEC-085): o do rascunho CONTEM o vivo, linha a linha, com os
+# mesmos tipos, e nao encolhe. O passo 2b so' ACRESCENTA; qualquer outra diferenca e' defeito.
+CADASTRO_ULTRA = "staging/unidades_ultra_mapeadas.parquet"
+cad_novo_p, cad_vivo_p = RASCUNHO / CADASTRO_ULTRA, VIVO / CADASTRO_ULTRA
+if cad_novo_p.exists() and cad_vivo_p.exists():
+    cad_novo, cad_vivo = pd.read_parquet(cad_novo_p), pd.read_parquet(cad_vivo_p)
+    if list(cad_novo.columns) != list(cad_vivo.columns) or dict(cad_novo.dtypes) != dict(cad_vivo.dtypes):
+        falhas.append("o cadastro das unidades Ultra mudou de colunas ou de tipos no rascunho")
+    elif len(cad_novo) < len(cad_vivo) or not cad_novo.iloc[: len(cad_vivo)].reset_index(drop=True).equals(
+        cad_vivo.reset_index(drop=True)
+    ):
+        falhas.append("o cadastro das unidades Ultra perdeu ou mudou uma unidade que ja existia")
+    else:
+        resumo["unidades_ultra_do_site_novas"] = len(cad_novo) - len(cad_vivo)
+
 Path("/saida/resumo.json").write_text(json.dumps(resumo, indent=2, ensure_ascii=False), encoding="utf-8")
 
 print("\n=== Validacao de publicacao ===")
@@ -618,6 +669,10 @@ if resumo.get("unidades_no_proxy_2500") is not None:
         f"Capacidade real conhecida em {_num(resumo['unidades_com_capacidade_real'])} unidades; "
         f"as demais {_num(resumo['unidades_no_proxy_2500'])} seguem no proxy de 2.500 alunos (DEC-057)."
     )
+if resumo.get("unidades_ultra_do_site_novas"):
+    linhas.append(
+        f"Unidades Ultra incluídas pelo site que entraram no cadastro: {resumo['unidades_ultra_do_site_novas']}."
+    )
 linhas.append("READ-ONLY sobre o M1: nenhum artefato oficial foi tocado.")
 Path("/saida/aviso.txt").write_text("\n".join(linhas), encoding="utf-8")
 print("\nValidacao OK")
@@ -657,14 +712,30 @@ fi
 # nenhum no job. O artefato ja' nasce legivel no instante em que aparece.
 # --------------------------------------------------------------------------
 echo ">> [$(date -u +%FT%TZ)] passo 5 - publicando"
+#
+# O cadastro das unidades Ultra (DEC-085) tem DUAS diferencas, as duas por causa da conta
+# `deploy`, que o regrava por `cp` (docs/infra_producao.md, "Incluir ou mover uma unidade
+# Ultra"): (1) so' e' publicado quando MUDOU -- sem unidade nova do site, o arquivo vivo fica
+# exatamente como esta'; (2) o novo herda DONO, GRUPO e MODO do vivo (`root:motor-ops 664`), e
+# nao o `0644` de root dos outros -- com ele, o `cp` da conta `deploy` passaria a ser recusado.
+REL_CADASTRO_ULTRA="staging/unidades_ultra_mapeadas.parquet"
 PRONTOS=()
 for rel in "${ARTEFATOS_ESCRITOS[@]}"; do
   origem="${RASCUNHO_DATA}/${rel}"
   [ -f "$origem" ] || { echo "   (pulado, nao gerado: ${rel})"; continue; }
   destino="${HOST_DATA}/${rel}"
+  if [ "$rel" = "$REL_CADASTRO_ULTRA" ] && [ -f "$destino" ] && cmp -s "$origem" "$destino"; then
+    echo "   (sem unidade nova do site: ${destino} fica como esta)"
+    continue
+  fi
   tmp="${destino}.tmp-$$"
   cp -p "$origem" "$tmp"
-  chmod 0644 "$tmp"
+  if [ "$rel" = "$REL_CADASTRO_ULTRA" ] && [ -f "$destino" ]; then
+    chown --reference="$destino" "$tmp"
+    chmod --reference="$destino" "$tmp"
+  else
+    chmod 0644 "$tmp"
+  fi
   PRONTOS+=("${tmp}|${destino}")
 done
 for par in "${PRONTOS[@]}"; do

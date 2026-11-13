@@ -202,6 +202,15 @@ de qualquer `scp`, **reiniciar é obrigatório** — `docker compose -f docker-c
 > estação com `scripts/incluir_unidade_ultra.py` e grava por cima, com backup e conferência. Foi assim que
 > Teresópolis entrou, em 04/11/2026.
 
+> **Desde a DEC-085, o caminho normal é o site.** Growth e Líderes incluem a unidade pelo Mapa (botão "+" ao
+> lado do seletor UNIDADES): nome e coordenadas, revisão e confirmação. Ela aparece na hora no pino e na busca,
+> pode ser alterada ou removida por 1 dia e, no primeiro domingo depois do prazo, o cron de mercado
+> (`run_regen_mercado.sh`, passo 2b) a acrescenta ao `unidades_ultra_mapeadas.parquet`, com
+> `ultra_id = site-<id>`, preservando dono, grupo e modo do arquivo. Este roteiro manual fica para **mover**
+> uma unidade, para o caso **forçado** (a menos de 200 m de outra que não é a mesma) e para **corrigir** uma
+> unidade do site depois do prazo (junto com uma migration do dono que marca a linha no banco). As regras de
+> recusa são as mesmas nos dois caminhos (`motor_expansao.cadastro_ultra`). O site não grava no `Ultra.csv`.
+
 | Arquivo na VPS | O que é | Quem lê |
 |---|---|---|
 | `data/staging/unidades_ultra_mapeadas.parquet` | uma linha por unidade: nome, UF, cidade, coordenada e hexágono | os pins e a rede do site, o PDF da API e o mercado residual, no recálculo de domingo |

@@ -27,6 +27,7 @@ import MethodologyPanel from '../components/MethodologyPanel'
 import NarrativePanel from '../components/NarrativePanel'
 import PainelComparacao from '../components/PainelComparacao'
 import { PainelObservacoes } from '../components/PainelObservacoes'
+import PainelIncluirUnidade from '../components/PainelIncluirUnidade'
 import ScoreLegend, { LegendaCalor } from '../components/ScoreLegend'
 import { alternarCalor, alternarCoresHex, type ModoCalor } from '../lib/camadas-calor'
 import Select from '../components/Select'
@@ -97,6 +98,8 @@ import type {
   Oportunidade,
   Pins,
   SetoresHeatmapPayload,
+  UnidadeSite,
+  UnidadesSitePayload,
 } from '../lib/types'
 
 /* A CAMADA em que o raio de 1 km vale. Camada 3 e' "Pressao concorrencial", e o modelo de
@@ -715,6 +718,9 @@ export default function MapScreen({
    * uma rota que negou não pode deixar o seletor esperando para sempre.
    */
   const [unidades, setUnidades] = useState<MapaUnidade[] | null>(null)
+  /* Sobe a cada inclusão, alteração ou remoção pelo site (DEC-085): a lista se refaz, e a
+     unidade nova entra no seletor sem recarregar a página. */
+  const [versaoUnidades, setVersaoUnidades] = useState(0)
   useEffect(() => {
     let vivo = true
     api
@@ -724,6 +730,28 @@ export default function MapScreen({
     return () => {
       vivo = false
     }
+  }, [versaoUnidades])
+
+  /*
+   * INCLUIR UNIDADE ULTRA PELO SITE (DEC-085) — Growth e Líderes ganham o botão "+" ao lado do
+   * seletor UNIDADES. Quem decide é o servidor (`pode_incluir`); falha ou 403 = sem botão. A
+   * janela tem formulário -> revisão -> confirmação, e a unidade confirmada abre na ficha.
+   */
+  const [unidadesSite, setUnidadesSite] = useState<UnidadesSitePayload | null>(null)
+  const [incluirAberto, setIncluirAberto] = useState(false)
+  useEffect(() => {
+    let vivo = true
+    api
+      .unidadesSite()
+      .then((r) => vivo && setUnidadesSite(r))
+      .catch(() => vivo && setUnidadesSite(null))
+    return () => {
+      vivo = false
+    }
+  }, [])
+  const aoMudarUnidadesSite = useCallback((payload: UnidadesSitePayload) => {
+    setUnidadesSite(payload)
+    setVersaoUnidades((v) => v + 1)
   }, [])
   const unidadesRede = useMemo(() => (unidades ?? []).filter((u) => !u.sem_rede), [unidades])
   const opcoesUnidades = useMemo(
@@ -835,6 +863,13 @@ export default function MapScreen({
       levarAoTerritorioDaUnidade(u, seq, unidade, pinU)
     },
     [onSoltarPonto, levarAoTerritorioDaUnidade, viagem],
+  )
+  /* A unidade recém-incluída pelo site abre na ficha e a câmera vai até ela: é a prova, na
+     hora, de que ela entrou no mapa (DEC-085). */
+  const aoIncluirUnidade = useCallback(
+    (u: UnidadeSite) =>
+      abrirUnidade({ id: u.id_no_mapa, nome: u.unidade, lat: u.lat, lng: u.lng, semRede: true, uf: u.uf, cidade: u.cidade }),
+    [abrirUnidade],
   )
   /* Fechar a ficha cancela a viagem pendente: a lista de municipios que chegar depois nao
      pode trocar o territorio (nem reabrir a ficha) de uma unidade que o operador fechou. */
@@ -2043,6 +2078,18 @@ export default function MapScreen({
               options={opcoesUnidades.map((u) => ({ value: u.id, label: u.rotulo }))}
             />
           </label>
+          {/* Incluir unidade Ultra (DEC-085): só para quem o servidor diz que pode. Um "+"
+              enxuto, porque a linha do cabeçalho já está no limite da largura. */}
+          {unidadesSite?.pode_incluir && (
+            <Botao
+              variante="ghost"
+              title="Incluir unidade Ultra"
+              onClick={() => setIncluirAberto(true)}
+              style={{ padding: '6px 10px', font: '700 14px/1 var(--f-ui)' }}
+            >
+              +
+            </Botao>
+          )}
 
         {/* Manual do funil. Ao lado do MELHORES e ANTES do `flex:1`: ocupa a folga do
             meio, entao o bloco de metricas segue ancorado na borda direita.
@@ -2461,6 +2508,21 @@ export default function MapScreen({
             op={imovelAberto}
             onVerNaAba={onVerImovelNaAba ? () => onVerImovelNaAba(imovelAberto) : undefined}
           />
+        )}
+      </JanelaFicha>
+
+      {/* ---------------- Janela de INCLUIR UNIDADE ULTRA (DEC-085) ----------------
+          À ESQUERDA (a âncora padrão): a ficha da unidade recém-incluída abre à direita, e as
+          duas ficham lado a lado. */}
+      <JanelaFicha
+        aberta={incluirAberto && unidadesSite != null}
+        titulo="Incluir unidade Ultra"
+        subtitulo="Growth e Líderes · alterar ou remover por 1 dia"
+        onFechar={() => setIncluirAberto(false)}
+        recuoInferior={96}
+      >
+        {incluirAberto && unidadesSite && (
+          <PainelIncluirUnidade dados={unidadesSite} onMudou={aoMudarUnidadesSite} onIncluida={aoIncluirUnidade} />
         )}
       </JanelaFicha>
 

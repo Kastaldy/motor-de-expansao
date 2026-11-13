@@ -43,7 +43,10 @@ import type {
   ViabilidadeOut,
   ObservacaoCampos,
   ObservacoesPayload,
+  PreviaUnidadeSite,
+  UnidadesSitePayload,
 } from './types'
+import type { CamposUnidade } from './inclusao-unidade'
 import type { Alcance } from './alcance'
 import { ehQuedaDeSessao, entradaDoPayload, type EntradaAceita } from './login-motor'
 import { relatarAcessoNegado, relatarFalhaDeRede } from './sessao'
@@ -952,6 +955,50 @@ export const api = {
 
   /** As unidades da rede e as do cadastro sem dado na Growth, para o seletor do mapa. */
   mapaUnidades: () => pedir<{ unidades: MapaUnidade[] }>('/api/mapa/unidades'),
+
+  /** Unidades Ultra incluídas pelo site (DEC-085): se ESTA pessoa pode incluir, e as que o
+   *  site incluiu, com o prazo de cada uma. Quem não pode recebe a lista vazia. */
+  unidadesSite: () => pedir<UnidadesSitePayload>('/api/mapa/unidades-site', {}, 30_000),
+
+  /** A tela de revisão: confere e devolve o que SERIA gravado. Não grava nada. */
+  unidadeSitePrevia: (campos: CamposUnidade) =>
+    pedir<PreviaUnidadeSite>(
+      '/api/mapa/unidades-site/previa',
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(campos),
+      },
+      30_000,
+    ),
+
+  /** Grava a unidade revisada. `confirmado` é o que o servidor exige: sem ele, 422. */
+  unidadeSiteIncluir: (campos: CamposUnidade) =>
+    pedir<UnidadesSitePayload>(
+      '/api/mapa/unidades-site',
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ...campos, confirmado: true }),
+      },
+      30_000,
+    ),
+
+  /** Corrige uma unidade do primeiro dia (409 depois do prazo). */
+  unidadeSiteAlterar: (id: number, campos: CamposUnidade) =>
+    pedir<UnidadesSitePayload>(
+      `/api/mapa/unidades-site/${id}`,
+      {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ...campos, confirmado: true }),
+      },
+      30_000,
+    ),
+
+  /** Remove (marca) uma unidade do primeiro dia (409 depois do prazo). */
+  unidadeSiteRemover: (id: number) =>
+    pedir<UnidadesSitePayload>(`/api/mapa/unidades-site/${id}`, { method: 'DELETE' }, 30_000),
 
   /** A ficha da unidade no mapa: o ponto e o raio com as concorrentes. */
   mapaUnidade: (id: string) =>

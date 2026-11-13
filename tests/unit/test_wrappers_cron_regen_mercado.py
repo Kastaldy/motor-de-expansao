@@ -192,6 +192,8 @@ ARTEFATOS_ESCRITOS: tuple[str, ...] = (
     "outputs/carteira_expansao_acionavel.parquet",
     "outputs/plano_expansao_curto_prazo.parquet",
     "outputs/plano_expansao_dominio.parquet",
+    # DEC-085: o passo 2b acrescenta a ele as unidades Ultra incluídas pelo site.
+    "staging/unidades_ultra_mapeadas.parquet",
 )
 
 
@@ -454,3 +456,63 @@ def test_runbook_documenta_a_instalacao_manual() -> None:
         "o runbook não manda rodar o modo seco antes de agendar"
     )
     assert "healthcheck_vps.sh mercado" in runbook, "o runbook não agenda o monitor novo"
+
+
+# --------------------------------------------------------------------------- #
+# Passo 2b — unidades Ultra incluídas pelo site (DEC-085)
+# --------------------------------------------------------------------------- #
+
+
+def _bloco_das_unidades_do_site() -> list[str]:
+    linhas = _linhas_executaveis(WRAPPER)
+    inicio = next(i for i, linha in enumerate(linhas) if "passo 2b - unidades Ultra" in linha)
+    fim = next(i for i, linha in enumerate(linhas) if i > inicio and "passo 3 - cadeia no rascunho" in linha)
+    return linhas[inicio:fim]
+
+
+def test_unidades_do_site_entram_no_rascunho_antes_da_cadeia() -> None:
+    """O Bloco 3 lê o `mapeadas` do rascunho: compor DEPOIS da cadeia deixaria a unidade do
+    site fora do residual da semana, mesmo publicada."""
+    executaveis = _linhas_executaveis(WRAPPER)
+    i_montado = next(i for i, linha in enumerate(executaveis) if "rascunho montado" in linha)
+    i_compor = next(i for i, linha in enumerate(executaveis) if "compor-unidades-ultra" in linha)
+    i_cadeia = next(i for i, linha in enumerate(executaveis) if "passo 3 - cadeia no rascunho" in linha)
+    assert i_montado < i_compor < i_cadeia
+
+
+def test_unidades_do_site_so_escrevem_na_copia_do_rascunho() -> None:
+    bloco = "\n".join(_bloco_das_unidades_do_site())
+    assert '-v "${RASCUNHO_DATA}/staging:/rascunho"' in bloco
+    assert "--arquivo /rascunho/unidades_ultra_mapeadas.parquet" in bloco
+    assert "HOST_STAGING" not in bloco and "HOST_DATA" not in bloco, (
+        "o passo 2b nao pode montar nem gravar o staging VIVO"
+    )
+    # o container do SITE tem a URL do banco no ambiente do compose: nenhuma credencial aqui
+    assert "docker compose -f \"$COMPOSE_FILE\" run --rm --no-deps -T -u 0:0" in bloco
+    assert "MOTOR_DATABASE_URL" not in bloco and "PGPASSWORD" not in bloco
+
+
+def test_banco_fora_avisa_e_nao_para_a_regeneracao() -> None:
+    bloco = _bloco_das_unidades_do_site()
+    texto = "\n".join(bloco)
+    assert "set +e" in texto and "COMPOR_RC=$?" in texto
+    assert "_avisar" in texto, "a falha do passo 2b tem de chegar ao chat de ops"
+    assert not any(linha.strip().startswith("exit") for linha in bloco), (
+        "banco fora nao pode abortar a regeneracao de mercado da semana"
+    )
+
+
+def test_cadastro_ultra_so_e_publicado_quando_muda_e_herda_dono_e_modo() -> None:
+    """A conta `deploy` regrava o `mapeadas` por `cp` (root:motor-ops 664). Publicar com o `0644`
+    de root dos outros artefatos tiraria dela a escrita, sem erro nenhum ate' a proxima inclusao."""
+    executaveis = "\n".join(_linhas_executaveis(WRAPPER))
+    assert 'cmp -s "$origem" "$destino"' in executaveis
+    assert 'chown --reference="$destino" "$tmp"' in executaveis
+    assert 'chmod --reference="$destino" "$tmp"' in executaveis
+
+
+def test_validacao_exige_que_o_cadastro_novo_contenha_o_vivo() -> None:
+    executaveis = "\n".join(_linhas_executaveis(WRAPPER))
+    assert 'CADASTRO_ULTRA = "staging/unidades_ultra_mapeadas.parquet"' in executaveis
+    assert "perdeu ou mudou uma unidade que ja existia" in executaveis
+

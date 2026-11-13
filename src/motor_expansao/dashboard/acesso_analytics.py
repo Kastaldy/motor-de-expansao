@@ -83,6 +83,15 @@ FEATURES_ROTULOS: tuple[tuple[str | None, str, str], ...] = (
     (None, "/api/rede/unidades-sem-rede", "Navegou pelo mapa"),
     (None, "/api/rede/unidade-sem-rede/", "Abriu ficha de unidade"),
     (None, "/api/rede/carteira", "Consultou carteira da rede"),
+    # Unidades Ultra incluídas pelo site (DEC-085). ANTES de `/api/mapa/unidades`, que casaria
+    # por prefixo e contaria a inclusão de uma unidade como navegação. A prévia vem antes do
+    # POST de incluir (first-match por prefixo): revisar não é gravar. O GET é o Mapa pedindo,
+    # sozinho, se o botão aparece.
+    ("POST", "/api/mapa/unidades-site/previa", "Revisou a inclusão de uma unidade Ultra"),
+    ("POST", "/api/mapa/unidades-site", "Incluiu uma unidade Ultra"),
+    ("PATCH", "/api/mapa/unidades-site/", "Alterou uma unidade Ultra incluída pelo site"),
+    ("DELETE", "/api/mapa/unidades-site/", "Removeu uma unidade Ultra incluída pelo site"),
+    (None, "/api/mapa/unidades-site", "Navegou pelo mapa"),
     # As mesmas leituras pela porta do Mapa (11/11/2026): a lista vem sozinha ao montar.
     (None, "/api/mapa/unidades", "Navegou pelo mapa"),
     (None, "/api/mapa/unidade/", "Abriu ficha de unidade"),
