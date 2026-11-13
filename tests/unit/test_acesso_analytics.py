@@ -967,3 +967,51 @@ def test_geoip_usa_a_base_quando_ligada(monkeypatch) -> None:
     assert aa._fora_do_pais("203.0.113.7") is True   # DE != BR (perfil do processo)
     assert aa.pais_do_ip("198.51.100.1") is None      # sem registro -> None
     assert aa._fora_do_pais("198.51.100.1") is False  # sem pais, nao marca
+
+
+# --- ruído de quem não está logado fora da taxa (13/11/2026) ------------------------
+#
+# Medido em produção nos 30 dias até 13/11/2026: taxa de erro de 4,5%, dos quais 89 erros
+# eram 404 sem conta (robôs atrás de `/.git/config`, `/.env`, `/wp-login.php`) e 47 o 401
+# de `/api/verify-sessao`, a checagem de sessão do apex antes do login. Só com quem estava
+# logado: 2,3%. O Felipe decidiu tirar esse ruído da taxa.
+
+
+def test_robo_sem_conta_e_checagem_de_sessao_saem_da_taxa(tmp_path: Path) -> None:
+    _gravar(tmp_path, AGORA, rota="/api/ponto", status=200)
+    _gravar(tmp_path, AGORA, rota="/api/relatorio/municipal", status=500)
+    _gravar(tmp_path, AGORA, usuario="desconhecido", rota="/.git/config", status=404)
+    _gravar(tmp_path, AGORA, usuario="desconhecido", rota="/wp-login.php", status=404)
+    _gravar(tmp_path, AGORA, usuario="desconhecido", rota="/api/verify-sessao", status=401)
+
+    s = aa.resumo(tmp_path, dias=7, agora_utc=AGORA)["saude"]
+    assert s["total"] == 2, "o ruído sai também do denominador"
+    assert s["erros_4xx"] == 0
+    assert s["taxa_erro_pct"] == 50.0
+    assert s["taxa_defeito_pct"] == 50.0
+
+
+def test_o_que_continua_contando_como_erro() -> None:
+    """A exclusão é estreita: só 4xx, só sem conta, e o 401 só na checagem de sessão."""
+    sem = "desconhecido"
+    assert rel.ruido_sem_conta({"usuario": sem, "rota": "/x", "status": 404}) is True
+    assert rel.ruido_sem_conta({"rota": "/x", "status": 404}) is True  # sem o campo
+    # 404 de quem ESTÁ logado é link quebrado ou cadastro defasado: fica
+    assert rel.ruido_sem_conta({"usuario": "isa", "rota": "/api/rede/unidade/x", "status": 404}) is False
+    # 5xx é sempre nosso, com ou sem conta
+    assert rel.ruido_sem_conta({"usuario": sem, "rota": "/api/verify-sessao", "status": 500}) is False
+    # senha errada fica na taxa
+    assert rel.ruido_sem_conta({"usuario": sem, "rota": "/api/login", "status": 401}) is False
+    # 401 logado na checagem de sessão não deveria acontecer: fica
+    assert rel.ruido_sem_conta({"usuario": "ana", "rota": "/api/verify-sessao", "status": 401}) is False
+    assert rel.ruido_sem_conta("linha quebrada") is False
+
+
+def test_o_ruido_segue_visivel_no_bloco_sem_conta(tmp_path: Path) -> None:
+    """Fora da TAXA, não fora da aba: o bloco "Acessos sem conta" continua vendo os robôs."""
+    _gravar(tmp_path, AGORA, usuario="desconhecido", rota="/.git/config", status=404)
+    _gravar(tmp_path, AGORA, usuario="desconhecido", rota="/.env", status=404)
+
+    r = aa.resumo(tmp_path, dias=7, agora_utc=AGORA)
+    assert r["saude"]["total"] == 0
+    assert r["sem_conta"]["total"] == 2

@@ -47,6 +47,7 @@ from motor_expansao.api.relatorio_acessos import (
     erro_por_desenho,
     evento_de_diagnostico,
     evento_do_painel,
+    ruido_sem_conta,
 )
 from motor_expansao.dashboard import acesso_log
 from motor_expansao.dashboard.acesso_log import (
@@ -701,6 +702,10 @@ def _saude(
     ontem tem de poder comparar com o de hoje. Ao lado dela nasce `taxa_defeito_pct`, que
     tira do numerador o 4xx que é a resposta CERTA do servidor (`erro_por_desenho`).
 
+    A ÚNICA mudança de universo desde então (13/11/2026, decisão do Felipe): o
+    `ruido_sem_conta` sai das duas taxas. A comparação com número anterior a essa data
+    tem de descontar isso — nos 30 dias medidos, 4,5% viravam 2,3%.
+
     A diferença entre as duas foi medida em 29/09/2026, com esta mesma régua: na janela de
     30 dias a taxa era **2,30%** (167 erros / 7.325 eventos), e dela **73 eventos** eram o
     corte do P19 com a chave desligada — 404 em `/api/login` e `/api/logout`, 405 em
@@ -712,6 +717,10 @@ def _saude(
     (allowlist defasada) que a de defeito ignoraria por construção.
     """
     do_painel = do_painel or []
+    # O erro de quem não está logado que não diz nada sobre o piloto (robô atrás de
+    # `/.git`, o 401 da checagem de sessão do apex) sai das DUAS taxas, numerador e
+    # denominador -- decisão do Felipe em 13/11/2026; ver `ruido_sem_conta`.
+    eventos = [r for r in eventos if not ruido_sem_conta(r)]
     total = len(eventos)
     e4 = sum(1 for r in eventos if isinstance(r.get("status"), int) and 400 <= r["status"] < 500)
     e5 = sum(1 for r in eventos if isinstance(r.get("status"), int) and r["status"] >= 500)

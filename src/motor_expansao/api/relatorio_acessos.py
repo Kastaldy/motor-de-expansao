@@ -228,6 +228,32 @@ def erro_por_desenho(rota: object, status: object) -> bool:
     )
 
 
+#: Rota que o apex chama para saber se há sessão ANTES do login (DEC-081). Sem sessão, o
+#: 401 é a resposta certa: é a pergunta "já entrou?", não uma falha.
+ROTA_CHECAGEM_DE_SESSAO = "/api/verify-sessao"
+
+
+def ruido_sem_conta(r: object) -> bool:
+    """Erro de quem NÃO está logado que não diz nada sobre a saúde do piloto.
+
+    Sai do universo da TAXA DE ERRO (numerador e denominador), decidido pelo Felipe em
+    13/11/2026. Medido nos 30 dias até ali: de 317 erros, 89 eram 404 sem conta (robôs
+    atrás de `/.git/config`, `/.env`, `/wp-login.php`) e 47 eram o 401 da checagem de
+    sessão do apex — a taxa de 4,5% caía para 2,3% contando só quem estava logado.
+
+    Só 4xx, e só sem conta: um 5xx é sempre nosso, e um 404 de quem está logado é link
+    quebrado ou cadastro defasado (exatamente o que a taxa tem de mostrar). O 401 de senha
+    errada em `/api/login` FICA. Fora da taxa, não fora da trilha nem do bloco "Acessos
+    sem conta", que segue vendo os robôs (rajadas, atípicos).
+    """
+    if not isinstance(r, dict) or str(r.get("usuario") or "desconhecido") != "desconhecido":
+        return False
+    status = r.get("status")
+    if status == 404:
+        return True
+    return status == 401 and str(r.get("rota", "")) == ROTA_CHECAGEM_DE_SESSAO
+
+
 def agregar_acessos(linhas: Iterable[str], dia_brt: date | None = None) -> dict[str, dict]:
     """`{usuario: {"ini", "fim" (HH:MM BRT), "acoes", "abas" (set)}}`.
 
