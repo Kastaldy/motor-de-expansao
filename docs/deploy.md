@@ -25,7 +25,7 @@ este doc cobre so o ciclo rotineiro de atualizacao.
   `pyproject.toml`).
   Scan Trivy HIGH/CRITICAL e BLOQUEANTE antes do push.
 - Um container serve tudo (`web`, container `motor_expansao_web`): o SPA (build do
-  Vite) e a API em `/api/*` na porta interna `8899`, atras do Caddy + Authelia em
+  Vite) e a API em `/api/*` na porta interna `8899`, atras do Caddy, com o login proprio do piloto (DEC-067), em
   `piloto.ultra-expansao.tech`. O subdominio `dashboard.ultra-expansao.tech` serve
   apenas `/tiles/*` (tileserver) e redireciona a raiz (301) para o piloto (DEC-022).
 - O `docker-compose.prod.yml` referencia a imagem via variavel de override
@@ -62,6 +62,8 @@ echo "$GHCR_PAT" | docker login ghcr.io -u <usuario-github> --password-stdin
 
 ```bash
 # 1. Pinar a imagem alvo no .env da VPS (/opt/motor-expansao/app/.env).
+#    ANTES de pinar: o `estado` com a imagem nova (passo 1 do §9.0 do docs/banco_deploy.md)
+#    diz se ela traz MIGRATION; se trouxer, siga aquele roteiro, onde o pin e o ultimo passo.
 #    WEB_IMAGE e OBRIGATORIO (o compose e fail-closed: sem essa variavel,
 #    `up`/`pull` falha de proposito). Preferir DIGEST imutavel:
 WEB_IMAGE=ghcr.io/kastaldy/motor-de-expansao/motor-expansao-web@sha256:<digest>
@@ -70,8 +72,14 @@ WEB_IMAGE=ghcr.io/kastaldy/motor-de-expansao/motor-expansao-web@sha256:<digest>
 # 2. Puxar a imagem (sem build)
 docker compose -f docker-compose.prod.yml pull web
 
-# 3. Subir/recriar so o servico web (SEM --build)
-docker compose -f docker-compose.prod.yml up -d web
+# 3. Subir/recriar so o servico web (SEM --build). Com o banco ligado (desde 23/10/2026),
+#    TODO `up` comeca com o `unset` (uma MOTOR_DATABASE_URL esquecida no shell, mesmo vazia,
+#    vence o .env e o web sobe sem banco) e leva --no-deps (sem ele o compose converge o
+#    postgres junto).
+unset MOTOR_DATABASE_URL
+docker compose -f docker-compose.prod.yml up -d --no-deps web
+#    o web subiu com a URL do papel `app`? Conta sem imprimir a senha -- tem de dar 1
+docker inspect -f '{{range .Config.Env}}{{println .}}{{end}}' motor_expansao_web | grep -c '^MOTOR_DATABASE_URL=postgresql://app:'
 
 # 4. Conferir estado e saude
 docker compose -f docker-compose.prod.yml ps
@@ -79,9 +87,17 @@ docker compose -f docker-compose.prod.yml logs --tail=80 web
 docker compose -f docker-compose.prod.yml exec web curl -fsS http://127.0.0.1:8899/api/health
 ```
 
-> **Stack AR (`web_ar`, `docker-compose.ar.yml`) usa o MESMO `WEB_IMAGE`:** o `up -d web` acima nao a
-> recria — rodar tambem `docker compose -f docker-compose.ar.yml pull web_ar` e
-> `docker compose -f docker-compose.ar.yml up -d web_ar` (idem no rollback). Ver `docs/deploy_piloto_web.md` §5.
+> **Stack AR (`web_ar`, `docker-compose.ar.yml`) usa o MESMO `WEB_IMAGE`:** o `up -d --no-deps web` acima nao a
+> recria — rodar tambem o bloco abaixo (idem no rollback). O `web_ar` tambem
+> fala com o banco desde o corte AR da DEC-081 (31/10/2026; `MOTOR_DATABASE_URL_AR` no `.env`, mesmo papel `app`):
+> vale o `unset` da variavel DELE, e a contagem se repete em `motor_expansao_web_ar`. Ver `docs/deploy_piloto_web.md` §5.
+
+```bash
+unset MOTOR_DATABASE_URL_AR
+docker compose -f docker-compose.ar.yml pull web_ar
+docker compose -f docker-compose.ar.yml up -d --no-deps web_ar
+docker inspect -f '{{range .Config.Env}}{{println .}}{{end}}' motor_expansao_web_ar | grep -c '^MOTOR_DATABASE_URL=postgresql://app:'   # tem de dar 1
+```
 
 ## Rollback (por digest imutavel)
 
@@ -90,9 +106,18 @@ docker compose -f docker-compose.prod.yml exec web curl -fsS http://127.0.0.1:88
 # (pin canonico) e refazer pull + up -d. O digest garante reproducao byte-identica.
 WEB_IMAGE=ghcr.io/kastaldy/motor-de-expansao/motor-expansao-web@sha256:<digest_anterior>
 #   alternativa rastreavel por commit: ...motor-expansao-web:sha-<commit_anterior>
+# Migration aplicada NAO volta com a imagem (§8 do docs/banco_deploy.md). Mesmo `unset`,
+# `--no-deps` e contagem da atualizacao, e a AR junto (nota acima).
+unset MOTOR_DATABASE_URL
 docker compose -f docker-compose.prod.yml pull web
-docker compose -f docker-compose.prod.yml up -d web
+docker compose -f docker-compose.prod.yml up -d --no-deps web
+docker inspect -f '{{range .Config.Env}}{{println .}}{{end}}' motor_expansao_web | grep -c '^MOTOR_DATABASE_URL=postgresql://app:'   # tem de dar 1
 docker compose -f docker-compose.prod.yml ps
+# AR (mesmo WEB_IMAGE, nota acima):
+unset MOTOR_DATABASE_URL_AR
+docker compose -f docker-compose.ar.yml pull web_ar
+docker compose -f docker-compose.ar.yml up -d --no-deps web_ar
+docker inspect -f '{{range .Config.Env}}{{println .}}{{end}}' motor_expansao_web_ar | grep -c '^MOTOR_DATABASE_URL=postgresql://app:'   # tem de dar 1
 ```
 
 ## Atualizacao de Parquets

@@ -318,7 +318,7 @@ O caminho de producao usa duas imagens publicadas no GHCR pelo CI e pinadas por 
 - `motor-expansao-web` (`Dockerfile.web`): o piloto — estagio Node builda o Vite, estagio Python serve SPA + API na porta 8899.
 - `motor-expansao-api` (`Dockerfile.api`): API GeoEspacial on-demand + bot Telegram (mesma imagem, dois containers).
 
-A imagem `motor-expansao-streamlit` morreu com o corte (DEC-022); fica retida no GHCR por algumas semanas so para rollback. O legado de PostGIS/Prefect de `fora_primeira_fase/api_postgis/` nao entra no caminho de producao; o banco de producao e outro, o servico `postgres` (`postgis/postgis:18-3.6`) do `docker-compose.prod.yml`, opcional no código (`MOTOR_DATABASE_URL` vazia = comportamento pré-banco; `docs/banco_deploy.md`), mas obrigatório no piloto BR desde o corte do P19, porque o login depende dele.
+A imagem `motor-expansao-streamlit` morreu com o corte (DEC-022); fica retida no GHCR por algumas semanas so para rollback. O legado de PostGIS/Prefect de `fora_primeira_fase/api_postgis/` nao entra no caminho de producao; o banco de producao e outro, o servico `postgres` (`postgis/postgis:18-3.6`) do `docker-compose.prod.yml`, opcional no código (`MOTOR_DATABASE_URL` vazia = comportamento pré-banco; `docs/banco_deploy.md`), mas obrigatório nos pilotos BR e AR desde o corte do P19 (BR, 27/10/2026) e o corte AR da DEC-081 (31/10/2026), porque o login dos dois depende dele.
 
 ## Fora do caminho de producao
 

@@ -3,7 +3,7 @@
 > **Em poucas palavras**
 > - **Do que trata:** O servidor onde o site roda: o que há nele, como publicar ou desfazer uma versão nova, tarefas agendadas, login, alertas e o que fazer em incidentes.
 > - **Quando ler:** Antes de mexer no servidor, ou quando algo sai do ar, um dado não atualiza ou é preciso dar ou tirar acesso de alguém.
-> - **Atenção:** Mexer no servidor é sempre passo manual, confirmado comando a comando. Desde 27/10/2026, no Brasil, tirar alguém só do login antigo não basta; a Argentina ainda usa esse login.
+> - **Atenção:** Mexer no servidor é sempre passo manual, confirmado comando a comando. Desde 27/10/2026 no Brasil, e desde 31/10/2026 na Argentina, tirar alguém só do login antigo não basta.
 
 > Histórico dos procedimentos superados e dos incidentes já consertados: `docs/archive/infra_producao_historico.md`.
 
@@ -122,9 +122,17 @@ docker inspect -f '{{range .Config.Env}}{{println .}}{{end}}' motor_expansao_web
   `POSTGRES_OWNER_PASSWORD` trocada no `.env` basta —, tirando o banco do ar no meio do deploy. O
   `up -d caddy` sem `--no-deps` alcança o `web` e, por ele, o `postgres`. Medido no laboratório em
   25/10/2026 (Compose 2.33 e 5.6); é a forma dos kits de deploy.
-- **A stack AR usa o MESMO `WEB_IMAGE`**: o `up -d web` do BR nao recria o `web_ar`. Rodar tambem
-  `docker compose -f docker-compose.ar.yml pull web_ar` e `docker compose -f docker-compose.ar.yml up -d --no-deps web_ar`
-  (idem no rollback abaixo) — ver `docs/deploy_piloto_web.md` §5.
+- **A stack AR usa o MESMO `WEB_IMAGE`**: o `up -d --no-deps web` do BR nao recria o `web_ar`, e
+  desde o corte AR da DEC-081 (31/10/2026) o `web_ar` tambem fala com o banco: o
+  `docker-compose.ar.yml` lhe entrega a `MOTOR_DATABASE_URL_AR` do `.env` como `MOTOR_DATABASE_URL`
+  (mesmo Postgres, mesmo papel `app`). Rodar tambem, com o `unset` da variavel DELE e a contagem do
+  passo 3b no container AR (idem no rollback abaixo) — ver `docs/deploy_piloto_web.md` §5:
+  ```bash
+  unset MOTOR_DATABASE_URL_AR
+  docker compose -f docker-compose.ar.yml pull web_ar
+  docker compose -f docker-compose.ar.yml up -d --no-deps web_ar
+  docker inspect -f '{{range .Config.Env}}{{println .}}{{end}}' motor_expansao_web_ar | grep -c '^MOTOR_DATABASE_URL=postgresql://app:'   # tem de dar 1
+  ```
 - API e bot seguem o mesmo modelo com `API_IMAGE` — ver `docs/deploy_api_bot.md`.
 - Dados em `/opt/motor-expansao/data/outputs/` sao preservados (bind mount read-only).
 - Se o pacote GHCR for privado, autenticar antes: `docker login ghcr.io` com PAT `read:packages`
@@ -958,8 +966,8 @@ Dois erros de leitura a evitar no `403` e no `200`:
 
 - **`403`** significa que o `Remote-User` escolhido não tem a aba `mapa` — **não** prova ausência de
   artefato. Use um usuário com o mapa: no BR, desde 23/10/2026, alguém ativo no banco com perfil
-  `expansao`, `lideres` ou `growth` (o `acesso_abas.json` só vale na AR e no rollback do §8 do
-  `docs/banco_deploy.md`).
+  `expansao`, `lideres` ou `growth` (o `acesso_abas.json` só vale no rollback do §8 do
+  `docs/banco_deploy.md`; o da AR também deixou de valer no corte da DEC-081, em 31/10/2026).
 - **`200` com um nome inventado não prova o gate.** Se o controle de abas estiver indisponível, o
   fail-closed devolve `ABAS_VALIDAS - ABAS_SENSIVEIS` (`acesso.py`), e `mapa` **não** é sensível —
   ou seja, qualquer nome passa. O `200` prova a camada, não a allowlist.
@@ -1174,13 +1182,19 @@ requisição seguinte, sem restart); mudanças no `Caddyfile` seguem pedindo
 
 > Até o corte do P19, o Authelia protegia `piloto.ultra-expansao.tech` e `/tiles/` em
 > `dashboard.ultra-expansao.tech` com a mesma base de usuários; desde o corte, o piloto BR tem login
-> próprio (abaixo), e o Authelia segue de pé para a instância AR.
+> próprio (abaixo), e a instância AR também, desde o corte da DEC-081 (31/10/2026). O Authelia segue
+> de pé só pelo `/tiles/` do `dashboard.` e como reserva do rollback até o fim da janela de
+> observação (16/11/2026); depois vem o Estágio 3, que o tira do compose (emenda de 06/11/2026 da
+> DEC-081).
 >
 > **Desde o corte, no BR,
 > quem autentica é o próprio piloto, pela senha do banco** (`MOTOR_AUTENTICACAO_PROPRIA` ligada e o
 > `forward_auth` do Caddy apontando para o nosso `/api/verify`, DEC-067, D4) — ver o aviso "Depois do
-> corte do P19", abaixo. A instância AR não tem banco e segue pelo Authelia e pelo `acesso_abas.json`
-> dela. Os gestos de senha do banco — "Trocar a minha senha", "Redefinir senha" e "Exigir troca" —
+> corte do P19", abaixo. Na AR é igual desde o corte da DEC-081: o `web_ar` fala com o mesmo banco
+> (`MOTOR_DATABASE_URL_AR` no `.env`, mesmo papel `app`), a mesma linha de `usuarios` (e a mesma
+> senha) vale nos dois hosts, e o `/api/verify` do `web_ar` só deixa entrar quem tem o país AR em
+> `usuario_paises`.
+> Os gestos de senha do banco — "Trocar a minha senha", "Redefinir senha" e "Exigir troca" —
 > só aparecem e só funcionam com `MOTOR_AUTENTICACAO_PROPRIA` ligada (P19); a coluna "Senha (banco)" da tela de Acessos fala da senha do banco.
 
 ### Adicionar usuário
@@ -1207,10 +1221,12 @@ requisição seguinte, sem restart); mudanças no `Caddyfile` seguem pedindo
    ```bash
    cd /opt/motor-expansao/app && docker compose -f docker-compose.prod.yml restart authelia
    ```
-5. **Banco (piloto BR, desde 23/10/2026):** criar a pessoa na tela de **Acessos** do piloto, com o
-   perfil (`expansao`, `consultoria`, `lideres` ou `growth`). Quem cria é um admin da allowlist do
-   painel (`MOTOR_ACESSOS_ADMIN_USUARIOS`) com perfil `growth`. A ordem dos dois cadastros não
-   importa. Desde o corte do P19 (27/10/2026), no BR o banco basta: a pessoa já entra com a senha inicial e é convidada a trocá-la no primeiro acesso; o cadastro no Authelia (passos 1 a 4) mantém o rollback possível durante a janela de observação do corte.
+5. **Banco (piloto BR desde 23/10/2026; AR desde 31/10/2026, no mesmo cadastro):** criar a pessoa na
+   tela de **Acessos** do piloto, com o perfil (`expansao`, `consultoria`, `lideres` ou `growth`) e
+   os países que ela vai usar (sem o país AR, o `/api/verify` do `web_ar` a barra com 403). Quem cria
+   é um admin da allowlist do painel (`MOTOR_ACESSOS_ADMIN_USUARIOS`) com perfil `growth`. A ordem
+   dos dois cadastros não importa. Desde o corte do P19 (27/10/2026), no BR o banco basta, e na AR
+   desde o corte da DEC-081 (31/10/2026): a pessoa já entra com a senha inicial e é convidada a trocá-la no primeiro acesso; o cadastro no Authelia (passos 1 a 4) mantém o rollback possível durante a janela de observação do corte.
 
 ### Revogar usuário
 
@@ -1220,13 +1236,16 @@ São **quatro** portas independentes, e revogar só a primeira não fecha as out
 do Authelia, remover da allowlist do bot e desativar na tela de Acessos. A porta 2 não corta nada no
 BR enquanto o banco estiver ligado.
 
-> **A porta 1 DEIXA DE REVOGAR O BR no dia do corte do P19, e a 4 passa a cortar também a entrada.** Depois
-> que `MOTOR_AUTENTICACAO_PROPRIA` estiver preenchida, quem autentica o piloto brasileiro é o
+> **A porta 1 DEIXA DE REVOGAR O BR no dia do corte do P19, e a AR no corte da DEC-081 (31/10/2026); a 4 passa a cortar também a entrada.** Depois
+> que `MOTOR_AUTENTICACAO_PROPRIA` estiver preenchida (na AR, a `MOTOR_AUTENTICACAO_PROPRIA_AR`), quem autentica o piloto é o
 > banco: remover a pessoa do `users_database.yml` **não a tira de lá** — ela continua dentro
-> pelas 8 h da sessão aberta —, e o `restart authelia` **desloga a instância argentina
-> inteira**, que segue dependendo dele. Conferir o estado:
-> `cd /opt/motor-expansao/app && grep '^MOTOR_AUTENTICACAO_PROPRIA=' .env`.
->
+> pelas 8 h da sessão aberta. O `restart authelia` já não desloga a instância argentina, que
+> dependia dele até o corte da DEC-081. Conferir o estado das duas chaves:
+
+```bash
+cd /opt/motor-expansao/app && grep -E '^MOTOR_AUTENTICACAO_PROPRIA(_AR)?=' .env
+```
+
 > Enquanto durar a janela de observação do corte, faça a **1 e a 4** (a 3, do bot, vale sempre): o rollback devolve o
 > Authelia ao comando, então quem sai da empresa precisa sair dos dois cadastros. É a dívida
 > declarada na emenda de 25/09/2026 da DEC-067.
@@ -1246,7 +1265,8 @@ BR enquanto o banco estiver ligado.
 3. **Bot do Telegram** — remover o `chat_id` de
    `/opt/motor-expansao/cadastro/bot_allowlist.json` (seção abaixo).
 4. **Linha em `usuarios`** — desativar a pessoa pelo painel de **Acessos** do piloto. É a
-   única porta que revoga de verdade no BR depois do corte, e é **imediata**: `SQL_VALIDAR`
+   única porta que revoga de verdade no BR e na AR depois do corte (a linha é a mesma nos dois
+   hosts), e é **imediata**: `SQL_VALIDAR`
    exige `u.ativo` a cada requisição guardada, então a sessão dela morre na requisição
    **seguinte** — sem janela de 8 h e sem reiniciar serviço nenhum.
 
@@ -1288,8 +1308,10 @@ Arquivo: `/opt/motor-expansao/cadastro/bot_allowlist.json`. Um `chat_id` por ent
 > **Depois do corte do P19, o caminho no BR é OUTRO, e é o que a própria mensagem de bloqueio
 > do piloto promete:** redefinir pelo painel de **Acessos**, que gera uma senha temporária
 > aleatória válida por 2 h e **destrava** a conta barrada pela trava de tentativas. Mexer no
-> `users_database.yml` não muda a senha com que a pessoa entra no piloto brasileiro. Os dois
-> passos abaixo seguem valendo antes do corte e, sempre, para a instância AR.
+> `users_database.yml` não muda a senha com que a pessoa entra no piloto brasileiro, nem, desde o
+> corte da DEC-081 (31/10/2026), no argentino: é a mesma linha de `usuarios` nos dois hosts. Os três
+> passos abaixo seguem valendo antes do corte e, depois dele, só mantêm o cadastro paralelo do
+> rollback, até o fim da janela de observação (16/11/2026).
 > Antes do corte (a partir da imagem de 24/10/2026), "Redefinir senha" nem aparece no painel (e a rota responde 404 avisando que a
 > entrada ainda é pelo Authelia).
 
@@ -1572,7 +1594,8 @@ local da máquina de dev (seção "Atualizar parquets de dados") ou regenerar pe
 pipelines. Sessões do bot (`bot_data`) são descartáveis (usuários apenas deslogam).
 
 **4. Banco fora (Postgres do piloto, `motor_expansao_postgres`).**
-Desde 23/10/2026 o RBAC do piloto BR vem do banco (a AR, a API e o bot não o usam). Quem acusa, na
+Desde 23/10/2026 o RBAC do piloto BR vem do banco, e o da AR desde o corte da DEC-081 (31/10/2026,
+pela `MOTOR_DATABASE_URL_AR`); a API e o bot não o usam. Quem acusa, na
 versão do repo: o `containers` (`container_motor_expansao_postgres`, a cada 5 min) e, uma vez por
 dia, o `banco_medicao` do `banco`. **Em 24/10/2026 nenhuma das duas checagens está ativa** — a cópia instalada no
 root não vigia o postgres nem tem o `banco` (ver "Alertas automáticos") —, e nada mais avisa.
@@ -1624,13 +1647,21 @@ interruptor é o §8 do `docs/banco_deploy.md`: esvaziar a `MOTOR_DATABASE_URL` 
 estação do Vinicius tem o desfazer simulado, que mostra quem muda antes de desligar) —, e migration
 não volta (a volta do dado é restore de dump, §10).
 
-**Depois do corte do P19 (`MOTOR_AUTENTICACAO_PROPRIA` ligada), banco fora = piloto BR fora:** a
-sessão vive em tabela, o `/api/verify` responde 503 e o Caddy nega tudo; quem estava dentro sai
-junto, e o login também não funciona. O interruptor do §8 deixa de existir (sem banco ninguém
-entra): primeiro desfaz-se o P19 — `docs/archive/repasse_corte_p19.md`, "Se precisar voltar atrás" (o bloco
-do Caddy de `Caddyfile.antes-do-p19`, depois a chave vazia), o que só devolve a entrada enquanto os
-logins BR ainda estiverem no Authelia —, e só então, se o banco seguir fora, o §8. Conferir o
-estado: `grep '^MOTOR_AUTENTICACAO_PROPRIA=' /opt/motor-expansao/app/.env`.
+**Depois do corte do P19 (`MOTOR_AUTENTICACAO_PROPRIA` ligada), banco fora = pilotos BR e AR fora
+(a AR desde o corte da DEC-081, 31/10/2026, com a `MOTOR_AUTENTICACAO_PROPRIA_AR` ligada e o mesmo
+Postgres):** a sessão vive em tabela, o `/api/verify` de cada um responde 503 (401 a quem chega sem cookie) e o Caddy nega tudo;
+quem estava dentro sai junto, e o login também não funciona. O interruptor do §8 deixa de existir
+(sem banco ninguém entra): primeiro desfaz-se o corte — no BR, `docs/archive/repasse_corte_p19.md`,
+"Se precisar voltar atrás" (o bloco do Caddy de `Caddyfile.antes-do-p19`, depois a chave vazia); na
+AR, a "Reversão" da DEC-081, análoga (o bloco do Caddy do `piloto-ar` restaurado, depois a
+`MOTOR_AUTENTICACAO_PROPRIA_AR` vazia; a URL fica) —, o que só devolve a entrada enquanto os logins
+ainda estiverem no Authelia (janela de observação até 16/11/2026; depois do Estágio 3, reverter
+exige ressubir o `authelia`), e só então, se o banco seguir fora, o §8. Conferir o estado das duas
+chaves:
+
+```bash
+grep -E '^MOTOR_AUTENTICACAO_PROPRIA(_AR)?=' /opt/motor-expansao/app/.env
+```
 
 Ligações: DR de segredos = `docs/backup_restore.md` (BLK-OPS-01); backup de dados =
 snapshot semanal da Hostinger (BLK-SEC-04, risco aceito em 2026-07-13) + `run_backup_banco.sh` para o Postgres; hardening preventivo = BLK-SEC-03.
@@ -1710,7 +1741,7 @@ prefixo do projeto `app`; `docker volume ls`), o único que nenhum pipeline rege
 | Arquivo | Conteúdo |
 |---|---|
 | `app/Caddyfile` | Configuração do Caddy com domínio real |
-| `app/.env` | Segredos e pins do deploy: `AUTHELIA_*`, `API_TOKENS`, `API_TELEGRAM_TOKEN`, `API_BOT_SENHA`, `POSTGRES_*`, `MOTOR_DATABASE_URL`, `MOTOR_APP_DB_PASSWORD`/`MOTOR_AUDITORIA_DB_PASSWORD` (senhas dos papéis do D20: o compose não as lê; a do `app` vai dentro da URL), `WEB_IMAGE`/`API_IMAGE` (o compose aborta sem os obrigatórios) |
+| `app/.env` | Segredos e pins do deploy: `AUTHELIA_*`, `API_TOKENS`, `API_TELEGRAM_TOKEN`, `API_BOT_SENHA`, `POSTGRES_*`, `MOTOR_DATABASE_URL`, `MOTOR_DATABASE_URL_AR` (a do `web_ar`, desde o corte da DEC-081; o `secrets/env.enc.env` vigente, de 27/10/2026, ainda não a tem: `docs/backup_restore.md` §10.6), `MOTOR_APP_DB_PASSWORD`/`MOTOR_AUDITORIA_DB_PASSWORD` (senhas dos papéis do D20: o compose não as lê; a do `app` vai dentro das duas URLs), `WEB_IMAGE`/`API_IMAGE` (o compose aborta sem os obrigatórios) |
 | `app/authelia/configuration.yml` | Configuração Authelia com domínio real |
 | `app/authelia/users_database.yml` | Usuários e hashes de senhas |
 | `data/outputs/` | Todos os parquets (~1,6 GB) |
