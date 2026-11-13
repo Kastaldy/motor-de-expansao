@@ -170,9 +170,9 @@ def conferir_inclusao(
     com `ultra_id`; `ignorar_ultra_id` tira dele a própria unidade numa alteração, senão ela
     seria recusada por estar a 0 m de si mesma.
     """
+    # Ordem das recusas: nome, coordenada, e só então UF e cidade -- no site, as duas vêm do
+    # ponto, então uma coordenada ruim tem de ser dita como coordenada, e não como "falta a UF".
     nome = _texto(unidade, "o nome da unidade", TAMANHO_MAX_NOME, minimo=2)
-    sigla = _texto(uf, "a UF", TAMANHO_MAX_UF).upper()
-    municipio = _texto(cidade, "a cidade", TAMANHO_MAX_CIDADE)
     try:
         la, ln = float(lat), float(lng)  # type: ignore[arg-type]
     except (TypeError, ValueError) as erro:
@@ -184,6 +184,8 @@ def conferir_inclusao(
             f"A coordenada {la:.6f}, {ln:.6f} fica fora do país deste site. Confira se a "
             "latitude e a longitude não estão trocadas."
         )
+    sigla = _texto(uf, "a UF", TAMANHO_MAX_UF).upper()
+    municipio = _texto(cidade, "a cidade", TAMANHO_MAX_CIDADE)
 
     outros = cadastro
     if outros is not None and len(outros) and ignorar_ultra_id is not None and "ultra_id" in outros:

@@ -12847,8 +12847,6 @@ class UnidadeSiteIn(BaseModel):
     cru e devolve o recado da tela, em vez do 422 em inglês do Pydantic."""
 
     unidade: Any = None
-    uf: Any = None
-    cidade: Any = None
     lat: Any = None
     lng: Any = None
     confirmado: bool = False
@@ -12924,20 +12922,26 @@ def _conferir_unidade_do_site(body: UnidadeSiteIn, ignorar_id: int | None = None
     """Limpa e confere contra o cadastro INTEIRO (arquivo + site), lido do banco agora, e não do
     cache: a conferência de um nome repetido não pode depender de quando o cache se refez.
 
-    UF e cidade em branco vêm do ponto, pela malha municipal (`/api/municipio-do-ponto`); o
-    que a pessoa digitou vale sobre o ponto."""
+    A pessoa digita só o nome e a coordenada (pedido do Juan na prévia de 13/11/2026): UF e
+    cidade vêm SEMPRE do ponto, pela malha municipal do país (`/api/municipio-do-ponto`, que o
+    BR e o AR têm). Ponto que não cai em município nenhum -- no mar, fora do país -- é recusado:
+    gravar uma unidade sem cidade deixaria a busca e o cadastro de domingo com um buraco."""
     from motor_expansao import cadastro_ultra
     from motor_expansao.db import unidades_site as db_us
 
     lat, lng = _numero_ou_none(body.lat), _numero_ou_none(body.lng)
-    uf, cidade = body.uf, body.cidade
-    if lat is not None and lng is not None and not (str(uf or "").strip() and str(cidade or "").strip()):
+    uf = cidade = None
+    if lat is not None and lng is not None and cadastro_ultra.dentro_da_caixa(lat, lng, PERFIL.bbox):
         try:
             do_ponto = municipio_do_ponto(lat, lng)
         except HTTPException:
             do_ponto = {}
-        uf = uf if str(uf or "").strip() else do_ponto.get("uf")
-        cidade = cidade if str(cidade or "").strip() else do_ponto.get("municipio")
+        uf, cidade = do_ponto.get("uf"), do_ponto.get("municipio")
+        if not (str(uf or "").strip() and str(cidade or "").strip()):
+            raise cadastro_ultra.Recusa(
+                "Não achamos o município deste ponto: ele pode estar no mar ou fora do país. "
+                "Confira a coordenada."
+            )
     cadastro = cadastro_ultra.unir_ao_cadastro(
         _rede_ler_opcional(ULTRA_MAPEADAS_PARQUET, ("ultra_id", "unidade", "uf", "cidade", "lat", "lng")),
         db_us.listar_vivas(PERFIL.pais),
@@ -12983,6 +12987,9 @@ def _payload_unidades_site(eu: Any) -> dict[str, Any]:
         "pode_incluir": pode,
         "prazo_horas": int(cadastro_ultra.PRAZO_ALTERACAO.total_seconds() // 3600),
         "unidades": unidades,
+        # O ícone do pino da Ultra (o mesmo `__ultra__` dos payloads do mapa): a tela desenha a
+        # unidade recém-incluída com a logo mesmo num recorte que ainda não tinha Ultra nenhuma.
+        "icone_ultra": _icone_ultra() if pode else None,
     }
 
 
@@ -13001,6 +13008,7 @@ def mapa_unidades_site(
         "pode_incluir": False,
         "prazo_horas": int(cadastro_ultra.PRAZO_ALTERACAO.total_seconds() // 3600),
         "unidades": [],
+        "icone_ultra": None,
     }
     try:
         eu = _identidade_para_unidade(remote_user)

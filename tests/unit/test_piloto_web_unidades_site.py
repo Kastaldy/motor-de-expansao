@@ -206,6 +206,7 @@ def test_quem_nao_e_growth_nem_lideres_recebe_403_e_nada_e_gravado(
     assert banco.linhas == {}
     lista = pilot_app.mapa_unidades_site(remote_user=None)
     assert lista["pode_incluir"] is False and lista["unidades"] == []
+    assert lista["icone_ultra"] is None
 
 
 def test_sem_a_confirmacao_nada_e_gravado(banco: _Banco, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -227,10 +228,39 @@ def test_previa_mostra_o_que_sera_gravado_e_nao_grava(banco: _Banco, monkeypatch
     assert banco.linhas == {}
 
 
-def test_uf_e_cidade_digitadas_valem_sobre_as_do_ponto(banco: _Banco, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_uf_e_cidade_vem_sempre_do_ponto(banco: _Banco, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Só nome e coordenada (prévia de 13/11/2026): UF e cidade mandadas no corpo não valem."""
     _como(monkeypatch, GROWTH)
-    previa = pilot_app.mapa_unidades_site_previa(_corpo(uf="rj", cidade="Teresópolis (Várzea)"), remote_user=None)
-    assert (previa["uf"], previa["cidade"]) == ("RJ", "Teresópolis (Várzea)")
+    previa = pilot_app.mapa_unidades_site_previa(_corpo(uf="SP", cidade="Outra Cidade"), remote_user=None)
+    assert (previa["uf"], previa["cidade"]) == ("RJ", "Teresópolis")
+    _incluir(uf="SP", cidade="Outra Cidade")
+    assert (banco.linhas[1].uf, banco.linhas[1].cidade) == ("RJ", "Teresópolis")
+
+
+@pytest.mark.parametrize(
+    "resposta",
+    [HTTPException(404, "Nenhum município encontrado"), {"uf": "RJ", "municipio": None}],
+    ids=["mar-aberto", "sem-nome-de-municipio"],
+)
+def test_ponto_sem_municipio_e_recusado_sem_gravar(
+    banco: _Banco, monkeypatch: pytest.MonkeyPatch, resposta: Any
+) -> None:
+    def _ponto(lat: float, lng: float) -> dict[str, Any]:
+        if isinstance(resposta, Exception):
+            raise resposta
+        return resposta
+
+    monkeypatch.setattr(pilot_app, "municipio_do_ponto", _ponto)
+    _como(monkeypatch, GROWTH)
+    for chamada in (
+        lambda: pilot_app.mapa_unidades_site_previa(_corpo(), remote_user=None),
+        lambda: _incluir(),
+    ):
+        with pytest.raises(HTTPException) as erro:
+            chamada()
+        assert erro.value.status_code == 422
+        assert "Não achamos o município deste ponto" in str(erro.value.detail)
+    assert banco.linhas == {}
 
 
 @pytest.mark.parametrize(
@@ -322,6 +352,8 @@ def test_lista_mostra_o_prazo_de_cada_unidade(banco: _Banco, monkeypatch: pytest
     banco.agora = T0 + timedelta(hours=2)
     lista = pilot_app.mapa_unidades_site(remote_user=None)
     assert lista["pode_incluir"] is True and lista["prazo_horas"] == 24
+    # o ícone do pino da Ultra, para a tela desenhar a logo num recorte que não tinha Ultra
+    assert str(lista["icone_ultra"]).startswith("data:image/")
     (item,) = lista["unidades"]
     assert item["no_prazo"] is True
     assert item["prazo_ate"] == (T0 + timedelta(hours=24)).isoformat()

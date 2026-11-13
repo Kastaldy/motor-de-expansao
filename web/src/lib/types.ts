@@ -2123,6 +2123,8 @@ export interface UnidadesSitePayload {
   unidades: UnidadeSite[]
   /** só na resposta de incluir: a que acabou de entrar */
   incluida?: UnidadeSite | null
+  /** o ícone `__ultra__` do mapa, para o pino da unidade nova (só para quem pode incluir) */
+  icone_ultra?: string | null
 }
 
 /** A tela de revisão: o que SERIA gravado, já conferido pelo servidor. Nada foi gravado. */

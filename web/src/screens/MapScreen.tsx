@@ -68,7 +68,8 @@ import {
   type EstadoTrilho,
   type MotivoFimDoDesenho,
 } from '../lib/painel-trilho'
-import type { PosicaoGeoJson } from '../lib/comparacao-pontos'
+import { chaveDaCoordenada, type PosicaoGeoJson } from '../lib/comparacao-pontos'
+import { coordenadasSuperadas, pinsComUnidadesDoSite } from '../lib/inclusao-unidade'
 import {
   AREA_MAX_KM2,
   DIAGONAL_MAX_KM,
@@ -749,10 +750,31 @@ export default function MapScreen({
       vivo = false
     }
   }, [])
-  const aoMudarUnidadesSite = useCallback((payload: UnidadesSitePayload) => {
-    setUnidadesSite(payload)
-    setVersaoUnidades((v) => v + 1)
-  }, [])
+  /* Coordenadas que deixaram de ser de uma unidade do site nesta sessão (removida, ou o ponto
+     antigo da alterada): o payload do recorte já carregado ainda pode trazê-las como pino. */
+  const [superadasDoSite, setSuperadasDoSite] = useState<ReadonlySet<string>>(new Set())
+  const aoMudarUnidadesSite = useCallback(
+    (payload: UnidadesSitePayload) => {
+      const saem = coordenadasSuperadas(unidadesSite?.unidades ?? [], payload.unidades)
+      const vivas = new Set(payload.unidades.map((u) => chaveDaCoordenada(u.lat, u.lng)))
+      setSuperadasDoSite((atual) => new Set([...atual, ...saem].filter((k) => !vivas.has(k))))
+      setUnidadesSite(payload)
+      setVersaoUnidades((v) => v + 1)
+    },
+    [unidadesSite],
+  )
+  /* Os pinos que o mapa desenha: os do recorte + as unidades vivas do site. A recém-incluída
+     aparece com a logo da Ultra NA HORA, mesmo com o município já carregado antes dela. */
+  const pinsComSite = useMemo(
+    () =>
+      pinsComUnidadesDoSite(
+        pinsNoMapa,
+        unidadesSite?.unidades ?? [],
+        superadasDoSite,
+        unidadesSite?.icone_ultra,
+      ),
+    [pinsNoMapa, unidadesSite, superadasDoSite],
+  )
   const unidadesRede = useMemo(() => (unidades ?? []).filter((u) => !u.sem_rede), [unidades])
   const opcoesUnidades = useMemo(
     () => unidadesDaBusca(unidadesRede, (unidades ?? []).filter((u) => u.sem_rede), uf),
@@ -838,22 +860,32 @@ export default function MapScreen({
     [viagem],
   )
   const abrirUnidade = useCallback(
-    (u: {
-      id: string
-      nome: string
-      lat: number | null
-      lng: number | null
-      semRede?: boolean
-      uf?: string | null
-      cidade?: string | null
-    }) => {
+    (
+      u: {
+        id: string
+        nome: string
+        lat: number | null
+        lng: number | null
+        semRede?: boolean
+        uf?: string | null
+        cidade?: string | null
+      },
+      /* `deUnidade`: o ponto é o de uma unidade recém-incluída pelo site — o pino dela, com a
+         logo, marca o lugar, e o anel neutro não é desenhado por cima (DEC-085). */
+      opcoes: { deUnidade?: boolean } = {},
+    ) => {
       const seq = viagem.iniciar()
       const unidade: UnidadeNoMapa = { id: u.id, nome: u.nome, semRede: u.semRede ?? false }
       setUnidadeAberta(unidade)
       const pinU =
         u.lat == null || u.lng == null
           ? null
-          : { lat: u.lat, lng: u.lng, hexId: latLngToCell(u.lat, u.lng, 7) }
+          : {
+              lat: u.lat,
+              lng: u.lng,
+              hexId: latLngToCell(u.lat, u.lng, 7),
+              ...(opcoes.deUnidade ? { deUnidade: true } : {}),
+            }
       if (pinU) {
         setBusca('')
         setBuscaErro(null)
@@ -868,7 +900,10 @@ export default function MapScreen({
      hora, de que ela entrou no mapa (DEC-085). */
   const aoIncluirUnidade = useCallback(
     (u: UnidadeSite) =>
-      abrirUnidade({ id: u.id_no_mapa, nome: u.unidade, lat: u.lat, lng: u.lng, semRede: true, uf: u.uf, cidade: u.cidade }),
+      abrirUnidade(
+        { id: u.id_no_mapa, nome: u.unidade, lat: u.lat, lng: u.lng, semRede: true, uf: u.uf, cidade: u.cidade },
+        { deUnidade: true },
+      ),
     [abrirUnidade],
   )
   /* Fechar a ficha cancela a viagem pendente: a lista de municipios que chegar depois nao
@@ -1814,7 +1849,7 @@ export default function MapScreen({
           centro={dados.centro}
           municipio={dados.municipio ?? undefined}
           uf={dados.uf}
-          pins={pinsNoMapa}
+          pins={pinsComSite}
           /* A seleção que veio do PONTO ativo não é contornada quando o alcance dele já
              está desenhado: o recorte é a marca (`selecaoMarcadaNoMapa`). Clique direto no
              hexágono segue marcado. */

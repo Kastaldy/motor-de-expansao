@@ -105,12 +105,9 @@ export default function PainelIncluirUnidade({
     setErro(null)
     try {
       const previa = await api.unidadeSitePrevia(leitura.campos)
-      // O que vai para a gravação é o que a pessoa VIU na revisão, com UF e cidade resolvidas.
-      setEtapa({
-        tipo: 'revisao',
-        previa,
-        campos: { unidade: previa.unidade, lat: previa.lat, lng: previa.lng, uf: previa.uf, cidade: previa.cidade },
-      })
+      // O que vai para a gravação é o que a pessoa VIU na revisão. UF e cidade, o servidor tira
+      // do ponto de novo ao gravar.
+      setEtapa({ tipo: 'revisao', previa, campos: { unidade: previa.unidade, lat: previa.lat, lng: previa.lng } })
     } catch (e) {
       setErro(mensagem(e))
     } finally {
@@ -195,32 +192,11 @@ export default function PainelIncluirUnidade({
               value={form.coordenadas}
               onChange={(e) => setForm({ ...form, coordenadas: e.target.value })}
             />
-            <p style={dica}>
+            <p style={{ ...dica, marginBottom: 12 }}>
               Latitude e longitude, como o Google Maps copia ao clicar com o botão direito no ponto. O link
-              do mapa também serve.
+              do mapa também serve. O estado e a cidade saem do ponto, e você confere na revisão.
             </p>
           </label>
-          <div style={{ display: 'grid', gridTemplateColumns: '96px 1fr', gap: 8, marginBottom: 4 }}>
-            <label style={{ display: 'block' }}>
-              <span style={rotuloCampo}>UF</span>
-              <input
-                maxLength={40}
-                placeholder="Do ponto"
-                value={form.uf}
-                onChange={(e) => setForm({ ...form, uf: e.target.value })}
-              />
-            </label>
-            <label style={{ display: 'block' }}>
-              <span style={rotuloCampo}>Cidade</span>
-              <input
-                maxLength={120}
-                placeholder="Do ponto"
-                value={form.cidade}
-                onChange={(e) => setForm({ ...form, cidade: e.target.value })}
-              />
-            </label>
-          </div>
-          <p style={{ ...dica, marginBottom: 12 }}>Em branco, UF e cidade vêm do ponto. Você confere na revisão.</p>
           {erro && (
             <p role="alert" style={erroEstilo}>
               {erro}

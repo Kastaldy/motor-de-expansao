@@ -12,7 +12,7 @@
 
 Hoje uma unidade Ultra nova só entra no cadastro (`unidades_ultra_mapeadas.parquet`) pela conta
 `deploy`, à mão (`scripts/incluir_unidade_ultra.py`). Com a DEC-085, quem tem o perfil `growth` ou
-`lideres` inclui pelo Mapa do piloto: digita nome e coordenadas, revisa numa tela de confirmação e
+`lideres` inclui pelo Mapa do piloto: digita nome e coordenada (UF e cidade saem do ponto), revisa numa tela de confirmação e
 só então grava. A unidade aparece na hora no pino, na busca e na ficha; pode ser alterada ou
 removida por 1 dia; depois disso a linha congela, e o cron de mercado de domingo a acrescenta ao
 parquet — de onde ela chega ao mercado residual e ao PDF da API.

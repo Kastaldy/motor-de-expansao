@@ -9,29 +9,27 @@
  *   formulário  --Revisar-->  revisão (POST /previa, não grava)  --Confirmar-->  salvo
  *        ^------------------------ Corrigir --------------------------|
  *
- * UF e cidade podem ficar em branco: a prévia as preenche pelo ponto (malha municipal), e o
- * "Corrigir" devolve o formulário já com elas, para a pessoa ajustar se o ponto errou.
+ * A pessoa digita só o NOME e a COORDENADA (prévia de 13/11/2026): a coordenada já diz o
+ * estado e a cidade. O servidor os tira do ponto pela malha municipal, e a revisão os mostra
+ * para conferência — ponto no mar ou fora do país é recusado ali.
  */
+import { chaveDaCoordenada } from './comparacao-pontos'
 import { parseCoordinate } from './coord'
-import type { PreviaUnidadeSite, UnidadeSite } from './types'
+import type { Pins, PreviaUnidadeSite, UnidadeSite } from './types'
 
 export interface FormularioUnidade {
   unidade: string
   /** "latitude, longitude" como o Google Maps copia, ou o link do mapa */
   coordenadas: string
-  uf: string
-  cidade: string
 }
 
-export const FORMULARIO_VAZIO: FormularioUnidade = { unidade: '', coordenadas: '', uf: '', cidade: '' }
+export const FORMULARIO_VAZIO: FormularioUnidade = { unidade: '', coordenadas: '' }
 
 /** O corpo das rotas `/api/mapa/unidades-site` (sem o `confirmado`, que só o passo 3 manda). */
 export interface CamposUnidade {
   unidade: string
   lat: number
   lng: number
-  uf: string | null
-  cidade: string | null
 }
 
 export type LeituraDoFormulario = { ok: true; campos: CamposUnidade } | { ok: false; erro: string }
@@ -55,16 +53,7 @@ export function lerFormulario(f: FormularioUnidade): LeituraDoFormulario {
         'Google Maps copia (ex.: -22.407291, -42.965760).',
     }
   }
-  return {
-    ok: true,
-    campos: {
-      unidade,
-      lat: ponto.lat,
-      lng: ponto.lng,
-      uf: espacos(f.uf) || null,
-      cidade: espacos(f.cidade) || null,
-    },
-  }
+  return { ok: true, campos: { unidade, lat: ponto.lat, lng: ponto.lng } }
 }
 
 /** A coordenada no formato que o próprio `parseCoordinate` lê de volta (ponto decimal). */
@@ -72,14 +61,48 @@ export function coordenadaTexto(lat: number, lng: number): string {
   return `${lat.toFixed(6)}, ${lng.toFixed(6)}`
 }
 
-/** "Corrigir" a partir da revisão: o formulário volta com UF e cidade já preenchidas pelo ponto. */
+/** "Corrigir" a partir da revisão: o formulário volta com o nome e a coordenada revisados. */
 export function formularioDaPrevia(p: PreviaUnidadeSite): FormularioUnidade {
-  return { unidade: p.unidade, coordenadas: coordenadaTexto(p.lat, p.lng), uf: p.uf, cidade: p.cidade }
+  return { unidade: p.unidade, coordenadas: coordenadaTexto(p.lat, p.lng) }
 }
 
 /** "Alterar" uma unidade do primeiro dia: o formulário volta com o que está gravado. */
 export function formularioDaUnidade(u: UnidadeSite): FormularioUnidade {
-  return { unidade: u.unidade, coordenadas: coordenadaTexto(u.lat, u.lng), uf: u.uf, cidade: u.cidade }
+  return { unidade: u.unidade, coordenadas: coordenadaTexto(u.lat, u.lng) }
+}
+
+/**
+ * As coordenadas que DEIXARAM de ser de uma unidade do site entre duas listas: a removida e o
+ * ponto antigo da alterada. O payload do recorte que o mapa já tem pode ainda trazê-las como
+ * pino — `pinsComUnidadesDoSite` as tira.
+ */
+export function coordenadasSuperadas(antes: UnidadeSite[], depois: UnidadeSite[]): string[] {
+  const vivas = new Set(depois.map((u) => chaveDaCoordenada(u.lat, u.lng)))
+  return antes.map((u) => chaveDaCoordenada(u.lat, u.lng)).filter((k) => !vivas.has(k))
+}
+
+/**
+ * Os pinos do recorte com as unidades do site somadas: a recém-incluída aparece com a logo da
+ * Ultra NA HORA, mesmo com o município já carregado (o payload dele é anterior à inclusão).
+ * Sem duplicar o que o servidor já manda, e sem as coordenadas superadas. O ícone `__ultra__`
+ * entra quando o recorte não tinha Ultra nenhuma — sem ele, o pino não teria imagem.
+ */
+export function pinsComUnidadesDoSite(
+  pins: Pins | undefined,
+  vivas: UnidadeSite[],
+  superadas: ReadonlySet<string>,
+  iconeUltra: string | null | undefined,
+): Pins | undefined {
+  if (!pins || (!vivas.length && !superadas.size)) return pins
+  const ultra = pins.ultra.filter((p) => !superadas.has(chaveDaCoordenada(p.lat, p.lng)))
+  const presentes = new Set(ultra.map((p) => chaveDaCoordenada(p.lat, p.lng)))
+  const novas = vivas
+    .filter((u) => !presentes.has(chaveDaCoordenada(u.lat, u.lng)))
+    .map((u) => ({ lat: u.lat, lng: u.lng, nome: u.unidade }))
+  if (!novas.length && ultra.length === pins.ultra.length) return pins
+  const icones =
+    pins.icones.__ultra__ || !iconeUltra ? pins.icones : { ...pins.icones, __ultra__: iconeUltra }
+  return { ...pins, ultra: [...ultra, ...novas], icones }
 }
 
 const fmt1 = new Intl.NumberFormat('pt-BR', { minimumFractionDigits: 1, maximumFractionDigits: 1 })
