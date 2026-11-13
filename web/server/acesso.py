@@ -709,6 +709,11 @@ REGRAS_POR_CAPACIDADE: tuple[tuple[str, tuple[str, ...] | None, str], ...] = (
     # (05/11/2026) da as duas a todos os perfis. O que muda por perfil -- ver o nome do autor e
     # moderar -- e' `concorrente.ver_autor`, conferida DENTRO da rota, nao no gate.
     ("/api/concorrente/observacoes", None, "concorrente.anotar"),
+    # Unidades Ultra incluidas pelo site (DEC-085, migration 024). ORDEM SIGNIFICATIVA: a
+    # escrita (e a previa, que so' quem inclui usa) vem ANTES da regra generica do mapa logo
+    # abaixo; a LEITURA (`GET`) cai nela, porque saber se o botao aparece e' do mapa. A rota
+    # confere a capacidade de novo por dentro.
+    ("/api/mapa/unidades-site", ("POST", "PATCH", "PUT", "DELETE"), "rede.unidade_incluir"),
     # Unidades da rede no mapa (11/11/2026): territorio e concorrencia, sem financeiro --
     # a capacidade do mapa, e nao `rede.ver`.
     ("/api/mapa/", None, "territorio.explorar"),
@@ -736,6 +741,8 @@ CAPACIDADES_SENSIVEIS = frozenset(
         # 023: ESCRITA, e de texto livre de qualquer perfil. Com o banco fora ela nem teria
         # onde gravar; negar no gate da' o recado certo em vez de um 503 por clique.
         "concorrente.anotar",
+        # 024 (DEC-085): ESCRITA no cadastro das unidades Ultra. Mesmo raciocinio.
+        "rede.unidade_incluir",
     }
 )
 

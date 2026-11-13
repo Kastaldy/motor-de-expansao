@@ -5,6 +5,7 @@
     python -m motor_expansao.db registrar   # registra migrations cujo efeito JA' esta no banco
     python -m motor_expansao.db conferir    # o banco bate com o que o motor espera?
     python -m motor_expansao.db privilegios # o papel `app` e' mesmo incapaz do que nao deve
+    python -m motor_expansao.db compor-unidades-ultra --arquivo <parquet>  # cron de domingo (DEC-085)
 
 Quem executa e' o operador
 --------------------------
@@ -81,12 +82,13 @@ TABELAS_DO_MODELO = (
     "sso_tickets",
     "observacoes_concorrente",
     "observacoes_concorrente_historico",
+    "unidades_ultra_site",
 )
 NUMEROS_DA_SECAO_ZERO = {
-    "indices": 60,  # 41 explicitos + 16 de PK + 3 de UNIQUE (a 022/DEC-083 somou 3 em sso_tickets: PK + UNIQUE do token + idx de id_usuario; a 023, 5 explicitos e 2 PK)
-    "constraints CHECK": 27,  # a 018 (D30), a 019 (`ck_usuarios_prazo_exige_troca`), a 021/DEC-081 (`chk_usuario_paises_sigla`), a 022/DEC-083 (`chk_sso_ticket_sigla`, `chk_sso_ticket_expira_apos_criacao`) e os 10 da 023
-    "chaves estrangeiras": 17,  # a 018 (D30): `sessoes.id_usuario`; a 021/DEC-081: `usuario_paises.id_usuario`; a 022/DEC-083: `sso_tickets.id_usuario` e `sso_tickets.id_sessao_origem`; a 023: autor e `apagada_por`
-    "triggers": 13,  # 5 ate' a 016; a 017 (D29) somou a guarda de coerencia nas duas regioes; a 023, seis
+    "indices": 66,  # 46 explicitos + 17 de PK + 3 de UNIQUE (a 022/DEC-083 somou 3 em sso_tickets: PK + UNIQUE do token + idx de id_usuario; a 023, 5 explicitos e 2 PK; a 024/DEC-085, 5 explicitos e 1 PK)
+    "constraints CHECK": 33,  # a 018 (D30), a 019 (`ck_usuarios_prazo_exige_troca`), a 021/DEC-081 (`chk_usuario_paises_sigla`), a 022/DEC-083 (`chk_sso_ticket_sigla`, `chk_sso_ticket_expira_apos_criacao`) os 10 da 023 e os 6 da 024 (DEC-085)
+    "chaves estrangeiras": 20,  # a 018 (D30): `sessoes.id_usuario`; a 021/DEC-081: `usuario_paises.id_usuario`; a 022/DEC-083: `sso_tickets.id_usuario` e `sso_tickets.id_sessao_origem`; a 023: autor e `apagada_por`; a 024: quem incluiu, `alterada_por` e `removida_por`
+    "triggers": 16,  # 5 ate' a 016; a 017 (D29) somou a guarda de coerencia nas duas regioes; a 023, seis; a 024, tres
     "colunas geometricas": 7,
 }
 #: `prosecdef` e `proconfig` esperados por funcao, apos a migration 011 (D21) e a 017 (D29).
@@ -106,6 +108,9 @@ FUNCOES_ESPERADAS = {
     "registra_observacao_concorrente": (True, "pg_catalog, public, pg_temp"),
     "guarda_observacao_concorrente": (False, "pg_catalog, pg_temp"),
     "recusa_remover_observacao": (False, "pg_catalog, pg_temp"),
+    # 024 (unidades Ultra do site, DEC-085): as duas so' levantam excecao -- nenhuma escreve.
+    "guarda_unidade_ultra_site": (False, "pg_catalog, pg_temp"),
+    "recusa_remover_unidade_ultra_site": (False, "pg_catalog, pg_temp"),
 }
 
 SQL_CONTAGENS = """
@@ -781,6 +786,15 @@ def _checagens_negativas() -> list[tuple[str, str, str]]:
             "por decisao de produto (05/11/2026). DELETE aqui significa que o "
             "`papeis-e-privilegios.md` foi afrouxado sem que a decisao acompanhasse",
         ),
+        # 024 (DEC-085): remover a unidade incluida pelo site e' MARCAR `removida_em`, e so' no
+        # primeiro dia. Com DELETE, a aplicacao apagaria uma unidade que o cron de domingo ja'
+        # levou ao parquet, e o cadastro do banco deixaria de explicar o do mercado.
+        (
+            "apagar unidade incluida pelo site",
+            "SELECT has_table_privilege(current_user, 'unidades_ultra_site', 'DELETE')",
+            "remover e' MARCAR `removida_em_unidade_site`, nunca DELETE (DEC-085). DELETE aqui "
+            "significa que o `papeis-e-privilegios.md` foi afrouxado sem que a decisao acompanhasse",
+        ),
         (
             "criar tabela temporaria",
             "SELECT has_database_privilege(current_user, current_database(), 'TEMP')",
@@ -912,6 +926,21 @@ def _checagens_positivas() -> list[tuple[str, str, str]]:
             "usar a sequence de observacoes_concorrente",
             "SELECT has_sequence_privilege(current_user, "
             "'observacoes_concorrente_id_observacao_seq', 'USAGE')",
+            "mesma armadilha da sequence de eventos: `GRANT INSERT` na tabela NAO a cobre",
+        ),
+        # 024 (DEC-085): a mesma armadilha da 022 e da 023 -- tabela criada DEPOIS do D20.
+        (
+            "escrever unidades incluidas pelo site",
+            "SELECT has_table_privilege(current_user, 'unidades_ultra_site', 'INSERT') "
+            "AND has_table_privilege(current_user, 'unidades_ultra_site', 'UPDATE') "
+            "AND has_table_privilege(current_user, 'unidades_ultra_site', 'SELECT')",
+            "sem isto o botao de incluir unidade do Mapa nao grava, e o cron de domingo nao le "
+            "as unidades do site",
+        ),
+        (
+            "usar a sequence de unidades_ultra_site",
+            "SELECT has_sequence_privilege(current_user, "
+            "'unidades_ultra_site_id_unidade_site_seq', 'USAGE')",
             "mesma armadilha da sequence de eventos: `GRANT INSERT` na tabela NAO a cobre",
         ),
     ]
@@ -1656,6 +1685,51 @@ def cmd_alinhar_senhas(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_compor_unidades_ultra(args: argparse.Namespace) -> int:
+    """Acrescenta ao `unidades_ultra_mapeadas.parquet` as unidades do site que passaram do prazo.
+
+    Roda no cron de mercado de domingo (`scripts/cron/run_regen_mercado.sh`), DENTRO do container
+    do site e sobre a COPIA do rascunho -- nunca sobre o arquivo vivo. Usa a credencial do piloto
+    (`MOTOR_DATABASE_URL`): so' le. As linhas que ja estavam no parquet nao mudam, os tipos das
+    colunas tambem nao, e a gravacao e' por arquivo temporario + rename no mesmo diretorio.
+
+    O prazo e' medido pelo RELOGIO DO BANCO, o mesmo da trigger da 024: a unidade que entra aqui e'
+    uma que o site ja nao consegue alterar.
+    """
+    import pandas as pd
+    import pyarrow.parquet as pq
+
+    from ..cadastro_ultra import compor_cadastro
+    from ..perfil import resolver_perfil
+    from . import unidades_site
+
+    caminho = Path(args.arquivo)
+    base = pd.read_parquet(caminho)
+    pais = resolver_perfil().pais
+    novo, levadas = compor_cadastro(
+        base, unidades_site.listar_vivas(pais), pais=pais, agora=unidades_site.agora_do_banco()
+    )
+    if not levadas:
+        print(f"unidades do site: nenhuma nova para o cadastro ({len(base)} unidades, pais {pais})")
+        return 0
+    temporario = caminho.with_name(caminho.name + ".compondo")
+    novo.to_parquet(temporario, index=False)
+    relido = pd.read_parquet(temporario)
+    if not relido.iloc[: len(base)].reset_index(drop=True).equals(base.reset_index(drop=True)):
+        temporario.unlink()
+        print("!! uma linha que ja estava no cadastro mudou ao compor; nada foi gravado")
+        return 3
+    if not pq.read_schema(temporario).remove_metadata().equals(pq.read_schema(caminho).remove_metadata()):
+        temporario.unlink()
+        print("!! os tipos das colunas do cadastro mudaram ao compor; nada foi gravado")
+        return 3
+    temporario.replace(caminho)
+    print(f"unidades do site: {len(base)} -> {len(relido)} unidades no cadastro (pais {pais})")
+    for u in levadas:
+        print(f"  + {u.ultra_id}  {u.unidade} ({u.cidade}/{u.uf})  {u.lat:.6f}, {u.lng:.6f}")
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="python -m motor_expansao.db", description=__doc__)
     sub = parser.add_subparsers(dest="comando", required=True)
@@ -1695,6 +1769,13 @@ def main(argv: list[str] | None = None) -> int:
     )
     p_alinhar.add_argument("--simular", action="store_true", help="so' relata; nao escreve nada")
     p_alinhar.set_defaults(funcao=cmd_alinhar_senhas)
+
+    p_compor = sub.add_parser(
+        "compor-unidades-ultra",
+        help="acrescenta ao parquet do cadastro as unidades do site fora do prazo (cron de domingo)",
+    )
+    p_compor.add_argument("--arquivo", required=True, help="o parquet do cadastro NO RASCUNHO")
+    p_compor.set_defaults(funcao=cmd_compor_unidades_ultra)
 
     args = parser.parse_args(argv)
     return int(args.funcao(args))

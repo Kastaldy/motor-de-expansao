@@ -57,7 +57,7 @@ _FORMA_DE_SQL = re.compile(
 )
 
 #: Modulos do pacote `db` cujas constantes `SQL_*` sao lidas JA' RESOLVIDAS.
-_MODULOS_DE_SQL = ("cli", "eventos", "postgres", "rbac", "usuarios")
+_MODULOS_DE_SQL = ("cli", "eventos", "postgres", "rbac", "usuarios", "unidades_site")
 
 
 def _pglast():

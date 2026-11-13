@@ -2098,6 +2098,47 @@ export interface RedeUnidadeSemRedeFicha {
   mapa: RedeUnidadeMapa | null
 }
 
+/** Unidade Ultra incluída pelo site (DEC-085, `/api/mapa/unidades-site`). `no_prazo` = ainda
+ *  dá para alterar ou remover (1 dia desde a inclusão); depois disso a correção é por PR. */
+export interface UnidadeSite {
+  id: number
+  ultra_id: string
+  /** o id dela no seletor UNIDADES e na ficha (`/api/mapa/unidade/{id}`) */
+  id_no_mapa: string
+  unidade: string
+  uf: string
+  cidade: string
+  lat: number
+  lng: number
+  criada_em: string
+  prazo_ate: string
+  no_prazo: boolean
+  incluida_por: string | null
+}
+
+export interface UnidadesSitePayload {
+  /** growth e líderes: o botão de incluir só aparece com isto */
+  pode_incluir: boolean
+  prazo_horas: number
+  unidades: UnidadeSite[]
+  /** só na resposta de incluir: a que acabou de entrar */
+  incluida?: UnidadeSite | null
+  /** o ícone `__ultra__` do mapa, para o pino da unidade nova (só para quem pode incluir) */
+  icone_ultra?: string | null
+}
+
+/** A tela de revisão: o que SERIA gravado, já conferido pelo servidor. Nada foi gravado. */
+export interface PreviaUnidadeSite {
+  unidade: string
+  uf: string
+  cidade: string
+  lat: number
+  lng: number
+  hex_id_res7: string
+  mais_perto: { unidade: string; cidade: string; uf: string; distancia_m: number } | null
+  prazo_horas: number
+}
+
 export interface RedeUnidadeInteligencia {
   mapa: RedeUnidadeMapa | null
   planos: RedePlanosEntorno

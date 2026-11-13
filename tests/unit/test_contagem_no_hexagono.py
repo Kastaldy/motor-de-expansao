@@ -139,7 +139,7 @@ def _limpar_caches() -> None:
         pilot._carregar_concorrentes,
         pilot._carregar_ultra_pontos,
         pilot._carregar_ultra_mapeadas,
-        pilot._ultra_pontos_mapa,
+        pilot._ultra_pontos_mapa_base,
         pilot._contagem_no_hexagono,
     ):
         fn.cache_clear()

@@ -41,11 +41,11 @@ MANIFESTO = MIGRACOES / "manifesto.json"
 #: A 021 (DEC-081, `usuario_paises`) somou 1 TABELA, 1 CHECK (`chk_usuario_paises_sigla`) e 1 FK
 #: (`id_usuario`), e NENHUM indice explicito (so' o da PK composta) nem trigger/funcao.
 OBJETOS_ESPERADOS = {
-    "CREATE TABLE": 16,  # a 022 (DEC-083): sso_tickets; a 023 (anotacoes de concorrente): a tabela viva e o historico
-    "CREATE TRIGGER": 13,  # a 023: guarda, historico e as quatro recusas de remocao
+    "CREATE TABLE": 17,  # a 022 (DEC-083): sso_tickets; a 023 (anotacoes de concorrente): a tabela viva e o historico; a 024 (DEC-085): unidades_ultra_site
+    "CREATE TRIGGER": 16,  # a 023: guarda, historico e as quatro recusas de remocao; a 024: guarda e as duas recusas
 }
-INDICES_ESPERADOS = 42  # +1 na D23 (login), +3 na D24 (metadados), +2 na D30 (sessoes), +2 na 022 (DEC-083, sso_tickets: UNIQUE do token + idx id_usuario) e +5 na 023
-FUNCOES_ESPERADAS = 11  # +1 na D29 (`exige_geom_coerente`, uma so' para as duas tabelas) e +3 na 023
+INDICES_ESPERADOS = 47  # +1 na D23 (login), +3 na D24 (metadados), +2 na D30 (sessoes), +2 na 022 (DEC-083, sso_tickets: UNIQUE do token + idx id_usuario) e +5 na 023 e +5 na 024 (4 + o UNIQUE parcial do nome vivo)
+FUNCOES_ESPERADAS = 13  # +1 na D29 (`exige_geom_coerente`, uma so' para as duas tabelas), +3 na 023 e +2 na 024
 
 #: Os `CHECK` que as migrations criam. Ate' 18/09/2026 NADA neste arquivo os contava: os seis
 #: numeros da §0 so' eram conferidos por `db.cli` contra um banco VIVO, e o CI nao tinha Postgres.
@@ -55,8 +55,8 @@ FUNCOES_ESPERADAS = 11  # +1 na D29 (`exige_geom_coerente`, uma so' para as duas
 #: A 021 (DEC-081) acrescentou `chk_usuario_paises_sigla` (sigla ISO de 2 letras), levando de 14 a 15.
 #: A 022 (DEC-083, sso_tickets) acrescentou dois, levando de 15 a 17. A 023 (anotacoes de
 #: concorrente) acrescentou dez nomeados -- nove na tabela viva e o da acao no historico --,
-#: levando de 17 a 27.
-CHECKS_ESPERADOS = 27
+#: levando de 17 a 27. A 024 (DEC-085, unidades do site) acrescentou seis nomeados, levando a 33.
+CHECKS_ESPERADOS = 33
 
 
 def _sql() -> list[Path]:

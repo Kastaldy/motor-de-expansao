@@ -298,6 +298,12 @@ export interface SearchPin {
    * centralizar com zoom 13 a cada clique tirava da tela o bairro do proximo.
    */
   semVoo?: boolean
+  /**
+   * O ponto É o de uma unidade Ultra que acabou de ser incluída pelo site (DEC-085): o pino
+   * dela, com a logo, já marca o lugar. O anel neutro por cima a esconderia — então ele não é
+   * desenhado; o contorno do hexágono e o voo seguem iguais (pedido do Juan, prévia de 13/11).
+   */
+  deUnidade?: boolean
 }
 
 /**
@@ -1143,7 +1149,10 @@ export default function HexMap({
       capturando
         ? marcaCaptura
         : searchPin
-          ? { hexId: searchPin.hexId, pin: { lat: searchPin.lat, lng: searchPin.lng } }
+          ? {
+              hexId: searchPin.hexId,
+              pin: searchPin.deUnidade ? null : { lat: searchPin.lat, lng: searchPin.lng },
+            }
           : null,
     [capturando, marcaCaptura, searchPin],
   )

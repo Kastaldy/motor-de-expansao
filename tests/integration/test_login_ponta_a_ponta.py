@@ -348,6 +348,8 @@ PRIVILEGIOS_COMO_DONO_SEM_D20 = frozenset(
         # 023: o dono escreve no historico e apaga linha; o `app` nao (D20).
         "escrever no historico de anotacoes de concorrente",
         "apagar anotacao de concorrente",
+        # 024 (DEC-085): o dono apaga linha das unidades do site; o `app` nao (D20).
+        "apagar unidade incluida pelo site",
         "criar tabela temporaria",
         "ser dono das tabelas auditadas",
         # Seção 2 do D20: os `REVOKE ... FROM PUBLIC`, que nenhum default do Postgres faz.
@@ -1005,3 +1007,139 @@ def test_023_anotar_e_de_todos_os_perfis_e_ver_autor_so_de_growth(con: Any) -> N
     todos = {r[0] for r in con.execute("SELECT nome_perfil FROM perfis").fetchall()}
     assert {p for p, c in linhas if c == "concorrente.anotar"} == todos
     assert {p for p, c in linhas if c == "concorrente.ver_autor"} == {"growth"}
+
+
+# ======================================================================================
+# 4. AS UNIDADES ULTRA INCLUÍDAS PELO SITE (024, DEC-085) — o que só o banco de verdade prova
+#
+# Aqui pelo mesmo motivo da seção 3: é este o arquivo que o passo do banco do CI roda. A promessa
+# é "depois de 1 dia a unidade não muda mais pelo site" — o cron de domingo a leva ao parquet
+# contando com isso —, e quem a cumpre é a trigger de guarda da 024, que dublê nenhum exercita.
+# ======================================================================================
+
+from motor_expansao.cadastro_ultra import hexagono  # noqa: E402
+from motor_expansao.db import unidades_site as db_us  # noqa: E402
+
+_LAT, _LNG = -22.407291, -42.965760
+
+
+def _nome_de_ensaio() -> str:
+    return f"Unidade Ensaio {uuid.uuid4().hex[:8]}"
+
+
+def _incluir_unidade(autor: int, nome: str | None = None, pais: str = "BR") -> int:
+    return db_us.incluir(
+        pais=pais,
+        unidade=nome or _nome_de_ensaio(),
+        uf="RJ",
+        cidade="Teresópolis",
+        lat=_LAT,
+        lng=_LNG,
+        hex_id_res7=hexagono(_LAT, _LNG),
+        autor=autor,
+    )
+
+
+def _incluir_com_mais_de_um_dia(con: Any, autor: int) -> int:
+    """Linha criada há 25 h, gravada pelo DONO: o `app` nunca escolhe a data de inclusão."""
+    return int(
+        con.execute(
+            "INSERT INTO unidades_ultra_site (pais, nome_unidade_site, uf_unidade_site, "
+            "cidade_unidade_site, lat_unidade_site, lng_unidade_site, hex_id_res7, id_usuario_criou, "
+            "criada_em_unidade_site) VALUES ('BR', %s, 'RJ', 'Teresópolis', %s, %s, %s, %s, "
+            "now() - interval '25 hours') RETURNING id_unidade_site",
+            (_nome_de_ensaio(), _LAT, _LNG, hexagono(_LAT, _LNG), autor),
+        ).fetchone()[0]
+    )
+
+
+def _ids_vivos(pais: str = "BR") -> set[int]:
+    return {u.id_unidade_site for u in db_us.listar_vivas(pais)}
+
+
+def test_024_no_primeiro_dia_inclui_altera_e_remove(con: Any) -> None:
+    autor = _pessoa_com_perfil(con, "growth")
+    ident = _incluir_unidade(autor)
+    (viva,) = [u for u in db_us.listar_vivas("BR") if u.id_unidade_site == ident]
+    assert viva.id_usuario_criou == autor and viva.nome_quem_criou
+    db_us.alterar(
+        ident, pais="BR", unidade=viva.unidade, uf="RJ", cidade="Teresópolis (Várzea)",
+        lat=_LAT, lng=_LNG, hex_id_res7=viva.hex_id_res7, autor=autor,
+    )
+    (alterada,) = [u for u in db_us.listar_vivas("BR") if u.id_unidade_site == ident]
+    assert alterada.cidade == "Teresópolis (Várzea)" and alterada.alterada_em is not None
+    db_us.remover(ident, pais="BR", autor=autor)
+    assert ident not in _ids_vivos()
+    # remover é marcar: a linha continua lá, com quem removeu
+    removida_por = con.execute(
+        "SELECT removida_por FROM unidades_ultra_site WHERE id_unidade_site = %s", (ident,)
+    ).fetchone()[0]
+    assert removida_por == autor
+    with pytest.raises(db_us.UnidadeRemovida):
+        db_us.remover(ident, pais="BR", autor=autor)
+
+
+def test_024_depois_de_um_dia_nem_o_app_nem_o_dono_mudam_a_unidade(con: Any) -> None:
+    autor = _pessoa_com_perfil(con, "lideres")
+    ident = _incluir_com_mais_de_um_dia(con, autor)
+    with pytest.raises(db_us.PrazoEncerrado):
+        db_us.remover(ident, pais="BR", autor=autor)
+    # a regra está no banco: nem um UPDATE direto do dono passa
+    with pytest.raises(psycopg.errors.CheckViolation):
+        con.execute(
+            "UPDATE unidades_ultra_site SET removida_em_unidade_site = now(), removida_por = %s "
+            "WHERE id_unidade_site = %s",
+            (autor, ident),
+        )
+    assert ident in _ids_vivos()
+
+
+def test_024_pais_autor_e_data_de_inclusao_nao_mudam(con: Any) -> None:
+    autor = _pessoa_com_perfil(con, "growth")
+    outro = _pessoa_com_perfil(con, "lideres")
+    ident = _incluir_unidade(autor)
+    for coluna, valor in (("id_usuario_criou", outro), ("pais", "AR")):
+        with pytest.raises(psycopg.errors.CheckViolation):
+            con.execute(
+                f"UPDATE unidades_ultra_site SET {coluna} = %s WHERE id_unidade_site = %s",
+                (valor, ident),
+            )
+
+
+def test_024_nada_se_apaga(con: Any) -> None:
+    autor = _pessoa_com_perfil(con, "growth")
+    ident = _incluir_unidade(autor)
+    with pytest.raises(psycopg.errors.InsufficientPrivilege):
+        con.execute("DELETE FROM unidades_ultra_site WHERE id_unidade_site = %s", (ident,))
+    with pytest.raises(psycopg.errors.InsufficientPrivilege):
+        con.execute("TRUNCATE unidades_ultra_site")
+    assert ident in _ids_vivos()
+
+
+def test_024_nome_vivo_e_unico_no_pais_e_a_unidade_e_do_pais_do_deploy(con: Any) -> None:
+    autor = _pessoa_com_perfil(con, "growth")
+    nome = _nome_de_ensaio()
+    primeira = _incluir_unidade(autor, nome)
+    with pytest.raises(psycopg.errors.UniqueViolation):
+        con.execute(
+            "INSERT INTO unidades_ultra_site (pais, nome_unidade_site, uf_unidade_site, "
+            "cidade_unidade_site, lat_unidade_site, lng_unidade_site, hex_id_res7, id_usuario_criou) "
+            "VALUES ('BR', %s, 'RJ', 'Teresópolis', %s, %s, %s, %s)",
+            (f"  {nome.upper()} ", _LAT, _LNG, hexagono(_LAT, _LNG), autor),
+        )
+    # o mesmo nome em outro país é outra unidade, e cada deploy só lê as suas
+    na_ar = _incluir_unidade(autor, nome, pais="AR")
+    assert na_ar not in _ids_vivos("BR") and primeira not in _ids_vivos("AR")
+    # removida, o nome fica livre de novo
+    db_us.remover(primeira, pais="BR", autor=autor)
+    assert _incluir_unidade(autor, nome) in _ids_vivos("BR")
+
+
+def test_024_incluir_e_so_de_growth_e_lideres(con: Any) -> None:
+    linhas = con.execute(
+        "SELECT p.nome_perfil FROM perfil_permissoes pp "
+        "JOIN perfis p ON p.id_perfil = pp.id_perfil "
+        "JOIN permissoes pe ON pe.id_permissao = pp.id_permissao "
+        "WHERE pe.chave = 'rede.unidade_incluir'"
+    ).fetchall()
+    assert {r[0] for r in linhas} == {"growth", "lideres"}

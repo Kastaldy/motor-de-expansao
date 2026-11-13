@@ -88,13 +88,14 @@ def test_hash_ignora_fim_de_linha(tmp_path: Path, monkeypatch: pytest.MonkeyPatc
     assert cli._sha256_do_arquivo("x.sql") == com_crlf
 
 
-def test_o_contrato_conferido_cobre_as_16_tabelas_do_modelo() -> None:
+def test_o_contrato_conferido_cobre_as_17_tabelas_do_modelo() -> None:
     """A lista de `conferir` e a da §0 da `verificacao.md` tem de ser a MESMA: se
     divergirem, a ferramenta passa a atestar um contrato que o documento nao descreve.
 
     Eram ONZE ate' a D30, que somou `sessoes` (migration 018), e DOZE ate' a 021 (DEC-081),
     que somou `usuario_paises` -> 13, QUATORZE desde a 022 (DEC-083: `sso_tickets`) e
-    DEZESSEIS desde a 023 (`observacoes_concorrente` e o historico). O nome deste teste carrega o numero pelo mesmo motivo
+    DEZESSEIS desde a 023 (`observacoes_concorrente` e o historico) e DEZESSETE desde a 024
+    (DEC-085: `unidades_ultra_site`). O nome deste teste carrega o numero pelo mesmo motivo
     que o do `..._as_8_funcoes` logo abaixo: numero no nome que deixou de ser o numero e' a
     deriva doc-contra-codigo que esta suite existe para pegar.
 
@@ -103,17 +104,19 @@ def test_o_contrato_conferido_cobre_as_16_tabelas_do_modelo() -> None:
     A nota da 018 dizia "tres lugares" ate' esta assercao ficar vermelha com `12 == 11`, e
     foi corrigida la'.
     """
-    assert len(cli.TABELAS_DO_MODELO) == 16
+    assert len(cli.TABELAS_DO_MODELO) == 17
     assert postgres.TABELA_MIGRACOES not in cli.TABELAS_DO_MODELO, (
         "a tabela de controle e' do motor, nao do modelo — some-la mudaria os seis numeros"
     )
 
 
-def test_endurecimento_esperado_cobre_as_11_funcoes() -> None:
-    """Onze funcoes, e as unicas `SECURITY DEFINER` sao as TRES gravadoras de historico.
+def test_endurecimento_esperado_cobre_as_13_funcoes() -> None:
+    """Treze funcoes, e as unicas `SECURITY DEFINER` sao as TRES gravadoras de historico.
 
     Eram sete ate' a D29, que somou `exige_geom_coerente` (migration 017), e oito ate' a 023,
-    que somou as tres das anotacoes de concorrente. O nome deste teste carrega o numero de
+    que somou as tres das anotacoes de concorrente, e onze ate' a 024 (DEC-085), que somou as
+    duas das unidades do site (`guarda_unidade_ultra_site`, `recusa_remover_unidade_ultra_site`,
+    nenhuma definer). O nome deste teste carrega o numero de
     proposito: um teste batizado com um numero que deixou de ser o numero e' a mesma deriva
     doc-contra-codigo que a suite existe para pegar.
 
@@ -123,7 +126,7 @@ def test_endurecimento_esperado_cobre_as_11_funcoes() -> None:
     (`registra_observacao_concorrente`, 023) e' definer de proposito: escreve o historico que
     o papel `app` nao pode escrever.
     """
-    assert len(cli.FUNCOES_ESPERADAS) == 11
+    assert len(cli.FUNCOES_ESPERADAS) == 13
     definers = [nome for nome, (secdef, _) in cli.FUNCOES_ESPERADAS.items() if secdef]
     assert sorted(definers) == [
         "registra_observacao_concorrente",
@@ -162,7 +165,8 @@ def test_contagens_conferem_com_os_seis_numeros_da_secao_zero() -> None:
         # 021 (DEC-081): +1 pela PK composta de `usuario_paises`; nenhum `CREATE INDEX`
         # explicito (o `INDICES_ESPERADOS` do `test_migracoes.py` segue 35), entao 49 -> 50.
         # 022 (DEC-083): +3 de sso_tickets (PK + UNIQUE do token + idx de id_usuario) -> 53.
-        "indices": 60,  # 023 (anotacoes de concorrente): +5 explicitos e +2 PK
+        # 023 (anotacoes de concorrente): +5 explicitos e +2 PK -> 60.
+        "indices": 66,  # 024 (DEC-085, unidades do site): +5 explicitos (um UNIQUE parcial) e +1 PK
 
         # 14 desde a 019: `ck_usuarios_prazo_exige_troca`, que impede senha PROPRIA com prazo
         # de validade -- o estado que faria a pessoa ser barrada com a senha certa. Era 13 desde
@@ -173,18 +177,21 @@ def test_contagens_conferem_com_os_seis_numeros_da_secao_zero() -> None:
         # o cobria no CI, que ate' 24/10/2026 nao tinha Postgres.
         # 15 desde a 021 (DEC-081): `chk_usuario_paises_sigla` (sigla ISO de 2 letras MAIUSCULAS).
         # 022 (DEC-083): +2 (chk_sso_ticket_sigla, chk_sso_ticket_expira_apos_criacao) -> 17.
-        "constraints CHECK": 27,  # 023: +10 (nove na tabela viva e o da acao no historico)
+        # 023: +10 (nove na tabela viva e o da acao no historico) -> 27.
+        "constraints CHECK": 33,  # 024 (DEC-085): +6 (pais, coordenada, textos, hexagono e os dois pares)
         # 12 desde a D30: `sessoes.id_usuario`, a UNICA FK do modelo com ON DELETE CASCADE
         # (sessao nao e' registro a preservar, e sessao orfa decidindo acesso e' o que nao
         # se quer). Toda FK ganha indice, e e' por isso que os indices somaram 3 e nao 2.
         # 13 desde a 021 (DEC-081): `usuario_paises.id_usuario` -> usuarios, ON DELETE CASCADE.
         # 022 (DEC-083): +2 (sso_tickets.id_usuario, sso_tickets.id_sessao_origem) -> 15.
-        "chaves estrangeiras": 17,  # 023: +2 (autor e `apagada_por` -> usuarios)
+        # 023: +2 (autor e `apagada_por` -> usuarios) -> 17.
+        "chaves estrangeiras": 20,  # 024: +3 (quem incluiu, `alterada_por`, `removida_por`)
         # 7 desde a D29: a guarda de coerencia (migration 017) poe uma trigger em
         # `areas_estudo` e outra em `contratos`. Mesma regra do numero acima -- este e o da
         # §0 da `verificacao.md` andam JUNTOS, senao um banco correto acusa DIVERGENTE.
         # 13 desde a 023: guarda, historico e as quatro recusas de remocao das anotacoes.
-        "triggers": 13,
+        # 16 desde a 024 (DEC-085): a guarda do prazo de 1 dia e as duas recusas de remocao.
+        "triggers": 16,
         "colunas geometricas": 7,
     }
 
@@ -284,6 +291,8 @@ _D20_DE_PE: dict[str, Any] = {
     # As anotacoes de concorrente (023): o `app` escreve e le a tabela viva e le o historico;
     # escrever no historico e apagar ficam NEGADOS (cai no padrao `False` do duble).
     "'observacoes_concorrente', 'INSERT'": True,
+    # As unidades incluidas pelo site (024, DEC-085): ler e escrever sim, apagar NAO.
+    "'unidades_ultra_site', 'INSERT'": True,
     "tgenabled": "A",
     # A ACL das funcoes de auditoria (secao 2 do D20), acrescentada em 05/10/2026: era a
     # TERCEIRA camada que o script endurecia e nenhum instrumento conferia. `False` aqui
@@ -2382,10 +2391,13 @@ def test_privilegios_COBRE_sessoes() -> None:
     assert "observacoes_concorrente_id_observacao_seq" in positivas, (
         "a sequence das anotacoes (023): sem o USAGE nela o painel do pino nao salva nada"
     )
+    assert "unidades_ultra_site_id_unidade_site_seq" in positivas, (
+        "a sequence das unidades do site (024): sem o USAGE nela o botao de incluir nao grava"
+    )
 
     _seqs = [s for s in positivas.split(" | ") if "has_sequence_privilege" in s]
-    assert len(_seqs) == 6, (
-        f"o script de papeis concede USAGE em SEIS sequences desde a 023 e este comando testa "
+    assert len(_seqs) == 7, (
+        f"o script de papeis concede USAGE em SETE sequences desde a 024 e este comando testa "
         f"{len(_seqs)}. Se o script mudar, mude os dois juntos -- a divergencia entre eles e' "
         f"exatamente o buraco que ficou aberto ate' 05/10/2026"
     )

@@ -20,7 +20,6 @@ from __future__ import annotations
 import argparse
 import csv
 import hashlib
-import math
 import re
 import sys
 from datetime import datetime
@@ -30,11 +29,26 @@ import h3
 import pandas as pd
 import pyarrow.parquet as pq
 
-ARQ_PARQUET = "unidades_ultra_mapeadas.parquet"
+# As regras (distância mínima, nome repetido, colunas do parquet) moram numa fonte só, que o
+# site também usa (DEC-085). O script roda na estação sem o pacote instalado, então o `src`
+# do próprio checkout entra no caminho.
+_SRC = Path(__file__).resolve().parents[1] / "src"
+if str(_SRC) not in sys.path:
+    sys.path.insert(0, str(_SRC))
+
+from motor_expansao.cadastro_ultra import (  # noqa: E402
+    ARQ_CADASTRO,
+    COLUNAS_CADASTRO,
+    DIST_MIN_M,
+    H3_RES,
+    Recusa,
+    distancia_m,
+    nome_ja_existe,
+)
+
+ARQ_PARQUET = ARQ_CADASTRO
 ARQ_CSV = "Ultra.csv"
-COLUNAS_PARQUET = ["ultra_id", "unidade", "uf", "cidade", "lat", "lng", "flag_coord_valida", "hex_id_res7"]
-H3_RES = 7
-DIST_MIN_M = 200.0
+COLUNAS_PARQUET = list(COLUNAS_CADASTRO)
 REGIAO_POR_UF = {
     **dict.fromkeys(["AC", "AM", "AP", "PA", "RO", "RR", "TO"], "Norte"),
     **dict.fromkeys(["AL", "BA", "CE", "MA", "PB", "PE", "PI", "RN", "SE"], "Nordeste"),
@@ -57,18 +71,6 @@ print("linhas da unidade:", len(t))
 for _, r in t.iterrows():
     print(r["unidade"], r["uf"], r["cidade"], round(float(r["lat"]), 6), round(float(r["lng"]), 6), r["hex_id_res7"])
 '''
-
-
-class Recusa(Exception):
-    """Entrada que o script não aceita: nada é gravado."""
-
-
-def distancia_m(lat1: float, lng1: float, lat2: float, lng2: float) -> float:
-    r = 6_371_000.0
-    p1, p2 = math.radians(lat1), math.radians(lat2)
-    dp, dl = p2 - p1, math.radians(lng2 - lng1)
-    a = math.sin(dp / 2) ** 2 + math.cos(p1) * math.cos(p2) * math.sin(dl / 2) ** 2
-    return 2 * r * math.asin(math.sqrt(a))
 
 
 def coord(texto: str, eixo: str) -> float:
@@ -107,7 +109,7 @@ def ler_csv(caminho: Path) -> tuple[bytes, list[str], list[str]]:
 def incluir(args: argparse.Namespace, m: pd.DataFrame, linhas: list[str], cab: list[str]):
     lat, lng = coord(args.lat, "lat"), coord(args.lng, "lng")
     nome, uf = args.nome.strip(), args.uf.strip().upper()
-    if m["unidade"].str.strip().str.casefold().eq(nome.casefold()).any():
+    if nome_ja_existe(nome, m["unidade"]):
         raise Recusa(f"{nome!r} já está no {ARQ_PARQUET}: para mudar o lugar, use `mover`")
     nomes_csv = [next(csv.reader([lin], delimiter=";"))[cab.index("UNIDADE")] for lin in linhas[2:] if lin]
     if nome in nomes_csv:

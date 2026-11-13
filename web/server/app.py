@@ -40,6 +40,7 @@ import time
 import unicodedata
 from collections.abc import Callable, Collection, Iterator, Sequence
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from pathlib import Path
 from types import EllipsisType
 from typing import Annotated, Any, Literal
@@ -2417,8 +2418,11 @@ def _carregar_ultra_pontos() -> pd.DataFrame:
 
 
 @functools.lru_cache(maxsize=1)
-def _ultra_pontos_mapa() -> pd.DataFrame:
-    """Pontos Ultra dos PINS do mapa: a curada COMPLETADA pelo cadastro amplo.
+def _ultra_pontos_mapa_base() -> pd.DataFrame:
+    """Pontos Ultra dos PINS do mapa que vêm de ARQUIVO: a curada COMPLETADA pelo cadastro amplo.
+
+    As unidades incluídas pelo site (DEC-085) entram por cima, em `_ultra_pontos_mapa`, fora
+    deste cache: elas mudam enquanto o site está no ar, e o arquivo só muda com restart.
 
     Vive separada de `_carregar_ultra_pontos` de propósito, e não por estilo. Aquela
     alimenta o dict `curada` de `_ultra_coord_map`, onde a precedência é entre FONTES:
@@ -2450,6 +2454,96 @@ def _ultra_pontos_mapa() -> pd.DataFrame:
     # da curada, e corrigir antes solta essas cópias como pins fantasmas a ~100 m.
     df = _aplicar_coord_corrigida(df).drop_duplicates(subset=["lat", "lng"])
     return df[cols].reset_index(drop=True)
+
+
+# --- Unidades Ultra incluídas pelo site (DEC-085, migration 024) ---------------------------
+# Growth e líderes incluem uma unidade pelo Mapa; ela mora no banco até o cron de domingo
+# levá-la ao `unidades_ultra_mapeadas.parquet` (depois do prazo de 1 dia para alterar). Até lá,
+# o site a soma ao cadastro em arquivo NA LEITURA: no pino, na busca e na ficha. Depois do
+# domingo ela está nos dois lugares com o mesmo `ultra_id` (`site-<id>`), e vale a do arquivo.
+#
+# O cache é POR PROCESSO e se limpa a cada escrita (o piloto roda com um worker só,
+# `Dockerfile.web`): é isso que faz a unidade aparecer sem reiniciar o site. Banco fora não
+# derruba o Mapa: o site segue com o arquivo e tenta de novo depois de `RETENTAR_S`.
+CAPACIDADE_INCLUIR_UNIDADE = "rede.unidade_incluir"
+
+
+def _agora_utc() -> datetime:
+    return datetime.now(UTC)
+
+
+def _criar_cache_unidades_do_site() -> Any:
+    """Fabrica o cache. A CLASSE fica dentro da funcao de proposito: `limpar_caches` varre os
+    globais atras de `cache_clear`, e acharia o metodo NAO ligado da classe."""
+
+    class _CacheUnidadesDoSite:
+        """As unidades vivas do site no país do deploy. Tem `cache_clear`, então `limpar_caches`
+        (a varredura dos `lru_cache`) também o alcança."""
+
+        RETENTAR_S = 60.0
+
+        def __init__(self) -> None:
+            self._lidas: list[Any] | None = None
+            self._falhou_em: float | None = None
+
+        def __call__(self) -> list[Any]:
+            if self._lidas is not None:
+                return self._lidas
+            if self._falhou_em is not None and time.monotonic() - self._falhou_em < self.RETENTAR_S:
+                return []
+            from motor_expansao.db import BancoNaoConfigurado
+            from motor_expansao.db import unidades_site as db_us
+
+            try:
+                lidas = db_us.listar_vivas(PERFIL.pais)
+            except BancoNaoConfigurado:
+                # Deploy sem banco: nunca haverá unidade do site. Não é falha, e não se tenta de novo.
+                self._lidas = []
+                return self._lidas
+            except Exception:  # noqa: BLE001 - o Mapa segue com o arquivo
+                _LOG_FALHA.warning("unidades do site indisponiveis: o mapa segue com o arquivo", exc_info=True)
+                self._falhou_em = time.monotonic()
+                return []
+            self._lidas, self._falhou_em = lidas, None
+            return lidas
+
+        def cache_clear(self) -> None:
+            self._lidas, self._falhou_em = None, None
+
+    return _CacheUnidadesDoSite()
+
+
+_unidades_do_site = _criar_cache_unidades_do_site()
+
+
+@functools.lru_cache(maxsize=1)
+def _ultra_ids_no_arquivo() -> frozenset[str]:
+    """Os `ultra_id` do cadastro em arquivo: a unidade do site que já está nele não se repete."""
+    df = _rede_ler_opcional(ULTRA_MAPEADAS_PARQUET, ("ultra_id",))
+    if df is None or "ultra_id" not in df.columns:
+        return frozenset()
+    return frozenset(df["ultra_id"].astype(str))
+
+
+def _ultra_pontos_mapa() -> pd.DataFrame:
+    """Pontos Ultra dos PINS do mapa: os de arquivo + as unidades vivas incluídas pelo site."""
+    base = _ultra_pontos_mapa_base()
+    no_arquivo = _ultra_ids_no_arquivo()
+    extra = [
+        {"nome": u.unidade, "lat": float(u.lat), "lng": float(u.lng)}
+        for u in _unidades_do_site()
+        if u.ultra_id not in no_arquivo
+    ]
+    if not extra:
+        return base
+    df = pd.concat([base, pd.DataFrame(extra, columns=["nome", "lat", "lng"])], ignore_index=True)
+    return df.drop_duplicates(subset=["lat", "lng"]).reset_index(drop=True)
+
+
+def _invalidar_cadastro_do_site() -> None:
+    """Depois de incluir, alterar ou remover: tudo o que deriva das unidades do site se refaz."""
+    _unidades_do_site.cache_clear()
+    _contagem_no_hexagono.cache_clear()
 
 
 def _aplicar_coord_corrigida(df: pd.DataFrame) -> pd.DataFrame:
@@ -12613,9 +12707,17 @@ def _rede_unidades_sem_rede() -> list[dict[str, Any]]:
 
     Casadas contra a Growth pela chave do nome (com a UF) OU pelo ponto: um dos dois basta
     para dizer que a unidade já está na rede, e aí ela sai pela carteira, como sempre.
+
+    O cadastro é o arquivo + as unidades vivas incluídas pelo site (DEC-085): a unidade nova
+    aparece na busca logo depois de salva, com id `cadastro-site-<id>`.
     """
-    cadastro = _rede_ler_opcional(
-        ULTRA_MAPEADAS_PARQUET, ("ultra_id", "unidade", "uf", "cidade", "lat", "lng")
+    from motor_expansao import cadastro_ultra
+
+    cadastro = cadastro_ultra.unir_ao_cadastro(
+        _rede_ler_opcional(
+            ULTRA_MAPEADAS_PARQUET, ("ultra_id", "unidade", "uf", "cidade", "lat", "lng")
+        ),
+        _unidades_do_site(),
     )
     if cadastro is None or not len(cadastro):
         return []
@@ -12728,6 +12830,309 @@ def mapa_unidade_concorrencia_pdf(unidade_id: str) -> Response:
     return _concorrencia_pdf_da_unidade(
         unidade_id, {"unidade": ficha["unidade"], "mes": ""}, {"mapa": ficha["mapa"]}
     )
+
+
+# --- Incluir unidade Ultra pelo site (DEC-085, migration 024) ------------------------------
+# Growth e líderes (`rede.unidade_incluir`) incluem pelo Mapa: digitam nome e coordenadas,
+# revisam numa tela de confirmação (`/previa`, que NÃO grava) e só então salvam
+# (`confirmado: true`, sem ele 422). A unidade pode ser alterada ou removida por 1 dia; depois
+# disso a correção é por PR, e o cron de domingo a leva ao parquet. As recusas do cadastro
+# (nome repetido, menos de 200 m, fora do país) moram em `motor_expansao.cadastro_ultra`, que o
+# script da conta `deploy` também usa. O gate de capacidade da escrita está em `acesso.py`; a
+# conferência aqui dentro repete a regra, para o 403 não depender só da ordem das regras de lá.
+
+
+class UnidadeSiteIn(BaseModel):
+    """O que o formulário manda. `Any` de propósito, como nas anotações: a regra recebe o valor
+    cru e devolve o recado da tela, em vez do 422 em inglês do Pydantic."""
+
+    unidade: Any = None
+    lat: Any = None
+    lng: Any = None
+    confirmado: bool = False
+
+
+def _identidade_para_unidade(remote_user: str | None) -> Any:
+    """Quem está incluindo. Sem banco não há onde gravar nem de quem é a unidade: 503."""
+    from motor_expansao.db import BancoIndisponivel, BancoNaoConfigurado, rbac
+
+    try:
+        eu = rbac.identidade(acesso.login_da_requisicao(remote_user))
+    except BancoNaoConfigurado as erro:
+        _LOG_FALHA.warning("inclusao de unidade pedida em deploy sem banco configurado")
+        raise HTTPException(
+            503,
+            "Incluir unidades precisa do banco, e este deploy está sem banco configurado. Avise o "
+            "time de tecnologia.",
+        ) from erro
+    except BancoIndisponivel as erro:
+        _LOG_FALHA.warning("inclusao de unidade: banco indisponivel", exc_info=True)
+        raise HTTPException(503, "Banco indisponível no momento. Tente novamente em instantes.") from erro
+    if eu is None:
+        raise HTTPException(403, "Seu usuário não tem cadastro no banco do piloto.")
+    return eu
+
+
+def _exigir_incluir(eu: Any) -> None:
+    if not eu.pode(CAPACIDADE_INCLUIR_UNIDADE):
+        raise HTTPException(403, "Incluir unidades Ultra é dos perfis Growth e Líderes.")
+
+
+def _exigir_confirmacao(body: UnidadeSiteIn) -> None:
+    if body.confirmado is not True:
+        raise HTTPException(
+            422, "Confirme os dados na tela de revisão antes de salvar: nada foi gravado."
+        )
+
+
+def _erro_de_unidade_site(erro: Exception) -> HTTPException:
+    from motor_expansao import cadastro_ultra
+    from motor_expansao.db import BancoIndisponivel, BancoNaoConfigurado
+    from motor_expansao.db import unidades_site as db_us
+
+    if isinstance(erro, HTTPException):
+        return erro
+    if isinstance(erro, cadastro_ultra.Conflito):
+        return HTTPException(409, str(erro))
+    if isinstance(erro, cadastro_ultra.Recusa):
+        return HTTPException(422, str(erro))
+    if isinstance(erro, db_us.UnidadeDesconhecida):
+        return HTTPException(404, str(erro))
+    if isinstance(erro, (db_us.UnidadeRemovida, db_us.PrazoEncerrado)):
+        return HTTPException(409, str(erro))
+    # O índice único das vivas (024) é a última linha contra o duplo clique.
+    if type(erro).__name__ == "UniqueViolation":
+        return HTTPException(409, "Já existe uma unidade com esse nome no cadastro.")
+    if isinstance(erro, (BancoIndisponivel, BancoNaoConfigurado)):
+        _LOG_FALHA.warning("unidade do site: banco indisponivel", exc_info=True)
+        return HTTPException(503, "Banco indisponível no momento. Tente novamente em instantes.")
+    _LOG_FALHA.error("unidade do site: falha inesperada", exc_info=True)
+    return HTTPException(500, "Não foi possível concluir. Tente novamente.")
+
+
+def _numero_ou_none(valor: Any) -> float | None:
+    try:
+        numero = float(str(valor).replace(",", ".")) if isinstance(valor, str) else float(valor)
+    except (TypeError, ValueError):
+        return None
+    return numero if math.isfinite(numero) else None
+
+
+def _conferir_unidade_do_site(body: UnidadeSiteIn, ignorar_id: int | None = None) -> Any:
+    """Limpa e confere contra o cadastro INTEIRO (arquivo + site), lido do banco agora, e não do
+    cache: a conferência de um nome repetido não pode depender de quando o cache se refez.
+
+    A pessoa digita só o nome e a coordenada (pedido do Juan na prévia de 13/11/2026): UF e
+    cidade vêm SEMPRE do ponto, pela malha municipal do país (`/api/municipio-do-ponto`, que o
+    BR e o AR têm). Ponto que não cai em município nenhum -- no mar, fora do país -- é recusado:
+    gravar uma unidade sem cidade deixaria a busca e o cadastro de domingo com um buraco."""
+    from motor_expansao import cadastro_ultra
+    from motor_expansao.db import unidades_site as db_us
+
+    lat, lng = _numero_ou_none(body.lat), _numero_ou_none(body.lng)
+    uf = cidade = None
+    if lat is not None and lng is not None and cadastro_ultra.dentro_da_caixa(lat, lng, PERFIL.bbox):
+        try:
+            do_ponto = municipio_do_ponto(lat, lng)
+        except HTTPException:
+            do_ponto = {}
+        uf, cidade = do_ponto.get("uf"), do_ponto.get("municipio")
+        if not (str(uf or "").strip() and str(cidade or "").strip()):
+            raise cadastro_ultra.Recusa(
+                "Não achamos o município deste ponto: ele pode estar no mar ou fora do país. "
+                "Confira a coordenada."
+            )
+    cadastro = cadastro_ultra.unir_ao_cadastro(
+        _rede_ler_opcional(ULTRA_MAPEADAS_PARQUET, ("ultra_id", "unidade", "uf", "cidade", "lat", "lng")),
+        db_us.listar_vivas(PERFIL.pais),
+    )
+    return cadastro_ultra.conferir_inclusao(
+        unidade=body.unidade,
+        uf=uf,
+        cidade=cidade,
+        lat=body.lat if lat is None else lat,
+        lng=body.lng if lng is None else lng,
+        cadastro=cadastro if cadastro is not None else pd.DataFrame(columns=["ultra_id", "unidade", "lat", "lng"]),
+        bbox=PERFIL.bbox,
+        ignorar_ultra_id=None if ignorar_id is None else cadastro_ultra.ultra_id_do_site(ignorar_id),
+    )
+
+
+def _item_unidade_site(u: Any, agora: datetime) -> dict[str, Any]:
+    return {
+        "id": u.id_unidade_site,
+        "ultra_id": u.ultra_id,
+        # o id da unidade no seletor UNIDADES e na ficha (`/api/mapa/unidade/{id}`)
+        "id_no_mapa": f"{_PREFIXO_SEM_REDE}{u.ultra_id}",
+        "unidade": u.unidade,
+        "uf": u.uf,
+        "cidade": u.cidade,
+        "lat": round(float(u.lat), 6),
+        "lng": round(float(u.lng), 6),
+        "criada_em": u.criada_em.isoformat(),
+        "prazo_ate": u.prazo_ate.isoformat(),
+        "no_prazo": u.no_prazo(agora),
+        "incluida_por": u.nome_quem_criou,
+    }
+
+
+def _payload_unidades_site(eu: Any) -> dict[str, Any]:
+    from motor_expansao import cadastro_ultra
+    from motor_expansao.db import unidades_site as db_us
+
+    pode = eu.pode(CAPACIDADE_INCLUIR_UNIDADE)
+    agora = _agora_utc()
+    unidades = [_item_unidade_site(u, agora) for u in db_us.listar_vivas(PERFIL.pais)] if pode else []
+    return {
+        "pode_incluir": pode,
+        "prazo_horas": int(cadastro_ultra.PRAZO_ALTERACAO.total_seconds() // 3600),
+        "unidades": unidades,
+        # O ícone do pino da Ultra (o mesmo `__ultra__` dos payloads do mapa): a tela desenha a
+        # unidade recém-incluída com a logo mesmo num recorte que ainda não tinha Ultra nenhuma.
+        "icone_ultra": _icone_ultra() if pode else None,
+    }
+
+
+@app.get("/api/mapa/unidades-site")
+def mapa_unidades_site(
+    remote_user: str | None = Header(default=None, alias="Remote-User"),
+) -> dict[str, Any]:
+    """Se ESTA pessoa pode incluir unidade, e as que o site incluiu (com o prazo de cada uma).
+
+    Quem não pode recebe a lista vazia: o botão não aparece, e o nome de quem incluiu não sai do
+    servidor. Banco fora não é erro de tela aqui: o botão some até o banco voltar.
+    """
+    from motor_expansao import cadastro_ultra
+
+    sem_botao = {
+        "pode_incluir": False,
+        "prazo_horas": int(cadastro_ultra.PRAZO_ALTERACAO.total_seconds() // 3600),
+        "unidades": [],
+        "icone_ultra": None,
+    }
+    try:
+        eu = _identidade_para_unidade(remote_user)
+    except HTTPException:
+        return sem_botao
+    try:
+        return _payload_unidades_site(eu)
+    except Exception:  # noqa: BLE001 - sem lista, sem botao; o Mapa segue
+        _LOG_FALHA.warning("lista de unidades do site indisponivel", exc_info=True)
+        return sem_botao
+
+
+@app.post("/api/mapa/unidades-site/previa")
+def mapa_unidades_site_previa(
+    body: UnidadeSiteIn,
+    remote_user: str | None = Header(default=None, alias="Remote-User"),
+) -> dict[str, Any]:
+    """A tela de confirmação: o que SERIA gravado, já limpo e conferido. Não grava nada."""
+    from motor_expansao import cadastro_ultra
+
+    eu = _identidade_para_unidade(remote_user)
+    _exigir_incluir(eu)
+    try:
+        inc = _conferir_unidade_do_site(body)
+    except Exception as erro:  # noqa: BLE001 - traduzido logo abaixo
+        raise _erro_de_unidade_site(erro) from erro
+    perto = inc.mais_perto
+    return {
+        "unidade": inc.unidade,
+        "uf": inc.uf,
+        "cidade": inc.cidade,
+        "lat": round(inc.lat, 6),
+        "lng": round(inc.lng, 6),
+        "hex_id_res7": inc.hex_id_res7,
+        "mais_perto": None
+        if perto is None
+        else {
+            "unidade": perto.unidade,
+            "cidade": perto.cidade,
+            "uf": perto.uf,
+            "distancia_m": round(perto.distancia_m),
+        },
+        "prazo_horas": int(cadastro_ultra.PRAZO_ALTERACAO.total_seconds() // 3600),
+    }
+
+
+@app.post("/api/mapa/unidades-site")
+def mapa_unidades_site_incluir(
+    body: UnidadeSiteIn,
+    remote_user: str | None = Header(default=None, alias="Remote-User"),
+) -> dict[str, Any]:
+    """Grava a unidade confirmada e devolve a lista atualizada, com a incluída à parte."""
+    from motor_expansao.db import unidades_site as db_us
+
+    eu = _identidade_para_unidade(remote_user)
+    _exigir_incluir(eu)
+    _exigir_confirmacao(body)
+    try:
+        inc = _conferir_unidade_do_site(body)
+        ident = db_us.incluir(
+            pais=PERFIL.pais,
+            unidade=inc.unidade,
+            uf=inc.uf,
+            cidade=inc.cidade,
+            lat=inc.lat,
+            lng=inc.lng,
+            hex_id_res7=inc.hex_id_res7,
+            autor=eu.id_usuario,
+        )
+        _invalidar_cadastro_do_site()
+        payload = _payload_unidades_site(eu)
+    except Exception as erro:  # noqa: BLE001 - traduzido logo abaixo
+        raise _erro_de_unidade_site(erro) from erro
+    incluida = next((u for u in payload["unidades"] if u["id"] == ident), None)
+    return {**payload, "incluida": incluida}
+
+
+@app.patch("/api/mapa/unidades-site/{id_unidade_site}")
+def mapa_unidades_site_alterar(
+    id_unidade_site: int,
+    body: UnidadeSiteIn,
+    remote_user: str | None = Header(default=None, alias="Remote-User"),
+) -> dict[str, Any]:
+    """Corrige nome, UF, cidade ou coordenada — só no primeiro dia (409 depois)."""
+    from motor_expansao.db import unidades_site as db_us
+
+    eu = _identidade_para_unidade(remote_user)
+    _exigir_incluir(eu)
+    _exigir_confirmacao(body)
+    try:
+        inc = _conferir_unidade_do_site(body, ignorar_id=id_unidade_site)
+        db_us.alterar(
+            id_unidade_site,
+            pais=PERFIL.pais,
+            unidade=inc.unidade,
+            uf=inc.uf,
+            cidade=inc.cidade,
+            lat=inc.lat,
+            lng=inc.lng,
+            hex_id_res7=inc.hex_id_res7,
+            autor=eu.id_usuario,
+        )
+        _invalidar_cadastro_do_site()
+        return _payload_unidades_site(eu)
+    except Exception as erro:  # noqa: BLE001 - traduzido logo abaixo
+        raise _erro_de_unidade_site(erro) from erro
+
+
+@app.delete("/api/mapa/unidades-site/{id_unidade_site}")
+def mapa_unidades_site_remover(
+    id_unidade_site: int,
+    remote_user: str | None = Header(default=None, alias="Remote-User"),
+) -> dict[str, Any]:
+    """Marca como removida — só no primeiro dia (409 depois). Nada sai do banco."""
+    from motor_expansao.db import unidades_site as db_us
+
+    eu = _identidade_para_unidade(remote_user)
+    _exigir_incluir(eu)
+    try:
+        db_us.remover(id_unidade_site, pais=PERFIL.pais, autor=eu.id_usuario)
+        _invalidar_cadastro_do_site()
+        return _payload_unidades_site(eu)
+    except Exception as erro:  # noqa: BLE001 - traduzido logo abaixo
+        raise _erro_de_unidade_site(erro) from erro
 
 
 def _rede_mapa_do_ponto(lat: float, lng: float) -> dict[str, Any]:
