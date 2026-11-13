@@ -61,14 +61,17 @@
 
 ### 2.1 Instancia AR (Bloco E / BLK-INTL-08)
 
-A stack AR (`docker-compose.ar.yml`) **nao cria segredo novo**: Caddy, Authelia e o
-`.env` sao os MESMOS da stack BR (compartilhados — o que muda neles e' so o bloco/regra
-do host `piloto-ar`, ja coberto pelos backups cifrados acima). O que a AR acrescenta:
+A stack AR (`docker-compose.ar.yml`) **nao cria arquivo de segredo novo**: Caddy, Authelia e o
+`.env` sao os MESMOS da stack BR (compartilhados — o que muda neles e' o bloco/regra do host
+`piloto-ar` e, desde o corte AR da DEC-081 (31/10/2026), as chaves de banco e login da AR no `.env`:
+`MOTOR_DATABASE_URL_AR`, que carrega a senha do `app`, e `MOTOR_AUTENTICACAO_PROPRIA_AR`). **Os
+cifrados do `.env` e do `Caddyfile` sao de 27/10/2026 (#492), anteriores a esse corte**, e o
+`secrets/env.enc.env` nao tem essas duas chaves (§10.6). O que a AR acrescenta:
 
 | Caminho no VPS                                     | O que e'                                                                     |
 | -------------------------------------------------- | ---------------------------------------------------------------------------- |
 | `/opt/motor-expansao-ar/data/perfil.json`          | Copia de `data/perfis/AR/perfil.json` (versionado — restore = scp do repo)   |
-| `/opt/motor-expansao-ar/cadastro/acesso_abas.json` | Concessoes de aba da AR (editado em producao, so existe no servidor); molde em `docs/acesso_abas_ar.exemplo.json` |
+| `/opt/motor-expansao-ar/cadastro/acesso_abas.json` | Concessoes de aba da AR (editado em producao, so existe no servidor); molde em `docs/acesso_abas_ar.exemplo.json`. Desde o corte AR da DEC-081 (31/10/2026) as abas da AR vem do RBAC do banco e este JSON nao e' consultado: so' volta a valer com a `MOTOR_DATABASE_URL_AR` vazia |
 
 A trilha de acesso AR (`/opt/motor-expansao-ar/logs/acesso/`) segue o regime da trilha
 BR (sem prazo de retencao desde a emenda 2 da DEC-027, 20/10/2026; era 90 dias), porque
@@ -434,12 +437,22 @@ sops --input-type binary --output-type binary -d secrets/authelia.db.sqlite3.enc
   > authelia/db.sqlite3
 ```
 
-> **O `secrets/env.enc.env` e' de 2026-10-25, ja' com a linha `MOTOR_DATABASE_URL`** (o banco foi
-> ligado no site em 2026-10-23; ate' 2026-10-25 o cifrado era o de 2026-10-17, sem ela, e
-> restaurado subia o web com o banco DESLIGADO, sem nada acusar). Ele fica velho de novo a cada
-> mudanca do `.env`: no corte do P19 entram a nova `MOTOR_SENHA_INICIAL` e a
-> `MOTOR_AUTENTICACAO_PROPRIA` (BLK-BANCO-04). Os pins `WEB_IMAGE`/`API_IMAGE` dele sao os de
-> 2026-10-25: confira o digest vigente antes do `pull` (§10.8).
+> **O `secrets/env.enc.env` e' de 2026-10-27 (#492), refeito depois do corte do P19 do BR**, com a
+> `MOTOR_DATABASE_URL` e a `MOTOR_AUTENTICACAO_PROPRIA` (o banco foi ligado no site em 2026-10-23;
+> ate' 2026-10-25 o cifrado era o de 2026-10-17, sem a URL, e restaurado subia o web com o banco
+> DESLIGADO, sem nada acusar). Ele fica velho de novo a cada mudanca do `.env`, e ja' ficou: **nao
+> tem as chaves de banco e login da AR**, que entraram no corte AR da DEC-081 (2026-10-31) —
+> `MOTOR_DATABASE_URL_AR` e `MOTOR_AUTENTICACAO_PROPRIA_AR` (nem as `MOTOR_GEOIP_DB`/`MOTOR_GEOIP_DB_AR`
+> da DEC-082, cuja falta so' desliga o pais do IP). Restaurado, o `web_ar` sobe sem banco e sem login
+> proprio, sem nada acusar, e com o bloco do `piloto-ar` do corte AR (`forward_auth` no `/api/verify`
+> dele, `deploy/caddy/piloto-ar.Caddyfile.template`) ninguem entra na AR: recoloque as duas chaves
+> antes do `up` da AR (o bloco da AR do `.env.example` diz o que vai nelas; a contagem do §14, passo
+> 6, confere so' a URL). Os pins `WEB_IMAGE`/`API_IMAGE` dele sao os de 2026-10-27: confira o digest
+> vigente antes do `pull` (§10.8). O `secrets/Caddyfile.enc` e' do mesmo dia, ja' com o bloco BR do
+> corte do P19 e tambem anterior ao corte AR: o bloco do `piloto-ar` que o passo 2 acima restaura
+> ainda manda o `forward_auth` ao Authelia, e com ele a AR volta em silencio ao estado de antes do
+> corte (Authelia + `acesso_abas.json`, que nao tem copia cifrada — §2.1). As duas chaves sozinhas
+> nao refazem o corte AR: falta tambem o bloco do template.
 
 ### 10.7. Recolocar dados de parquets
 
@@ -495,7 +508,17 @@ docker compose -f docker-compose.prod.yml ps
 
 Esperado: 6 containers `healthy`/`running` em ate 2 min (web, api, telegram-bot, postgres, caddy, authelia) — o `.env`
 restaurado precisa dos `POSTGRES_*` (o compose aborta sem eles). Stack AR (`docker-compose.ar.yml`), tileserver
-(`/opt/openmaptiles-infra`) e Valhalla (`/opt/valhalla-infra`) tem compose proprio e sobem a parte.
+(`/opt/openmaptiles-infra`) e Valhalla (`/opt/valhalla-infra`) tem compose proprio e sobem a parte. O `web_ar`
+fala com o MESMO Postgres desde o corte AR da DEC-081 (31/10/2026): sobe depois do stack BR (usa a rede
+`app_app_net` dele), deste mesmo diretorio (le o mesmo `.env`, que ja' tem de ter as duas chaves da AR
+de volta — §10.6), com o `perfil.json` e os diretorios de `/opt/motor-expansao-ar/` ja' no lugar (§2.1;
+o bind de ARQUIVO do `perfil.json` tem a mesma pre-condicao do BR, §10.7) e com o `unset` da variavel
+DELE (a contagem fica no §14, passo 6):
+
+```bash
+unset MOTOR_DATABASE_URL_AR   # a do shell, mesmo vazia, venceria a do .env
+docker compose -f docker-compose.ar.yml up -d --no-deps web_ar
+```
 
 ### 10.9. Validar (vai para §14)
 
@@ -674,9 +697,10 @@ docker compose -f docker-compose.prod.yml exec web curl -fsS http://127.0.0.1:88
 # Abrir em navegador: https://auth.ultra-expansao.tech
 # Esperado: tela de login do Authelia
 
-# 4. Login no piloto (cookie via Authelia)
+# 4. Login no piloto (login proprio desde o corte do P19, 27/10/2026 — o .env e o Caddyfile
+#    restaurados, de 27/10, ja' o trazem: §10.6)
 # Abrir em navegador: https://piloto.ultra-expansao.tech
-# Esperado: redirect para Authelia, login, retorno ao SPA do piloto
+# Esperado: a tela de entrar do proprio piloto, login, retorno ao SPA do piloto
 
 # 5. Logs sem erro
 docker compose -f docker-compose.prod.yml logs --tail=50 web
@@ -687,6 +711,9 @@ docker compose -f docker-compose.prod.yml logs --tail=50 authelia
 # 6. Banco ligado no web, com a URL do papel `app` (o .env restaurado pode ter vindo sem ela —
 #    §10.6). Conta a linha sem imprimir a senha: tem de dar 1. NUNCA tire o -c.
 docker inspect -f '{{range .Config.Env}}{{println .}}{{end}}' motor_expansao_web | grep -c '^MOTOR_DATABASE_URL=postgresql://app:'
+#    E no web_ar, que a recebe da MOTOR_DATABASE_URL_AR desde o corte AR da DEC-081 (o
+#    env.enc.env de 2026-10-27 NAO a tem — §10.6): tambem 1.
+docker inspect -f '{{range .Config.Env}}{{println .}}{{end}}' motor_expansao_web_ar | grep -c '^MOTOR_DATABASE_URL=postgresql://app:'
 ```
 
 ### 14.1. Validacao de dados M1

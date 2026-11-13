@@ -13,7 +13,7 @@ Contrato curto para compartilhar o repo com a equipe e operar o deploy do piloto
   `src/motor_expansao/dashboard/`.
 - Deploy via imagens do GHCR (`motor-expansao-web` e `motor-expansao-api`, buildadas de
   `Dockerfile.web`/`Dockerfile.api` pelo CI) pinadas por digest no `docker-compose.prod.yml`.
-- Sem Prefect nem recálculo nacional no deploy. O PostGIS (`postgres`) é obrigatório no piloto BR, porque é ele que autentica o login (DEC-067).
+- Sem Prefect nem recálculo nacional no deploy. O PostGIS (`postgres`) é obrigatório nos pilotos BR e AR, porque é ele que autentica o login (DEC-067; na AR, desde o corte da DEC-081, em 31/10/2026).
 - `score_priorizacao` e o score oficial do M1; `hex_score_estrutural` e artefatos oficiais nao devem mudar sem aprovacao explicita.
 - Quartis sao apoio de ranking relativo; para reporte executivo e carteira, priorizar regua absoluta, churn esperado, receita esperada perdida e capacidade operacional.
 

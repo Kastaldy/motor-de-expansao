@@ -32,8 +32,9 @@ escreve em BR e AR, e arquivo novo nasce `deploy:motor-ops` (efeito do `setgid`)
 - `/opt/motor-expansao/cadastro/` e `/opt/motor-expansao-ar/cadastro/` — `ubuntu:ubuntu`, arquivos `0600`.
   É onde vive o `acesso_abas.json` (controle de abas, **fail-closed**): sobrescrever por `scp` com
   outro dono derruba o controle de abas inteiro, **sem erro visível**.
-  No BR, desde 23/10/2026, quem controla as abas é o banco: o `acesso_abas.json` de lá só volta a
-  valer se a `MOTOR_DATABASE_URL` for esvaziada (o da AR segue no comando). A pasta do BR guarda ainda o
+  No BR desde 23/10/2026, e na AR desde o corte AR da DEC-081 (31/10/2026), quem controla as abas é o
+  banco: cada `acesso_abas.json` só volta a valer se a URL do país for esvaziada (`MOTOR_DATABASE_URL`
+  no BR, `MOTOR_DATABASE_URL_AR` na AR). A pasta do BR guarda ainda o
   `bot_allowlist.json` do bot, também fail-closed: ilegível, ninguém usa o bot.
 - `/opt/motor-expansao/logs/acesso/` — `ubuntu`, `0700`, trilha de acesso (DEC-027), escrita do app.
 - `authelia/`, `secrets/`, `Caddyfile` — ficam dentro de `/opt/motor-expansao/app/`, com permissão própria.
