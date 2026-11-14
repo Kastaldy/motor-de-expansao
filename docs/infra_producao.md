@@ -1135,7 +1135,7 @@ gravável, em `/oportunidades-rw`.
   - As seguintes só calculam os imóveis novos de cada envio da lista. Sem novidade, saem em segundos e não regravam o arquivo.
 - **Falhas:**
   - Falha permanente do ponto (sem via a 300 m, área grande demais, sem setor) fica gravada com o motivo.
-  - Falha do Valhalla não grava e volta na noite seguinte. Com 20 falhas seguidas o lote para com `rc=3`, guarda o que já fez e avisa o chat de ops.
+  - Falha do Valhalla ou de insumo (malha municipal ausente, partição de setores ausente ou ilegível) não grava e volta na noite seguinte. Com 20 falhas seguidas o lote para com `rc=3`, guarda o que já fez e avisa o chat de ops; o motivo vai em `ultima_falha_do_servico`, no resumo do log.
 - **Gravação:** por temporário + rename, a cada 500 pontos.
 
 **Sem restart:** a aba relê lista e entradas quando o mtime ou o tamanho mudam.

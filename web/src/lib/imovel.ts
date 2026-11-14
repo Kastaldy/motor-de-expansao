@@ -98,7 +98,8 @@ export function faixaDoModelo(o: Oportunidade): string | null {
   return `Faixa do modelo: ${brl(o.fat_p10, true)}–${brl(o.fat_p90, true)}`
 }
 
-/** Faixa curta para a linha da lista ("R$ 180k–430k"), ou null fora do modelo. */
+/** Faixa curta para a nota de "Projeção fat." do card lateral da vista Mapa
+ *  ("R$ 180k–430k"), ou null fora do modelo. */
 export function faixaDoModeloCurta(o: Oportunidade): string | null {
   if (!projecaoPeloModelo(o) || o.fat_p10 == null || o.fat_p90 == null) return null
   return `${brlCurto(o.fat_p10)}–${brlCurto(o.fat_p90).replace(/^\S+\s/, '')}`
@@ -108,9 +109,10 @@ export function faixaDoModeloCurta(o: Oportunidade): string | null {
 export const avisoDaProjecao = (o: Oportunidade): string | null =>
   projecaoPeloModelo(o) && o.fat_extrapolacao ? AVISO_EXTRAPOLACAO_V2 : null
 
-/** O modelo contou menos metragem que a do anúncio (o teto do modelo, DEC-086)? */
+/** O teto do modelo cortou a metragem do anúncio (DEC-086)? Lê o booleano do MODELO, e não
+ *  `m2_modelo < area`: comparar números arredondados de lados diferentes dava falso corte. */
 export const modeloCortouAArea = (o: Oportunidade): boolean =>
-  projecaoPeloModelo(o) && o.m2_modelo != null && o.area != null && o.m2_modelo < o.area
+  projecaoPeloModelo(o) && o.teto_m2_aplicado === true && o.m2_modelo != null
 
 /** % do faturamento projetado que o ALUGUEL toma; null sem as duas pontas. */
 export const pctAluguelFat = (o: Oportunidade): number | null =>

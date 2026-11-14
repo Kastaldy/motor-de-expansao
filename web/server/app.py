@@ -15469,6 +15469,7 @@ def _projecao_praca(
         "alunos_p50": alunos,
         "extrapolacao": bool(prev.flag_extrapolacao),
         "m2_modelo": prev.m2_modelo,
+        "teto_m2_aplicado": bool(prev.teto_m2_aplicado),
     }
 
 
@@ -15739,12 +15740,16 @@ def _montar_oportunidades(caminho_entradas: Path, coef: Any | None) -> list[dict
                 "fat_proj": _op_num(fat_proj, 2),
                 "ticket_proj": _op_num(ticket),
                 # DEC-086: de onde veio o faturamento ("praca" | "densidade" | null) e, no
-                # modelo de praca, a faixa p10-p90, a extrapolacao e a metragem que ele usou.
+                # modelo de praca, a faixa p10-p90, a extrapolacao, a metragem que ele usou
+                # e se o teto a cortou. `m2_modelo` SEM arredondar (abaixo do teto e' a
+                # propria `area`) e o corte vem do modelo, nunca de comparar os dois numeros
+                # na tela: arredondado, 1.250,25 m2 virava 1.250,2 e parecia corte.
                 "fat_fonte": fat_fonte,
                 "fat_p10": _op_num(praca["fat_p10"], 2) if praca else None,
                 "fat_p90": _op_num(praca["fat_p90"], 2) if praca else None,
                 "fat_extrapolacao": praca["extrapolacao"] if praca else None,
-                "m2_modelo": _op_num(praca["m2_modelo"], 1) if praca else None,
+                "m2_modelo": _op_num(praca["m2_modelo"]) if praca else None,
+                "teto_m2_aplicado": praca["teto_m2_aplicado"] if praca else None,
             }
         )
     return itens

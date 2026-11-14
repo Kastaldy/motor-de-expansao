@@ -128,12 +128,12 @@ scp -i ~/.ssh/id_ultra_mcp <arquivo> root@2.25.137.241:/opt/motor-expansao/data/
 
 > ### ⚠ `scp` sem restart não acende nada — e o `/api/health` fica verde mentindo
 >
-> Os leitores do backend **memoizam a ausência**, por dois mecanismos diferentes:
-> `@functools.lru_cache(maxsize=1)` em `carregar_independentes` e `carregar_redes`, e um global de
-> módulo (`_OPORTUNIDADES_CACHE`) em `_carregar_oportunidades`. Nenhum dos dois é invalidado em
-> runtime — `limpar_caches()` é helper de teste, não rota. Se o arquivo chegar com o container de
-> pé, o leitor já guardou o `None` da primeira requisição e continuará devolvendo `None` até o
-> processo morrer.
+> Os leitores do backend **memoizam a ausência**: `@functools.lru_cache(maxsize=1)` em
+> `carregar_independentes` e `carregar_redes`, que não é invalidado em runtime — `limpar_caches()`
+> é helper de teste, não rota. Se o arquivo chegar com o container de pé, o leitor já guardou o
+> `None` da primeira requisição e continuará devolvendo `None` até o processo morrer. (A lista de
+> imóveis, `_carregar_oportunidades`, deixou de ser um deles na DEC-086: ela remonta sozinha pela
+> assinatura do arquivo.)
 >
 > O `/api/health`, por outro lado, faz `exists()` **a cada chamada** — então ele fica **verde na
 > hora**, com a camada ainda invisível na tela. É a pior combinação possível: o sinal que o

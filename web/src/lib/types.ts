@@ -855,6 +855,9 @@ export interface Oportunidade {
   fat_extrapolacao?: boolean | null
   /** Metragem que o modelo de praça usou: a do anúncio até o teto do modelo (`V2_TETO_M2`). */
   m2_modelo?: number | null
+  /** O teto do modelo cortou a área do anúncio? Vem do MODELO (nunca comparar `m2_modelo`
+   *  com `area` na tela: arredondamento pareceria corte). `null` fora do modelo de praça. */
+  teto_m2_aplicado?: boolean | null
   /** Se o coletor gerou um dossiê PDF para este imóvel (top-N por praça). */
   tem_dossie?: boolean
 }

@@ -168,7 +168,7 @@ describe('projeção de faturamento: modelo de praça ou curva (DEC-086)', () =>
     expect(faixaDoModelo(praca({ fat_p90: null }))).toBeNull()
   })
 
-  it('a faixa curta da lista não repete o símbolo da moeda', () => {
+  it('a faixa curta do card lateral da vista Mapa não repete o símbolo da moeda', () => {
     expect(faixaDoModeloCurta(praca())).toMatch(/^R\$ 203k–483k$/)
     expect(faixaDoModeloCurta(op())).toBeNull()
   })
@@ -179,10 +179,17 @@ describe('projeção de faturamento: modelo de praça ou curva (DEC-086)', () =>
     expect(avisoDaProjecao(op({ fat_fonte: 'densidade', fat_extrapolacao: true }))).toBeNull()
   })
 
-  it('o teto do modelo só é dito quando cortou a área do anúncio', () => {
-    expect(modeloCortouAArea(praca({ area: 3000, m2_modelo: 2800 }))).toBe(true)
-    expect(modeloCortouAArea(praca({ area: 1500, m2_modelo: 1500 }))).toBe(false)
+  it('o teto do modelo só é dito quando o MODELO diz que cortou a área do anúncio', () => {
+    expect(modeloCortouAArea(praca({ area: 3000, m2_modelo: 2800, teto_m2_aplicado: true }))).toBe(true)
+    expect(modeloCortouAArea(praca({ area: 1500, m2_modelo: 1500, teto_m2_aplicado: false }))).toBe(false)
     expect(modeloCortouAArea(op({ fat_fonte: 'densidade', area: 3000 }))).toBe(false)
+  })
+
+  it('REGRESSÃO da revisão: arredondamento não vira corte do teto', () => {
+    // m2_modelo arredondado a 1 casa contra a área crua: 1250,2 < 1250,25 parecia corte.
+    expect(modeloCortouAArea(praca({ area: 1250.25, m2_modelo: 1250.2, teto_m2_aplicado: false }))).toBe(false)
+    // Servidor anterior ao campo: sem o booleano, nunca afirma corte.
+    expect(modeloCortouAArea(praca({ area: 3000, m2_modelo: 2800 }))).toBe(false)
   })
 
   it('a régua do aluguel segue o número servido, venha de onde vier', () => {

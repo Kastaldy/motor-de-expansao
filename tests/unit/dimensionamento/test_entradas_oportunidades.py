@@ -214,3 +214,39 @@ def test_main_usa_os_caminhos_do_site_e_devolve_o_codigo(tmp_path, monkeypatch, 
     assert eo.main(["--oportunidades", str(tmp_path / "nao-existe.parquet")]) == (
         eo.CODIGO_ENTRADA_INVALIDA
     )
+
+
+def test_calculadora_de_producao_so_grava_o_erro_que_depende_do_ponto(tmp_path, monkeypatch):
+    """Achado da revisão: o 404 `base_geo_ausente` também sai de partição ILEGÍVEL e o 500 é
+    a malha ausente — incidentes de insumo. Gravá-los como permanentes deixaria o imóvel na
+    curva de densidade até um `--recalcular-tudo` manual. Só o 400 (coordenada fora da
+    malha) depende do ponto."""
+    from motor_expansao.api import coord, service
+    from motor_expansao.api.errors import APIError
+    from motor_expansao.dashboard import alcance_ponto
+
+    iso = type("Iso", (), {"geometria": object(), "area_km2": 12.0, "versao": "t"})()
+    monkeypatch.setattr(alcance_ponto, "isocrona_carro", lambda lat, lng, minutos: iso)
+    monkeypatch.setattr(coord, "validar_brasil", lambda lat, lng: None)
+    erro: dict[str, object] = {}
+
+    def _resolver(lat, lng, cfg, geometria=None):
+        raise APIError(erro["status"], "detalhe", erro["codigo"])
+
+    monkeypatch.setattr(service, "_resolver_e_carregar", _resolver)
+    calc = eo.calculadora_de_producao(tmp_path, None)
+
+    erro.update(status=400, codigo="coordenada_invalida")
+    with pytest.raises(eo.FalhaPermanente) as permanente:
+        calc(-23.5, -46.6)
+    assert permanente.value.status == eo.STATUS_SEM_MALHA
+    for status, codigo in ((404, "base_geo_ausente"), (500, "erro_interno")):
+        erro.update(status=status, codigo=codigo)
+        with pytest.raises(eo.FalhaDoServico, match=codigo):
+            calc(-23.5, -46.6)
+
+
+def test_a_ultima_falha_do_servico_vai_para_o_resumo(tmp_path):
+    kb = eo.chave_coordenada(*B)
+    r = _rodar(_lista(tmp_path, [A, B]), tmp_path / "entradas_c10.parquet", Calc(servico={kb}))
+    assert r.como_dict()["ultima_falha_do_servico"] == "timeout"

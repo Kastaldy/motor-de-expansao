@@ -19,10 +19,11 @@ tudo, por exemplo depois de tiles novos do Valhalla, `--recalcular-tudo`.
 
 Falha PERMANENTE do ponto (sem via a 300 m, area grande demais, coordenada fora da malha,
 sem setor, populacao ou renda) fica gravada com o motivo e nao se repete. Falha do SERVICO
-(Valhalla fora, timeout) ou erro inesperado NAO grava nada: o ponto volta na noite seguinte.
-Com `--max-falhas-seguidas` falhas do servico em sequencia o lote para (codigo 3), e o que
-ja foi calculado fica salvo -- o arquivo e' regravado a cada `GRAVAR_A_CADA` pontos novos,
-sempre por temporario + rename.
+(Valhalla fora, timeout), do INSUMO (malha municipal ausente, particao de setores ausente ou
+ilegivel) ou erro inesperado NAO grava nada: o ponto volta na noite seguinte. Com
+`--max-falhas-seguidas` dessas falhas em sequencia o lote para (codigo 3), e o que ja foi
+calculado fica salvo -- o arquivo e' regravado a cada `GRAVAR_A_CADA` pontos novos, sempre
+por temporario + rename.
 
 READ-ONLY sobre o M1 e sobre o `viaveis.parquet`; escreve SO' o arquivo de saida.
 """
@@ -94,7 +95,8 @@ class FalhaPermanente(Exception):
 
 
 class FalhaDoServico(Exception):
-    """O servico de rotas nao respondeu: nada e' gravado e o ponto volta na proxima rodada."""
+    """O servico de rotas nao respondeu, ou um insumo do calculo (malha municipal, particao
+    de setores) esta ausente ou ilegivel: nada e' gravado e o ponto volta na proxima rodada."""
 
 
 def chave_coordenada(lat: Any, lng: Any) -> tuple[float, float] | None:
@@ -206,7 +208,14 @@ def calculadora_de_producao(raiz: Path, perfil: Any) -> Callable[[float, float],
         try:
             _uf, _cod, setores = _resolver_e_carregar(lat, lng, cfg, geometria=iso.geometria)
         except APIError as exc:
-            raise FalhaPermanente(STATUS_SEM_MALHA, str(exc.detail)) from exc
+            # So' o 400 depende do PONTO (coordenada fora da malha municipal). O 404
+            # `base_geo_ausente` tambem sai de particao ILEGIVEL (corrompida, no meio de um
+            # scp -- o incidente de Varjota/CE) e o 500 e' a malha municipal ausente: sao
+            # incidentes de INSUMO, e gravar o ponto como permanente o deixaria na curva
+            # de densidade ate' um `--recalcular-tudo` manual. Voltam na proxima noite.
+            if int(getattr(exc, "status_code", 0)) == 400:
+                raise FalhaPermanente(STATUS_SEM_MALHA, str(exc.detail)) from exc
+            raise FalhaDoServico(f"{exc.codigo}: {exc.detail}") from exc
         try:
             ent = agregar_entradas_c10(setores, iso.geometria, lat, lng)
         except EntradasC10Indisponiveis as exc:
@@ -232,6 +241,7 @@ class Resumo:
     pendentes: int = 0
     calculadas_agora: Counter = field(default_factory=Counter)
     falhas_do_servico: int = 0
+    ultima_falha_do_servico: str | None = None
     erros_inesperados: Counter = field(default_factory=Counter)
     abortou_por_servico: bool = False
     linhas_no_arquivo: int = 0
@@ -246,6 +256,7 @@ class Resumo:
             "pendentes": self.pendentes,
             "calculadas_agora": dict(self.calculadas_agora),
             "falhas_do_servico": self.falhas_do_servico,
+            "ultima_falha_do_servico": self.ultima_falha_do_servico,
             "erros_inesperados": dict(self.erros_inesperados),
             "abortou_por_servico": self.abortou_por_servico,
             "linhas_no_arquivo": self.linhas_no_arquivo,
@@ -316,10 +327,11 @@ def rodar(
             valores = calcular(lat, lng)
         except FalhaDoServico as exc:
             r.falhas_do_servico += 1
+            r.ultima_falha_do_servico = str(exc)[:300]
             seguidas += 1
             if seguidas >= max_falhas_seguidas:
                 r.abortou_por_servico = True
-                escrever(f"[entradas_oportunidades] servico de rotas fora ({exc}); parando")
+                escrever(f"[entradas_oportunidades] servico ou insumo fora ({exc}); parando")
                 break
             continue
         except FalhaPermanente as exc:

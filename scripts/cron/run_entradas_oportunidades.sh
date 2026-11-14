@@ -147,7 +147,7 @@ case "$JOB_RC" in
     ;;
   3)
     _avisar <<EOF
-⚠️ [Motor] Entradas do modelo de praça: o serviço de rotas (Valhalla) não respondeu e o lote PAROU.
+⚠️ [Motor] Entradas do modelo de praça: o lote PAROU por falhas seguidas do serviço de rotas (Valhalla) ou de um insumo do cálculo (malha municipal, partição de setores). O motivo da última falha está no log (ultima_falha_do_servico).
 O que já foi calculado ficou salvo; os imóveis que faltam seguem na curva de densidade e entram na próxima noite.
 Log: ${LOG}
 EOF

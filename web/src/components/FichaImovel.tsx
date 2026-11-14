@@ -265,11 +265,6 @@ export default function FichaImovel({
           <div style={{ marginTop: 6, font: '400 9.5px/1.3 var(--f-ui)', color: 'var(--tx-label)' }}>
             marcas: ideal {ALUGUEL_PCT_IDEAL}% · teto {ALUGUEL_PCT_TETO}% — % do faturamento, como na Viabilidade
           </div>
-          {avisoDaProjecao(op) && (
-            <div style={{ marginTop: 8, font: '400 11px/1.4 var(--f-ui)', color: 'var(--warn-text)' }}>
-              {avisoDaProjecao(op)}
-            </div>
-          )}
         </CardPainel>
       ) : (
         <CardPainel>
@@ -332,6 +327,13 @@ export default function FichaImovel({
           }
         />
       </div>
+      {/* O aviso fica junto da PROJEÇÃO, e não dentro do veredito do aluguel: aquele card
+          some quando o anúncio não traz aluguel, e a faixa do modelo seguiria sem o aviso. */}
+      {avisoDaProjecao(op) && (
+        <div style={{ marginTop: -2, font: '400 11px/1.4 var(--f-ui)', color: 'var(--warn-text)' }}>
+          {avisoDaProjecao(op)}
+        </div>
+      )}
 
       {/* ---- Composição do custo ---- */}
       <div

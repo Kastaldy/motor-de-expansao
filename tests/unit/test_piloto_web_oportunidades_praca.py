@@ -92,6 +92,7 @@ def test_imovel_com_entradas_usa_o_modelo_do_simulador(cenario):
     assert item["fat_p10"] == pytest.approx(prev.fat_p10, abs=0.01)
     assert item["fat_p90"] == pytest.approx(prev.fat_p90, abs=0.01)
     assert item["fat_extrapolacao"] is False and item["m2_modelo"] == 1_500.0
+    assert item["teto_m2_aplicado"] is False
 
 
 def test_alunos_do_modelo_sao_a_conversao_da_sugestao_do_simulador(cenario):
@@ -115,6 +116,7 @@ def test_sem_entrada_ou_com_falha_permanente_cai_na_curva_de_densidade(cenario):
         assert itens[iid]["fat_proj"] == pytest.approx(ALUNOS_DENSIDADE * pilot_app._ticket_proj_mensal())
         assert itens[iid]["fat_p10"] is None and itens[iid]["fat_p90"] is None
         assert itens[iid]["fat_extrapolacao"] is None and itens[iid]["m2_modelo"] is None
+        assert itens[iid]["teto_m2_aplicado"] is None
 
 
 def test_chave_da_v2_desligada_poe_a_lista_inteira_na_densidade(cenario, monkeypatch):
@@ -130,6 +132,8 @@ def test_area_acima_do_teto_conta_so_ate_o_teto_no_modelo(cenario):
     )
     itens = _itens()
     assert itens["grande"]["m2_modelo"] == V2_TETO_M2
+    assert itens["grande"]["teto_m2_aplicado"] is True
+    assert itens["teto"]["teto_m2_aplicado"] is False, "na borda o teto nao corta"
     assert itens["grande"]["fat_proj"] == pytest.approx(itens["teto"]["fat_proj"], abs=0.01)
     assert itens["grande"]["area"] == 3_000, "a area exibida segue a do anuncio"
 
@@ -183,3 +187,12 @@ def test_primeira_leitura_quebrada_sobe_o_erro_como_antes(cenario):
     with pytest.raises((ValueError, OSError)):
         pilot_app._carregar_oportunidades()
     assert pilot_app._OPORTUNIDADES_CACHE is None and pilot_app._OPORTUNIDADES_CHAVE is None
+
+
+def test_area_fracionaria_abaixo_do_teto_nao_vira_corte(cenario):
+    """Achado da revisao: `m2_modelo` arredondado a 1 casa contra a `area` crua fazia
+    1.250,25 m2 parecer cortado pelo teto. O servidor manda os dois iguais e o booleano."""
+    cenario([_imovel("a", -23.5, -46.6, area=1_250.25)], [_ok(-23.5, -46.6)])
+    item = _itens()["a"]
+    assert item["m2_modelo"] == item["area"] == 1_250.25
+    assert item["teto_m2_aplicado"] is False
