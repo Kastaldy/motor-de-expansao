@@ -1,4 +1,6 @@
+import { brl, brlCurto } from './format'
 import type { Oportunidade } from './types'
+import { AVISO_EXTRAPOLACAO_V2 } from './viabilidade-demanda-v2'
 
 /* ---------------------------------------------------------------------------
    Identidade visual e derivacoes da camada IMOBILIARIA (oferta de imoveis).
@@ -77,6 +79,38 @@ export const rsM2 = (o: Oportunidade): number | null =>
 export const ALUGUEL_PCT_IDEAL = 15
 export const ALUGUEL_PCT_TETO = 20
 export const ALUGUEL_PCT_EXCECAO = 30
+
+/* --- Projecao de faturamento: o MODELO DE PRACA do simulador ou a curva ------
+   DEC-086. O backend serve o p50 pronto em `fat_proj` e diz a fonte em
+   `fat_fonte`: "praca" quando o lote noturno tem as entradas da isocrona do
+   imovel (o mesmo modelo da Viabilidade, com a faixa p10-p90), "densidade" no
+   fallback (a curva de alunos por m2 de antes, com os textos de antes). O
+   padrao de exibicao e' o do simulador: o p50 e' o numero, a faixa vai na nota
+   com o MESMO rotulo ("Faixa do modelo"), e o aviso de extrapolacao e' o MESMO
+   texto. Nada aqui recalcula: so' escolhe o texto pela fonte. */
+
+/** O faturamento projetado deste imóvel veio do modelo de praça? */
+export const projecaoPeloModelo = (o: Oportunidade): boolean => o.fat_fonte === 'praca'
+
+/** "Faixa do modelo: R$ 180 mil–R$ 430 mil" (como o simulador), ou null fora do modelo. */
+export function faixaDoModelo(o: Oportunidade): string | null {
+  if (!projecaoPeloModelo(o) || o.fat_p10 == null || o.fat_p90 == null) return null
+  return `Faixa do modelo: ${brl(o.fat_p10, true)}–${brl(o.fat_p90, true)}`
+}
+
+/** Faixa curta para a linha da lista ("R$ 180k–430k"), ou null fora do modelo. */
+export function faixaDoModeloCurta(o: Oportunidade): string | null {
+  if (!projecaoPeloModelo(o) || o.fat_p10 == null || o.fat_p90 == null) return null
+  return `${brlCurto(o.fat_p10)}–${brlCurto(o.fat_p90).replace(/^\S+\s/, '')}`
+}
+
+/** O MESMO aviso do simulador (`avisosV2`) quando o ponto sai do intervalo do ajuste. */
+export const avisoDaProjecao = (o: Oportunidade): string | null =>
+  projecaoPeloModelo(o) && o.fat_extrapolacao ? AVISO_EXTRAPOLACAO_V2 : null
+
+/** O modelo contou menos metragem que a do anúncio (o teto do modelo, DEC-086)? */
+export const modeloCortouAArea = (o: Oportunidade): boolean =>
+  projecaoPeloModelo(o) && o.m2_modelo != null && o.area != null && o.m2_modelo < o.area
 
 /** % do faturamento projetado que o ALUGUEL toma; null sem as duas pontas. */
 export const pctAluguelFat = (o: Oportunidade): number | null =>

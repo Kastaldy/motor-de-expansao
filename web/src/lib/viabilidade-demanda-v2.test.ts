@@ -136,6 +136,24 @@ describe('avisos (emenda de 21/10/2026: sem aviso de faixa provisória)', () => 
   })
 })
 
+describe('teto de metragem do modelo (DEC-086)', () => {
+  it('acima do teto avisa que a sugestão para de crescer, com o número do SERVIDOR', () => {
+    const a = avisosV2(sug({ teto_m2_aplicado: true, m2_modelo: 2800 }))
+    expect(a).toHaveLength(1)
+    expect(a[0]).toMatch(/2\.800 m²/)
+    expect(a[0]).toMatch(/não cresce com a metragem/)
+  })
+  it('até o teto, nenhum aviso novo; servidor antigo (sem os campos) também não', () => {
+    expect(avisosV2(sug({ teto_m2_aplicado: false, m2_modelo: 1500 }))).toEqual([])
+    expect(avisosV2(sug())).toEqual([])
+  })
+  it('teto e extrapolação juntos: os dois avisos, extrapolação primeiro', () => {
+    const a = avisosV2(sug({ flag_extrapolacao: true, teto_m2_aplicado: true, m2_modelo: 2800 }))
+    expect(a).toHaveLength(2)
+    expect(a[0]).toMatch(/extrapolação/)
+  })
+})
+
 describe('mesmoPonto arredonda como o servidor (5 casas)', () => {
   it('dois pontos dos dois lados da fronteira de arredondamento não são o mesmo', async () => {
     const { mesmoPonto } = await import('./viabilidade-demanda-v2')

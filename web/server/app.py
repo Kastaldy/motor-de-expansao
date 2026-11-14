@@ -15359,6 +15359,117 @@ _OPORTUNIDADES_COLS = [
 ]
 
 _OPORTUNIDADES_CACHE: list[dict[str, Any]] | None = None
+# Assinatura (caminho, mtime, tamanho) da lista, das entradas do modelo de praca e o sha dos
+# coeficientes com que o cache foi montado (DEC-086). Mudou qualquer um -> remonta sozinho:
+# o lote noturno grava as entradas sem `restart`, e trocar o `viaveis.parquet` tambem deixa
+# de exigir um (era a ressalva (ii) da DEC-037).
+_OPORTUNIDADES_CHAVE: tuple[Any, ...] | None = None
+
+
+def _assinatura_arquivo(p: Path) -> tuple[str, int, int] | None:
+    try:
+        st = p.stat()
+    except OSError:
+        return None
+    return (str(p), int(st.st_mtime_ns), int(st.st_size))
+
+
+def _caminho_entradas_oportunidades() -> Path:
+    """Entradas do modelo de praca por imovel (lote noturno, DEC-086), ao lado da lista.
+
+    Resolvido NA CHAMADA, e nao no import: quem aponta `OPORTUNIDADES_PATH` para outro
+    lugar (os testes, um deploy) leva as entradas junto.
+    """
+    from motor_expansao.dimensionamento.entradas_oportunidades import ARQUIVO_SAIDA, ENV_SAIDA
+
+    return Path(os.environ.get(ENV_SAIDA) or OPORTUNIDADES_PATH.with_name(ARQUIVO_SAIDA))
+
+
+def _coeficientes_praca() -> Any | None:
+    """Os coeficientes do modelo de praca, ou `None` (chave desligada, arquivo ausente ou
+    invalido): sem eles a lista inteira fica na curva de densidade, como o simulador."""
+    try:
+        return _viab_v2.carregar_coeficientes()
+    except _viab_v2.V2Indisponivel:
+        return None
+
+
+def _entradas_praca_por_coordenada(
+    caminho: Path,
+) -> dict[tuple[float, float], tuple[float, float, float]]:
+    """{(lat5, lng5): (pop_c10, dom_c10, renda_pc_c10)} das linhas `ok` do lote noturno.
+
+    Arquivo ausente ou ilegivel -> {} e a lista cai inteira na curva de densidade; nunca 500.
+    """
+    if not caminho.exists():
+        return {}
+    try:
+        df = pd.read_parquet(
+            caminho, columns=["lat5", "lng5", "status", "pop_c10", "dom_c10", "renda_pc_c10"]
+        )
+    except Exception as erro:  # noqa: BLE001 -- sem as entradas, a lista segue na densidade
+        print(f"[oportunidades] entradas do modelo de praca ilegiveis ({erro})", file=sys.stderr)
+        return {}
+    df = df[df["status"].astype(str) == "ok"]
+    saida: dict[tuple[float, float], tuple[float, float, float]] = {}
+    for lat, lng, pop, dom, renda in zip(
+        df["lat5"], df["lng5"], df["pop_c10"], df["dom_c10"], df["renda_pc_c10"], strict=True
+    ):
+        try:
+            v = (float(pop), float(dom), float(renda))
+        except (TypeError, ValueError):
+            continue
+        if all(math.isfinite(x) and x > 0 for x in v):
+            saida[(float(lat), float(lng))] = v
+    return saida
+
+
+@functools.lru_cache(maxsize=1)
+def _conversao_alunos_padrao() -> tuple[float, float] | None:
+    """(fixo, r_aluno) das premissas PADRAO da Viabilidade: a mesma conversao faturamento ->
+    alunos da sugestao do simulador sem estudio, com o ticket e o mix do config. Nao depende
+    do ponto nem da metragem, por isso e' calculada uma vez por processo."""
+    try:
+        from motor_expansao.dimensionamento.demanda_v2 import converter_em_alunos
+
+        corpo = _viab_v2.DemandaV2In(lat=-23.55, lng=-46.63, m2=1500.0)
+        conv = converter_em_alunos(1.0, 1.0, 1.0, _viab_v2._premissas_da_sugestao(corpo))
+        return float(conv.fixo), float(conv.r_aluno)
+    except Exception:  # noqa: BLE001 -- sem conversao, o imovel do modelo fica sem alunos
+        return None
+
+
+def _projecao_praca(
+    area: float | None, entradas: tuple[float, float, float] | None, coef: Any | None
+) -> dict[str, Any] | None:
+    """Faturamento do imovel pelo modelo de praca (o mesmo do simulador), ou `None` para
+    a curva de densidade assumir. Sem estudio; a metragem vai ate' o teto do modelo."""
+    if coef is None or entradas is None or not area:
+        return None
+    from motor_expansao.dimensionamento.demanda_v2 import (
+        EntradasInvalidas,
+        EntradasV2,
+        prever_faturamento_v2,
+    )
+
+    pop, dom, renda = entradas
+    try:
+        prev = prever_faturamento_v2(
+            EntradasV2(m2=float(area), studios=0, pop_c10=pop, dom_c10=dom, renda_pc_c10=renda),
+            coef,
+        )
+    except EntradasInvalidas:
+        return None
+    conv = _conversao_alunos_padrao()
+    alunos = max((prev.fat_p50 - conv[0]) / conv[1], 1.0) if conv else None
+    return {
+        "fat_p50": prev.fat_p50,
+        "fat_p10": prev.fat_p10,
+        "fat_p90": prev.fat_p90,
+        "alunos_p50": alunos,
+        "extrapolacao": bool(prev.flag_extrapolacao),
+        "m2_modelo": prev.m2_modelo,
+    }
 
 
 def _op_num(v: Any, casas: int | None = None) -> float | int | None:
@@ -15508,13 +15619,47 @@ def _op_renda_pc_por_hex(df: pd.DataFrame) -> dict[int, float | None]:
 
 
 def _carregar_oportunidades() -> list[dict[str, Any]]:
-    """Le o parquet UMA vez e monta os dicts sem PII, ordenados por residual."""
-    global _OPORTUNIDADES_CACHE
-    if _OPORTUNIDADES_CACHE is not None:
+    """Monta os dicts sem PII, ordenados por residual, e guarda ate' um dos insumos mudar.
+
+    Faturamento projetado (DEC-086): o MODELO DE PRACA do simulador (p50, com a faixa
+    p10-p90) para o imovel que tem as entradas da isocrona no lote noturno; sem elas
+    (imovel novo, sem via perto, Valhalla fora, chave da v2 desligada), a curva de densidade
+    de sempre. `fat_fonte` diz qual das duas valeu.
+
+    A chave do cache so' vale JUNTO com a lista montada. O envio da lista e' um `scp` por
+    cima do arquivo (nao atomico): uma leitura no meio dele falha, e ai' a lista ANTERIOR
+    segue servida e a chave fica a antiga, para a proxima chamada tentar de novo. Sem lista
+    anterior (1a leitura do processo), a falha sobe como antes.
+    """
+    global _OPORTUNIDADES_CACHE, _OPORTUNIDADES_CHAVE
+    caminho_entradas = _caminho_entradas_oportunidades()
+    coef = _coeficientes_praca()
+    chave = (
+        _assinatura_arquivo(OPORTUNIDADES_PATH),
+        _assinatura_arquivo(caminho_entradas),
+        getattr(coef, "sha256", None),
+    )
+    if _OPORTUNIDADES_CACHE is not None and _OPORTUNIDADES_CHAVE == chave:
         return _OPORTUNIDADES_CACHE
+    try:
+        itens = _montar_oportunidades(caminho_entradas, coef)
+    except Exception as erro:
+        if _OPORTUNIDADES_CACHE is None:
+            raise
+        print(
+            f"[oportunidades] lista ilegivel agora ({type(erro).__name__}: {erro}); "
+            "segue a anterior",
+            file=sys.stderr,
+        )
+        return _OPORTUNIDADES_CACHE
+    _OPORTUNIDADES_CACHE, _OPORTUNIDADES_CHAVE = itens, chave
+    return itens
+
+
+def _montar_oportunidades(caminho_entradas: Path, coef: Any | None) -> list[dict[str, Any]]:
+    """Le a lista e as entradas e monta os dicts (sem cache: quem guarda e' o chamador)."""
     if not OPORTUNIDADES_PATH.exists():
-        _OPORTUNIDADES_CACHE = []
-        return _OPORTUNIDADES_CACHE
+        return []
     df = pd.read_parquet(OPORTUNIDADES_PATH)
     df = df[[c for c in _OPORTUNIDADES_COLS if c in df.columns]]
     if "status" in df.columns:
@@ -15533,8 +15678,11 @@ def _carregar_oportunidades() -> list[dict[str, Any]]:
         df = df.sort_values(
             ordenar_por, ascending=False, na_position="last", kind="stable"
         )
+    from motor_expansao.dimensionamento.entradas_oportunidades import chave_coordenada
+
     ticket = _ticket_proj_mensal()
     renda_pc = _op_renda_pc_por_hex(df)
+    entradas_praca = _entradas_praca_por_coordenada(caminho_entradas) if coef is not None else {}
     itens: list[dict[str, Any]] = []
     for idx, r in zip(df.index, df.itertuples(index=False), strict=True):
         d = r._asdict()
@@ -15542,13 +15690,23 @@ def _carregar_oportunidades() -> list[dict[str, Any]]:
         aluguel = _op_num(d.get("preco_aluguel")) or _op_num(d.get("preco"))
         rs_m2 = round(aluguel / area, 1) if aluguel and area else None
         primeiro = _op_txt(d.get("first_seen"))
-        # Faturamento projetado = alunos p50 (curva tamanho->densidade) x ticket. p50
-        # depende SO do tamanho (property-first, DEC-009); m2 arredondado p/ cachear e
-        # capado no ideal (lote/galpao grande nao vira academia inteira — ver helper).
-        area_cap = min(float(area), _area_curva_max()) if area else 0.0
-        area_p50 = int(round(area_cap / 10.0) * 10) if area_cap else 0
-        alunos_p50 = _alunos_p50_por_m2(area_p50)
-        fat_proj = alunos_p50 * ticket if alunos_p50 else None
+        # Faturamento projetado (DEC-086). 1o o MODELO DE PRACA, o mesmo do simulador: as
+        # entradas da isocrona vem do lote noturno, pela coordenada em 5 casas, e a metragem
+        # vai ate' o teto do modelo (`V2_TETO_M2`).
+        k = chave_coordenada(d.get("latitude"), d.get("longitude"))
+        praca = _projecao_praca(area, entradas_praca.get(k) if k else None, coef)
+        if praca is not None:
+            alunos_p50, fat_proj = praca["alunos_p50"], praca["fat_p50"]
+            fat_fonte = "praca"
+        else:
+            # Sem as entradas do imovel: a curva tamanho->densidade de antes (p50 de alunos x
+            # ticket), m2 arredondado p/ cachear e capado no ideal (lote/galpao grande nao vira
+            # academia inteira — ver helper). E' o fallback do simulador sem o modelo.
+            area_cap = min(float(area), _area_curva_max()) if area else 0.0
+            area_p50 = int(round(area_cap / 10.0) * 10) if area_cap else 0
+            alunos_p50 = _alunos_p50_por_m2(area_p50)
+            fat_proj = alunos_p50 * ticket if alunos_p50 else None
+            fat_fonte = "densidade" if fat_proj else None
         itens.append(
             {
                 "id": _op_txt(d.get("imovel_id")) or _op_txt(d.get("fonte_listing_id")) or "",
@@ -15577,12 +15735,18 @@ def _carregar_oportunidades() -> list[dict[str, Any]]:
                 "lat": _op_num(d.get("latitude"), 6),
                 "lng": _op_num(d.get("longitude"), 6),
                 "url": _op_txt(d.get("url")),
-                "alunos_p50": _op_num(alunos_p50),
-                "fat_proj": _op_num(fat_proj),
+                "alunos_p50": _op_num(alunos_p50, 1),
+                "fat_proj": _op_num(fat_proj, 2),
                 "ticket_proj": _op_num(ticket),
+                # DEC-086: de onde veio o faturamento ("praca" | "densidade" | null) e, no
+                # modelo de praca, a faixa p10-p90, a extrapolacao e a metragem que ele usou.
+                "fat_fonte": fat_fonte,
+                "fat_p10": _op_num(praca["fat_p10"], 2) if praca else None,
+                "fat_p90": _op_num(praca["fat_p90"], 2) if praca else None,
+                "fat_extrapolacao": praca["extrapolacao"] if praca else None,
+                "m2_modelo": _op_num(praca["m2_modelo"], 1) if praca else None,
             }
         )
-    _OPORTUNIDADES_CACHE = itens
     return itens
 
 

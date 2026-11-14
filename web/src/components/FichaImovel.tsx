@@ -6,12 +6,16 @@ import {
   ALUGUEL_PCT_EXCECAO,
   ALUGUEL_PCT_IDEAL,
   ALUGUEL_PCT_TETO,
+  avisoDaProjecao,
   classeAluguelFat,
   corTipo,
   custoOcup,
+  faixaDoModelo,
   labelFaixa,
   labelTipo,
+  modeloCortouAArea,
   pctAluguelFat,
+  projecaoPeloModelo,
   rsM2,
 } from '../lib/imovel'
 import { alternarVisita, lerVisitas } from '../lib/visitas'
@@ -261,6 +265,11 @@ export default function FichaImovel({
           <div style={{ marginTop: 6, font: '400 9.5px/1.3 var(--f-ui)', color: 'var(--tx-label)' }}>
             marcas: ideal {ALUGUEL_PCT_IDEAL}% · teto {ALUGUEL_PCT_TETO}% — % do faturamento, como na Viabilidade
           </div>
+          {avisoDaProjecao(op) && (
+            <div style={{ marginTop: 8, font: '400 11px/1.4 var(--f-ui)', color: 'var(--warn-text)' }}>
+              {avisoDaProjecao(op)}
+            </div>
+          )}
         </CardPainel>
       ) : (
         <CardPainel>
@@ -302,16 +311,25 @@ export default function FichaImovel({
           unidade="/mês"
           cor="var(--pos-text)"
           nota={
-            op.alunos_p50 != null
+            faixaDoModelo(op) ??
+            (op.alunos_p50 != null
               ? `${num(op.alunos_p50)} alunos × R$ ${num(op.ticket_proj ?? 0)}`
-              : 'sem base de m² p/ estimar'
+              : 'sem base de m² p/ estimar')
           }
         />
         <CardFigura
           rotulo="ÁREA ÚTIL"
           valor={op.area == null ? '—' : num(op.area)}
           unidade="m²"
-          nota={op.alunos_p50 != null ? `${num(op.alunos_p50)} alunos pelo p50` : labelTipo(op.tipo)}
+          nota={
+            projecaoPeloModelo(op)
+              ? modeloCortouAArea(op)
+                ? `o modelo conta ${num(op.m2_modelo ?? 0)} m²`
+                : labelTipo(op.tipo)
+              : op.alunos_p50 != null
+                ? `${num(op.alunos_p50)} alunos pelo p50`
+                : labelTipo(op.tipo)
+          }
         />
       </div>
 
@@ -437,7 +455,7 @@ export default function FichaImovel({
           />
           <EncaixeNum
             valor={op.alunos_p50 == null ? '—' : num(op.alunos_p50)}
-            rotulo="Capacidade do imóvel (p50)"
+            rotulo={projecaoPeloModelo(op) ? 'Alunos pelo modelo (p50)' : 'Capacidade do imóvel (p50)'}
             tom="var(--pos-text)"
           />
           <EncaixeNum
@@ -447,7 +465,11 @@ export default function FichaImovel({
         </div>
         {op.area != null && op.alunos_p50 != null && op.residual_total != null && (
           <p style={{ margin: '13px 0 0', font: '400 11.5px/1.5 var(--f-ui)', color: 'var(--tx-narrative)' }}>
-            Os {num(op.area)} m² comportam {num(op.alunos_p50)} alunos pelo p50 —{' '}
+            {projecaoPeloModelo(op) ? (
+              <>O modelo de praça projeta {num(op.alunos_p50)} alunos (p50) —{' '}</>
+            ) : (
+              <>Os {num(op.area)} m² comportam {num(op.alunos_p50)} alunos pelo p50 —{' '}</>
+            )}
             {op.alunos_p50 >= op.residual_total ? 'acima' : 'abaixo'} dos {num(op.residual_total)}{' '}
             ainda livres no hexágono.
           </p>
@@ -495,9 +517,19 @@ export default function FichaImovel({
       </div>
 
       <div style={{ font: '400 10.5px/1.5 var(--f-ui)', color: 'var(--tx-sub)' }}>
-        Faturamento projetado = alunos p50/m² × ticket
-        {op.ticket_proj != null ? ` de R$ ${num(op.ticket_proj)}` : ''}. Dado agregado por{' '}
-        <span className="num">hex_id</span>; o contato do corretor fica no dossiê do coletor.
+        {projecaoPeloModelo(op) ? (
+          <>
+            Faturamento projetado pelo modelo de praça da Viabilidade: área de 10 min de carro e
+            metragem do anúncio, limitada à da maior unidade usada no ajuste; sem estúdio.
+          </>
+        ) : (
+          <>
+            Faturamento projetado = alunos p50/m² × ticket
+            {op.ticket_proj != null ? ` de R$ ${num(op.ticket_proj)}` : ''}.
+          </>
+        )}{' '}
+        Dado agregado por <span className="num">hex_id</span>; o contato do corretor fica no
+        dossiê do coletor.
       </div>
     </div>
   )

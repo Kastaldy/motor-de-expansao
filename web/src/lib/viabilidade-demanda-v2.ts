@@ -11,6 +11,7 @@
    Vitest alcança sem servidor.
    --------------------------------------------------------------------------- */
 
+import { num } from './format'
 import type { DemandaV2In, DemandaV2Out, EstadoDemandaV2, ViabilidadeIn } from './types'
 
 /** A v2 vale para esta tela? Só com o servidor dizendo `disponivel: true`. */
@@ -109,6 +110,11 @@ export function camposDeV2(
   }
 }
 
+/** O aviso de extrapolação do modelo de praça — o MESMO texto no simulador e na aba de
+ *  oportunidades imobiliárias (DEC-086). */
+export const AVISO_EXTRAPOLACAO_V2 =
+  'Este ponto está fora do intervalo das unidades usadas no ajuste (extrapolação).'
+
 /**
  * Avisos da sugestão, em português, para a tela. Sem o aviso de faixa provisória e sem
  * "rampa reta forçada" (emenda de 21/10/2026): `faixa_provisoria` segue no payload como
@@ -117,8 +123,14 @@ export function camposDeV2(
 export function avisosV2(sug: DemandaV2Out): string[] {
   const avisos: string[] = []
   if (sug.flag_extrapolacao) {
+    avisos.push(AVISO_EXTRAPOLACAO_V2)
+  }
+  // DEC-086: acima do teto (a maior unidade do ajuste) o modelo usa o teto, e a sugestão
+  // para de crescer com a metragem. Sem o aviso o operador digitaria 3.500 m² e veria a
+  // mesma demanda de 2.800 sem saber por quê. O número vem do servidor, nunca daqui.
+  if (sug.teto_m2_aplicado && sug.m2_modelo != null) {
     avisos.push(
-      'Este ponto está fora do intervalo das unidades usadas no ajuste (extrapolação).',
+      `O modelo conta até ${num(sug.m2_modelo)} m², a maior unidade usada no ajuste: acima disso, a sugestão não cresce com a metragem.`,
     )
   }
   return avisos

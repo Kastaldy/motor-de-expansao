@@ -3,16 +3,22 @@ import { describe, expect, it } from 'vitest'
 import {
   COR_TIPO,
   COR_TIPO_FALLBACK,
+  avisoDaProjecao,
   classeAluguelFat,
   corTipo,
   corTipoRgb,
   custoOcup,
+  faixaDoModelo,
+  faixaDoModeloCurta,
   labelFaixa,
   labelTipo,
+  modeloCortouAArea,
   pctAluguelFat,
+  projecaoPeloModelo,
   rsM2,
 } from './imovel'
 import type { Oportunidade } from './types'
+import { AVISO_EXTRAPOLACAO_V2 } from './viabilidade-demanda-v2'
 
 function op(extra: Partial<Oportunidade> = {}): Oportunidade {
   return {
@@ -143,5 +149,43 @@ describe('rsM2', () => {
   it('sem area (ou area 0) nao inventa numero', () => {
     expect(rsM2(op({ aluguel: 30_000 }))).toBeNull()
     expect(rsM2(op({ aluguel: 30_000, area: 0 }))).toBeNull()
+  })
+})
+
+describe('projeção de faturamento: modelo de praça ou curva (DEC-086)', () => {
+  const praca = (extra: Partial<Oportunidade> = {}) =>
+    op({ fat_fonte: 'praca', fat_proj: 300_000, fat_p10: 203_000, fat_p90: 483_000, ...extra })
+
+  it('a fonte é a do servidor; sem campo (servidor antigo) é a curva', () => {
+    expect(projecaoPeloModelo(praca())).toBe(true)
+    expect(projecaoPeloModelo(op({ fat_fonte: 'densidade' }))).toBe(false)
+    expect(projecaoPeloModelo(op())).toBe(false)
+  })
+
+  it('a faixa do modelo usa o rótulo do simulador e some fora do modelo', () => {
+    expect(faixaDoModelo(praca())).toMatch(/^Faixa do modelo: R\$ 203 mil–R\$ 483 mil$/)
+    expect(faixaDoModelo(op({ fat_fonte: 'densidade', fat_proj: 200_000 }))).toBeNull()
+    expect(faixaDoModelo(praca({ fat_p90: null }))).toBeNull()
+  })
+
+  it('a faixa curta da lista não repete o símbolo da moeda', () => {
+    expect(faixaDoModeloCurta(praca())).toMatch(/^R\$ 203k–483k$/)
+    expect(faixaDoModeloCurta(op())).toBeNull()
+  })
+
+  it('o aviso de extrapolação é o MESMO texto do simulador, só no modelo', () => {
+    expect(avisoDaProjecao(praca({ fat_extrapolacao: true }))).toBe(AVISO_EXTRAPOLACAO_V2)
+    expect(avisoDaProjecao(praca({ fat_extrapolacao: false }))).toBeNull()
+    expect(avisoDaProjecao(op({ fat_fonte: 'densidade', fat_extrapolacao: true }))).toBeNull()
+  })
+
+  it('o teto do modelo só é dito quando cortou a área do anúncio', () => {
+    expect(modeloCortouAArea(praca({ area: 3000, m2_modelo: 2800 }))).toBe(true)
+    expect(modeloCortouAArea(praca({ area: 1500, m2_modelo: 1500 }))).toBe(false)
+    expect(modeloCortouAArea(op({ fat_fonte: 'densidade', area: 3000 }))).toBe(false)
+  })
+
+  it('a régua do aluguel segue o número servido, venha de onde vier', () => {
+    expect(pctAluguelFat(praca({ aluguel: 30_000 }))).toBe(10)
   })
 })
