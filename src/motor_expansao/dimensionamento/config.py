@@ -130,6 +130,15 @@ V2_ENV_CHAVE = "MOTOR_VIABILIDADE_V2"
 V2_COEFICIENTES_ARQUIVO = "v2_coeficientes.json"
 # A isocrona do modelo: 10 min de carro sem transito (DEC-074). Nunca o raio.
 V2_MINUTOS_ISOCRONA = 10
+# TETO de metragem do modelo de praca (DEC-086): a maior unidade do treino tem 2.800 m2 e,
+# acima dela, nao ha evidencia de que o faturamento continue subindo. O MODELO conta ate'
+# aqui; o resto da conta (aluguel, obra, custos) segue a metragem digitada. Teste de
+# 13/11/2026 nas 39 unidades de treino e 18 de teste, com a metragem truncada em
+# ln(min(m2, c)): o erro deixa-um-fora fica no minimo entre 2.400 e 2.800 m2, sem sinal de
+# achatamento ate' 2.800, e o teto de 2.000 (o da curva de densidade, `AREA_IDEAL_MAX_M2`)
+# deixava as 3 unidades acima dele 25% abaixo do real. Igual ao topo do envelope `ln_m2`
+# dos coeficientes de hoje: na borda o ponto NAO e' extrapolacao (o envelope e' inclusivo).
+V2_TETO_M2 = 2800.0
 # Predicado de "abre SEM agregador" (achado UNI-14, critica A3): a curva da rampa foi medida
 # em unidades que abriram COM agregador. Ate' a emenda de 21/10/2026 o modo v2 com share de
 # balcao >= este valor FORCAVA a reta; com o produto so' na curva isso deixou de valer (a
