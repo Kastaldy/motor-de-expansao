@@ -89,9 +89,9 @@ services:
   api:
     # Modo PULL por digest (igual ao Streamlit): o CI (job publish-api) publica
     # `motor-expansao-api` no GHCR; a VPS pina por digest no .env. Fail-closed.
-    #   API_IMAGE=ghcr.io/kastaldy/motor-de-expansao/motor-expansao-api@sha256:<digest>
+    #   API_IMAGE=ghcr.io/growth-grupo-ultra/motor-de-expansao/motor-expansao-api@sha256:<digest>
     # Build local de dev/sanity: `docker build -f Dockerfile.api -t motor-expansao-api:local .`
-    image: ${API_IMAGE:?defina API_IMAGE com o digest imutavel ghcr.io/kastaldy/motor-de-expansao/motor-expansao-api@sha256:<digest> — ver docs/deploy_api_bot.md}
+    image: ${API_IMAGE:?defina API_IMAGE com o digest imutavel ghcr.io/growth-grupo-ultra/motor-de-expansao/motor-expansao-api@sha256:<digest> — ver docs/deploy_api_bot.md}
     container_name: motor_expansao_api
     restart: unless-stopped
     # Teto anti-DoS (BLK-SEC-05): a API e internet-facing (api.ultra-expansao.tech, so
@@ -265,9 +265,9 @@ services:
   web:
     # Modo PULL por digest (igual aos demais): o CI (job publish-web) publica
     # `motor-expansao-web` no GHCR; a VPS pina por digest no .env. Fail-closed.
-    #   WEB_IMAGE=ghcr.io/kastaldy/motor-de-expansao/motor-expansao-web@sha256:<digest>
+    #   WEB_IMAGE=ghcr.io/growth-grupo-ultra/motor-de-expansao/motor-expansao-web@sha256:<digest>
     # Build local de sanity: `docker build -f Dockerfile.web -t motor-expansao-web:local .`
-    image: ${WEB_IMAGE:?defina WEB_IMAGE com o digest imutavel ghcr.io/kastaldy/motor-de-expansao/motor-expansao-web@sha256:<digest> — ver docs/deploy_piloto_web.md}
+    image: ${WEB_IMAGE:?defina WEB_IMAGE com o digest imutavel ghcr.io/growth-grupo-ultra/motor-de-expansao/motor-expansao-web@sha256:<digest> — ver docs/deploy_piloto_web.md}
     container_name: motor_expansao_web
     restart: unless-stopped
     # DEC-022: teto herdado da funcao do streamlit (que tinha 10g/12g) — o web e o app

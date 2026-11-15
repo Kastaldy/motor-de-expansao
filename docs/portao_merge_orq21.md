@@ -39,7 +39,7 @@ A `main` não é mais protegida por "1 aprovação humana". Ela é protegida por
 - **Baixa / Média** → mergeia **sozinho** (auto-merge nativo), sem humano, com os 4 verdes.
 - **Alta** → exige a label `aprovado-humano`, aplicada por um humano **não-bot**, **diferente do
   autor do PR**, com `write`/`admin` — tudo validado **via API**, não na confiança.
-- **Crítica** → exige `critica-aprovada` aplicada por um dos **donos** (`Kastaldy` ou `VinhoAbencoado` — DEC-019), além de `aprovado-humano` de um humano ≠ autor (`review-gate`).
+- **Crítica** → exige `critica-aprovada` aplicada por um dos **donos** (`FelipeC-Growth`/`Kastaldy` ou `ViniciusM-Growth`/`VinhoAbencoado` — DEC-019), além de `aprovado-humano` de um humano ≠ autor (`review-gate`).
 
 **O deploy NUNCA é automático.** Auto-merge não deploya: um push na `main` só publica a imagem
 no GHCR. Subir a imagem na VPS continua sendo passo manual, por digest (`CLAUDE.md` §6).
@@ -63,7 +63,7 @@ App poderia reportar um check chamado `guard` e satisfazer o portão.
 
 1. **`guard` vermelho** — leia o veredito no log: ele diz o caminho, a classe e a label que falta.
    - classe `governanca` → alguém **que não seja você** aplica `aprovado-humano`.
-   - classe `critico` → um dos **donos** (`Kastaldy` ou `VinhoAbencoado`, DEC-019) aplica `critica-aprovada`.
+   - classe `critico` → um dos **donos** (`FelipeC-Growth`/`Kastaldy` ou `ViniciusM-Growth`/`VinhoAbencoado`, DEC-019) aplica `critica-aprovada`.
 2. **`review-gate` vermelho** — aplique a label `criticidade:<nivel>` **igual** ao campo
    Criticidade do bloco no `backlog.md`. Divergir = reprovado (é o ponto: o agente não
    se auto-classifica como Baixa).
@@ -104,7 +104,7 @@ com `enforce_admins: true`, **nenhum PR mergeia — nem o que consertaria isso**
 ## 5. Kill-switch (restaura o gate humano em 1 comando)
 
 ```bash
-gh api --method PUT repos/Kastaldy/motor-de-expansao/branches/main/protection --input - <<'JSON'
+gh api --method PUT repos/Growth-Grupo-Ultra/motor-de-expansao/branches/main/protection --input - <<'JSON'
 {
   "required_status_checks": {"strict": true, "checks": [{"context": "test", "app_id": 15368}]},
   "enforce_admins": false,

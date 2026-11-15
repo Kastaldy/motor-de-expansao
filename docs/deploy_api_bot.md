@@ -144,7 +144,7 @@ A imagem `motor-expansao-api` é publicada no GHCR pelo job **`publish-api`** do
 cd /opt/motor-expansao/app
 # 1. Pinar o digest publicado (do job publish-api no Actions, "API digest imutavel publicado"):
 #    edite API_IMAGE no .env:
-#    API_IMAGE=ghcr.io/kastaldy/motor-de-expansao/motor-expansao-api@sha256:<digest>
+#    API_IMAGE=ghcr.io/growth-grupo-ultra/motor-de-expansao/motor-expansao-api@sha256:<digest>
 # 2. Pull + up -d (SEM build)
 docker compose -f docker-compose.prod.yml pull api telegram-bot
 docker compose -f docker-compose.prod.yml up -d api telegram-bot

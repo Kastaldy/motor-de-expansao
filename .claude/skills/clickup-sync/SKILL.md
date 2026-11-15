@@ -161,7 +161,7 @@ Tarefa conjunta: **cada** responsável recebe os pontos/itens **integrais**. Nã
 - **Creator vs assignee:** distinguir quem criou de quem executa; a pontuação segue o executor.
 - **IDs de pessoa:** Juan `101182134` · Vinícius `101182135` · Felipe `296609800`. Para outros nomes,
   `clickup_resolve_assignees`.
-- **Login do GitHub → pessoa:** `Kastaldy` = Felipe · `juancalu` = Juan · `VinhoAbencoado` = Vinícius.
+- **Login do GitHub → pessoa:** `FelipeC-Growth`/`Kastaldy` = Felipe · `JuanC-Growth`/`juancalu` = Juan · `ViniciusM-Growth`/`VinhoAbencoado` = Vinícius.
   O autor do PR é **indício, não prova**: um PR na conta de um pode ser trabalho de outro (ex.: agente
   rodando na conta do Felipe para uma frente do Juan). Na dúvida — especialmente em lote grande de uma
   conta só — **perguntar** antes de criar a tarefa com o assignee.
@@ -171,7 +171,7 @@ Tarefa conjunta: **cada** responsável recebe os pontos/itens **integrais**. Nã
 - **Campo Frente:** `7adab26a-ff95-408e-b8b0-14f8a249e96e` → Operacional `3c64ee76-ff6a-448f-8888-1817591988de`.
 
 ## Gap-audit GitHub↔ClickUp
-1. **GitHub** — PRs mergeados no período (repo `Kastaldy/motor-de-expansao`):
+1. **GitHub** — PRs mergeados no período (repo `Growth-Grupo-Ultra/motor-de-expansao`):
    ```
    gh pr list --state merged --search "merged:AAAA-MM-DD..AAAA-MM-DD" --limit 200 \
      --json number,title,headRefName,author,mergedAt,labels,files

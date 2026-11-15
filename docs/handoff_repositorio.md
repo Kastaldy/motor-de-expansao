@@ -87,7 +87,7 @@ Deploy do piloto web em VPS (modo PULL por digest — nada de `build` no servido
 completo em `docs/deploy_piloto_web.md`):
 
 ```bash
-# .env da VPS: WEB_IMAGE=ghcr.io/kastaldy/motor-de-expansao/motor-expansao-web@sha256:<digest>
+# .env da VPS: WEB_IMAGE=ghcr.io/growth-grupo-ultra/motor-de-expansao/motor-expansao-web@sha256:<digest>
 docker compose -f docker-compose.prod.yml pull web
 docker compose -f docker-compose.prod.yml up -d web
 docker compose -f docker-compose.prod.yml exec web curl -fsS http://127.0.0.1:8899/api/health

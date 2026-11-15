@@ -1,6 +1,6 @@
 # Fase 0 (parte B) — A receita da Argentina e o esforço real, como base de estimativa para CO, PY, MX e PE
 
-- Data: 2026-10-16 · Somente leitura · Repositório da plataforma: `Kastaldy/motor-de-expansao` (worktree sincronizada com `origin/main`, último commit `a59b0e7`).
+- Data: 2026-10-16 · Somente leitura · Repositório da plataforma: `Growth-Grupo-Ultra/motor-de-expansao` (worktree sincronizada com `origin/main`, último commit `a59b0e7`).
 - Repositório do pipeline argentino: **`juancalu/motor-argentina` (privado, ACESSÍVEL e lido nesta tarefa via `gh api`)** — criado em 2026-07-14, último push em 2026-10-07, 95 commits, 29 PRs.
 - **Não verificado:** `HANDOFF.md` e `docs/dicionario_dados.md` do "pacote" — o `HANDOFF.md` **não está versionado** no repositório do Juan (não aparece na árvore `git/trees/main?recursive=1`; o exportador cita `felipe/HANDOFF.md`, fora do git). O `dicionario_dados.md` existe (`docs/dicionario_dados.md`, 56 KB), mas não foi lido inteiro; os números dele aqui vêm das citações na plataforma. Estado **em produção** (VPS) não foi conferido: tudo que segue é o estado do código na `main` e o que os commits/DECs dizem que foi aplicado.
 - Convenção: **[medido]** = conferido em arquivo, commit ou API nesta tarefa; **[declarado]** = afirmado em doc/commit, não reconferido; **[estimativa]** = inferência minha.

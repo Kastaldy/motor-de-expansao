@@ -118,10 +118,13 @@ O `sshd` não tem `AllowUsers`/`AllowGroups` — usuário novo loga sem mexer em
      'cd /opt/motor-expansao/app && docker compose -f docker-compose.prod.yml ps'
    ```
 
-4. **GHCR não precisa de PAT**: as imagens `ghcr.io/kastaldy/motor-de-expansao/motor-expansao-{web,api}`
+4. **GHCR não precisa de PAT**: as imagens `ghcr.io/growth-grupo-ultra/motor-de-expansao/motor-expansao-{web,api}`
    são **públicas** (verificado em 2026-10-09 com token anônimo), então `docker compose pull` funciona
    sem `docker login`. Se a visibilidade do pacote virar privada, aí sim cada pessoa precisa de um PAT
    com `read:packages`.
+   **Migração para a org (2026-11):** o pacote da org nasce PRIVADO no primeiro publish; um owner da
+   org precisa torná-lo público (Package settings → Change visibility) antes do primeiro deploy por ele.
+   Os pacotes antigos em `ghcr.io/kastaldy/...` NÃO podem ser apagados: são os digests que a VPS roda hoje.
 
 5. **Deploy e dados**: seguir `docs/deploy_piloto_web.md` (web), `docs/deploy_api_bot.md` (api/bot) e
    `docs/infra_producao.md` (dados/manutenção), trocando `root@` por `deploy@` e `id_ultra_mcp` pela

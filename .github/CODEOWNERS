@@ -26,22 +26,22 @@
 # check run), alem da label.
 
 # --- GOVERNANCA: a superficie que define as PROPRIAS regras do portao ---
-/.github/                          @Kastaldy @VinhoAbencoado @juancalu
-/scripts/loop_guard.py             @Kastaldy @VinhoAbencoado @juancalu
-/REVIEW.md                         @Kastaldy @VinhoAbencoado @juancalu
-/CLAUDE.md                         @Kastaldy @VinhoAbencoado @juancalu
-/pyproject.toml                    @Kastaldy @VinhoAbencoado @juancalu
-/constraints.txt                   @Kastaldy @VinhoAbencoado @juancalu
-/conftest.py                       @Kastaldy @VinhoAbencoado @juancalu
+/.github/                          @FelipeC-Growth @ViniciusM-Growth @JuanC-Growth @Kastaldy @VinhoAbencoado @juancalu
+/scripts/loop_guard.py             @FelipeC-Growth @ViniciusM-Growth @JuanC-Growth @Kastaldy @VinhoAbencoado @juancalu
+/REVIEW.md                         @FelipeC-Growth @ViniciusM-Growth @JuanC-Growth @Kastaldy @VinhoAbencoado @juancalu
+/CLAUDE.md                         @FelipeC-Growth @ViniciusM-Growth @JuanC-Growth @Kastaldy @VinhoAbencoado @juancalu
+/pyproject.toml                    @FelipeC-Growth @ViniciusM-Growth @JuanC-Growth @Kastaldy @VinhoAbencoado @juancalu
+/constraints.txt                   @FelipeC-Growth @ViniciusM-Growth @JuanC-Growth @Kastaldy @VinhoAbencoado @juancalu
+/conftest.py                       @FelipeC-Growth @ViniciusM-Growth @JuanC-Growth @Kastaldy @VinhoAbencoado @juancalu
 
 # --- CRITICO: M1 oficial, deploy, segredos e scanners (espelha o loop_guard) ---
 # `deploy/` ainda nao existe no git; a regra e preventiva (o dia que nascer, ja tem dono).
-/src/motor_expansao/config.py      @Kastaldy @VinhoAbencoado @juancalu
-/src/motor_expansao/pipelines/m1/  @Kastaldy @VinhoAbencoado @juancalu
-/deploy/                           @Kastaldy @VinhoAbencoado @juancalu
-/secrets/                          @Kastaldy @VinhoAbencoado @juancalu
-/Dockerfile.*                      @Kastaldy @VinhoAbencoado @juancalu
-/docker-compose*.yml               @Kastaldy @VinhoAbencoado @juancalu
-/.gitleaks.toml                    @Kastaldy @VinhoAbencoado @juancalu
-/.gitleaksignore                   @Kastaldy @VinhoAbencoado @juancalu
-/.trivyignore                      @Kastaldy @VinhoAbencoado @juancalu
+/src/motor_expansao/config.py      @FelipeC-Growth @ViniciusM-Growth @JuanC-Growth @Kastaldy @VinhoAbencoado @juancalu
+/src/motor_expansao/pipelines/m1/  @FelipeC-Growth @ViniciusM-Growth @JuanC-Growth @Kastaldy @VinhoAbencoado @juancalu
+/deploy/                           @FelipeC-Growth @ViniciusM-Growth @JuanC-Growth @Kastaldy @VinhoAbencoado @juancalu
+/secrets/                          @FelipeC-Growth @ViniciusM-Growth @JuanC-Growth @Kastaldy @VinhoAbencoado @juancalu
+/Dockerfile.*                      @FelipeC-Growth @ViniciusM-Growth @JuanC-Growth @Kastaldy @VinhoAbencoado @juancalu
+/docker-compose*.yml               @FelipeC-Growth @ViniciusM-Growth @JuanC-Growth @Kastaldy @VinhoAbencoado @juancalu
+/.gitleaks.toml                    @FelipeC-Growth @ViniciusM-Growth @JuanC-Growth @Kastaldy @VinhoAbencoado @juancalu
+/.gitleaksignore                   @FelipeC-Growth @ViniciusM-Growth @JuanC-Growth @Kastaldy @VinhoAbencoado @juancalu
+/.trivyignore                      @FelipeC-Growth @ViniciusM-Growth @JuanC-Growth @Kastaldy @VinhoAbencoado @juancalu

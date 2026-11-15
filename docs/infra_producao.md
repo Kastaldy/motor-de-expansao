@@ -90,8 +90,8 @@ cd /opt/motor-expansao/app
 #    Obter o digest:
 #    - do output "WEB digest imutavel publicado:" do job publish-web no Actions, ou
 #    - via: docker buildx imagetools inspect \
-#        ghcr.io/kastaldy/motor-de-expansao/motor-expansao-web:sha-<commit>
-#    No .env: WEB_IMAGE=ghcr.io/kastaldy/motor-de-expansao/motor-expansao-web@sha256:<digest>
+#        ghcr.io/growth-grupo-ultra/motor-de-expansao/motor-expansao-web:sha-<commit>
+#    No .env: WEB_IMAGE=ghcr.io/growth-grupo-ultra/motor-de-expansao/motor-expansao-web@sha256:<digest>
 
 # 2. Pull + up -d SOMENTE do web (SEM --build). O `unset` vem antes de TODO `up` do web: uma
 #    MOTOR_DATABASE_URL no shell, mesmo vazia, vence a do .env, e o web subiria sem banco. O
@@ -149,7 +149,7 @@ cd /opt/motor-expansao/app
 
 # 1. Apontar o .env para o DIGEST imutavel do deploy anterior (anote sempre o digest
 #    vigente antes de atualizar; ou recupere via imagetools inspect da tag sha-<commit_anterior>)
-#    No .env: WEB_IMAGE=ghcr.io/kastaldy/motor-de-expansao/motor-expansao-web@sha256:<digest_anterior>
+#    No .env: WEB_IMAGE=ghcr.io/growth-grupo-ultra/motor-de-expansao/motor-expansao-web@sha256:<digest_anterior>
 
 # 2. Pull + up -d --no-deps (SEM --build), com o mesmo `unset` da atualizacao
 unset MOTOR_DATABASE_URL
