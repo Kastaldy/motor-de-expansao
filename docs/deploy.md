@@ -16,7 +16,7 @@ este doc cobre so o ciclo rotineiro de atualizacao.
 
 - O job `publish-web` do workflow `CI` builda `Dockerfile.web` (estagio Node para o
   Vite + estagio Python para o backend FastAPI) e publica em
-  `ghcr.io/kastaldy/motor-de-expansao/motor-expansao-web` com:
+  `ghcr.io/growth-grupo-ultra/motor-de-expansao/motor-expansao-web` com:
   - tag `sha-<commit>` (rastreavel por commit) e
   - tag `latest` (apenas em push na `main`).
   Publica SOMENTE quando o job `test` conclui com sucesso (`needs: [test]`) e, em push
@@ -66,7 +66,7 @@ echo "$GHCR_PAT" | docker login ghcr.io -u <usuario-github> --password-stdin
 #    diz se ela traz MIGRATION; se trouxer, siga aquele roteiro, onde o pin e o ultimo passo.
 #    WEB_IMAGE e OBRIGATORIO (o compose e fail-closed: sem essa variavel,
 #    `up`/`pull` falha de proposito). Preferir DIGEST imutavel:
-WEB_IMAGE=ghcr.io/kastaldy/motor-de-expansao/motor-expansao-web@sha256:<digest>
+WEB_IMAGE=ghcr.io/growth-grupo-ultra/motor-de-expansao/motor-expansao-web@sha256:<digest>
 #   alternativa rastreavel por commit: ...motor-expansao-web:sha-<commit>
 
 # 2. Puxar a imagem (sem build)
@@ -104,7 +104,7 @@ docker inspect -f '{{range .Config.Env}}{{println .}}{{end}}' motor_expansao_web
 ```bash
 # Apontar WEB_IMAGE (no .env da VPS) para o DIGEST imutavel do deploy anterior
 # (pin canonico) e refazer pull + up -d. O digest garante reproducao byte-identica.
-WEB_IMAGE=ghcr.io/kastaldy/motor-de-expansao/motor-expansao-web@sha256:<digest_anterior>
+WEB_IMAGE=ghcr.io/growth-grupo-ultra/motor-de-expansao/motor-expansao-web@sha256:<digest_anterior>
 #   alternativa rastreavel por commit: ...motor-expansao-web:sha-<commit_anterior>
 # Migration aplicada NAO volta com a imagem (§8 do docs/banco_deploy.md). Mesmo `unset`,
 # `--no-deps` e contagem da atualizacao, e a AR junto (nota acima).

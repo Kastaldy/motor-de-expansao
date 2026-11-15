@@ -33,7 +33,7 @@ inalterados), com **301 da raiz para o piloto** — DEC-022.
 ## 1. Publicar a imagem (CI → GHCR, por digest)
 
 O job **`publish-web`** (`.github/workflows/ci.yml`) builda `Dockerfile.web` (estágio Node
-para o Vite + estágio Python para o backend) e publica `ghcr.io/kastaldy/motor-de-expansao/
+para o Vite + estágio Python para o backend) e publica `ghcr.io/growth-grupo-ultra/motor-de-expansao/
 motor-expansao-web` no GHCR, com **Trivy bloqueante** (HIGH/CRITICAL).
 
 - **Automático**: o job roda em **todo push na `main`** (DEC-022 — a imagem `motor-expansao-web`
@@ -46,7 +46,7 @@ motor-expansao-web` no GHCR, com **Trivy bloqueante** (HIGH/CRITICAL).
   ```
 - Pegar o **digest** no fim do job (step "WEB digest imutavel publicado: sha256:...") ou:
   ```bash
-  docker buildx imagetools inspect ghcr.io/kastaldy/motor-de-expansao/motor-expansao-web:sha-<commit>
+  docker buildx imagetools inspect ghcr.io/growth-grupo-ultra/motor-de-expansao/motor-expansao-web:sha-<commit>
   ```
 
 > Se o Trivy travar numa CVE sem fix viável, adicionar ao `.trivyignore` (raiz) com
@@ -430,7 +430,7 @@ Usuários novos: `authelia/users_database.yml` (argon2id, grupos `ultra_team` + 
 
 No `.env` da VPS (`/opt/motor-expansao/app/.env`), pinar:
 ```
-WEB_IMAGE=ghcr.io/kastaldy/motor-de-expansao/motor-expansao-web@sha256:<digest-do-passo-1>
+WEB_IMAGE=ghcr.io/growth-grupo-ultra/motor-de-expansao/motor-expansao-web@sha256:<digest-do-passo-1>
 ```
 
 > **Com o banco ligado (produção BR desde 23/10/2026):** antes de pinar, o `estado` com a imagem nova diz

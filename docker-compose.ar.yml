@@ -24,7 +24,7 @@ services:
   web_ar:
     # MESMA imagem e MESMO digest da instancia BR, pelo MESMO ${WEB_IMAGE} do .env
     # (DEC-047: uma imagem para todos os paises; o que muda e' o perfil.json montado).
-    image: ${WEB_IMAGE:?defina WEB_IMAGE com o digest imutavel ghcr.io/kastaldy/motor-de-expansao/motor-expansao-web@sha256:<digest> — ver docs/deploy_piloto_web.md}
+    image: ${WEB_IMAGE:?defina WEB_IMAGE com o digest imutavel ghcr.io/growth-grupo-ultra/motor-de-expansao/motor-expansao-web@sha256:<digest> — ver docs/deploy_piloto_web.md}
     container_name: motor_expansao_web_ar
     restart: unless-stopped
     # PROVISORIO E NAO MEDIDO (perfil.operacao.mem_limit_alvo = "2g"): o numero sai do

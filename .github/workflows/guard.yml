@@ -197,7 +197,7 @@ jobs:
           LABEL_CRITICA = "critica-aprovada"   # identificador — sem acento
           LABEL_HUMANO = "aprovado-humano"     # identificador — sem acento
           # DEC-019: dois donos autorizados a liberar mudanca critica (logins em minusculas).
-          DONOS = {"kastaldy", "vinhoabencoado"}
+          DONOS = {"kastaldy", "vinhoabencoado", "felipec-growth", "viniciusm-growth"}
           CLASSES_CONHECIDAS = {"critico", "governanca"}
           PERMISSOES_OK = {"admin", "maintain", "write"}
 
@@ -205,6 +205,19 @@ jobs:
           REPO = os.environ["REPO"]
           AUTOR_PR = os.environ.get("AUTOR_PR", "")
           resumo: list[str] = []
+
+          # Contas da MESMA pessoa (pessoal -> profissional, migracao para a org
+          # Growth-Grupo-Ultra, emenda da DEC-019 de 2026-11-14): para a regra
+          # "humano diferente do autor", as duas contas contam como UMA pessoa.
+          PESSOA = {
+              "felipec-growth": "kastaldy",
+              "viniciusm-growth": "vinhoabencoado",
+              "juanc-growth": "juancalu",
+          }
+
+          def mesma_pessoa(a: str, b: str) -> bool:
+              a, b = a.lower(), b.lower()
+              return PESSOA.get(a, a) == PESSOA.get(b, b)
 
           def escrever_resumo() -> None:
               destino = os.environ.get("GITHUB_STEP_SUMMARY")
@@ -244,7 +257,7 @@ jobs:
                       f"A label `{LABEL_HUMANO}` foi aplicada por um bot (`{autor}`). "
                       f"Aprovacao humana nao pode vir de automacao."
                   )
-              if AUTOR_PR and autor.lower() == AUTOR_PR.lower():
+              if AUTOR_PR and mesma_pessoa(autor, AUTOR_PR):
                   reprovar(
                       f"A label `{LABEL_HUMANO}` foi aplicada pelo proprio autor do PR (`{autor}`). "
                       f"A aprovacao precisa vir de outra pessoa."
@@ -329,7 +342,7 @@ jobs:
                   resumo.append(
                       f"\nComo destravar: este PR toca o nucleo protegido (M1/score/pesos/artefatos, "
                       f"deploy/VPS, segredos ou CI). Ele so passa com a label `{LABEL_CRITICA}` "
-                      f"aplicada por um dos donos autorizados (`Kastaldy` ou `VinhoAbencoado`), "
+                      f"aplicada por um dos donos autorizados (`FelipeC-Growth`/`Kastaldy` ou `ViniciusM-Growth`/`VinhoAbencoado`), "
                       f"acompanhada de uma DEC registrada no CLAUDE.md secao 8."
                   )
                   reprovar(f"Violacao critica sem a label `{LABEL_CRITICA}`.")
@@ -345,12 +358,12 @@ jobs:
               if autor.lower() not in DONOS:
                   resumo.append(
                       f"\nA label `{LABEL_CRITICA}` foi aplicada por **{autor}**, que nao e um dos "
-                      f"donos autorizados (`Kastaldy`, `VinhoAbencoado`). Mudanca critica so um dono "
+                      f"donos autorizados (`FelipeC-Growth`/`Kastaldy`, `ViniciusM-Growth`/`VinhoAbencoado`). Mudanca critica so um dono "
                       f"libera — remova a label e peca a aprovacao de um deles."
                   )
                   reprovar(
                       f"Label critica aplicada por `{autor}` "
-                      f"(esperado: um dos donos: Kastaldy, VinhoAbencoado)."
+                      f"(esperado: um dos donos: FelipeC-Growth/Kastaldy, ViniciusM-Growth/VinhoAbencoado)."
                   )
               resumo.append(f"\nLabel `{LABEL_CRITICA}` confirmada — aplicada por um dono autorizado (`{autor}`).")
 
@@ -508,6 +521,19 @@ jobs:
           AUTOR_PR = os.environ.get("AUTOR_PR", "")
           resumo: list[str] = []
 
+          # Contas da MESMA pessoa (pessoal -> profissional, migracao para a org
+          # Growth-Grupo-Ultra, emenda da DEC-019 de 2026-11-14): para a regra
+          # "humano diferente do autor", as duas contas contam como UMA pessoa.
+          PESSOA = {
+              "felipec-growth": "kastaldy",
+              "viniciusm-growth": "vinhoabencoado",
+              "juanc-growth": "juancalu",
+          }
+
+          def mesma_pessoa(a: str, b: str) -> bool:
+              a, b = a.lower(), b.lower()
+              return PESSOA.get(a, a) == PESSOA.get(b, b)
+
           def escrever_resumo() -> None:
               destino = os.environ.get("GITHUB_STEP_SUMMARY")
               if destino:
@@ -552,7 +578,7 @@ jobs:
                       f"A label `{LABEL_HUMANO}` foi aplicada por um bot (`{autor}`). "
                       f"Aprovacao humana nao pode vir de automacao."
                   )
-              if AUTOR_PR and autor.lower() == AUTOR_PR.lower():
+              if AUTOR_PR and mesma_pessoa(autor, AUTOR_PR):
                   reprovar(
                       f"A label `{LABEL_HUMANO}` foi aplicada pelo proprio autor do PR (`{autor}`). "
                       f"A aprovacao precisa vir de outra pessoa."

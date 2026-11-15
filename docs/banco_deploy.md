@@ -997,7 +997,7 @@ para ele: o `.env` não muda, e o que está no ar segue na imagem antiga.
 ```bash
 cd /opt/motor-expansao/app
 export MOTOR_DATABASE_URL_ADMIN='postgresql://reservas_owner:<senha>@postgres:5432/banco_de_reservas'
-NOVA='ghcr.io/kastaldy/motor-de-expansao/motor-expansao-web@sha256:<digest novo>'
+NOVA='ghcr.io/growth-grupo-ultra/motor-de-expansao/motor-expansao-web@sha256:<digest novo>'
 WEB_IMAGE="$NOVA" docker compose -f docker-compose.prod.yml run --rm -e MOTOR_DATABASE_URL_ADMIN \
   web python -m motor_expansao.db estado
 ```
