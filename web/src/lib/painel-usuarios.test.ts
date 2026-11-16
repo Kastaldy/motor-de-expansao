@@ -1,7 +1,6 @@
 import { describe, expect, it } from 'vitest'
 
 import {
-  ARQUIVO_AUTHELIA,
   COLUNA_SENHA,
   dicaDoFormulario,
   loginProprioDoPayload,
@@ -16,7 +15,30 @@ import {
 /* Os textos da administração de usuários que dependem do login próprio (decisão do dono,
    24/10/2026). Até essa data a tela falava como se a chave já estivesse ligada; com ela
    DESLIGADA — o estado de produção até o corte do P19 — o recado de criação, o rodapé e o
-   recado de 503 diziam coisas falsas. Cada bloco abaixo guarda uma delas nos DOIS estados. */
+   recado de 503 diziam coisas falsas. Cada bloco abaixo guarda uma delas nos DOIS estados.
+
+   DESDE 16/11/2026 (Estágio 3 da DEC-081) o Authelia não existe mais, e nenhum texto pode
+   mandar cadastrar alguém nele — nem como caminho de volta do corte. */
+
+const TODOS_OS_TEXTOS = (ligado: boolean): string[] => [
+  tituloDoSeloDaSenha(true, ligado),
+  tituloDoSeloDaSenha(false, ligado),
+  recadoDaCriacao('ana', ligado).titulo,
+  recadoDaCriacao('ana', ligado).corpo,
+  dicaDoFormulario(ligado),
+  tituloDoBotaoCriar(ligado),
+  textoCorrido(rodapeDoPainel(ligado)),
+]
+
+describe('nenhum texto cita o Authelia aposentado', () => {
+  it('nos dois estados da chave', () => {
+    for (const ligado of [true, false]) {
+      for (const texto of TODOS_OS_TEXTOS(ligado)) {
+        expect(texto).not.toMatch(/authelia|users_database|rollback/i)
+      }
+    }
+  })
+})
 
 describe('ler a chave do payload', () => {
   it('só `true` de verdade liga; o resto conta como desligado, o lado conservador', () => {
@@ -51,7 +73,7 @@ describe('a coluna e o selo falam da senha do BANCO', () => {
   it('desligado, a dica avisa que ela ainda não é usada para entrar', () => {
     const dica = tituloDoSeloDaSenha(false, false)
     expect(dica).toContain('ainda não é usada para entrar')
-    expect(dica).toContain('Authelia')
+    expect(dica).toContain('desligado neste servidor')
   })
 
   it('ligado, a dica diz que é ela que o piloto confere', () => {
@@ -67,11 +89,10 @@ describe('a coluna e o selo falam da senha do BANCO', () => {
 })
 
 describe('o recado depois de criar', () => {
-  it('desligado: a pessoa ainda não entra, e o passo do Authelia é o que falta', () => {
+  it('desligado: a pessoa ainda não entra, até o login próprio ser ligado', () => {
     const r = recadoDaCriacao('ana', false)
     expect(r.titulo).toBe('ana foi criado no banco, mas ainda não consegue entrar.')
-    expect(r.corpo).toContain(ARQUIVO_AUTHELIA)
-    expect(r.corpo).toContain('login ana')
+    expect(r.corpo).toContain('login próprio está desligado')
     // A frase que era falsa com a chave desligada não pode voltar.
     expect(r.corpo).not.toContain('levada a trocá-la')
   })
@@ -83,17 +104,19 @@ describe('o recado depois de criar', () => {
       'A senha inicial é a compartilhada do piloto, e a pessoa será levada a trocá-la no ' +
         'primeiro acesso.',
     )
-    // O Authelia segue no recado, mas pelo rollback — durante a janela de observação.
-    expect(r.corpo).toContain(ARQUIVO_AUTHELIA)
-    expect(r.corpo).toContain('rollback')
+    // Até 16/11/2026 o recado pedia também o cadastro no Authelia, pelo rollback; saiu.
+    expect(r.corpo).toBe(
+      'A senha inicial é a compartilhada do piloto, e a pessoa será levada a trocá-la no ' +
+        'primeiro acesso.',
+    )
   })
 })
 
 describe('o formulário de criação', () => {
   it('desligado, não promete troca no primeiro acesso', () => {
     expect(dicaDoFormulario(false)).not.toContain('primeiro acesso')
-    expect(dicaDoFormulario(false)).toContain('Authelia')
-    expect(tituloDoBotaoCriar(false)).toContain('Authelia')
+    expect(dicaDoFormulario(false)).toContain('login próprio desligado')
+    expect(tituloDoBotaoCriar(false)).toContain('login próprio precisa estar ligado')
   })
 
   it('ligado, diz que a pessoa troca a inicial no primeiro acesso', () => {
@@ -115,13 +138,12 @@ describe('o rodapé', () => {
 
   it('desligado: explica por que os gestos de senha não aparecem', () => {
     expect(desligado).toContain('só aparecem com o login próprio ligado')
-    expect(desligado).toContain('Authelia')
+    expect(desligado).toContain('desligado neste servidor')
     expect(desligado).not.toContain('gera uma senha temporária')
   })
 
-  it('ligado: descreve o Redefinir e o Authelia como caminho de volta', () => {
+  it('ligado: descreve o Redefinir', () => {
     expect(ligado).toContain('gera uma senha temporária')
-    expect(ligado).toContain('rollback')
   })
 
   it('a coluna aparece com o mesmo nome do cabeçalho, em destaque', () => {

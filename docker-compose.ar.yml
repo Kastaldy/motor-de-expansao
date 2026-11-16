@@ -6,8 +6,8 @@
 # compose BR segue como divida declarada (docs/archive/plano_multipais.md §5.0.6, item 3).
 #
 # UM servico so (`web_ar`): sem api e sem bot (decisao do plano — a AR do dia 1 e'
-# mapa + viabilidade; o bot e o PDF por API sao superficies BR). Caddy e Authelia
-# NAO se repetem aqui: sao COMPARTILHADOS com a stack BR (docs/backup_restore.md),
+# mapa + viabilidade; o bot e o PDF por API sao superficies BR). O Caddy
+# NAO se repete aqui: e' COMPARTILHADO com a stack BR (docs/backup_restore.md),
 # e o Caddy segue o unico a bindar 80/443.
 #
 # Roda do MESMO diretorio da stack BR na VPS (/opt/motor-expansao/app), com o MESMO
@@ -64,8 +64,8 @@ services:
       # Aba "Acessos e uso do piloto" (emenda da DEC-027): allowlist PROPRIA da AR.
       # Os dois composes leem o MESMO .env da VPS — reusar MOTOR_ACESSOS_ADMIN_USUARIOS
       # prenderia quem ve o painel AR a quem ve o BR; NAO unificar. Vazia = painel
-      # DESLIGADO (404), igual ao BR. Quem entra na lista tambem precisa do grupo
-      # expansao_ar no Authelia, senao nem chega ao container.
+      # DESLIGADO (404), igual ao BR. Quem entra na lista tambem precisa ter o pais AR
+      # no cadastro (`usuario_paises`, DEC-081), senao o portao de pais o barra antes.
       MOTOR_ACESSOS_ADMIN_USUARIOS: ${MOTOR_ACESSOS_ADMIN_USUARIOS_AR:-}
       # ── Banco + login proprio (DEC-081): a AR passa a autenticar pela plataforma ──
       # Var AR-ESPECIFICA de proposito: os dois composes leem o MESMO .env da VPS, entao reusar

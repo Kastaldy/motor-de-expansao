@@ -10,21 +10,23 @@
    passam a dizer a verdade nos dois estados, e os gestos de senha só aparecem com a chave
    ligada.
 
-   NO DIA DO CORTE a senha inicial do banco passa a ser a compartilhada do Authelia (o
-   `db alinhar-senhas` remarca a troca de quem nunca definiu a própria). Por isso, com a
+   NO DIA DO CORTE a senha inicial do banco passou a ser a compartilhada do Authelia (o
+   `db alinhar-senhas` remarcou a troca de quem nunca definiu a própria). Por isso, com a
    chave ligada, a frase do recado volta a ser verdadeira — e ela está aqui, idêntica.
+
+   DESDE 16/11/2026 O AUTHELIA NÃO EXISTE MAIS (Estágio 3 da DEC-081): saiu o passo de
+   cadastrar a pessoa no `users_database.yml`, que até ali era o caminho de volta do corte. Com a
+   chave desligada não há outra porta de entrada: a senha do banco só passa a valer quando
+   o login próprio for ligado neste servidor.
 
    MÓDULO PURO, pela razão de sempre deste projeto: o Vitest roda em `node`, sem DOM, e o
    texto é a parte que pode mentir. Mesma divisão de `confirmacao-admin.ts`.
    --------------------------------------------------------------------------------- */
 
-/** O arquivo do Authelia onde a pessoa ainda precisa ser cadastrada. */
-export const ARQUIVO_AUTHELIA = 'authelia/users_database.yml'
-
 /**
  * O rótulo da coluna da senha. "(banco)" porque o selo descreve a senha do BANCO — a que o
- * login próprio confere —, e não a que a pessoa digita hoje no Authelia. Sem o qualificador,
- * "inicial" ao lado de quem entra todo dia com a senha da equipe leria como cadastro errado.
+ * login próprio confere. Era ela que separava a senha do banco da do Authelia, enquanto ele
+ * existiu, e ficou: diz de onde vem o selo PRÓPRIA/INICIAL ao lado.
  */
 export const COLUNA_SENHA = 'Senha (banco)'
 
@@ -32,7 +34,7 @@ export const COLUNA_SENHA = 'Senha (banco)'
  * O login próprio está LIGADO neste deploy? Lê o `login_proprio` da listagem sem confiar nele.
  *
  * Ausente ou de outro tipo conta como DESLIGADO, o lado conservador: esconde os gestos de
- * senha (que o servidor recusaria) e mostra o recado de quem ainda depende do Authelia.
+ * senha (que o servidor recusaria) e avisa que a senha do banco ainda não vale na entrada.
  */
 export function loginProprioDoPayload(payload: unknown): boolean {
   if (typeof payload !== 'object' || payload === null) return false
@@ -46,14 +48,13 @@ export function tituloDoSeloDaSenha(senhaPropria: boolean, loginProprio: boolean
     : 'Ainda está na senha inicial do banco — nunca definiu a própria.'
   return loginProprio
     ? `${estado} É a senha do banco que o piloto confere na entrada.`
-    : `${estado} É a senha do banco, que ainda não é usada para entrar: hoje a entrada é pelo ` +
-        'Authelia, com a senha de lá.'
+    : `${estado} É a senha do banco, que ainda não é usada para entrar: o login próprio está ` +
+        'desligado neste servidor.'
 }
 
 /**
- * O recado que fica na tela depois de criar alguém. O passo do Authelia aparece nos DOIS
- * estados, por razões diferentes: desligado, sem ele a pessoa não entra; ligado, durante a
- * janela de observação do corte, ele é o que mantém o rollback possível.
+ * O recado que fica na tela depois de criar alguém. Até 16/11/2026 ele pedia, nos dois estados,
+ * o cadastro no Authelia; com o Authelia aposentado, sobra dizer se a pessoa já entra.
  */
 export function recadoDaCriacao(
   login: string,
@@ -64,16 +65,14 @@ export function recadoDaCriacao(
       titulo: `${login} foi criado e já pode entrar.`,
       corpo:
         'A senha inicial é a compartilhada do piloto, e a pessoa será levada a trocá-la no ' +
-        `primeiro acesso. Durante a janela de observação do corte, cadastre o login ${login} ` +
-        `também no ${ARQUIVO_AUTHELIA} do servidor, para o rollback continuar possível.`,
+        'primeiro acesso.',
     }
   }
   return {
     titulo: `${login} foi criado no banco, mas ainda não consegue entrar.`,
     corpo:
-      `Falta cadastrar o login ${login} no ${ARQUIVO_AUTHELIA} do servidor — é o Authelia ` +
-      'que confere a senha na entrada hoje, com a senha de lá. A senha do banco só passa a ' +
-      'valer quando o login próprio do piloto for ligado.',
+      'O login próprio está desligado neste servidor, e sem ele ninguém entra pela tela de ' +
+      'login. A senha do banco só passa a valer quando ele for ligado.',
   }
 }
 
@@ -82,15 +81,15 @@ export function dicaDoFormulario(loginProprio: boolean): string {
   return loginProprio
     ? 'Sem campo de senha de propósito — a pessoa recebe a senha inicial do piloto e troca no ' +
         'primeiro acesso.'
-    : 'Sem campo de senha de propósito — hoje a senha que vale na entrada é a do Authelia, ' +
-        'cadastrada no servidor.'
+    : 'Sem campo de senha de propósito — com o login próprio desligado neste servidor, a ' +
+        'senha do banco ainda não vale na entrada.'
 }
 
 /** A dica do botão "Criar usuário". */
 export function tituloDoBotaoCriar(loginProprio: boolean): string {
   return loginProprio
     ? 'Cria a pessoa com a senha inicial do piloto, marcada para troca.'
-    : 'Cria a pessoa no banco. Para entrar, ela ainda precisa do cadastro no Authelia.'
+    : 'Cria a pessoa no banco. Para entrar, o login próprio precisa estar ligado.'
 }
 
 /** Um pedaço do rodapé: texto corrido, ou um trecho em destaque. */
@@ -105,8 +104,7 @@ export function rodapeDoPainel(loginProprio: boolean): Segmento[] {
     return [
       { forte: 'Criar usuário' },
       ' dá à pessoa a senha inicial compartilhada do piloto, e ela é levada a trocá-la no ' +
-        'primeiro acesso; durante a janela de observação do corte, cadastre-a também no ' +
-        'Authelia, no servidor, para o rollback continuar possível. A coluna ',
+        'primeiro acesso. A coluna ',
       { forte: COLUNA_SENHA },
       ' diz quem já definiu a própria senha — é a que o piloto confere na entrada; nenhum hash ' +
         'sai do banco para esta tela. ',
@@ -119,9 +117,8 @@ export function rodapeDoPainel(loginProprio: boolean): Segmento[] {
     ]
   }
   return [
-    { forte: 'Criar usuário grava só no banco:' },
-    ' a pessoa também precisa ser cadastrada no Authelia, no servidor — é ele que confere a ' +
-      'senha na entrada hoje —, senão ela aparece nesta lista e não consegue entrar. A coluna ',
+    { forte: 'O login próprio está desligado neste servidor:' },
+    ' a pessoa criada aqui aparece nesta lista, mas só entra quando ele for ligado. A coluna ',
     { forte: COLUNA_SENHA },
     ' diz quem já definiu a própria senha no banco: é a que o login próprio do piloto vai ' +
       'conferir quando for ligado, e hoje ela não é usada para entrar; nenhum hash sai do ' +
@@ -129,8 +126,8 @@ export function rodapeDoPainel(loginProprio: boolean): Segmento[] {
     { forte: 'Redefinir senha' },
     ' e ',
     { forte: 'Exigir troca' },
-    ' só aparecem com o login próprio ligado: até lá, a senha que vale na entrada é a do ' +
-      'Authelia, e mexer na do banco não mudaria nada.',
+    ' só aparecem com o login próprio ligado: até lá, a senha do banco não é conferida na ' +
+      'entrada, e mexer nela não mudaria nada.',
   ]
 }
 

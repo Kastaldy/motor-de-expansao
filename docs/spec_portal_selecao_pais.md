@@ -1,5 +1,10 @@
 # SPEC — Portal de seleção de país na raiz `ultra-expansao.tech`
 
+> **O Authelia foi aposentado em 16/11/2026 (Estágio 3 da DEC-081).** Este documento é registro de
+> época: onde ele descreve o Authelia autenticando, grupos `expansao_*` ou cadastro no
+> `users_database.yml`, isso já não existe. O estado vigente do login está em
+> `docs/infra_producao.md` ("Gerenciar usuários do login") e na DEC-081.
+
 - Data: 2026-08-31 | Status: **IMPLANTADA em 2026-09-03** — metade versionada no PR #313; bloco raiz do `Caddyfile` e Authelia aplicados na VPS, com backups cifrados no PR #316, aceite do §7.4.2 8/8 OK e Caddy v2.11.3 anotado | Decidida por Felipe em 2026-08-31
 - **Dono do arquivo: esta spec.** `docs/archive/plano_multipais.md` e `docs/decisions/` têm outros donos e **não** são alterados por aqui — o ponteiro para esta spec é costurado depois, por outra pessoa.
 - Bloco sugerido: **BLK-INTL-13**. Criticidade: **CRITICA** — exige a label `critica-aprovada` do Felipe (§8). **Não** é `loop-safe`.

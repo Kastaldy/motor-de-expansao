@@ -353,28 +353,19 @@ o artefato entrou no inventário de artefatos — hoje em `/api/acessos/saude-ar
 
 > ### ⚠ LEIA ANTES DE COPIAR O BLOCO ABAIXO
 >
-> **O bloco desta seção é o de ANTES do corte do P19.** Se o corte já aconteceu, copiá-lo
-> **DESFAZ o corte em silêncio**: a borda volta a perguntar ao Authelia, que não autentica mais
-> ninguém do lado brasileiro.
->
-> **Como saber em qual estado a instância está:**
-> ```bash
-> cd /opt/motor-expansao/app
-> grep '^MOTOR_AUTENTICACAO_PROPRIA=' .env
-> ```
-> Vazia ou ausente → o corte NÃO aconteceu, e esta seção vale. Com valor → **o corte aconteceu**,
-> e o bloco correto é o de `deploy/caddy/piloto-br.Caddyfile.template`.
->
-> Para **fazer** o corte, não use esta seção: siga `docs/archive/repasse_corte_p19.md`, que tem a ordem
-> (chave primeiro, Caddy depois — o inverso derruba o piloto inteiro) e os pré-requisitos.
+> **O bloco desta seção é HISTÓRICO: o de ANTES do corte do P19, com o Authelia na borda.**
+> Não copie: o serviço `authelia` saiu em 16/11/2026 (Estágio 3 da DEC-081), e a borda que
+> perguntasse a ele negaria todo mundo. O bloco vigente é o de
+> `deploy/caddy/piloto-br.Caddyfile.template` (o corte do BR foi em 27/10/2026).
 >
 > **A instância AR também cortou** (DEC-081, que revogou a emenda de 25/09/2026 da DEC-067; corte AR em
 > 31/10/2026): o bloco dela é `deploy/caddy/piloto-ar.Caddyfile.template`, com o `forward_auth` no
 > `/api/verify` do `web_ar` (gateado por país).
 
 O `Caddyfile` **não está no git** (gitignored, backup cifrado em `secrets/Caddyfile.enc`);
-vive em `/opt/motor-expansao/app/Caddyfile`. O bloco do piloto (o bloco de `dashboard.` hoje só
-serve `/tiles/*` e redireciona a raiz 301 para cá — DEC-022):
+vive em `/opt/motor-expansao/app/Caddyfile`. O bloco do piloto, como era antes do corte (o bloco
+de `dashboard.` redireciona a raiz para cá, DEC-022; o `/tiles/*` dele responde 404 desde
+16/11/2026, opção A do Estágio 3 da DEC-081):
 
 ```caddyfile
 piloto.ultra-expansao.tech {
@@ -406,8 +397,8 @@ docker compose -f docker-compose.prod.yml exec caddy caddy reload --config /etc/
 
 > **Esta seção é histórica: valia ANTES do corte do P19 no BR e, na AR, antes do corte AR da DEC-081
 > (31/10/2026).** Depois dos cortes quem autoriza os dois hosts é o portão de sessão do motor, e a regra
-> de `access_control` abaixo deixa de ser consultada para eles. O serviço `authelia` segue de pé até o
-> Estágio 3 da DEC-081 (depois de 16/11/2026), só pelo `/tiles/` do `dashboard.` e pelo rollback. Ver
+> de `access_control` abaixo deixa de ser consultada para eles. O serviço `authelia` saiu em
+> 16/11/2026 (Estágio 3 da DEC-081): nada desta seção se aplica mais. Ver
 > `docs/archive/repasse_corte_p19.md`.
 
 Config **não versionada** (backup cifrado `secrets/authelia.configuration.enc.yaml`); vive em
@@ -513,10 +504,8 @@ docker inspect -f '{{range .Config.Env}}{{println .}}{{end}}' motor_expansao_web
       `"diag": true`. Na tela: a **pílula "Ver academias independentes"** aparece no
       drill-down municipal. (`pins.redes_disponivel` só existe em imagem ≥ BLK-MA-19 —
       ausente **não** é falha; ver a nota em `docs/infra_producao.md`.)
-- [ ] `https://piloto.ultra-expansao.tech` exige login e abre o SPA depois. **Qual login depende
-      do estado do corte:** antes dele, a tela do Authelia; depois, a nossa tela de entrar
-      (`/entrar.html`). Confira com `grep '^MOTOR_AUTENTICACAO_PROPRIA=' .env` qual esperar — ver
-      `docs/archive/repasse_corte_p19.md`.
+- [ ] `https://piloto.ultra-expansao.tech` exige login (a nossa tela de entrar, `/entrar.html`) e
+      abre o SPA depois.
 - [ ] Mapa Territorial carrega uma UF (a 1ª leitura carrega a partição inteira, demora).
 - [ ] Viabilidade calcula um ponto e mostra o payback e o VPL.
 - [ ] Relatório Pontual (PDF) gera sem erro (basemap/contextily presentes).
@@ -558,7 +547,7 @@ docker inspect -f '{{range .Config.Env}}{{println .}}{{end}}' motor_expansao_web
 > `--no-deps` e a contagem).
 
 Checklist do deploy **manual** da stack argentina (`docker-compose.ar.yml` — mesma VPS,
-mesma imagem/digest via `WEB_IMAGE`, Caddy e Authelia compartilhados). **Todo comando
+mesma imagem/digest via `WEB_IMAGE`, Caddy compartilhado; o Authelia também era, até 16/11/2026). **Todo comando
 executado na VPS é com aprovação do Felipe, comando a comando (CLAUDE.md §6).** Em
 ordem:
 
@@ -636,11 +625,11 @@ ordem:
     medido e CPU sem briga com o BR — **e a memória livre do HOST** com as duas
     stacks em regime (`free -m` nos picos): a soma dos tetos rígidos fecha os 16 GB
     (api 6g + web BR 8g + web_ar 2g) — e passa deles desde que o `postgres` (2g) entrou no
-    compose (#376, 17/09/2026): 18 GB, §11 do `docs/banco_deploy.md` — com caddy/authelia/bot
+    compose (#376, 17/09/2026): 18 GB, §11 do `docs/banco_deploy.md` — com caddy/bot
     **sem teto** (o tileserver declara 1500m na stack dele);
     se `available` cair abaixo de ~2 GB nos picos, rever os tetos **antes** do fim da
-    observação — num aperto, o OOM killer escolhe uma vítima sem teto (Authelia ou
-    Caddy) e derruba o edge das **duas** stacks.
+    observação — num aperto, o OOM killer escolhe uma vítima sem teto (o Caddy, por
+    exemplo) e derruba o edge das **duas** stacks.
 
 > **Dívida declarada (até o BLK-INTL-09, operação em matriz):** o relatório periódico
 > de acessos (`scripts/cron/run_relatorio_acessos.sh`) e o `/acessos` do bot leem

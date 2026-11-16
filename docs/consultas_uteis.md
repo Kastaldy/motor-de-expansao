@@ -396,8 +396,10 @@ está em `/api/acessos/saude-artefatos`, que é **autenticado** (401 sem sessão
 pela aba **Acessos** do piloto.
 
 **Verificador on-demand na VPS:** `/opt/motor-monitoring/healthcheck_vps.sh <sub>`, com `<sub>` ∈
-{`containers`, `host`, `authelia`, `coleta`, `agregadores`, `crescimento`, `geoip`, `mercado`,
-`pins`, `banco`, `test`}.
+{`containers`, `host`, `coleta`, `agregadores`, `crescimento`, `geoip`, `mercado`, `pins`,
+`banco`, `test`}. O `authelia` saiu com o Estágio 3 da DEC-081 (16/11/2026): a cópia instalada só o
+perde quando o Felipe instalar a versão nova, e aí a linha diária `healthcheck_vps.sh authelia` do
+crontab do root precisa sair junto (sem ela o script responde "uso:" e sai com erro).
 
 > **Atenção — não é leitura passiva:** o `healthcheck_vps.sh` **alerta via Telegram** na transição
 > OK→FAIL (e avisa a recuperação em FAIL→OK). Rodar um subcomando pode disparar aviso no chat de

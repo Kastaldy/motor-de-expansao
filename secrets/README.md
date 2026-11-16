@@ -34,6 +34,12 @@ esta no `.gitignore`.
 | `secrets/authelia.users_database.enc.yaml`      | `authelia/users_database.yml`                |
 | `secrets/authelia.db.sqlite3.enc`               | `authelia/db.sqlite3` (binario)              |
 
+> **Os tres `secrets/authelia.*` sao backup de um servico aposentado em 16/11/2026** (Estagio 3
+> da DEC-081): nenhum container le mais `authelia/`. Ficam ate a pasta `authelia/` e as variaveis
+> `AUTHELIA_*` sairem tambem da VPS; o `env.enc.env` e o `Caddyfile.enc` vigentes (27/10/2026) sao
+> de antes do Estagio 3 e precisam ser recifrados (BLK-BANCO-04; `docs/backup_restore.md`, aviso
+> do topo).
+
 > O sufixo `.enc.env` (em vez de apenas `.enc`) e necessario para que a regra
 > dotenv do `.sops.yaml` case e encripte cada KEY=VALUE em vez de tratar o
 > arquivo como blob binario opaco.

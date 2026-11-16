@@ -5767,12 +5767,12 @@ def _minha_identidade(remote_user: str | None) -> Any:
 #: o texto, ao contrario do "Not Found" de la', e' em portugues, porque aqui quem o le' e' gente
 #: -- por uma tela aberta antes de a chave mudar, ou por uma SPA de outra versao.
 LOGIN_PROPRIO_DESLIGADO_TROCA = (
-    "A troca de senha só funciona com o login próprio do piloto ligado. Hoje a entrada é pelo "
-    "Authelia, e a senha de lá continua valendo."
+    "A troca de senha só funciona com o login próprio do piloto ligado, e ele está desligado "
+    "neste servidor."
 )
 LOGIN_PROPRIO_DESLIGADO_ADMIN = (
-    "Redefinir senha e exigir troca só funcionam com o login próprio do piloto ligado. Hoje a "
-    "entrada é pelo Authelia, e a senha do banco ainda não é usada para entrar."
+    "Redefinir senha e exigir troca só funcionam com o login próprio do piloto ligado. Ele está "
+    "desligado neste servidor, e a senha do banco ainda não é usada para entrar."
 )
 
 
@@ -5936,11 +5936,10 @@ def acessos_usuarios_criar(
     de acesso casa: `acesso.py` reserva `POST` ali para `acesso.usuario_gerir`, antes da regra
     generica de `acesso.painel_ver`. Ver a pessoa e criar pessoa sao capacidades diferentes.
 
-    A senha entregue e' a INICIAL compartilhada. A resposta traz `falta_cadastrar_no_authelia`
-    (o passo que continua manual) e `login_proprio` (a chave deste deploy), porque o recado da
-    tela depende dos dois -- ver `usuarios.criar`: com a chave desligada, sem a entrada no
-    `users_database.yml` a pessoa NAO ENTRA; ligada, ela entra com a senha inicial, e a entrada
-    no Authelia e' o que mantem o rollback possivel durante a janela de observacao do corte.
+    A senha entregue e' a INICIAL compartilhada. A resposta traz `login_proprio` (a chave deste
+    deploy), porque o recado da tela depende dela: ligada, a pessoa entra com a senha inicial;
+    desligada, a senha do banco ainda nao vale na entrada. O `falta_cadastrar_no_authelia` saiu
+    com o Estagio 3 da DEC-081 (16/11/2026) -- ver `usuarios.criar`.
     """
     _exigir_admin_acessos(remote_user)
     from motor_expansao.db import usuarios as db_usuarios

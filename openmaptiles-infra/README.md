@@ -7,9 +7,11 @@ O consumidor é o **fundo de ruas dos PDFs** (`api` e `web`), por URL interna
 a "Fase 2" original (seletor de basemap no `map_style` do pydeck) morreu com o Streamlit (DEC-022).
 
 > **Alinhado à infra de produção do motor** (`docs/infra_producao.md`): stack separada
-> (padrão dos `-infra`), na rede `app_net`, atrás do **Caddy** existente. Servido **sob
-> o domínio do dashboard e o MESMO login (Authelia)** — igual ao antigo. **Sem porta
-> nova** (ufw só libera 22/80/443) e **sem subdomínio/DNS novo**.
+> (padrão dos `-infra`), na rede `app_net`. **Só interno desde 16/11/2026:** a rota pública
+> `dashboard.ultra-expansao.tech/tiles/*`, que passava pelo login do Authelia, responde 404 desde o
+> Estágio 3 da DEC-081 (opção A). Quem usa o tileserver são os PDFs, pela URL interna; o mapa do
+> piloto não depende dele. **Sem porta nova** (ufw só libera 22/80/443) e **sem subdomínio/DNS
+> novo**.
 
 > **Muda / não muda:** muda só *de onde vêm os tiles de fundo*. Os dados do motor
 > (hexágonos, scores, pins) **não mudam**. Esta infra **não toca no código do motor**.
@@ -19,22 +21,21 @@ a "Fase 2" original (seletor de basemap no `map_style` do pydeck) morreu com o S
 ## Como encaixa na produção (topologia)
 
 ```
-https://dashboard.ultra-expansao.tech/          -> 301 para o piloto (DEC-022)
-https://dashboard.ultra-expansao.tech/tiles/... -> tiles (MESMO login Authelia)
+https://dashboard.ultra-expansao.tech/          -> redireciona para o piloto (DEC-022)
+https://dashboard.ultra-expansao.tech/tiles/... -> 404 (desde 16/11/2026, opção A do Estágio 3 da DEC-081)
+
+[api / web]  ──  http://motor_expansao_tileserver:8080/styles/...  (rede app_net, sem passar pelo Caddy)
                           │
-          [Caddy motor_expansao_caddy] :443  (TLS + Authelia forward_auth)
-                          │  handle_path /tiles/*  (rede app_net)
           [motor_expansao_tileserver] :8080  (interno, cap 1.5G/1cpu)
                           │  lê  data/mbtiles/brazil.mbtiles
-                          ▼
-          /tiles/styles/ultra-maptiler/style.json
-          /tiles/styles/ultra-labels/style.json
 ```
 
-- **Login:** herda o Authelia do dashboard (same-origin) — sem cookie cross-origin.
-- **Edge:** o Caddy do motor (não subo outro proxy). Um `handle_path /tiles/*` roteia.
+- **Acesso:** só pela rede interna (`API_BASEMAP_TILES_URL` / `API_BASEMAP_LABELS_URL`). Até
+  16/11/2026 havia também a rota pública `/tiles/*` no bloco `dashboard.` do Caddy, atrás do
+  `forward_auth` do Authelia; o trecho de Caddyfile que a montava (`caddy/tiles.Caddyfile`) saiu do
+  repositório junto.
 - **Rede:** `app_net` (externa) — a mesma do `docker-compose.prod.yml` do motor.
-- **Porta / DNS:** nada novo. Acesso pelo domínio do dashboard já existente.
+- **Porta / DNS:** nada novo, e nenhum acesso de fora da VPS.
 - **Servidor:** `/opt/openmaptiles-infra` (padrão dos outros `-infra`).
 
 ---
@@ -44,7 +45,6 @@ https://dashboard.ultra-expansao.tech/tiles/... -> tiles (MESMO login Authelia)
 ```
 openmaptiles-infra/
 ├─ docker-compose.yml            # tileserver (capado) na rede app_net externa
-├─ caddy/tiles.Caddyfile         # handle_path /tiles/* p/ o bloco do dashboard (SOPS)
 ├─ scripts/generate-brazil.sh    # gera o brazil.mbtiles com planetiler
 └─ data/
    ├─ config.json                # tileserver -> mbtiles + styles + publicUrl (/tiles/)
@@ -93,18 +93,12 @@ openmaptiles-infra/
    docker compose up -d
    ```
 
-5. **Adicione a rota no Caddy** — cole o `handle_path /tiles/*` de `caddy/tiles.Caddyfile`
-   **dentro do bloco `dashboard.ultra-expansao.tech { ... }`** do Caddyfile do motor
-   (gerenciado por SOPS: `secrets/Caddyfile.enc` no repo do motor). Assim os tiles
-   herdam o `forward_auth` do Authelia que já protege o dashboard. Recarregue:
-   ```bash
-   cd /opt/motor-expansao/app
-   docker compose -f docker-compose.prod.yml restart caddy
-   ```
+5. **Sem rota no Caddy.** Até 16/11/2026 este passo colava um `handle_path /tiles/*` no
+   bloco `dashboard.` do Caddyfile, atrás do login do Authelia. A rota foi fechada (opção A do
+   Estágio 3 da DEC-081): o tileserver só atende a rede interna.
 
-6. **Pronto.** Estilos disponíveis (exigem estar logado no dashboard):
-   - `https://dashboard.ultra-expansao.tech/tiles/styles/ultra-maptiler/style.json`
-   - `https://dashboard.ultra-expansao.tech/tiles/styles/ultra-labels/style.json`
+6. **Pronto.** Os consumidores usam a URL interna, por exemplo
+   `http://motor_expansao_tileserver:8080/styles/ultra-maptiler/{z}/{x}/{y}@2x.png`.
 
 ---
 
@@ -117,37 +111,31 @@ docker exec motor_expansao_tileserver \
   wget -qO- http://127.0.0.1:8080/data/brazil.json | head   # dataset responde
 docker stats --no-stream motor_expansao_tileserver  # < 1.5 GB / ~0% CPU
 
-# --- externo (via Caddy; precisa do cookie de sessão do Authelia) ---
-# Sem login, o Caddy/Authelia redireciona p/ auth.ultra-expansao.tech (esperado).
-# Logado no navegador, abrir:
-#   https://dashboard.ultra-expansao.tech/tiles/data/brazil.json
+# --- externo: nao ha mais (a rota publica /tiles/ responde 404 desde 16/11/2026) ---
 ```
 
-**Verificação visual:** logado no dashboard, aponte um MapLibre para
-`https://dashboard.ultra-expansao.tech/tiles/styles/ultra-maptiler/style.json`. No zoom
-das casas os prédios devem bater **melhor** com o MapTiler que na demo com CARTO — agora
-a fonte é OpenMapTiles, a mesma família do MapTiler Basic.
+**Verificação visual:** gere um PDF de Relatório Pontual e confira o fundo de ruas. No zoom
+das casas os prédios devem bater **melhor** com o MapTiler que na demo com CARTO — a fonte é
+OpenMapTiles, a mesma família do MapTiler Basic.
 
 ---
 
 ## Checklist de integração (não esquecer)
 
 - [ ] `docker network ls` confirma o nome da rede em `docker-compose.yml`.
-- [ ] `handle_path /tiles/*` adicionado ao bloco **dashboard** do Caddyfile (via SOPS) e Caddy recarregado.
 - [ ] `ufw` **permanece** só 22/80/443 (nada a abrir). **Sem DNS novo.**
-- [x] **Monitoramento:** `motor_expansao_tileserver` já está no array `CONTAINERS` de `scripts/healthcheck_vps.sh` (8 containers vigiados hoje).
-- [ ] `publicUrl` no `data/config.json` = `https://dashboard.ultra-expansao.tech/tiles/` (ajuste se o domínio mudar).
+- [x] **Monitoramento:** `motor_expansao_tileserver` já está no array `CONTAINERS` de `scripts/healthcheck_vps.sh` (7 containers vigiados desde a saída do Authelia, em 16/11/2026).
+- [ ] `publicUrl` no `data/config.json` aponta para a antiga rota pública (`https://dashboard.ultra-expansao.tech/tiles/`), que hoje responde 404. Os PNGs que os PDFs pedem pela URL interna não dependem dele.
 
 ---
 
 ## Notas
 
-- **Login (igual ao antigo):** os tiles ficam atrás do Authelia porque são servidos no
-  domínio do dashboard. Como é same-origin, o cookie de sessão já vale — por isso **não**
-  usamos subdomínio separado (lá o MapLibre não mandaria o cookie e quebraria).
+- **Sem login, porque sem rota pública:** até 16/11/2026 os tiles ficavam atrás do Authelia, no
+  domínio do dashboard. Com a rota fechada, só a rede interna os alcança.
 - **Fontes (glyphs):** os estilos usam `Noto Sans Regular`, a única fonte da imagem (`paths.fonts`
   aponta para dentro dela) — ver "Fontes do estilo (nao remover)" abaixo.
-- **Sem segredos:** OpenMapTiles é keyless — nada entra no SOPS além do trecho do Caddyfile.
+- **Sem segredos:** OpenMapTiles é keyless — nada entra no SOPS.
 - **Atualizar OSM:** re-rode `scripts/generate-brazil.sh` (trimestral basta) e
   `docker compose restart tileserver`. Opcional.
 - **Encolher:** `AREA=sao-paulo bash scripts/generate-brazil.sh` gera só uma UF. Default: `brazil`.

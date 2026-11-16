@@ -5,9 +5,9 @@
 # (/opt/gymscraping-infra, /opt/motor-monitoring): roda na MESMA rede do motor
 # (app_net EXTERNA) para o Caddy do motor rotear um subdomínio até o tileserver.
 #
-# SEM porta publicada no host: o ufw só libera 22/80/443. O acesso externo é
-# via Caddy, SOB o domínio do dashboard e o MESMO login (Authelia):
-#   https://dashboard.ultra-expansao.tech/tiles/  (ver caddy/tiles.Caddyfile).
+# SEM porta publicada no host: o ufw só libera 22/80/443. Sem acesso externo desde
+# 16/11/2026: a rota https://dashboard.ultra-expansao.tech/tiles/ responde 404 (opção A do
+# Estágio 3 da DEC-081). Os PDFs usam a URL interna, pela app_net.
 #
 # Caps (servidor 16 GB / 4 vCPU, motor usa 3-6 GB): tileserver NUNCA passa de
 # 1.5 GB / 1 vCPU. Servir tile vector é I/O (não CPU) -> impacto no motor ~nulo.

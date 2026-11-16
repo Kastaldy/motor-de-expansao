@@ -10,6 +10,18 @@
 > Streamlit aposentado, app de producao passa a ser o piloto web); revisado em
 > 2026-10-24 (o restore do servidor zerado passa a incluir o banco Postgres — §10.7-bis).
 
+> **O Authelia foi aposentado em 16/11/2026 (Estágio 3 da DEC-081).** O serviço saiu do compose, e
+> nenhum container lê mais `authelia/`. Os passos deste runbook que cifram, decifram ou conferem os
+> três arquivos do Authelia (`configuration.yml`, `users_database.yml`, `db.sqlite3`) e as variáveis
+> `AUTHELIA_*` ficam como estavam, porque as cópias cifradas em `secrets/` ainda existem; num restore,
+> eles podem ser **pulados**. Duas consequências que valem já:
+> - o `secrets/Caddyfile.enc` e o `secrets/env.enc.env` vigentes são de 27/10/2026, de antes do
+>   Estágio 3: o Caddyfile restaurado traz de volta os blocos `auth.` e `dashboard./tiles/*`
+>   apontando para um `authelia:9091` que não existe (o `/tiles/*` daria 502 em vez do 404 de hoje,
+>   e o `auth.` não redirecionaria). Recifrar os dois depois do Estágio 3 é o BLK-BANCO-04
+>   (`tasks/backlog.md`);
+> - os containers esperados depois do `up -d` são cinco, sem o `authelia` (§10 e §14).
+
 ---
 
 ## 1. Escopo e premissas
@@ -506,7 +518,7 @@ docker compose -f docker-compose.prod.yml up -d
 docker compose -f docker-compose.prod.yml ps
 ```
 
-Esperado: 6 containers `healthy`/`running` em ate 2 min (web, api, telegram-bot, postgres, caddy, authelia) — o `.env`
+Esperado: 5 containers `healthy`/`running` em ate 2 min (web, api, telegram-bot, postgres, caddy; o `authelia` saiu em 16/11/2026) — o `.env`
 restaurado precisa dos `POSTGRES_*` (o compose aborta sem eles). Stack AR (`docker-compose.ar.yml`), tileserver
 (`/opt/openmaptiles-infra`) e Valhalla (`/opt/valhalla-infra`) tem compose proprio e sobem a parte. O `web_ar`
 fala com o MESMO Postgres desde o corte AR da DEC-081 (31/10/2026): sobe depois do stack BR (usa a rede
@@ -588,14 +600,14 @@ sops secrets/env.enc.env
 
 # Salvar e sair re-encripta automaticamente.
 git add secrets/env.enc.env
-git commit -m "chore: rotacionar AUTHELIA_JWT_SECRET"
+git commit -m "chore: rotacionar API_TOKENS"
 git push
 
 # No VPS, regenerar o .env (o checkout /opt/motor-expansao/app esta parado: levar secrets/env.enc.env por scp em vez de git pull):
 ssh root@2.25.137.241
 cd /opt/motor-expansao/app/
 sops --input-type dotenv --output-type dotenv -d secrets/env.enc.env > .env
-docker compose -f docker-compose.prod.yml up -d authelia   # restart NAO rele o .env; so' o up -d aplica o segredo novo
+docker compose -f docker-compose.prod.yml up -d api telegram-bot   # o servico que le o segredo; restart NAO rele o .env, so' o up -d aplica o segredo novo
 ```
 
 > **Ressalva (2026-10-24): a metade do VPS nao funciona na producao de hoje.** O `sops -d` no VPS
@@ -679,7 +691,7 @@ Checklist apos `docker compose up -d`:
 ```bash
 # 1. Containers
 docker compose -f docker-compose.prod.yml ps
-# Esperado: web, api, telegram-bot, postgres, caddy, authelia todos 'healthy' ou 'running'
+# Esperado: web, api, telegram-bot, postgres, caddy todos 'healthy' ou 'running' (sem authelia desde 16/11/2026)
 
 # 2. Healthcheck do piloto web — POR DENTRO do container (este e' o caminho bom)
 docker compose -f docker-compose.prod.yml exec web curl -fsS http://127.0.0.1:8899/api/health
@@ -690,12 +702,11 @@ docker compose -f docker-compose.prod.yml exec web curl -fsS http://127.0.0.1:88
 # NAO usar `curl -fsS https://piloto.ultra-expansao.tech/api/health` como verificacao: o
 # `forward_auth` do Caddy vale para o SITE INTEIRO (ver o bloco do Caddyfile em
 # docs/deploy_piloto_web.md §3) e nao ha matcher que isente `/api/health`, entao um curl
-# anonimo recebe o redirect do Authelia — e como `-f` nao falha em 3xx, o comando sai com
+# anonimo recebe o redirect para o login — e como `-f` nao falha em 3xx, o comando sai com
 # exit 0 e corpo VAZIO, que le como sucesso. Por fora, so' no navegador ja logado.
 
-# 3. Login Authelia
-# Abrir em navegador: https://auth.ultra-expansao.tech
-# Esperado: tela de login do Authelia
+# 3. (Era o login do Authelia em https://auth.ultra-expansao.tech; desde 16/11/2026 esse host so'
+#    redireciona para https://ultra-expansao.tech/ -- passo sem efeito.)
 
 # 4. Login no piloto (login proprio desde o corte do P19, 27/10/2026 — o .env e o Caddyfile
 #    restaurados, de 27/10, ja' o trazem: §10.6)
@@ -706,7 +717,6 @@ docker compose -f docker-compose.prod.yml exec web curl -fsS http://127.0.0.1:88
 docker compose -f docker-compose.prod.yml logs --tail=50 web
 docker compose -f docker-compose.prod.yml logs --tail=50 api
 docker compose -f docker-compose.prod.yml logs --tail=50 caddy
-docker compose -f docker-compose.prod.yml logs --tail=50 authelia
 
 # 6. Banco ligado no web, com a URL do papel `app` (o .env restaurado pode ter vindo sem ela —
 #    §10.6). Conta a linha sem imprimir a senha: tem de dar 1. NUNCA tire o -c.

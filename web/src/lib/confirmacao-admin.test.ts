@@ -235,24 +235,26 @@ describe('criar', () => {
     expect(texto).toContain('ana@ultraacademia.com.br')
   })
 
-  it('com o login próprio DESLIGADO não promete a senha inicial: a entrada é o Authelia', () => {
-    /* O estado de produção até o corte do P19 (decisão do dono, 24/10/2026). Quem confere a
-       senha é o Authelia, então "nasce com a senha inicial e é levada a trocá-la" era falso —
-       e o que a pessoa não adivinha é que criar aqui NÃO a deixa entrar. */
+  it('com o login próprio DESLIGADO não promete a senha inicial: a pessoa ainda não entra', () => {
+    /* Decisão do dono, 24/10/2026: sem a chave, "nasce com a senha inicial e é levada a
+       trocá-la" é falso — e o que a pessoa não adivinha é que criar aqui NÃO a deixa entrar.
+       Até 16/11/2026 o texto mandava cadastrá-la no Authelia, que o Estágio 3 aposentou. */
     const texto = montarConfirmacao(novo).apoio.join(' ')
-    expect(texto).toContain('Authelia')
+    expect(texto).not.toContain('Authelia')
+    expect(texto).toContain('login próprio desligado')
     expect(texto).toContain('grava só no banco')
     expect(texto).not.toContain('senha inicial compartilhada')
     expect(texto).not.toContain('primeiro acesso')
   })
 
-  it('com o login próprio LIGADO avisa da senha inicial — e do Authelia como caminho de volta', () => {
-    /* No dia do corte a inicial do banco passa a ser a compartilhada do Authelia, e a frase
-       volta a ser verdadeira. O Authelia segue no texto, mas por outra razão: o rollback. */
+  it('com o login próprio LIGADO avisa da senha inicial, sem o Authelia', () => {
+    /* No dia do corte a inicial do banco passou a ser a compartilhada do Authelia, e a frase
+       voltou a ser verdadeira. Até 16/11/2026 vinha junto o cadastro no Authelia, pelo
+       rollback; o Estágio 3 da DEC-081 o aposentou. */
     const texto = montarConfirmacao({ ...novo, loginProprio: true }).apoio.join(' ')
     expect(texto).toContain('senha inicial compartilhada')
     expect(texto).toContain('primeiro acesso')
-    expect(texto).toContain('rollback')
+    expect(texto).not.toMatch(/Authelia|rollback/)
     expect(texto).not.toContain('grava só no banco')
   })
 

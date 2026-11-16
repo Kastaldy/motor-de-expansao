@@ -15,7 +15,7 @@ indisponibilidade real:
 > **`MOTOR_DATABASE_URL` é o ÚLTIMO passo, e só depois de os usuários existirem.**
 > No instante em que ela é preenchida, o RBAC do banco assume o controle das abas
 > (`banco_no_comando()` em `web/server/acesso.py`). O comportamento é *deny-by-default*:
-> quem o Authelia autentica mas que **não tem linha em `usuarios`** não recebe capacidade
+> quem entra mas **não tem linha em `usuarios`** não recebe capacidade
 > nenhuma. Ligar a variável com a tabela vazia tranca **todo mundo para fora**, inclusive você.
 > Vale igual para a `MOTOR_DATABASE_URL_AR`, a do `web_ar` (DEC-081): só depois de cada usuário AR
 > ter linha em `usuarios`, com perfil e o país AR em `usuario_paises`.
@@ -622,9 +622,10 @@ As migrations `012` e `013` trazem perfis, capacidades e a matriz — **não tra
 usuários são dado operacional com PII (nome, e-mail, `login_usuario`) e por isso **nunca** entram
 em arquivo de migration versionado no git.
 
-O `login_usuario` tem de ser exatamente o `Remote-User` que o Authelia entrega — é a chave que casa
-a pessoa autenticada com a linha do banco (D23). Confira contra o
-`authelia/users_database.yml` antes de inserir, e não contra a memória de ninguém.
+O `login_usuario` é a chave que casa a pessoa autenticada com a linha do banco (D23): é o login que
+ela digita na tela de entrar. (Até o corte do login próprio, tinha de ser o `Remote-User` que o
+Authelia entregava, conferido contra o `authelia/users_database.yml`; o Authelia foi aposentado em
+16/11/2026.)
 
 Deixe **pelo menos um** usuário do perfil Growth pronto antes do passo 8: é o único que enxerga o
 painel de Acessos, e é por ele que você verifica que o RBAC subiu certo.
@@ -634,11 +635,10 @@ trocar perfil e ativar/desativar, com autor e de-para registrados em `eventos`. 
 manual porque criar exige autor, e autor exige alguém já cadastrado; do segundo em diante a tela
 resolve.
 
-**Mas a tela grava só no banco.** Quem entra também precisa nascer no
-`authelia/users_database.yml`, que é quem autentica até o **P19** ser executado — a tela avisa isso
-depois de criar, com o login a cadastrar. Enquanto o Authelia autenticar, os dois cadastros andam
-juntos e é preciso lembrar dos dois; uma linha em `usuarios` sem a entrada de lá aparece na lista e
-não entra.
+**Até o corte do login próprio, a tela gravava só no banco** e a pessoa precisava nascer também no
+`authelia/users_database.yml`, que era quem autenticava. Desde o corte (BR 27/10, AR 31/10/2026) o
+banco basta, e desde 16/11/2026 (Estágio 3 da DEC-081) o Authelia nem existe mais: não há segundo
+cadastro.
 
 **Depois de pôr a `MOTOR_SENHA_INICIAL` no `.env`, suba o `web`:**
 
@@ -662,8 +662,8 @@ da tela diz quem já definiu senha no banco (selo `própria` ou `inicial`).
 **Mas a senha do banco só vale com o login próprio ligado** (decisão do dono, 24/10/2026). O cadeado
 "Trocar a minha senha", o "Redefinir senha" e o "Exigir troca" só aparecem, e só funcionam, com
 `MOTOR_AUTENTICACAO_PROPRIA` ligada; com ela desligada, `PATCH /api/me/senha` e as duas rotas de admin
-respondem 404, e quem confere a senha na entrada é o Authelia — então, até o corte do P19, ninguém sai
-da inicial. Na produção, a `MOTOR_SENHA_INICIAL` foi sorteada na instalação (não é a senha compartilhada
+respondem 404, e quem conferia a senha na entrada era o Authelia — então, até o corte do P19, ninguém
+saía da inicial. Na produção, a `MOTOR_SENHA_INICIAL` foi sorteada na instalação (não é a senha compartilhada
 do Authelia), e a marca de troca (`deve_trocar_senha_usuario`) foi desligada nos 20 em 17/10/2026. Para
 o corte, a decisão é trocá-la pela compartilhada e rodar o `db alinhar-senhas`, que remarca a troca
 de quem nunca definiu a própria: o convite do primeiro acesso, que tem "Agora não" — a troca é
@@ -721,11 +721,16 @@ a tela escreve — `SQL_CRIAR` em `db/usuarios.py`. Os perfis disponíveis são 
 > Um `senha_hash` **improvisado**, que não seja um PHC Argon2id, não autentica ninguém: `verificar`
 > recusa qualquer coisa que não comece com `$argon2id$`.
 
-> **O `login_usuario` tem de ser a MESMA STRING da chave do `authelia/users_database.yml`.** A caixa
-> não importa — a coluna é `CITEXT` e a allowlist do painel compara com `casefold()`. O que não pode
-> divergir é o texto: usar o e-mail de um lado e o nome de usuário do outro deixa a pessoa de fora.
+> **Até o corte, o `login_usuario` tinha de ser a MESMA STRING da chave do `authelia/users_database.yml`.**
+> A caixa não importa — a coluna é `CITEXT` e a allowlist do painel compara com `casefold()`. Hoje
+> vale o mesmo cuidado com a allowlist (`MOTOR_ACESSOS_ADMIN_USUARIOS`): usar o e-mail de um lado e
+> o nome de usuário do outro deixa a pessoa de fora.
 
 ### Conferir antes de ligar
+
+> **Seção histórica: o conferidor compara o Authelia com o banco, e o Authelia foi aposentado em
+> 16/11/2026 (Estágio 3 da DEC-081).** Não há mais o que conferir; o script fica no repositório só
+> como registro do corte.
 
 Depois do cadastro, e de novo no momento do corte, rode o conferidor. Ele responde, pessoa a
 pessoa, se **quem entra hoje** (Authelia) **existe no banco, ativo, e com as mesmas abas** que vê
@@ -1480,7 +1485,7 @@ refaz sozinho, `bot_data` custa um relogin, os parquets saem dos pipelines. Este
 
 `mem_limit: 2g` é teto conservador: a KVM4 tem 16 GB, e só os tetos de `web` (8g) e `api` (6g) — sem contar o `web_ar` (2g, `docker-compose.ar.yml`, na mesma VPS) — já somam
 14; com o do `postgres` e o do `web_ar`, os tetos declarados chegam a **18 GB num host de 16 GB**
-(`telegram-bot`, `caddy` e `authelia` nem têm teto; e o `tileserver`, outra stack na mesma VPS, declara
+(`telegram-bot` e `caddy` nem têm teto; e o `tileserver`, outra stack na mesma VPS, declara
 mais 1500m no `openmaptiles-infra/docker-compose.yml` do repositório). Teto não reserva memória, e a soma só morde se
 vários encostarem nele ao mesmo tempo, mas não sobra folga para subir nenhum sem medir. O candidato a
 estourar isso é o ETL da fase 5 (dissolve por UF) — quando ele existir, **medir
