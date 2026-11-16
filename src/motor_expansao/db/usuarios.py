@@ -632,12 +632,10 @@ def criar(
     configurada, a criacao e' RECUSADA antes de abrir transacao -- criar alguem com uma senha que
     ninguem sabe qual e' seria pior que nao criar.
 
-    O que esta funcao NAO faz, e a tela precisa dizer: cadastrar a pessoa no
-    `authelia/users_database.yml`. Com o login proprio DESLIGADO, uma linha em `usuarios` sem a
-    entrada de la' nao deixa ninguem entrar; LIGADO, a pessoa entra com a senha inicial, e a
-    entrada no Authelia e' o que mantem o rollback possivel durante a janela de observacao do
-    corte. Por isso `falta_cadastrar_no_authelia` sai `True` nos DOIS estados da chave -- o que
-    muda e' o recado, e a rota acrescenta `login_proprio` para a tela escolher qual.
+    Ate' 16/11/2026 a resposta trazia `falta_cadastrar_no_authelia`: o passo manual no
+    `authelia/users_database.yml`, sem o qual a pessoa nao entrava (chave desligada) ou ficava
+    fora de um rollback do corte (chave ligada). O Estagio 3 da DEC-081 aposentou o Authelia e o
+    campo saiu. A rota acrescenta `login_proprio` para a tela dizer se a pessoa ja' entra.
     """
     from . import senhas
 
@@ -695,9 +693,6 @@ def criar(
         "login": login,
         "perfil": perfil,
         "paises": paises_norm,
-        # O passo que continua manual, nos DOIS estados da chave (ver o docstring): desligada,
-        # sem ele a pessoa nao entra; ligada, sem ele um rollback do corte a deixaria de fora.
-        "falta_cadastrar_no_authelia": True,
     }
 
 

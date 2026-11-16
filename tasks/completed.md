@@ -16198,3 +16198,53 @@ READ-ONLY sobre o M1. Não toca o gate de país, o apex, nem o contrato de event
 **O fix.** Nova consulta `SQL_DONO_PARA_TRILHA` / função `dono_para_trilha(token)` em `sessoes.py`: é a `SQL_VALIDAR` **menos as duas travas de TEMPO**, mantendo `revogada_em_sessao IS NULL` + `u.ativo`, projetando só o login. O ramo de rota pública do portao passa a resolver o nome por ela (no lugar de `validar`). Efeito: sessão vencida por **timeout** → mostra o nome; **logout explícito / expulsão / troca de senha** (sessão revogada), usuário inativo ou registro já expurgado → segue **"desconhecido"**. É **só rótulo de trilha**: nunca concede acesso — as rotas gateadas seguem exigindo `validar` (sessão viva), então uma sessão vencida continua tomando 401. Best-effort: a rota pública nunca barra nem vira 500/503. Decisão do Vinicius (04/11): estender a opção B do BANCO-13 à sessão vencida por tempo.
 
 READ-ONLY sobre o M1. Não toca o gate de país, o apex, nem o contrato de eventos.
+
+---
+
+### BLK-SAUDE-08 — O cron do sync de concorrentes volta a rodar, e passa a falhar ALTO
+
+| Campo | Valor |
+|---|---|
+| **Criticidade** | **Média** — o passo é fail-soft por desenho e os apps seguem com os arquivos anteriores; o dano é obsolescência silenciosa, não corrupção. |
+| **Prioridade** | **Média** — está quebrado há 3 semanas e ninguém soube. |
+| **Esteira** | `[aplicação na VPS: passo MANUAL, comando a comando — §6]` + PR neste repositório (o lote de domingo é versionado em `scripts/cron/run_weekly_90.sh` desde 2026-09-17, PR #377; a cópia em `/opt/gymscraping-infra/` é instalação) |
+| **Status** | **Concluído em 16/11/2026** — conserto do repositório no PR #528 (`b02e805a`, de 29/10/2026, junto com o pacote de 05/11); **aplicado na VPS em 05/11/2026 pelo Felipe**: a cópia instalada (a versão de 22/09 mais 17 linhas de versões posteriores, sem edição à mão) recebeu só o conserto, sem o bloco do feed do TotalPass da DEC-066 (adiado), e foi conferida pela conta deploy. Os lotes de 08/11 e 15/11 rodaram o sync (conferência só de leitura de 16/11, abaixo) |
+| **Depende de** | — |
+| **Autonomia** | **manual (NÃO loop-safe)** — VPS + repositório irmão. NUNCA marcar loop-safe. |
+
+**Medido em 29/09.** A etapa *"sync do diretorio de concorrentes dos apps"*
+(`/opt/gymscraping-infra/run_weekly_90.sh:243-248`) roda `sync_concorrentes_dashboard.py`, que importa
+`motor_expansao.dashboard.competitors`; esse módulo resolve `perfil.json` no import (DEC-047) e no
+contexto daquele `docker run` o arquivo não existe:
+
+```
+motor_expansao.perfil.PerfilInvalidoError: perfil.json ausente em
+  /usr/local/lib/python3.11/data/perfis/BR/perfil.json
+```
+
+Funcionou de 02/08 a **06/09** (6 domingos) e falha desde **20/09** — correlaciona com a entrada da
+DEC-047, mecanismo exato não confirmado (provável: falta `MOTOR_DATA_DIR` nessa chamada pontual).
+**Efeito confirmado:** `/opt/motor-expansao/concorrentes/` está congelado em **06/09 10:15** (23 dias),
+com 97 logos. Consequência que o próprio script documenta nas linhas 240-242: rede sem
+`logo_<slug>.png` cai no **fallback de sigla** nos pins do piloto e nos PDFs.
+
+**São dois consertos, e o segundo é o que importa mais:** (a) definir `MOTOR_DATA_DIR` na chamada de
+`/tmp/sync.py`; (b) **tirar o `|| echo`** da linha 248 — hoje a falha vira um aviso no meio de um log
+que ninguém lê, e foi por isso que passou três semanas. É a mesma classe de falha silenciosa que a
+DEC-059 existe para impedir (lá, nove domingos sem propagar moveram 60,46% dos hexágonos).
+
+**Não confirmado, e não vou afirmar:** se os `unidades_*.csv` congelados nesse diretório alimentam algo
+além das logos. O passo 4.5 do mesmo script (pins M&A) lê os **feeds CRUS montados**, não este
+diretório (decisão de 2026-09-02, comentada na linha 257) — mas eu não tracei todos os consumidores.
+Primeiro entregável do bloco: traçar isso.
+
+**Conferido em produção em 29/10/2026** (achado a-02 da conferência da higiene dos docs; leitura só de contagens, com simulacro antes): o domingo de **25/10 falhou de novo**, com 1 linha `AVISO: sync falhou` e 2 de `PerfilInvalidoError` no `weekly_20261025-060001.log`. O diretório segue em **06/09 10:15** (204 arquivos, 97 logos; 53 dias), e o script instalado em `/opt/gymscraping-infra/run_weekly_90.sh` não tem `MOTOR_DATA_DIR` (0 linhas). Os consertos (a) e (b) estão no repositório, na branch `fix/achados-conferencia` (commit `b02e805a`, ainda sem PR), com dois testes de contrato; a aplicação na VPS segue manual. O traçado dos consumidores dos `unidades_*.csv` continua por fazer.
+
+**Conferido em produção em 16/11/2026** (leitura só de contagens, com simulacro antes): o sync voltou
+nos dois domingos depois do conserto. Em **08/11**, 77 listas de concorrentes atualizadas e 4.837
+unidades no diretório dos apps; em **15/11**, 74 listas e 4.857 unidades. **`PerfilInvalidoError`: 0**
+nos dois logs. O diretório saiu de 06/09: o arquivo mais novo é de 15/11 09:57 UTC, e 80 arquivos
+mudaram desde 07/11. Nenhuma logo foi atualizada nos dois domingos, o esperado quando o coletor não
+traz logo nova (o sync preserva as existentes). Os logs desses lotes têm `Traceback` em outros passos
+(3 em 08/11, 2 em 15/11), não examinados aqui: fora do escopo deste bloco. O traçado dos consumidores
+dos `unidades_*.csv` não foi feito; se importar, vira bloco próprio.

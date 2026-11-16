@@ -135,8 +135,8 @@ ajuda a decidir onde abrir unidades novas. Os termos estão agrupados por assunt
   país roda separado; hoje estão no ar o Brasil e a Argentina. *Mais:* `data/perfis/LEIA-ME.md` e decisão
   nº 47.
 - **Login próprio (P19)** — o login do site feito pelo próprio Motor, com a senha guardada no banco de dados.
-  Está no ar no Brasil desde 27/10/2026; a Argentina ainda usa o sistema de login anterior (Authelia). *Mais:*
-  decisão nº 67 e `docs/infra_producao.md`.
+  Está no ar no Brasil desde 27/10/2026 e na Argentina desde 31/10/2026. O sistema de login anterior
+  (Authelia) foi desligado em 16/11/2026. *Mais:* decisões nº 67 e nº 81 e `docs/infra_producao.md`.
 - **Banco de dados** — guarda os usuários, as permissões e o registro de ações (por exemplo, quem gerou qual
   relatório). As notas e os mapas não vêm dele: vêm dos arquivos de dados. *Mais:* `docs/banco_conexao.md`.
 - **Grafo de conhecimento** — um índice automático do código e da documentação, para achar onde está cada

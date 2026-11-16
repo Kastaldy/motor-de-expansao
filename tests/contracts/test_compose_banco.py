@@ -138,7 +138,7 @@ def test_a_chave_do_P19_chega_ao_container(compose: dict) -> None:
         "nao a recebe, por o valor no `.env` da VPS vira no-op, e o corte do P19 fica "
         "impossivel de ligar sem editar o compose no meio da janela de manutencao."
     )
-    # `:-` e nao `:?`: ausente, o piloto SOBE com o Authelia autenticando, que e' o estado
+    # `:-` e nao `:?`: ausente, o piloto SOBE (sem login proprio), que era o estado
     # de producao. Um `:?` aqui faria a epic dormente virar pre-requisito de deploy.
     assert env["MOTOR_AUTENTICACAO_PROPRIA"] == "${MOTOR_AUTENTICACAO_PROPRIA:-}", (
         "a chave tem de ter default VAZIO. Com `:?` o compose passaria a ABORTAR sem ela, "

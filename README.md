@@ -175,7 +175,7 @@ O contrato de handoff do repositorio esta em `docs/handoff_repositorio.md`.
 - `docs/README.md`: índice dos documentos, que abre com "Comece por aqui" (o que é o Motor e por onde ler, conforme o que você faz); os termos estão em `docs/glossario.md`.
 - `web/README.md`: produto e telas do piloto web.
 - `docs/arquitetura_app_atual.md`: arquitetura do app atual (piloto web) + historia do Streamlit.
-- `docs/deploy_piloto_web.md`: runbook de deploy do piloto na VPS (digest, Caddy, Authelia).
+- `docs/deploy_piloto_web.md`: runbook de deploy do piloto na VPS (digest, Caddy, login).
 - `docs/handoff_repositorio.md`: checklist para compartilhar o repo com a equipe.
 - `docs/artefatos_dados.md`: manifesto de dados, politica de versionamento e artefatos externos.
 - `docs/modelo_mercado_hexagonos.md`: contrato tecnico da camada de mercado.

@@ -753,6 +753,12 @@ de novo antes de ligar, em 23/10; ele ainda cruza também o `acesso_abas.json`, 
 para o BR. Faltam a política de offboarding escrita e a periodicidade da revisão. É pré-requisito
 prático do corte (BLK-BANCO-01).
 
+**Estado em 16/11/2026.** O Authelia foi aposentado (Estágio 3 da DEC-081), e com ele o
+`users_database.yml` deixou de contar: a revisão de acesso passa a ser sobre as linhas ativas de
+`usuarios` (painel de Acessos) e a allowlist do bot. O offboarding ficou escrito em
+`docs/infra_producao.md` ("Revogar usuário": desativar no painel e tirar do bot). Falta a
+periodicidade da revisão.
+
 **Risco:** baixo e de outra natureza que o FU1 — não vira policy nem tranca ninguém; o erro possível
 é remover acesso de quem ainda precisa, que se desfaz com um `INSERT` de volta.
 
@@ -3629,44 +3635,8 @@ Decidir qual, aplicar no compose por PR, e a aplicação na VPS é passo manual 
 
 ---
 
-### BLK-SAUDE-08 — O cron do sync de concorrentes volta a rodar, e passa a falhar ALTO
+- BLK-SAUDE-08 (concluído 2026-11-16) — ver tasks/completed.md
 
-| Campo | Valor |
-|---|---|
-| **Criticidade** | **Média** — o passo é fail-soft por desenho e os apps seguem com os arquivos anteriores; o dano é obsolescência silenciosa, não corrupção. |
-| **Prioridade** | **Média** — está quebrado há 3 semanas e ninguém soube. |
-| **Esteira** | `[aplicação na VPS: passo MANUAL, comando a comando — §6]` + PR neste repositório (o lote de domingo é versionado em `scripts/cron/run_weekly_90.sh` desde 2026-09-17, PR #377; a cópia em `/opt/gymscraping-infra/` é instalação) |
-| **Status** | **Em andamento** — conserto do repositório no PR #528 (`b02e805a`, de 29/10/2026, junto com o pacote de 05/11); **aplicado na VPS em 05/11/2026 pelo Felipe**: a cópia instalada (a versão de 22/09 mais 17 linhas de versões posteriores, sem edição à mão) recebeu só o conserto, sem o bloco do feed do TotalPass da DEC-066 (adiado), e foi conferida pela conta deploy; falta ver o lote de 08/11 |
-| **Depende de** | — |
-| **Autonomia** | **manual (NÃO loop-safe)** — VPS + repositório irmão. NUNCA marcar loop-safe. |
-
-**Medido em 29/09.** A etapa *"sync do diretorio de concorrentes dos apps"*
-(`/opt/gymscraping-infra/run_weekly_90.sh:243-248`) roda `sync_concorrentes_dashboard.py`, que importa
-`motor_expansao.dashboard.competitors`; esse módulo resolve `perfil.json` no import (DEC-047) e no
-contexto daquele `docker run` o arquivo não existe:
-
-```
-motor_expansao.perfil.PerfilInvalidoError: perfil.json ausente em
-  /usr/local/lib/python3.11/data/perfis/BR/perfil.json
-```
-
-Funcionou de 02/08 a **06/09** (6 domingos) e falha desde **20/09** — correlaciona com a entrada da
-DEC-047, mecanismo exato não confirmado (provável: falta `MOTOR_DATA_DIR` nessa chamada pontual).
-**Efeito confirmado:** `/opt/motor-expansao/concorrentes/` está congelado em **06/09 10:15** (23 dias),
-com 97 logos. Consequência que o próprio script documenta nas linhas 240-242: rede sem
-`logo_<slug>.png` cai no **fallback de sigla** nos pins do piloto e nos PDFs.
-
-**São dois consertos, e o segundo é o que importa mais:** (a) definir `MOTOR_DATA_DIR` na chamada de
-`/tmp/sync.py`; (b) **tirar o `|| echo`** da linha 248 — hoje a falha vira um aviso no meio de um log
-que ninguém lê, e foi por isso que passou três semanas. É a mesma classe de falha silenciosa que a
-DEC-059 existe para impedir (lá, nove domingos sem propagar moveram 60,46% dos hexágonos).
-
-**Não confirmado, e não vou afirmar:** se os `unidades_*.csv` congelados nesse diretório alimentam algo
-além das logos. O passo 4.5 do mesmo script (pins M&A) lê os **feeds CRUS montados**, não este
-diretório (decisão de 2026-09-02, comentada na linha 257) — mas eu não tracei todos os consumidores.
-Primeiro entregável do bloco: traçar isso.
-
-**Conferido em produção em 29/10/2026** (achado a-02 da conferência da higiene dos docs; leitura só de contagens, com simulacro antes): o domingo de **25/10 falhou de novo**, com 1 linha `AVISO: sync falhou` e 2 de `PerfilInvalidoError` no `weekly_20261025-060001.log`. O diretório segue em **06/09 10:15** (204 arquivos, 97 logos; 53 dias), e o script instalado em `/opt/gymscraping-infra/run_weekly_90.sh` não tem `MOTOR_DATA_DIR` (0 linhas). Os consertos (a) e (b) estão no repositório, na branch `fix/achados-conferencia` (commit `b02e805a`, ainda sem PR), com dois testes de contrato; a aplicação na VPS segue manual. O traçado dos consumidores dos `unidades_*.csv` continua por fazer.
 
 ---
 
@@ -5127,6 +5097,10 @@ depende de quando ela foi feita; o levantamento de 23/10/2026 aponta ao menos a 
 `/api/me`, o `web_ar` e o Valhalla condicional), que pode começar em FAIL, e o `banco_offbox` avisa
 desde a primeira rodada enquanto o restic estiver desligado (BLK-BANCO-02). Testes:
 `tests/unit/test_healthcheck_banco.py`.
+**Desde 16/11/2026** a `main` não vigia mais o Authelia (Estágio 3 da DEC-081): sem o container no
+`containers` e sem o subcomando `authelia`. Ao trocar a cópia, tirar do crontab do root a linha diária
+`healthcheck_vps.sh authelia`, senão ela passa a sair com erro de uso todo dia. (A linha do container
+já tinha saído da cópia instalada antes do Estágio 3, pelo `felipe-monitor-sem-authelia.sh`.)
 
 ---
 
@@ -5151,6 +5125,13 @@ Authelia e desfaria o corte sem avisar. **Feito em 25/10/2026:** o `.env` re-cif
 para o `.env` depois de 17/10, e nenhuma sumiu; conferido sem decifrar. **Falta:** depois do corte,
 o Caddyfile e o `.env` outra vez, conferidos sem decifrar (nomes e contagem de valores em `ENC[]`),
 como no #462.
+
+**Estado em 16/11/2026.** O Estágio 3 da DEC-081 mudou de novo os dois arquivos da VPS: o Caddyfile
+perdeu os blocos do Authelia (`auth.` redireciona para o apex e o `/tiles/*` do `dashboard.` responde
+404) e o compose perdeu o serviço `authelia`. O `.env` ainda tem as `AUTHELIA_*`, guardadas como
+caminho de volta do kit. Um restore pelo `Caddyfile.enc` de 27/10 traria de volta os blocos que
+apontam para um `authelia:9091` que não existe. Recifrar o Caddyfile agora; o `.env`, depois que as
+`AUTHELIA_*` saírem da VPS.
 
 ---
 

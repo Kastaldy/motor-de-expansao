@@ -7,7 +7,6 @@
 # Subcomandos:
 #   containers  containers esperados up/healthy + edge HTTPS do dashboard (cron */5)
 #   host        disco e memória do host (cron horário)
-#   authelia    resumo diário de falhas de login (cron 1x/dia)
 #   coleta      domingo pós-coleta: resumo do relatório GymScraping ou alerta de falha
 #   agregadores idade da última partição de snapshot de cada agregador (cron semanal, BLK-MA-21)
 #   crescimento idade do artefato da camada de crescimento municipal (cron trimestral, DEC-052)
@@ -103,7 +102,6 @@ PINS_MIN_DESENHAVEIS="${MONITOR_PINS_MIN_DESENHAVEIS:-100}"
 PINS_CONTAINER="${MONITOR_PINS_CONTAINER:-motor_expansao_web}"
 CONTAINERS=(
     motor_expansao_caddy
-    motor_expansao_authelia
     motor_expansao_api
     motor_expansao_telegram_bot
     # Tileserver do basemap self-host (BLK-BASEMAP-01, stack em /opt/openmaptiles-infra).
@@ -272,7 +270,7 @@ check_containers() {
             report "container_$c" OK ""
         fi
     done
-    # Edge externo: 2xx/3xx (redirect do Authelia) ou 401 = vivo.
+    # Edge externo: 2xx/3xx (redirect para o login) ou 401 = vivo.
     code=$(curl -s -o /dev/null -m 15 -w '%{http_code}' "$EDGE_URL" || echo "000")
     if [[ "$code" =~ ^(2|3|401) ]]; then
         report edge OK ""
@@ -291,8 +289,8 @@ check_containers() {
 #
 # `/api/me` com um cookie de sessao INVALIDO tem de ser 401. Se vier 200, a API esta' aberta
 # (a borda deixou passar e, depois do corte, o portao de sessao tambem); se vier 503, o banco
-# nao respondeu e ninguem entra (ver o comentario do `postgres` acima). ANTES do corte tambem
-# vale: o Authelia responde 302 ou 401, e os dois sao aceitos.
+# nao respondeu e ninguem entra (ver o comentario do `postgres` acima). Um 302 (redirect para
+# o login) tambem conta como borda fechada.
 #
 # POR QUE O COOKIE (achado de 24/10/2026). A sonda ia SEM cookie, e assim o ramo do 503 nunca
 # disparava: sem token, o `/api/verify` responde 401 ANTES de abrir conexao
@@ -300,8 +298,6 @@ check_containers() {
 # depois do corte, quando banco fora e' o piloto BR inteiro fora. Com um token qualquer, ele
 # faz a MESMA consulta que faz para uma pessoa: token que nao existe = 401; banco que nao
 # responde = 503. O token nao abre nada nem escreve nada: e' um SELECT que nao acha linha.
-# Antes do corte, nada muda: o Authelia ignora este cookie (o dele e' outro), e o `auth` nao
-# acusa banco fora -- ali, banco fora e' degradacao, e quem acusa e' o `containers`.
 check_auth() {
     local code
     code=$(curl -s -o /dev/null -m 15 -w '%{http_code}' -H "Cookie: ${COOKIE_SONDA_AUTH}" \
@@ -329,17 +325,6 @@ check_host() {
         report mem FAIL "Memória disponível em ${availpct}% (limiar ${MEM_AVAIL_PCT_MIN}%)"
     else
         report mem OK ""
-    fi
-}
-
-check_authelia() {
-    # Resumo diário; só notifica se houve falha de login nas últimas 24h.
-    local n
-    n=$(docker logs --since 24h motor_expansao_authelia 2>&1 |
-        grep -ci "unsuccessful.*authentication" || true)
-    log "authelia: $n falha(s) de login em 24h"
-    if ((n > 0)); then
-        send_telegram "🟡 [VPS Ultra] Authelia: ${n} tentativa(s) de login malsucedida(s) nas últimas 24h" || true
     fi
 }
 
@@ -829,7 +814,6 @@ check_banco() {
 case "${1:-}" in
 containers) check_containers ;;
 host) check_host ;;
-authelia) check_authelia ;;
 coleta) check_coleta ;;
 agregadores) check_agregadores ;;
 crescimento) check_crescimento ;;
@@ -842,7 +826,7 @@ test)
     echo "mensagem de teste enviada"
     ;;
 *)
-    echo "uso: $0 {containers|host|authelia|coleta|agregadores|crescimento|geoip|mercado|pins|banco|test}" >&2
+    echo "uso: $0 {containers|host|coleta|agregadores|crescimento|geoip|mercado|pins|banco|test}" >&2
     exit 2
     ;;
 esac

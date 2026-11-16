@@ -49,7 +49,7 @@ um valor é editar esta tabela primeiro.
 > rotas respondem **404** enquanto `MOTOR_AUTENTICACAO_PROPRIA` estiver vazia, e aí nenhuma
 > linha de `login` é escrita — não por falta de chamador, mas porque o caminho
 > inteiro fica dormente. Com a chave ligada, as linhas aparecem no mesmo instante, sem mudar
-> uma linha de código. No BR ela está ligada desde o corte do P19 (27/10/2026, `docs/infra_producao.md`), e na AR desde o corte AR da DEC-081 (31/10/2026, pela `MOTOR_AUTENTICACAO_PROPRIA_AR` do `.env`); onde ainda está vazia, quem autentica é o Authelia.
+> uma linha de código. No BR ela está ligada desde o corte do P19 (27/10/2026, `docs/infra_producao.md`), e na AR desde o corte AR da DEC-081 (31/10/2026, pela `MOTOR_AUTENTICACAO_PROPRIA_AR` do `.env`). O Authelia, que autenticava onde ela estava vazia, foi aposentado em 16/11/2026 (Estágio 3 da DEC-081).
 >
 > **Por que isto é reposição, e não conveniência.** O `docs/trilha_acesso_piloto.md` registra as
 > tentativas de login do Authelia — **sucesso e falha**, com usuário e IP — como a **camada 3** da
@@ -240,12 +240,14 @@ que alguém mude o próprio acesso pela tela. Trocar a própria senha é o opost
 nunca a senha, nunca o hash, nunca parte de nenhum dos dois.
 
 > **O que a criação NÃO resolve com o login próprio desligado.** Com `MOTOR_AUTENTICACAO_PROPRIA` vazia, criar linha em `usuarios` **não** cria a
-> pessoa no `authelia/users_database.yml`, que é quem autentica nesse caso. A tela
-> avisa isso em voz alta depois de criar, com o login a cadastrar; sem esse aviso a criação seria uma
-> armadilha silenciosa — a pessoa apareceria na lista e não entraria, sem pista do porquê. Com a chave ligada (o BR, desde o corte do P19, em 27/10/2026), a pessoa já entra com a senha inicial, e a tela pede o cadastro no Authelia só para o rollback do corte continuar possível.
+> pessoa em lugar nenhum por onde ela entre: até 16/11/2026 era preciso cadastrá-la também no
+> `authelia/users_database.yml`, e a tela pedia isso depois de criar (com a chave ligada, pelo
+> rollback do corte). O Estágio 3 da DEC-081 aposentou o Authelia e o pedido saiu: hoje, com a chave
+> desligada, a tela avisa que a pessoa só entra quando o login próprio for ligado; com ela ligada (o
+> estado de produção), a pessoa já entra com a senha inicial.
 >
 > `senha_hash` guarda, desde a D26, um PHC Argon2id de
-> verdade, produzido só por `motor_expansao.db.senhas.gerar`. No BR, desde o corte do P19 (27/10/2026), é ela que autentica: o `POST /api/login` confere a senha digitada contra este hash; com a chave vazia, o login volta a passar pelo Authelia.
+> verdade, produzido só por `motor_expansao.db.senhas.gerar`. No BR, desde o corte do P19 (27/10/2026), é ela que autentica: o `POST /api/login` confere a senha digitada contra este hash. Com a chave vazia não há mais outra porta: o Authelia foi aposentado em 16/11/2026.
 
 **Os dois gestos sobre a senha DE OUTRA PESSOA (15/09/2026).** A tela de administração tem os dois gestos, e cada
 um tem o seu tipo:

@@ -222,7 +222,7 @@ def test_healthcheck_expoe_subcomando_agregadores() -> None:
     assert "agregadores|" in texto, (
         "a string de uso não lista o subcomando: ele existiria sem ser descobrível"
     )
-    assert "uso: $0 {containers|host|authelia|coleta|agregadores|" in texto
+    assert "uso: $0 {containers|host|coleta|agregadores|" in texto
 
 
 def test_healthcheck_agregadores_tem_limiar_configuravel() -> None:

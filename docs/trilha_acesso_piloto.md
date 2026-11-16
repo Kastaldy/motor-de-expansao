@@ -19,7 +19,7 @@ e de onde".
 |---|---|---|---|
 | **1. App (backend do piloto)** | usuário real, IP de origem, método, rota+query, status, latência, user-agent, bytes | `/opt/motor-expansao/logs/acesso/acesso-AAAA-MM-DD.jsonl` (volume `:rw` próprio) | **sem prazo** desde a emenda 2 da DEC-027 (20/10/2026; era 90 dias). Poda só se `MOTOR_ACESSO_RETENCAO_DIAS` for definida |
 | **2. Caddy (edge)** | access log HTTP completo do host `piloto.` em JSON (IP real, TLS, user-agent, latência) | `/opt/motor-expansao/logs/caddy/piloto-access.log` | rotação do próprio Caddy: 20 MiB × 10 arquivos, máx. 2160h (90 dias) |
-| **3. Authelia (login)** | tentativas de login com usuário + IP — **sucesso e falha** (`level: info`) | stdout do container (rotação do daemon Docker) | ~semanas (10 MB × 3) |
+| **3. Login (entrada)** | tentativas de login com usuário — **sucesso e falha** (eventos `login` e `login.recusado`, `docs/eventos_contrato.md`) | tabela de eventos do banco | a do banco. Até o corte do login próprio (BR 27/10, AR 31/10/2026) eram os logs do Authelia, aposentado em 16/11/2026 |
 
 A camada 1 é a fonte primária de auditoria de uso; a 2 é o registro bruto de edge
 (cobre também o que o app filtra); a 3 responde "quem entrou e quando".
@@ -73,13 +73,13 @@ A camada 1 é a fonte primária de auditoria de uso; a 2 é o registro bruto de 
   a escrita vive no módulo `acesso_log`).
 - **Sem segredo, sem excesso:** a trilha não grava headers de autenticação, cookies nem
   corpo de requisição. O Caddy (camada 2) redige `Authorization`/`Cookie` por default
-  (>= 2.5). Usuários são logins internos do Authelia; IPs são dado operacional de
+  (>= 2.5). Usuários são os logins do piloto; IPs são dado operacional de
   auditoria. **A retenção deixou de ser definida** na emenda 2 da DEC-027 (20/10/2026):
   a trilha nominal (usuário + IP + rota) é guardada sem prazo, por decisão do Vinicius —
   um afastamento declarado da postura "retenção definida" da DEC-005, registrado na emenda.
 - **Limite de confiança da identidade:** `Remote-User`/`X-Forwarded-For` são headers, e o
-  backend `web:8899` só autentica por conta própria com `MOTOR_AUTENTICACAO_PROPRIA` ligada (aí o portão de sessão apaga o `Remote-User` do cliente e o refaz pelo cookie); desligada, como na produção hoje, a camada 1 só é **confiável para
-  tráfego que passou pelo Caddy** (que sobrescreve `Remote-User` com o valor do Authelia
+  backend `web:8899` só autentica por conta própria com `MOTOR_AUTENTICACAO_PROPRIA` ligada (aí o portão de sessão apaga o `Remote-User` do cliente e o refaz pelo cookie; é o estado de produção desde o corte, BR 27/10 e AR 31/10/2026); desligada, a camada 1 só é **confiável para
+  tráfego que passou pelo Caddy** (que sobrescreve `Remote-User` com o valor do `/api/verify`
   e ignora XFF de cliente não confiável). Uma requisição feita direto ao container (outro
   processo na `app_net`, dev local) pode forjar usuário/IP na linha. Para perícia, cruzar
   com a camada 2: linha na trilha do app **sem par no access log do Caddy** = tráfego que
@@ -98,8 +98,9 @@ grep '"usuario": "fulano' /opt/motor-expansao/logs/acesso/acesso-2026-08-16.json
 # quem gerou Relatorio Pontual na semana
 grep '"rota": "/api/relatorio/pontual"' /opt/motor-expansao/logs/acesso/acesso-2026-08-1*.jsonl
 
-# logins (sucesso e falha) com usuario + IP
-docker logs motor_expansao_authelia 2>&1 | grep -iE "authentication attempt"
+# logins (sucesso e falha): eventos `login` e `login.recusado` no banco -- consultas prontas
+# em docs/consultas_uteis.md (o `docker logs motor_expansao_authelia` de antes morreu com o
+# Authelia, em 16/11/2026)
 
 # edge bruto do piloto
 tail -50 /opt/motor-expansao/logs/caddy/piloto-access.log
@@ -123,8 +124,8 @@ O merge + deploy da imagem `web` ativa a camada 1 **somente depois** destes pass
    `piloto.ultra-expansao.tech` (o arquivo local do repo já tem a versão de referência;
    o do servidor é editado à mão). Depois: `docker compose -f docker-compose.prod.yml
    restart caddy`. **Atualizar também o backup `secrets/Caddyfile.enc` (SOPS).**
-4. **Authelia do servidor:** `log.level: info` em `authelia/configuration.yml` +
-   `docker compose -f docker-compose.prod.yml restart authelia`.
+4. **Authelia do servidor** (passo da época; o Authelia foi aposentado em 16/11/2026):
+   `log.level: info` em `authelia/configuration.yml` + `restart authelia`.
 5. **Subir o `web` novo** por digest (runbook `docs/deploy_piloto_web.md`) e conferir:
    navegar no piloto logado e `tail /opt/motor-expansao/logs/acesso/acesso-$(date -u
    +%F).jsonl` deve mostrar linhas com o seu usuário.
@@ -197,7 +198,7 @@ A trilha ganhou um consumidor visual: a aba `Acessos` do piloto
 > porque ver a trilha e mudar quem entra no sistema não são o mesmo poder.
 
 - **Autorização própria, mais forte que a das abas**: allowlist na env
-  `MOTOR_ACESSOS_ADMIN_USUARIOS` (usuários Authelia separados por vírgula,
+  `MOTOR_ACESSOS_ADMIN_USUARIOS` (logins do piloto separados por vírgula,
   case-insensitive), checada no middleware contra o `Remote-User`. FORA do
   `acesso_abas.json`: sem curinga, sem fail-open; `acessos` está fora de
   `ABAS_VALIDAS`, então concedê-la pelo JSON é permissão fantasma impossível.

@@ -93,7 +93,7 @@ def test_compose_ar_container_name_exato() -> None:
 
 
 def test_compose_ar_sem_api_e_sem_bot() -> None:
-    """Um servico so: api/bot/caddy/authelia sao da stack BR (compartilhados)."""
+    """Um servico so: api/bot/caddy sao da stack BR (compartilhados)."""
     assert set(_compose_ar()["services"]) == {"web_ar"}
 
 

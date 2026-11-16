@@ -675,16 +675,16 @@ def test_as_duas_pessoas_da_criacao_nao_se_invertem(
     assert tipo == mod.EVENTO_CRIADO
 
 
-def test_criar_devolve_o_id_novo_e_avisa_do_authelia(
+def test_criar_devolve_o_id_novo_sem_o_passo_do_authelia(
     monkeypatch: pytest.MonkeyPatch, _sem_argon2: None
 ) -> None:
-    """A tela precisa do id, e precisa do recado: a pessoa ainda não entra."""
+    """A tela precisa do id. O `falta_cadastrar_no_authelia` saiu no Estágio 3 da DEC-081."""
     _con_criacao(monkeypatch, id_novo=42)
     saida = mod.criar(
         login="ana", nome="Ana", email="ana@ultra.com", perfil="growth", paises=["BR"], autor=7
     )
     assert saida["id_usuario"] == 42
-    assert saida["falta_cadastrar_no_authelia"] is True
+    assert "falta_cadastrar_no_authelia" not in saida
 
 
 def test_metadados_da_criacao_nao_carregam_pii(

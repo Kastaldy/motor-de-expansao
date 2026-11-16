@@ -4,7 +4,6 @@ import { api, ApiError } from '../lib/api'
 import type { AcaoAdmin } from '../lib/confirmacao-admin'
 import { montarConfirmacao, rotuloPerfil } from '../lib/confirmacao-admin'
 import {
-  ARQUIVO_AUTHELIA,
   COLUNA_SENHA,
   dicaDoFormulario,
   loginProprioDoPayload,
@@ -45,18 +44,15 @@ import { Aviso, Botao, Chip, Spinner } from './primitives'
    propósito: o admin não deve conhecer a senha de outra pessoa, senão qualquer ação
    daquela conta fica contestável — o oposto do que o D17 sustenta.
 
-   O PASSO DO AUTHELIA, e a tela diz em voz alta DEPOIS DE CRIAR. Com o login próprio
-   DESLIGADO (o estado de produção até o corte do P19), a pessoa também precisa nascer no
-   `users_database.yml` do servidor: uma linha em `usuarios` sem a entrada de lá não deixa
-   ninguém entrar, e sem esse recado criar usuário seria uma armadilha silenciosa — a pessoa
-   apareceria na lista e não entraria, sem pista do porquê. Com a chave LIGADA ela já entra
-   com a senha inicial, e o cadastro no Authelia vira o caminho de volta do corte, durante a
-   janela de observação. A listagem diz qual dos dois vale (`login_proprio`); os textos que
-   dependem disso moram em `lib/painel-usuarios.ts`, com teste.
+   O RECADO DEPOIS DE CRIAR diz se a pessoa já entra. Até 16/11/2026 ele pedia também o
+   cadastro no `users_database.yml` do Authelia — sem ele, com a chave desligada, a pessoa
+   não entrava; com ela ligada, era o caminho de volta do corte. O Estágio 3 da DEC-081
+   aposentou o Authelia, e o passo saiu. A listagem diz se a chave está ligada
+   (`login_proprio`); os textos que dependem disso moram em `lib/painel-usuarios.ts`, com teste.
 
    OS GESTOS DE SENHA SÓ EXISTEM COM A CHAVE LIGADA (decisão do dono, 24/10/2026).
-   "Redefinir senha" e "Exigir troca" mexem na senha do BANCO, que com a entrada pelo
-   Authelia não abre porta nenhuma: a temporária não servia para nada. Sem a chave os
+   "Redefinir senha" e "Exigir troca" mexem na senha do BANCO, que sem a chave não é
+   conferida na entrada: a temporária não serviria para nada. Sem a chave os
    botões somem, e o servidor recusa os dois com 404.
 
    CADA MUDANÇA É UM EVENTO. O backend grava `usuario.criado`,
@@ -91,16 +87,6 @@ const TOM_DO_PERFIL: Record<string, 'blue' | 'green' | 'amber' | 'gray'> = {
 function mensagemDeErro(e: unknown, escrita = false): string {
   if (!(e instanceof ApiError)) return String(e)
   return mensagemDeErroDoPainel(e.status, e.message, { escrita })
-}
-
-/** O corpo de um recado com o caminho do Authelia em fonte de código, como sempre foi. */
-function comArquivo(texto: string) {
-  return texto.split(ARQUIVO_AUTHELIA).map((parte, i) => (
-    <Fragment key={i}>
-      {i > 0 && <code style={{ font: '500 11px var(--f-num)' }}>{ARQUIVO_AUTHELIA}</code>}
-      {parte}
-    </Fragment>
-  ))
 }
 
 /** Campos vazios do formulário de criação. Fica fora do componente para o
@@ -284,8 +270,7 @@ export default function PainelUsuarios() {
   /**
    * Cria a pessoa e RECARREGA, como o `aplicar`.
    *
-   * O recado de sucesso não é decorativo: ele diz o passo que a tela não fez — cadastrar
-   * a pessoa no Authelia. Sem isso, criar usuário aqui é uma armadilha silenciosa.
+   * O recado de sucesso não é decorativo: ele diz se a pessoa já entra e com qual senha.
    *
    * Em caso de erro o formulário fica ABERTO com o que foi digitado. Um 409 de login em
    * uso costuma se resolver mudando uma letra, e limpar os campos obrigaria a redigitar
@@ -321,7 +306,7 @@ export default function PainelUsuarios() {
    * Fecha ANTES de esperar a resposta nos casos de linha (`aplicar` já tranca a linha
    * pelo `salvando`), e no caso de criar espera, porque o `criar` precisa do formulário
    * intacto se der erro. Em nenhum caminho o pop-up fica aberto no sucesso: ele cobriria
-   * justamente o aviso do Authelia, que é a coisa mais importante da tela depois de criar.
+   * justamente o recado da criação, que é a coisa mais importante da tela depois de criar.
    */
   const confirmar = useCallback(async () => {
     if (!pendente) return
@@ -379,8 +364,8 @@ export default function PainelUsuarios() {
 
   const { usuarios, perfis, eu } = dados
   /* A chave do login próprio deste deploy. Ausente conta como desligada — o lado
-     conservador: esconde gestos que o servidor recusaria e mostra o recado de quem ainda
-     depende do Authelia. */
+     conservador: esconde gestos que o servidor recusaria e avisa que a senha do banco ainda
+     não vale na entrada. */
   const loginProprio = loginProprioDoPayload(dados)
   /* Catálogo de países para o seletor (DEC-081), e qual vem marcado por padrão (o país deste
      processo). Ausentes num deploy antigo: o seletor some e a criação herda o padrão do backend. */
@@ -602,10 +587,10 @@ export default function PainelUsuarios() {
           <div style={{ flex: 1, minWidth: 0 }}>
             {/* O recado depende do login próprio (`recadoDaCriacao`, com teste). Até 24/10/2026
                 ele dizia, com a chave desligada, que "a pessoa será levada a trocá-la no
-                primeiro acesso" — falso enquanto quem confere a senha é o Authelia. */}
+                primeiro acesso" — falso enquanto quem conferia a senha era o Authelia. */}
             <strong>{recadoCriado.titulo}</strong>
             <br />
-            {comArquivo(recadoCriado.corpo)}
+            {recadoCriado.corpo}
           </div>
           <Botao variante="ghost" onClick={() => setCriado(null)}>
             Ok
@@ -660,7 +645,7 @@ export default function PainelUsuarios() {
                 value={novo.login}
                 autoComplete="off"
                 spellCheck={false}
-                placeholder="igual ao do Authelia"
+                placeholder="ex.: joao.silva"
                 onChange={(ev) => setNovo({ ...novo, login: ev.target.value })}
               />
             </div>
@@ -979,8 +964,8 @@ export default function PainelUsuarios() {
                           entrada a preparar. O backend aceita os dois em inativos — esconder aqui
                           é para a linha apagada não oferecer o que não serve.
 
-                          E SÓ COM O LOGIN PRÓPRIO LIGADO (decisão do dono, 24/10/2026): com a
-                          entrada pelo Authelia, a temporária de "Redefinir" não abria nada e a
+                          E SÓ COM O LOGIN PRÓPRIO LIGADO (decisão do dono, 24/10/2026): sem a
+                          chave, a temporária de "Redefinir" não abriria nada e a
                           marca de "Exigir troca" não convidava ninguém. O backend recusa os dois
                           com 404 sem a chave; esconder aqui é para o botão não prometer o que
                           será negado. */}

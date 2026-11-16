@@ -5,7 +5,7 @@ GitHub Container Registry (GHCR), sem `build` no servidor. O piloto web e o app 
 construida e publicada pelo job `publish-web` do workflow `CI`
 (`.github/workflows/ci.yml`), que so publica quando o job `test` conclui com sucesso
 (gate `needs: [test]`); o servidor so faz `pull` + `up -d`. O runbook completo
-(DNS, Caddy, Authelia, dados, checklist pos-deploy) e `docs/deploy_piloto_web.md` —
+(DNS, Caddy, dados, checklist pos-deploy) e `docs/deploy_piloto_web.md` —
 este doc cobre so o ciclo rotineiro de atualizacao.
 
 > GUARDRAIL CLAUDE.md §6: nenhum comando e executado no VPS por agente/MCP/SSH sem
@@ -40,7 +40,7 @@ este doc cobre so o ciclo rotineiro de atualizacao.
 ## Pre-condicoes (no VPS, ja existentes)
 
 - Imagem publicada no GHCR pelo workflow (tag `sha-<commit>` ou `latest`).
-- `.env` (com `WEB_IMAGE` pinado), `Caddyfile`, `authelia/*` presentes em
+- `.env` (com `WEB_IMAGE` pinado) e `Caddyfile` presentes em
   `/opt/motor-expansao/app/`.
 - Parquets em `/opt/motor-expansao/data/{outputs,staging,ibge,ultra}` e
   `concorrentes/` (montados read-only). A lista do que o piloto precisa — e o que
@@ -142,9 +142,9 @@ docker compose -f docker-compose.prod.yml restart web
 
 ## Referencias
 
-- Runbook completo do piloto (DNS, Caddy, Authelia, dados, checklist, gotchas):
+- Runbook completo do piloto (DNS, Caddy, dados, checklist, gotchas):
   `docs/deploy_piloto_web.md`.
 - Build local de sanity (independe do compose): `docker build -f Dockerfile.web -t test:web .`
 - API GeoEspacial + bot Telegram (`API_IMAGE`): `docs/deploy_api_bot.md`.
-- Infra real do servidor (Caddy/Authelia/tileserver): `docs/infra_producao.md`.
+- Infra real do servidor (Caddy/tileserver): `docs/infra_producao.md`.
 - Backup/restore de segredos e regeneracao de Parquets: `docs/backup_restore.md`.

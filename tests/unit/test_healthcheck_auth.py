@@ -150,7 +150,7 @@ def test_a_sonda_manda_o_cookie_e_cada_codigo_vira_o_estado_certo(tmp_path: Path
     assert set(por_caso) == set(casos), por_caso
 
     assert por_caso["401"][0] == "OK"
-    assert por_caso["302"][0] == "OK", "antes do corte o Authelia redireciona, e isso é saudável"
+    assert por_caso["302"][0] == "OK", "um redirect para o login é borda fechada, e isso é saudável"
     assert por_caso["200"][0] == "FAIL"
     assert "GRAVE" in por_caso["200"][1]
     assert por_caso["503"][0] == "FAIL"

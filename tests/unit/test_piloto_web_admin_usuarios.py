@@ -365,7 +365,6 @@ def test_a_criacao_passa_o_autor_e_devolve_o_id(monkeypatch: pytest.MonkeyPatch)
             "id_usuario": 42,
             "login": "ana",
             "perfil": "expansao",
-            "falta_cadastrar_no_authelia": True,
         }
 
     monkeypatch.setattr(db_usuarios, "criar", _criar)
@@ -374,19 +373,17 @@ def test_a_criacao_passa_o_autor_e_devolve_o_id(monkeypatch: pytest.MonkeyPatch)
     assert visto["autor"] == 7
     assert visto["login"] == "ana"
     assert saida["id_usuario"] == 42
-    assert saida["falta_cadastrar_no_authelia"] is True
 
 
 @pytest.mark.parametrize("ligada", [False, True])
-def test_a_criacao_diz_a_chave_e_o_authelia_segue_pendente_nos_dois_estados(
+def test_a_criacao_diz_a_chave_nos_dois_estados(
     monkeypatch: pytest.MonkeyPatch, ligada: bool
 ) -> None:
     """O recado depois de criar depende da chave, e a resposta tem de dizer qual e'.
 
-    `falta_cadastrar_no_authelia` fica `True` nos DOIS estados, por razoes diferentes:
-    desligada, sem a entrada no `users_database.yml` a pessoa nao entra; ligada, durante a
-    janela de observacao do corte, a entrada no Authelia e' o que mantem o rollback possivel.
-    O que muda e' o recado -- e quem o escolhe e' `login_proprio`.
+    Ate' 16/11/2026 vinha tambem `falta_cadastrar_no_authelia`, o passo manual no
+    `users_database.yml`; saiu com o Estagio 3 da DEC-081. Quem escolhe o recado e'
+    `login_proprio`.
     """
     if ligada:
         monkeypatch.setenv(db_sessoes.ENV_AUTENTICACAO_PROPRIA, "1")
@@ -398,12 +395,11 @@ def test_a_criacao_diz_a_chave_e_o_authelia_segue_pendente_nos_dois_estados(
             "id_usuario": 42,
             "login": "ana",
             "perfil": "expansao",
-            "falta_cadastrar_no_authelia": True,
         },
     )
     saida = pilot_app.acessos_usuarios_criar(_corpo_novo(), remote_user=ADMIN)
     assert saida["login_proprio"] is ligada
-    assert saida["falta_cadastrar_no_authelia"] is True
+    assert "falta_cadastrar_no_authelia" not in saida
     assert saida["id_usuario"] == 42
 
 
@@ -775,7 +771,8 @@ def test_a_recusa_segue_o_STATUS_do_login_mas_fala_portugues() -> None:
         assert no_login.value.status_code == 404
         assert texto != no_login.value.detail
         assert "login próprio" in texto, "a recusa tem de dizer o que esta' desligado"
-        assert "Authelia" in texto, "a recusa tem de dizer por onde se entra hoje"
+        assert "desligado neste servidor" in texto, "a recusa tem de dizer onde esta' desligado"
+        assert "Authelia" not in texto, "o Authelia foi aposentado no Estagio 3 da DEC-081"
 
 
 @pytest.mark.parametrize(
@@ -1085,7 +1082,6 @@ def test_criacao_usa_o_pais_do_processo_quando_a_tela_nao_manda(
             "id_usuario": 1,
             "login": "ana",
             "perfil": "expansao",
-            "falta_cadastrar_no_authelia": True,
         }
 
     monkeypatch.setattr(db_usuarios, "criar", _criar)
@@ -1104,7 +1100,6 @@ def test_criacao_repassa_os_paises_escolhidos(monkeypatch: pytest.MonkeyPatch) -
             "id_usuario": 1,
             "login": "ana",
             "perfil": "growth",
-            "falta_cadastrar_no_authelia": True,
         }
 
     monkeypatch.setattr(db_usuarios, "criar", _criar)

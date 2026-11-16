@@ -15,10 +15,10 @@
 | IP | 2.25.137.241 |
 | Domínio | ultra-expansao.tech |
 | Piloto (app de produção) | https://piloto.ultra-expansao.tech |
-| Tiles (basemap self-host) | https://dashboard.ultra-expansao.tech/tiles/* |
-| Portal de login | https://auth.ultra-expansao.tech |
+| Tiles (basemap self-host) | só na rede interna (`http://motor_expansao_tileserver:8080`); a rota pública `dashboard.ultra-expansao.tech/tiles/*` responde 404 desde 16/11/2026 |
+| Login | a tela de entrar de cada host (`/entrar.html`); `auth.ultra-expansao.tech`, o antigo portal do Authelia, só redireciona para o apex desde 16/11/2026 |
 | Piloto AR (instância argentina) | https://piloto-ar.ultra-expansao.tech |
-| API GeoEspacial (só Bearer, sem Authelia) | https://api.ultra-expansao.tech |
+| API GeoEspacial (só Bearer, sem login do piloto) | https://api.ultra-expansao.tech |
 | Portal de seleção de país | https://ultra-expansao.tech |
 | SO | Ubuntu 22.04 LTS |
 | Recursos | 4 vCPU, 16 GB RAM, 200 GB NVMe, 4 GB swap |
@@ -39,14 +39,14 @@
 - **web (SPA + FastAPI)** — piloto web (React/Vite + FastAPI num único container, porta interna `8899`), container `motor_expansao_web`
 - **API GeoEspacial + bot Telegram** — containers `motor_expansao_api` e `motor_expansao_telegram_bot` (mesma imagem; ver `docs/deploy_api_bot.md`)
 - **Caddy** — reverse proxy com TLS automático (Let's Encrypt), container `motor_expansao_caddy`
-- **Authelia 4.38** — autenticação self-hosted (login + 2FA opcional), container `motor_expansao_authelia`
+- **Login próprio** — a autenticação dos três hosts (apex, BR e AR) é do próprio piloto: o Caddy pergunta ao `/api/verify` do `web`/`web_ar` em cada requisição (DEC-067 e DEC-081). O Authelia, que fazia isso antes, foi aposentado em 16/11/2026 (Estágio 3 da DEC-081)
 - **Valhalla (opcional, DEC-074)** — serviço de rotas das isócronas de 5 e 10 min de carro (Emenda 1 da DEC-074), stack separada em `/opt/valhalla-infra`, container `motor_expansao_valhalla` (ver "Serviço de rotas")
 
 - **PostgreSQL 18 + PostGIS 3.6** — banco do piloto (usuários, RBAC, sessões), container `motor_expansao_postgres`, sem porta no host (ver `docs/banco_deploy.md`)
 - **Piloto web AR** — instância argentina com a MESMA imagem (`WEB_IMAGE`), container `motor_expansao_web_ar`, compose próprio `docker-compose.ar.yml` (ver `docs/deploy_piloto_web.md` §8)
 - **Tileserver (basemap self-host)** — container `motor_expansao_tileserver`, stack separada em `/opt/openmaptiles-infra`
 
-`web`, `api`, `telegram-bot`, `postgres`, `caddy` e `authelia` sobem com `docker compose -f docker-compose.prod.yml`; `web_ar` (`docker-compose.ar.yml`), tileserver e Valhalla têm compose próprio.
+`web`, `api`, `telegram-bot`, `postgres` e `caddy` sobem com `docker compose -f docker-compose.prod.yml`; `web_ar` (`docker-compose.ar.yml`), tileserver e Valhalla têm compose próprio.
 
 ## Acesso SSH
 
@@ -109,7 +109,7 @@ docker compose -f docker-compose.prod.yml exec web curl -fsS http://127.0.0.1:88
 docker inspect -f '{{range .Config.Env}}{{println .}}{{end}}' motor_expansao_web | grep -c '^MOTOR_DATABASE_URL=postgresql://app:'
 ```
 
-- Caddy e Authelia **nao** reiniciam.
+- O Caddy **nao** reinicia.
 - **Todo `up` que alcance o `web` comeca com `unset MOTOR_DATABASE_URL`**: o dele (aqui, no
   rollback abaixo e em qualquer recriacao), o `up -d` sem servico e o `up -d caddy`, que recria o
   `web` junto quando a config dele diverge (medido em 24/10/2026, Compose v5.6.0: com a variavel
@@ -1229,103 +1229,53 @@ docker compose -f docker-compose.prod.yml up -d caddy    # NAO `caddy reload` ne
 
 Depois disso, edições de HTML em `portal/` são **ao vivo** (o bind entrega o arquivo novo na
 requisição seguinte, sem restart); mudanças no `Caddyfile` seguem pedindo
-`caddy reload` como sempre. Aceites da metade não-versionada (Caddyfile/Authelia):
+`caddy reload` como sempre. Aceites da metade não-versionada (Caddyfile):
 `bash scripts/aceite_portal_paises.sh` em `/opt/motor-expansao/app`, com a saída colada no PR
 (spec §7.4.2).
 
-## Gerenciar usuários do login (Authelia)
+## Gerenciar usuários do login
 
-> Até o corte do P19, o Authelia protegia `piloto.ultra-expansao.tech` e `/tiles/` em
-> `dashboard.ultra-expansao.tech` com a mesma base de usuários; desde o corte, o piloto BR tem login
-> próprio (abaixo), e a instância AR também, desde o corte da DEC-081 (31/10/2026). O Authelia segue
-> de pé só pelo `/tiles/` do `dashboard.` e como reserva do rollback até o fim da janela de
-> observação (16/11/2026); depois vem o Estágio 3, que o tira do compose (emenda de 06/11/2026 da
-> DEC-081).
+> **Quem autentica é o próprio piloto, pela senha do banco, nos três hosts** (apex, BR e AR):
+> `MOTOR_AUTENTICACAO_PROPRIA` ligada e o `forward_auth` do Caddy apontando para o nosso
+> `/api/verify` (DEC-067 e DEC-081). O BR cortou em 27/10/2026 e a AR em 31/10/2026: o `web_ar` fala
+> com o mesmo banco (`MOTOR_DATABASE_URL_AR` no `.env`, mesmo papel `app`), a mesma linha de
+> `usuarios` (e a mesma senha) vale nos dois hosts, e o `/api/verify` do `web_ar` só deixa entrar quem
+> tem o país AR em `usuario_paises`.
 >
-> **Desde o corte, no BR,
-> quem autentica é o próprio piloto, pela senha do banco** (`MOTOR_AUTENTICACAO_PROPRIA` ligada e o
-> `forward_auth` do Caddy apontando para o nosso `/api/verify`, DEC-067, D4) — ver o aviso "Depois do
-> corte do P19", abaixo. Na AR é igual desde o corte da DEC-081: o `web_ar` fala com o mesmo banco
-> (`MOTOR_DATABASE_URL_AR` no `.env`, mesmo papel `app`), a mesma linha de `usuarios` (e a mesma
-> senha) vale nos dois hosts, e o `/api/verify` do `web_ar` só deixa entrar quem tem o país AR em
-> `usuario_paises`.
-> Os gestos de senha do banco — "Trocar a minha senha", "Redefinir senha" e "Exigir troca" —
-> só aparecem e só funcionam com `MOTOR_AUTENTICACAO_PROPRIA` ligada (P19); a coluna "Senha (banco)" da tela de Acessos fala da senha do banco.
+> **O Authelia não existe mais desde 16/11/2026** (Estágio 3 da DEC-081). Até essa data esta seção
+> ensinava também a cadastrar, revogar e trocar senha no `users_database.yml` dele, que era o
+> caminho de volta do corte; esse texto está no histórico do git. Hoje não há segundo cadastro.
+>
+> Os gestos de senha do banco — "Trocar a minha senha", "Redefinir senha" e "Exigir troca" — só
+> aparecem e só funcionam com `MOTOR_AUTENTICACAO_PROPRIA` ligada; a coluna "Senha (banco)" da tela
+> de Acessos fala da senha do banco.
 
 ### Adicionar usuário
 
-1. Gerar hash da senha no servidor:
-   ```bash
-   docker run --rm authelia/authelia:4.38 authelia crypto hash generate argon2 --password 'SenhaNova'
-   ```
-2. Editar o arquivo de usuários:
-   ```bash
-   nano /opt/motor-expansao/app/authelia/users_database.yml
-   ```
-3. Adicionar bloco:
-   ```yaml
-   novousuario:
-     displayname: "Nome Completo"
-     password: "$argon2id$v=19$... (hash gerado)"
-     email: email@ultraacademia.com.br
-     groups:
-       - ultra_team
-       - expansao_br     # piloto BR (regra com `subject`, Bloco D de 2026-09-03); `expansao_ar` para a AR
-   ```
-4. Reiniciar Authelia:
-   ```bash
-   cd /opt/motor-expansao/app && docker compose -f docker-compose.prod.yml restart authelia
-   ```
-5. **Banco (piloto BR desde 23/10/2026; AR desde 31/10/2026, no mesmo cadastro):** criar a pessoa na
-   tela de **Acessos** do piloto, com o perfil (`expansao`, `consultoria`, `lideres` ou `growth`) e
-   os países que ela vai usar (sem o país AR, o `/api/verify` do `web_ar` a barra com 403). Quem cria
-   é um admin da allowlist do painel (`MOTOR_ACESSOS_ADMIN_USUARIOS`) com perfil `growth`. A ordem
-   dos dois cadastros não importa. Desde o corte do P19 (27/10/2026), no BR o banco basta, e na AR
-   desde o corte da DEC-081 (31/10/2026): a pessoa já entra com a senha inicial e é convidada a trocá-la no primeiro acesso; o cadastro no Authelia (passos 1 a 4) mantém o rollback possível durante a janela de observação do corte.
+Criar a pessoa na tela de **Acessos** do piloto, com o perfil (`expansao`, `consultoria`, `lideres`
+ou `growth`) e os países que ela vai usar (sem o país AR, o `/api/verify` do `web_ar` a barra com
+403). Quem cria é um admin da allowlist do painel (`MOTOR_ACESSOS_ADMIN_USUARIOS`) com perfil
+`growth`. A pessoa entra com a senha inicial (`MOTOR_SENHA_INICIAL`) e é convidada a trocá-la no
+primeiro acesso. Para usar o bot do Telegram, ela também precisa entrar na allowlist do bot (abaixo).
 
 ### Revogar usuário
 
-São **quatro** portas independentes, e revogar só a primeira não fecha as outras três.
+Sair da empresa é em **dois** lugares, e um não fecha o outro:
 
-**Com o banco ligado (BR desde 23/10/2026), sair é em TRÊS lugares — as portas 1, 3 e 4:** remover
-do Authelia, remover da allowlist do bot e desativar na tela de Acessos. A porta 2 não corta nada no
-BR enquanto o banco estiver ligado.
-
-> **A porta 1 DEIXA DE REVOGAR O BR no dia do corte do P19, e a AR no corte da DEC-081 (31/10/2026); a 4 passa a cortar também a entrada.** Depois
-> que `MOTOR_AUTENTICACAO_PROPRIA` estiver preenchida (na AR, a `MOTOR_AUTENTICACAO_PROPRIA_AR`), quem autentica o piloto é o
-> banco: remover a pessoa do `users_database.yml` **não a tira de lá** — ela continua dentro
-> pelas 8 h da sessão aberta. O `restart authelia` já não desloga a instância argentina, que
-> dependia dele até o corte da DEC-081. Conferir o estado das duas chaves:
-
-```bash
-cd /opt/motor-expansao/app && grep -E '^MOTOR_AUTENTICACAO_PROPRIA(_AR)?=' .env
-```
-
-> Enquanto durar a janela de observação do corte, faça a **1 e a 4** (a 3, do bot, vale sempre): o rollback devolve o
-> Authelia ao comando, então quem sai da empresa precisa sair dos dois cadastros. É a dívida
-> declarada na emenda de 25/09/2026 da DEC-067.
-
-1. **Authelia** — editar `authelia/users_database.yml`, remover o bloco do usuário e
-   `docker compose -f docker-compose.prod.yml restart authelia`.
-   O restart não é opcional se a pessoa puder estar logada: a sessão vive na memória
-   do processo (não há Redis) e o cookie dura 8h absolutas, então sem reiniciar ela
-   continua dentro. O restart desloga todo mundo — as pessoas só entram de novo.
-2. **Abas do piloto** — remover a chave do usuário em
-   `/opt/motor-expansao/cadastro/acesso_abas.json`. Relido por mtime: vale na hora,
-   sem restart. (O curinga `"*"` está em `[]`, então sair do arquivo já zera as abas —
-   mas o passo 1 continua necessário, senão a pessoa ainda autentica.)
-   **Com o banco ligado (produção BR desde 23/10/2026) este arquivo não é consultado no BR:**
-   remover a chave não corta nada hoje, só mantém fiel o caminho de volta do §8 do
-   `docs/banco_deploy.md` (esvaziar a `MOTOR_DATABASE_URL` devolve o controle a este JSON).
-3. **Bot do Telegram** — remover o `chat_id` de
+1. **Linha em `usuarios`** — desativar a pessoa pelo painel de **Acessos** do piloto. Revoga a
+   entrada nos três hosts (a linha é a mesma), e é **imediata**: `SQL_VALIDAR` exige `u.ativo` a
+   cada requisição guardada, então a sessão dela morre na requisição **seguinte** — sem janela de
+   8 h e sem reiniciar serviço nenhum.
+2. **Bot do Telegram** — remover o `chat_id` de
    `/opt/motor-expansao/cadastro/bot_allowlist.json` (seção abaixo).
-4. **Linha em `usuarios`** — desativar a pessoa pelo painel de **Acessos** do piloto. É a
-   única porta que revoga de verdade no BR e na AR depois do corte (a linha é a mesma nos dois
-   hosts), e é **imediata**: `SQL_VALIDAR`
-   exige `u.ativo` a cada requisição guardada, então a sessão dela morre na requisição
-   **seguinte** — sem janela de 8 h e sem reiniciar serviço nenhum.
 
-> **Por que o passo 3 existe.** O bot nunca consulta o Authelia: revogar no Authelia **não fecha o bot**. Ele tem a senha
+Existe ainda o `/opt/motor-expansao/cadastro/acesso_abas.json`, que **não é consultado** com o banco
+ligado (produção BR desde 23/10/2026). Tirar a pessoa dele não corta nada hoje; só mantém fiel o
+caminho de volta do §8 do `docs/banco_deploy.md` (esvaziar a `MOTOR_DATABASE_URL` devolve o controle
+das abas a este JSON).
+
+> **Por que o passo 2 existe.** O bot nunca consulta o cadastro do piloto: desativar a pessoa no
+> painel **não fecha o bot**. Ele tem a senha
 > COMPARTILHADA, e o "login" pedido depois dela não é verificado contra nada — é
 > rótulo de trilha, não identidade. E trocar a
 > senha também não resolve, porque as sessões são persistidas em disco com
@@ -1360,19 +1310,10 @@ Arquivo: `/opt/motor-expansao/cadastro/bot_allowlist.json`. Um `chat_id` por ent
 
 ### Trocar senha de usuário
 
-> **Depois do corte do P19, o caminho no BR é OUTRO, e é o que a própria mensagem de bloqueio
-> do piloto promete:** redefinir pelo painel de **Acessos**, que gera uma senha temporária
-> aleatória válida por 2 h e **destrava** a conta barrada pela trava de tentativas. Mexer no
-> `users_database.yml` não muda a senha com que a pessoa entra no piloto brasileiro, nem, desde o
-> corte da DEC-081 (31/10/2026), no argentino: é a mesma linha de `usuarios` nos dois hosts. Os três
-> passos abaixo seguem valendo antes do corte e, depois dele, só mantêm o cadastro paralelo do
-> rollback, até o fim da janela de observação (16/11/2026).
-> Antes do corte (a partir da imagem de 24/10/2026), "Redefinir senha" nem aparece no painel (e a rota responde 404 avisando que a
-> entrada ainda é pelo Authelia).
-
-1. Gerar novo hash (passo 1 acima)
-2. Substituir o campo `password:` do usuário em `users_database.yml`
-3. Reiniciar Authelia
+Redefinir pelo painel de **Acessos**, que é o que a própria mensagem de bloqueio do piloto
+promete: gera uma senha temporária aleatória, válida por 2 h, mostrada uma única vez para quem
+administra repassar, e **destrava** a conta barrada pela trava de tentativas. Vale nos três hosts (a
+linha de `usuarios` é a mesma). A própria pessoa troca a dela em "Trocar a minha senha".
 
 ---
 
@@ -1403,8 +1344,9 @@ reinicia sozinho. Quando o banner/`/var/run/reboot-required` acusar, agendar reb
 indisponibilidade; containers voltam sozinhos — comprovado em 2026-07-13). O monitoramento
 (BLK-SEC-05) alerta se algo não voltar.
 
-**Pendente (follow-up BLK-SEC-03-FU1):** forçar 2FA no Authelia para o `ultra_team` + revisão de
-acesso — exige o time presente para cadastrar TOTP; agendar com aviso prévio.
+**Pendente (follow-up BLK-SEC-03-FU1):** 2FA para a equipe + revisão de acesso. Era "forçar 2FA no
+Authelia"; com o Authelia aposentado (16/11/2026), o 2FA teria de nascer no login próprio, que o
+deixou fora do corte (DEC-067).
 
 ---
 
@@ -1422,7 +1364,6 @@ cd /opt/motor-expansao/app && docker compose -f docker-compose.prod.yml ps
 docker compose -f docker-compose.prod.yml logs -f web
 docker compose -f docker-compose.prod.yml logs -f api
 docker compose -f docker-compose.prod.yml logs -f caddy
-docker compose -f docker-compose.prod.yml logs -f authelia
 ```
 
 ### Verificar uso de memória
@@ -1436,7 +1377,6 @@ free -h
 
 ```bash
 docker compose -f docker-compose.prod.yml restart web
-docker compose -f docker-compose.prod.yml restart authelia
 docker compose -f docker-compose.prod.yml restart caddy
 ```
 
@@ -1464,11 +1404,11 @@ du -sh /opt/motor-expansao/data/outputs/
 
 ### Trilha de acesso do piloto (DEC-027)
 
-Quem fez o quê no piloto: JSONL diário com usuário (Authelia), IP real, rota, status e
+Quem fez o quê no piloto: JSONL diário com usuário (login do piloto), IP real, rota, status e
 latência em `/opt/motor-expansao/logs/acesso/` (sem prazo de retenção desde a emenda 2 da
 DEC-027, 20/10/2026; poda só com `MOTOR_ACESSO_RETENCAO_DIAS` definida) +
-access log do Caddy em `/opt/motor-expansao/logs/caddy/` + Authelia em `level: info`
-(logins com sucesso e falha). Contrato, comandos de consulta e os passos manuais de
+access log do Caddy em `/opt/motor-expansao/logs/caddy/` + eventos de login no banco (sucesso e
+falha). Contrato, comandos de consulta e os passos manuais de
 habilitação na VPS: **`docs/trilha_acesso_piloto.md`**.
 
 ### Alertas automáticos (BLK-SEC-05)
@@ -1480,9 +1420,8 @@ grupo de ops — `MONITOR_TELEGRAM_CHAT_ID` no `.env`). Script versionado no rep
 O que é vigiado e a cadência (crontab do root):
 
 ```cron
-*/5 * * * * /opt/motor-monitoring/healthcheck_vps.sh containers  # 8 containers (web, web_ar, api, bot, postgres, caddy, authelia, tileserver; + valhalla se MOTOR_ROTAS_URL) + edge HTTPS + /api/me com cookie de sessão falso = 401 (503 = banco fora, depois do P19)
+*/5 * * * * /opt/motor-monitoring/healthcheck_vps.sh containers  # 7 containers (web, web_ar, api, bot, postgres, caddy, tileserver; + valhalla se MOTOR_ROTAS_URL) + edge HTTPS + /api/me com cookie de sessão falso = 401 (503 = banco fora, depois do P19)
 0 * * * *   /opt/motor-monitoring/healthcheck_vps.sh host        # disco >80% / memória <10%
-0 11 * * *  /opt/motor-monitoring/healthcheck_vps.sh authelia    # resumo diário de falhas de login (08h BRT)
 0 18 * * 0  /opt/motor-monitoring/healthcheck_vps.sh coleta      # domingo 15h BRT: resumo/falha da coleta semanal
 0 12 * * 4  /opt/motor-monitoring/healthcheck_vps.sh agregadores # quinta 09h BRT: idade da partição de cada agregador (BLK-MA-21)
 0 12 * * 4  /opt/motor-monitoring/healthcheck_vps.sh crescimento # quinta 09h BRT: idade da camada de crescimento municipal (DEC-052; limiar 100 dias)
@@ -1630,7 +1569,7 @@ Ação: restart do serviço (seção acima). Se o restart não segurar (crash-lo
 de imagem por digest (seção "Rollback"). Se o host estiver sem recurso (disco/memória do
 alerta de host): liberar espaço (`docker system prune`, logs antigos) antes de reiniciar.
 
-**2. Suspeita de comprometimento (login anômalo no Authelia, processo estranho, tráfego
+**2. Suspeita de comprometimento (login anômalo, processo estranho, tráfego
 inesperado).**
 Contenção imediata: `ufw deny 80 && ufw deny 443` (derruba o edge, preserva SSH para
 forense) — decisão de Felipe. Coletar evidência ANTES de reiniciar qualquer coisa:
@@ -1660,7 +1599,8 @@ o banco (com ele de pé, 401). A
 sonda antiga ia sem cookie, e sem cookie o `/api/verify` responde 401 sem consultar o banco: banco
 fora passava como "auth OK". O `/api/health` segue 200 (não olha o banco, de propósito).
 
-O que a equipe vê com o P19 desligado (login pelo Authelia):
+O que a equipe via com o P19 desligado (login pelo Authelia, até o corte; hoje, sem o Authelia,
+a chave desligada derruba a entrada inteira):
 - **Queda provada** (conexão recusada, nome `postgres` que não resolve, servidor saindo do ar — o
   container parado ou caído): as rotas sensíveis — Visão Executiva (carteira e cadastro da rede),
   dossiê do imóvel, Viabilidade e o painel de Acessos — respondem 403 "Acesso indisponível no
@@ -1709,9 +1649,10 @@ quem estava dentro sai junto, e o login também não funciona. O interruptor do 
 (sem banco ninguém entra): primeiro desfaz-se o corte — no BR, `docs/archive/repasse_corte_p19.md`,
 "Se precisar voltar atrás" (o bloco do Caddy de `Caddyfile.antes-do-p19`, depois a chave vazia); na
 AR, a "Reversão" da DEC-081, análoga (o bloco do Caddy do `piloto-ar` restaurado, depois a
-`MOTOR_AUTENTICACAO_PROPRIA_AR` vazia; a URL fica) —, o que só devolve a entrada enquanto os logins
-ainda estiverem no Authelia (janela de observação até 16/11/2026; depois do Estágio 3, reverter
-exige ressubir o `authelia`), e só então, se o banco seguir fora, o §8. Conferir o estado das duas
+`MOTOR_AUTENTICACAO_PROPRIA_AR` vazia; a URL fica) —, o que só devolvia a entrada enquanto o
+Authelia existia. **Desde o Estágio 3 (16/11/2026) esse caminho não existe:** sem o serviço
+`authelia`, desfazer o corte deixa todo mundo de fora. Banco fora, hoje, é restaurar o banco
+(`docs/backup_restore.md`). Conferir o estado das duas
 chaves:
 
 ```bash
@@ -1743,10 +1684,7 @@ docker compose -f docker-compose.prod.yml logs caddy | grep -i "certificate\|tls
 │   ├── Dockerfile.api
 │   ├── Caddyfile                 # NÃO está no git
 │   ├── .env                      # NÃO está no git (WEB_IMAGE/API_IMAGE pinados por digest)
-│   ├── authelia/
-│   │   ├── configuration.yml     # NÃO está no git
-│   │   ├── users_database.yml    # NÃO está no git
-│   │   └── db.sqlite3            # banco de sessões Authelia
+│   ├── authelia/                 # sobra do Authelia aposentado em 16/11/2026 (sem serviço que a leia)
 │   ├── web/                      # SPA + backend FastAPI do piloto
 │   └── src/
 ├── data/
@@ -1796,9 +1734,7 @@ prefixo do projeto `app`; `docker volume ls`), o único que nenhum pipeline rege
 | Arquivo | Conteúdo |
 |---|---|
 | `app/Caddyfile` | Configuração do Caddy com domínio real |
-| `app/.env` | Segredos e pins do deploy: `AUTHELIA_*`, `API_TOKENS`, `API_TELEGRAM_TOKEN`, `API_BOT_SENHA`, `POSTGRES_*`, `MOTOR_DATABASE_URL`, `MOTOR_DATABASE_URL_AR` (a do `web_ar`, desde o corte da DEC-081; o `secrets/env.enc.env` vigente, de 27/10/2026, ainda não a tem: `docs/backup_restore.md` §10.6), `MOTOR_APP_DB_PASSWORD`/`MOTOR_AUDITORIA_DB_PASSWORD` (senhas dos papéis do D20: o compose não as lê; a do `app` vai dentro das duas URLs), `WEB_IMAGE`/`API_IMAGE` (o compose aborta sem os obrigatórios) |
-| `app/authelia/configuration.yml` | Configuração Authelia com domínio real |
-| `app/authelia/users_database.yml` | Usuários e hashes de senhas |
+| `app/.env` | Segredos e pins do deploy: `API_TOKENS`, `API_TELEGRAM_TOKEN`, `API_BOT_SENHA`, `POSTGRES_*`, `MOTOR_DATABASE_URL`, `MOTOR_DATABASE_URL_AR` (a do `web_ar`, desde o corte da DEC-081; o `secrets/env.enc.env` vigente, de 27/10/2026, ainda não a tem: `docs/backup_restore.md` §10.6), `MOTOR_APP_DB_PASSWORD`/`MOTOR_AUDITORIA_DB_PASSWORD` (senhas dos papéis do D20: o compose não as lê; a do `app` vai dentro das duas URLs), `WEB_IMAGE`/`API_IMAGE` (o compose aborta sem os obrigatórios) |
 | `data/outputs/` | Todos os parquets (~1,6 GB) |
 | `data/ultra/` | Base Ultra.csv |
 
@@ -1808,7 +1744,7 @@ prefixo do projeto `app`; `docker volume ls`), o único que nenhum pipeline rege
 
 ## Cuidados e boas práticas
 
-- **Nunca commitar** `.env`, `Caddyfile`, `authelia/users_database.yml` ou `authelia/configuration.yml` com dados reais
+- **Nunca commitar** `.env` ou `Caddyfile` com dados reais
 - **Backup dos parquets:** manter cópia local em `data/outputs/` na máquina de desenvolvimento
 - **Scrapers M2/M3:** agendar em janela noturna 2h–5h BRT para não competir com usuários ativos
 - **Memória:** limite de 8 GB no container `web` (`memswap_limit` 10 GB); monitorar com `docker stats` se houver lentidão

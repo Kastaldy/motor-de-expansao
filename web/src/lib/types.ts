@@ -2920,17 +2920,13 @@ export interface AdminUsuarioNovo {
   paises: string[]
 }
 
-/** Resposta do POST. `falta_cadastrar_no_authelia` vem `true` nos DOIS estados do login
- *  próprio, por razões diferentes: desligado, uma linha em `usuarios` sem a entrada no
- *  `users_database.yml` não deixa a pessoa entrar — sem esse recado, criar usuário viraria
- *  uma armadilha silenciosa —; ligado, durante a janela de observação do corte, a entrada
- *  no Authelia é o que mantém o rollback possível. Quem diz qual recado vale é
- *  `login_proprio` (`recadoDaCriacao`, em `lib/painel-usuarios.ts`). */
+/** Resposta do POST. `login_proprio` diz qual recado vale (`recadoDaCriacao`, em
+ *  `lib/painel-usuarios.ts`). Até 16/11/2026 vinha também `falta_cadastrar_no_authelia`, o
+ *  passo manual no `users_database.yml`; saiu com o Estágio 3 da DEC-081. */
 export interface AdminCriacao {
   id_usuario: number
   login: string
   perfil: string
-  falta_cadastrar_no_authelia: boolean
   login_proprio?: boolean
 }
 

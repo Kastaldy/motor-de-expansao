@@ -170,19 +170,17 @@ export function montarConfirmacao(
           : `Perfil ${rot(acao.perfil)}.` + contagem(undefined, acao.capacidades),
         ...(acao.paises?.length ? [`Com acesso a: ${acao.paises.join(', ')}.`] : []),
         // A promessa sobre a senha depende do login próprio (decisão do dono, 24/10/2026).
-        // Desligado, quem confere a senha é o Authelia: "nasce com a senha inicial e é
-        // levada a trocá-la" era falso, e o passo do Authelia é o que deixa a pessoa entrar.
-        // Ligado, a frase volta a valer, e o Authelia vira o caminho de volta do corte.
+        // Desligado, "nasce com a senha inicial e é levada a trocá-la" seria falso: a senha do
+        // banco não é conferida na entrada. Até 16/11/2026 os dois ramos pediam também o
+        // cadastro no Authelia; o Estágio 3 da DEC-081 o aposentou, e o passo saiu.
         ...(acao.loginProprio
           ? [
               'A pessoa nasce com a senha inicial compartilhada do piloto e é levada a ' +
                 'trocá-la no primeiro acesso.',
-              'Durante a janela de observação do corte, cadastre-a também no Authelia, para ' +
-                'o rollback continuar possível.',
             ]
           : [
-              'Isto grava só no banco: para entrar, a pessoa ainda precisa ser cadastrada no ' +
-                'Authelia, que é quem confere a senha hoje.',
+              'Isto grava só no banco: com o login próprio desligado neste servidor, a pessoa ' +
+                'só entra quando ele for ligado.',
             ]),
         'Esta tela não apaga ninguém: para desfazer, o caminho é desativar.',
       ],

@@ -1,5 +1,10 @@
 # Autenticação própria do piloto (epic do P19) — escopo
 
+> **O Authelia foi aposentado em 16/11/2026 (Estágio 3 da DEC-081).** Este documento é registro de
+> época: onde ele descreve o Authelia autenticando, grupos `expansao_*` ou cadastro no
+> `users_database.yml`, isso já não existe. O estado vigente do login está em
+> `docs/infra_producao.md` ("Gerenciar usuários do login") e na DEC-081.
+
 > **O que é.** O levantamento do que a epic do **P19** precisa fazer para o motor passar a autenticar
 > e o Authelia sair. Não é especificação de implementação nem cronograma: é o mapa do terreno,
 > medido, para que a primeira pessoa a pegar isto não comece descobrindo o que já existe.

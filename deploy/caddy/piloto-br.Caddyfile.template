@@ -46,10 +46,9 @@
 #     senha pessoal la'.
 # ─────────────────────────────────────────────────────────────────────────────────
 #
-# O AUTHELIA NAO MORRE NESTE CORTE. A instancia AR continua atras dele (ver
-# `piloto-ar.Caddyfile.template`), porque o `web_ar` nao tem banco e portanto nao tem
-# tabela de sessao. Manter o servico `authelia` de pe' e' PRE-REQUISITO deste corte, e
-# nao sobra de deploy.
+# O AUTHELIA FOI APOSENTADO DEPOIS: a AR cortou para o login proprio em 31/10/2026 (DEC-081) e o
+# servico `authelia` saiu em 16/11/2026 (Estagio 3). O rollback acima, que devolve o bloco do
+# Authelia, ficou SEM DESTINO: so' vale se o servico voltar antes.
 
 piloto.ultra-expansao.tech {
     import sec_headers

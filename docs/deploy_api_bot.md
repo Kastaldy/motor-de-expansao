@@ -15,8 +15,7 @@
 ## Arquitetura
 
 ```
-caddy ─► web (piloto)                 [app de produção — DEC-022]
-     └─► authelia  (login)            [já existia]
+caddy ─► web (piloto)                 [app de produção — DEC-022; login próprio, DEC-081]
 
 telegram-bot ──HTTP interno──► api ──► volumes :ro (outputs + ibge + staging + ultra)
   (long-polling p/ Telegram,          (FastAPI/uvicorn, porta 8077 só na rede interna)
@@ -26,7 +25,7 @@ telegram-bot ──HTTP interno──► api ──► volumes :ro (outputs + ib
 - **Imagem única** (`Dockerfile.api`) para os dois serviços; o bot inclui Google Chrome
   porque o geocoder de endereço+CEP usa Selenium (`maps_geocoder`).
 - A API **não tem porta no host**: o bot a consome por `http://api:8077` na rede interna, e o Caddy a
-  publica em `api.ultra-expansao.tech` (internet-facing, só Bearer, sem Authelia na frente — BLK-SEC-05).
+  publica em `api.ultra-expansao.tech` (internet-facing, só Bearer, sem o login do piloto na frente — BLK-SEC-05).
 - Não afeta a imagem do piloto web (`Dockerfile.web`, `motor-expansao-web`).
 
 ## Pré-condições de dados na VPS (READ-ONLY, montados via volume)
@@ -107,11 +106,13 @@ A imagem `motor-expansao-api` é publicada no GHCR pelo job **`publish-api`** do
 (`API_IMAGE` no `.env`), sem buildar localmente. Execução na VPS é passo humano (§6).
 
 > **⚠ O compose da VPS fica atrás da main, de propósito (medido em 05/11/2026).** A main tira o
-> bind `./portal` do Caddy (#502, DEC-081), e essa mudança só vale junto com o Estágio 3 do corte do
-> login. Por isso **não rode `git pull` em `/opt/motor-expansao/app`** (o roteiro de deploy do PR #520
-> mandava): o compose da main inteiro mudaria o `caddy`, e o próximo `up -d` sem nome de serviço o
-> recriaria fora do corte. Mudança de compose para a API entra por conteúdo: o compose da VPS mais só
-> o bloco que o deploy precisa, com backup antes e a prova de que só `api` e `telegram-bot` mudam
+> bind `./portal` do Caddy (#502, DEC-081). O Estágio 3 do corte do login (16/11/2026) tirou do
+> compose da VPS só o serviço `authelia` (blob `bcc229b4`), sem medir depois se o bind `./portal`
+> ainda está lá. Até uma medição mostrar que o compose da VPS é igual ao da main, **não rode
+> `git pull` em `/opt/motor-expansao/app`** (o roteiro de deploy do PR #520 mandava): o compose da
+> main inteiro poderia mudar o `caddy`, e o próximo `up -d` sem nome de serviço o recriaria.
+> Mudança de compose para a API entra por conteúdo: o compose da VPS mais só o bloco que o deploy
+> precisa, com backup antes e a prova de que só `api` e `telegram-bot` mudam
 > (`docker compose config --hash` de cada serviço, antes e depois). Assim entraram as 6 linhas do #520
 > em 05/11/2026: o compose da VPS passou do blob `8c7537e0` (o do #494) ao `65189bbf`.
 
@@ -153,7 +154,7 @@ docker exec motor_expansao_api curl -fsS http://127.0.0.1:8077/health   # sem po
 docker compose -f docker-compose.prod.yml logs --tail=50 telegram-bot
 ```
 
-- Caddy/Authelia/web **não** reiniciam.
+- Caddy e web **não** reiniciam.
 - Sessões do bot persistem no volume `bot_data` (restart não desloga usuários).
 - O primeiro geocode por endereço baixa o chromedriver (webdriver-manager) — precisa de
   internet na VPS (já tem). `lat,lng`/link do Maps não dependem disso.

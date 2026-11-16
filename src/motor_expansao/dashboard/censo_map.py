@@ -69,10 +69,11 @@ _BASEMAP_PROVIDER_ATTR = "Voyager"
 # fundo de ruas vem do tileserver OpenMapTiles proprio (stack em `openmaptiles-infra/`) em vez do
 # CartoDB. Em producao a API e o Streamlit alcancam o container direto pela rede `app_net`:
 #   API_BASEMAP_TILES_URL=http://motor_expansao_tileserver:8080/styles/ultra-maptiler/{z}/{x}/{y}@2x.png
-# INTERNO de proposito, NAO a rota publica `/tiles/`: aquela esta atras do Authelia e um fetch
-# server-side nao tem cookie de sessao -> 302 p/ o login, `_fetch_basemap` engole a excecao e o
-# PDF sairia SEM ruas, em silencio. Sem a env var o comportamento e' byte-identico ao anterior
-# (Voyager), que e' o que CI, teste e dev local exercitam. Nao e' parametro de score: e' RENDER.
+# INTERNO de proposito: a antiga rota publica `/tiles/` exigia sessao (um fetch server-side caia no
+# 302 do login, `_fetch_basemap` engolia a excecao e o PDF saia SEM ruas, em silencio), e desde
+# 16/11/2026 nem existe mais (responde 404, opcao A do Estagio 3 da DEC-081). Sem a env var o
+# comportamento e' byte-identico ao anterior (Voyager), que e' o que CI, teste e dev local
+# exercitam. Nao e' parametro de score: e' RENDER.
 _BASEMAP_TILES_URL_ENV = "API_BASEMAP_TILES_URL"
 
 # Atribuicao do rodape do PNG (DEC-004), resolvida em RUNTIME porque depende do MODO:
