@@ -198,9 +198,17 @@ repositório) e deploy por digest. Nenhum arquivo de versão é apagado nem edit
 # 1) no .env da VPS (lido pelo compose para interpolar ${MOTOR_FATORES_RENDA_VERSAO:-})
 #    exemplo: voltar da 2026-10_pnad2025_v1 (DEC-075) para a v0 do CAGED
 MOTOR_FATORES_RENDA_VERSAO=2026-08_caged_v0
-# 2) RECRIAR o container (restart NÃO relê o environment do compose)
-docker compose -f docker-compose.prod.yml up -d web api
-#    instância AR: docker compose -f docker-compose.ar.yml up -d web_ar
+# 2) RECRIAR o container (restart NÃO relê o environment do compose). Com o banco ligado, todo `up`
+#    do `web` começa com o `unset` (uma MOTOR_DATABASE_URL vazia no shell vence o .env, e o web sobe
+#    sem banco) e leva --no-deps (sem ele o compose converge o postgres junto): §9.0 do
+#    docs/banco_deploy.md.
+unset MOTOR_DATABASE_URL
+docker compose -f docker-compose.prod.yml up -d --no-deps web api
+#    a contagem tem de dar 1 (conta a linha sem imprimir a senha)
+docker inspect -f '{{range .Config.Env}}{{println .}}{{end}}' motor_expansao_web | grep -c '^MOTOR_DATABASE_URL=postgresql://app:'
+#    instância AR: NÃO recriar o web_ar enquanto a variável estiver no .env. Ele lê a MESMA variável
+#    (docker-compose.ar.yml), e fatores/AR/ só tem a 2026-08_sem_atualizacao_v0: com a
+#    2026-08_caged_v0 do exemplo, que é só do BR, ele recusa subir (versão inexistente, abaixo).
 ```
 
 - **A variável só chega ao container porque o compose a lista** no `environment` de `api`, `web`
@@ -214,7 +222,10 @@ docker compose -f docker-compose.prod.yml up -d web api
   `/api/health` mostra a versão fixada com `fixada_por_env: true`.
 - Versão inexistente no diretório do país = **erro na subida** (não cai no `VIGENTE`).
 - É ponte, não estado: abrir em seguida o PR de `VIGENTE` e, depois do deploy dele, **remover a
-  variável** do `.env` e recriar os containers (`up -d`).
+  variável** do `.env` e recriar os containers do mesmo jeito do passo 2 acima (o `unset`, o
+  `up -d --no-deps` e a contagem). O `web_ar`, inclusive no deploy do PR, só é recriado depois de a
+  variável sair do `.env`, pelo §5 do `docs/deploy_piloto_web.md` (`unset` da variável DELE,
+  `--no-deps` e a contagem).
 
 ## Onde olhar quando algo falhar
 

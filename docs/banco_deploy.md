@@ -5,7 +5,7 @@
 > que descreve como o motor **fala** com o banco; aqui é como ele **passa a existir**.
 >
 > Fonte do esquema: repositório `banco-de-reservas`. Nenhum DDL nasce aqui.
-> Versão: Setembro 2026 · Executor: Vinícius · Estado: §1 a §7 executados na VPS em 17/10/2026 e o §8 (ligar) em 23/10/2026 — desde então o RBAC do piloto BR vem do banco, e a autenticação própria (P19, `MOTOR_AUTENTICACAO_PROPRIA`) segue desligada; os crons do expurgo (§9.1) e do backup (§10) ficaram no crontab do usuário `deploy`, fora do caminho deste roteiro
+> Versão: Setembro 2026 · Executor: Vinícius · Estado: §1 a §7 executados na VPS em 17/10/2026 e o §8 (ligar) em 23/10/2026 — desde então o RBAC do piloto BR vem do banco, e o da AR desde o corte da DEC-081 (31/10/2026, pela `MOTOR_DATABASE_URL_AR`); a autenticação própria (P19) está ligada nos dois, no BR desde o corte do P19 (27/10/2026, `MOTOR_AUTENTICACAO_PROPRIA`) e na AR desde o da DEC-081 (`MOTOR_AUTENTICACAO_PROPRIA_AR`); os crons do expurgo (§9.1) e do backup (§10) ficaram no crontab do usuário `deploy`, fora do caminho deste roteiro
 
 ## 0. A ordem importa — leia antes de qualquer comando
 
@@ -17,6 +17,8 @@ indisponibilidade real:
 > (`banco_no_comando()` em `web/server/acesso.py`). O comportamento é *deny-by-default*:
 > quem o Authelia autentica mas que **não tem linha em `usuarios`** não recebe capacidade
 > nenhuma. Ligar a variável com a tabela vazia tranca **todo mundo para fora**, inclusive você.
+> Vale igual para a `MOTOR_DATABASE_URL_AR`, a do `web_ar` (DEC-081): só depois de cada usuário AR
+> ter linha em `usuarios`, com perfil e o país AR em `usuario_paises`.
 
 O caminho de volta é curto e vale saber de antemão: esvaziar `MOTOR_DATABASE_URL` e recriar
 o `web` (`up -d --no-deps web`; um `restart` não relê o `.env`) devolve o piloto ao comportamento pré-banco em
@@ -378,7 +380,7 @@ Os três papéis e por que eles são três, não um:
 | Papel | Quem cria | Para quê | Onde a credencial vive |
 |---|---|---|---|
 | dono do schema | o próprio compose (`POSTGRES_OWNER_USER`) | DDL das migrations; é o `SECURITY DEFINER` das triggers do D19 | `.env` (`POSTGRES_OWNER_PASSWORD`), e **nunca** no ambiente do `web` |
-| `app` | você, no passo 6 | tudo que a aplicação faz | dentro de `MOTOR_DATABASE_URL`; na instalação de 17/10/2026, também em `MOTOR_APP_DB_PASSWORD` no `.env`, que o compose não lê |
+| `app` | você, no passo 6 | tudo que a aplicação faz | dentro de `MOTOR_DATABASE_URL` e, desde o corte AR da DEC-081 (31/10/2026), também da `MOTOR_DATABASE_URL_AR` (a do `web_ar`); na instalação de 17/10/2026, também em `MOTOR_APP_DB_PASSWORD` no `.env`, que o compose não lê |
 | `auditoria` | você, no passo 6 | ler `perfil_permissoes_historico` | fora do compose; uso manual (a senha ficou no `.env` como `MOTOR_AUDITORIA_DB_PASSWORD`, que o compose não lê) |
 
 Dar ao piloto a credencial do dono anula o D19 em silêncio: a promessa de que a aplicação não
@@ -435,8 +437,11 @@ você procurar no lugar errado.
 **`.env` mexido pede re-encriptação no SOPS+age.** Era pendência aberta do BLK-OPS-01 desde os
 segredos da API/bot, fechada na instalação de 17/10/2026 (`secrets/env.enc.env` refeito no #462, já com as senhas do banco); repita a cada mudança do `.env`. O de 17/10/2026 venceu com o §8: não tinha a linha
 `MOTOR_DATABASE_URL`, acrescentada ao `.env` em 23/10/2026, e restaurado subiria o piloto com o banco
-desligado, sem erro nenhum. Foi refeito em 25/10/2026, já com ela. Refazê-lo é sempre pela estação do
-Vinicius — o `sops` e a chave age não ficam na VPS —, e a próxima vez é depois do corte do P19.
+desligado, sem erro nenhum. Foi refeito em 25/10/2026, já com ela, e de novo em 27/10/2026 (#492), depois
+do corte do P19. Esse, o vigente, venceu com o corte AR da DEC-081 (31/10/2026): não tem a
+`MOTOR_DATABASE_URL_AR` nem a `MOTOR_AUTENTICACAO_PROPRIA_AR`, e restaurado subiria o `web_ar` sem banco e
+sem login próprio, sem erro nenhum. Refazê-lo com elas é pendência, e é sempre pela estação do
+Vinicius — o `sops` e a chave age não ficam na VPS.
 
 ## 4. Subir o serviço
 
@@ -763,9 +768,12 @@ no cadastro (tela de Acessos ou Authelia) e roda-se de novo até sair `0`.
 
 **Executado em 23/10/2026.** A linha `MOTOR_DATABASE_URL` foi acrescentada ao `.env` e o `web`, recriado
 na mesma imagem (digest `d1cc438e…`, `main` em `84429f3e`). Desde então o RBAC do piloto BR vem do banco,
-e o `acesso_abas.json` deixou de valer para o BR (a instância AR, sem banco, segue no `acesso_abas.json` dela). A autenticação
-própria (`MOTOR_AUTENTICACAO_PROPRIA`, P19) continua desligada: quem confere a senha na entrada ainda é o
-Authelia. O roteiro abaixo fica para uma reinstalação e como referência do interruptor.
+e o `acesso_abas.json` deixou de valer para o BR (a instância AR, então sem banco, seguiu no
+`acesso_abas.json` dela até o corte da DEC-081, em 31/10/2026, quando o `web_ar` passou a falar com o
+mesmo banco pela `MOTOR_DATABASE_URL_AR`). A autenticação própria (`MOTOR_AUTENTICACAO_PROPRIA`, P19)
+ficou desligada nesse dia (quem conferia a senha na entrada ainda era o Authelia) e foi ligada no BR no
+corte do P19 (27/10/2026) e na AR no da DEC-081 (`MOTOR_AUTENTICACAO_PROPRIA_AR`). O roteiro abaixo
+fica para uma reinstalação e como referência do interruptor.
 
 **Antes de preencher, o conferidor do §7 ("Conferir antes de ligar") tem de sair `0` — rode-o
 de novo agora, não confie no de ontem.** E confira que o seu login está na allowlist do painel:
@@ -839,19 +847,24 @@ a matriz manda.
 Sem o `unset`, uma `MOTOR_DATABASE_URL` com valor esquecida no terminal (a do §10, por exemplo) vence o
 `.env`, e o `web` volta com o banco ligado, sem erro nenhum. Sem o `--no-deps`, o `up` mexe também no
 `postgres`: liga o que estiver parado e recria o que tiver a config mudada.
-O piloto volta ao `acesso_abas.json` e serve exatamente como antes do banco. O container `postgres`
-pode continuar de pé — nada no piloto o consulta enquanto a variável estiver vazia. É o interruptor
-de incidente, e ele existe justamente para que "o banco está estranho" nunca vire "o piloto caiu".
+O piloto BR volta ao `acesso_abas.json` e serve exatamente como antes do banco. O container `postgres`
+pode continuar de pé — nada no piloto BR o consulta enquanto a variável estiver vazia (o `web_ar` segue
+nele: ressalva 4). É o interruptor de incidente, e ele existe justamente para que "o banco está
+estranho" nunca vire "o piloto caiu".
 
-**Três ressalvas desde que o banco foi ligado (23/10/2026):**
+**Quatro ressalvas desde que o banco foi ligado (23/10/2026):**
 
 1. o `acesso_abas.json` ficou congelado naquele dia — a tela grava só no banco —, então quem foi criado
    ou mudado pela tela depois disso perde ou muda de acesso no rollback;
 2. também aqui, `unset MOTOR_DATABASE_URL` antes do `up` (§9.0): uma variável não vazia esquecida no
    terminal vence a linha esvaziada do `.env`, e o `web` volta a subir com o banco;
 3. **depois do corte do P19 o interruptor deixa de existir:** sem banco ninguém entra (o `/api/verify`
-   responde 503). A volta passa a ser desfazer primeiro o P19 (roteiro em `docs/archive/repasse_corte_p19.md`) e
-   só então, se for o caso, o banco.
+   responde 401 a quem chega sem cookie e 503 a quem tem um). A volta passa a ser desfazer primeiro o
+   P19 (roteiro em `docs/archive/repasse_corte_p19.md`) e só então, se for o caso, o banco;
+4. **esvaziar a `MOTOR_DATABASE_URL` não desliga o banco do `web_ar`:** desde o corte da DEC-081
+   (31/10/2026) ele o recebe pela `MOTOR_DATABASE_URL_AR`, com o mesmo papel `app` e o mesmo Postgres, e
+   tem o login próprio ligado. Banco fora derruba os dois pilotos de uma vez, e na AR a volta também é
+   desfazer primeiro o corte (a "Reversão" da DEC-081) e só então, se for o caso, o banco.
 
 O kit da estação do Vinicius tem este rollback em script simulado (`passo8c-desfazer.sh`): esvazia só a
 linha da URL, recria só o `web`, mostra quem muda de acesso e se recusa a rodar com o P19 ligado.
@@ -865,7 +878,8 @@ DDL sobre dado real é onde se perde dado. O caminho de volta é o restore do du
   lista. Sem essa linha, o banco fora do ar seria invisível: a leitura de parquet continua
   servindo, e só o RBAC começa a negar. **A cópia instalada na VPS (`/opt/motor-monitoring/`, crontab
   do root) é antiga e não tem essa linha** (24/10/2026): instalar a do repositório é passo do Felipe,
-  comando a comando. E a gravidade muda no corte do P19: dali em diante, banco fora é o piloto BR fora.
+  comando a comando. E a gravidade muda no corte do P19: dali em diante, banco fora é o piloto BR fora — e,
+  desde o corte da DEC-081 (31/10/2026), o AR também.
 - O **healthcheck do container `web` não consulta o banco**, e isso é escolha. Amarrar os dois faria
   o Docker reiniciar o `web` a cada piscada do Postgres, derrubando junto tudo que não depende dele.
   O `depends_on` é `service_started`, não `service_healthy`, pelo mesmo motivo.
@@ -991,17 +1005,37 @@ WEB_IMAGE="$NOVA" docker compose -f docker-compose.prod.yml run --rm -e MOTOR_DA
 Sem linha `pendentes:` e sem `ATENCAO`, não há migration nova: vá direto ao passo 6. Com `ATENCAO`,
 pare — é migration editada depois de aplicada, ou banco sem o registro (`banco_conexao.md` §8).
 
-**2. Havendo pendente, pare o `web` — ou aplique com `lock_timeout`.** Migration que altera tabela do
+**2. Havendo pendente, pare os DOIS pilotos — ou aplique com `lock_timeout`.** Migration que altera tabela do
 caminho quente pega `ACCESS EXCLUSIVE` e espera sem fim por uma sessão parada em `idle in transaction`;
 enquanto ela espera, as consultas do RBAC desistem em 1 s (o `lock_timeout` do pool) e o piloto responde
-503. Com o `web` parado isso não acontece, e ele é o único serviço que fala com o banco: o `web_ar` não
-recebe `MOTOR_DATABASE_URL`. A alternativa com ele de pé está no §9.0.1, passo 2: `psql` com `SET lock_timeout` antes de cada
+503. Com os pilotos parados isso não acontece. **São dois serviços, e não só o `web`:** desde o Estágio 2
+da DEC-081 o `web_ar` também fala com o banco — o `docker-compose.ar.yml` entrega a ele
+`MOTOR_DATABASE_URL` a partir da `MOTOR_DATABASE_URL_AR` do `.env`, com o mesmo papel `app` e o mesmo
+Postgres, porque o cadastro é único. Parar só o `web` deixa o pool do `web_ar` de pé. A alternativa com
+eles de pé está no §9.0.1, passo 2: `psql` com `SET lock_timeout` antes de cada
 migration — e por esse caminho o runner não registra o que foi aplicado; no passo 3, troque o `aplicar`
 por `registrar --ate <NNN>` (`banco_conexao.md` §8).
 
 **No terminal da VPS:**
 ```bash
 docker compose -f docker-compose.prod.yml stop web     # o piloto BR sai do ar até o passo 6
+docker compose -f docker-compose.ar.yml stop web_ar    # o piloto AR também
+```
+
+> **Exceção registrada, não regra.** A 024 (13/11/2026) não faz `ALTER` em tabela existente e foi
+> aplicada com os dois pilotos de pé, sem este passo, pelo `aplicar` do runner — que conecta **sem**
+> `lock_timeout` —, depois de conferir no `pg_stat_activity` que nenhuma sessão tinha transação aberta.
+> Para repetir a conferência, use o comando do bloco abaixo. A 024 não só cria tabela: a `unidades_ultra_site`
+> nasce com três FKs para `usuarios`, e a migration cria duas funções e três triggers e insere a
+> capacidade nova em `permissoes` e `perfil_permissoes` (cuja trigger grava o
+> `perfil_permissoes_historico`). E não é isenta de lock: as três FKs pegam `SHARE ROW EXCLUSIVE` em
+> `usuarios` até o `COMMIT`, lock que não bloqueia leitura, mas espera sem fim por qualquer transação
+> aberta que tenha escrito em `usuarios` e, enquanto espera, põe na fila toda escrita nova nela (criar
+> usuário e mudar perfil, ativo ou senha), que desiste em 1 s pelo `lock_timeout` do pool.
+
+**No terminal da VPS:**
+```bash
+docker exec motor_expansao_postgres psql -U reservas_owner -d banco_de_reservas -Atc "select pid, usename, state, now()-xact_start from pg_stat_activity where datname=current_database() and pid<>pg_backend_pid() and xact_start is not null"   # antes do aplicar: vazio = nenhuma transação aberta
 ```
 
 **3. `aplicar`, com a credencial do dono e a imagem nova.**
@@ -1057,8 +1091,10 @@ unset MOTOR_DATABASE_URL
 docker compose -f docker-compose.prod.yml pull web
 docker compose -f docker-compose.prod.yml up -d --no-deps web
 docker inspect -f '{{range .Config.Env}}{{println .}}{{end}}' motor_expansao_web | grep -c '^MOTOR_DATABASE_URL=postgresql://app:'   # tem de dar 1
+unset MOTOR_DATABASE_URL_AR
 docker compose -f docker-compose.ar.yml pull web_ar
 docker compose -f docker-compose.ar.yml up -d --no-deps web_ar
+docker inspect -f '{{range .Config.Env}}{{println .}}{{end}}' motor_expansao_web_ar | grep -c '^MOTOR_DATABASE_URL=postgresql://app:'   # tem de dar 1
 unset MOTOR_DATABASE_URL_ADMIN
 ```
 
@@ -1070,6 +1106,12 @@ vence a linha do `.env`, e o `web` sobe sem banco, sem erro nenhum — antes do 
 contagem confere sem imprimir a URL, que carrega a senha do `app`. E `restart` não relê o `.env`: ele
 mantém o ambiente do container — é o que faz o `docker restart` diário da ingestão da Growth (06:30
 UTC); para reler, é `up -d <serviço>`.
+
+**No `web_ar` é a mesma armadilha, com outro nome de variável.** O `docker-compose.ar.yml` interpola
+`MOTOR_DATABASE_URL_AR` (e a entrega ao container como `MOTOR_DATABASE_URL`), então o `unset` que
+protege o `up` dele é o da `MOTOR_DATABASE_URL_AR`, e a contagem é no `motor_expansao_web_ar`. Sem
+banco, o `web_ar` também sobe sem erro nenhum; e, com o login próprio ligado na AR desde o corte da
+DEC-081, o `forward_auth` do `piloto-ar` passa pelo `/api/verify` dele — ninguém entra na AR.
 
 **E todo `up` do `web` e do `web_ar` leva `--no-deps`, que recria só o serviço pedido.** O `web`
 declara `depends_on: postgres`, e sem o `--no-deps` o `up -d web` converge o `postgres` junto: se a
@@ -1108,7 +1150,9 @@ RBAC inteiro para. Nenhuma das três migrations define `lock_timeout`, e o ensai
 isso porque lá não há tráfego.
 
 Com o `web` parado o problema não existe. Se preferir aplicar com ele de pé, use `psql` e
-`SET lock_timeout = '3s';` antes de cada uma.
+`SET lock_timeout = '3s';` antes de cada uma. Hoje são os dois pilotos: o `web_ar` também tem pool no
+mesmo banco desde o corte AR da DEC-081 (31/10/2026), e parar só o `web` deixa esse pool de pé (§9.0,
+passo 2).
 
 ### 3. Aplicar a 018 **e conceder o privilégio na sequência**
 
@@ -1181,7 +1225,8 @@ do root), com o script em `/home/deploy/motor-infra/run_expurgo_sessoes.sh` (id�
 repositório) e o log em `/home/deploy/logs/expurgo_sessoes.log` — a linha do crontab passa `LOG_CRON`
 com esse caminho. A receita do cabeçalho (`/opt/motor-expansao-infra`, log em
 `/var/log/motor-monitoring/`, crontab do root) segue como a genérica; o risco de a conta `deploy` sair
-está no §10. Em 24/10/2026 ele não tem o que zerar: sessão só nasce no login próprio, que segue desligado.
+está no §10. Em 24/10/2026 ele não tinha o que zerar: sessão só nasce no login próprio, que seguiu
+desligado até o corte do P19 (27/10/2026).
 
 **A ordem entre este cron e o backup É a política de retenção.** O expurgo zera
 `ip_sessao`/`user_agent_sessao` além de 90 dias; o backup, 30 minutos depois, dumpa o banco
@@ -1461,8 +1506,18 @@ docker exec -it motor_expansao_postgres psql -U reservas_owner -d banco_de_reser
 | Papel | No `.env` | E depois |
 |---|---|---|
 | dono (`reservas_owner`) | `POSTGRES_OWNER_PASSWORD` | nada a recriar: backup e expurgo releem o `.env` a cada execução, e o `POSTGRES_PASSWORD` do compose só vale no initdb (§3). Quem exportar a `MOTOR_DATABASE_URL_ADMIN` daí em diante usa a nova |
-| `app` | `MOTOR_APP_DB_PASSWORD` **e** a senha dentro da `MOTOR_DATABASE_URL` | edite o `.env` **antes** do `\password`, para a janela ficar curta; logo depois dele, `unset MOTOR_DATABASE_URL`, `up -d --no-deps web` e a contagem do §9.0. Até o `web` ser recriado, conexão nova do pool falha na senha, e o RBAC pode ficar indisponível por alguns segundos (`banco_conexao.md` §3); depois do corte do P19, o login e as sessões também |
+| `app` | `MOTOR_APP_DB_PASSWORD` **e** a senha dentro da `MOTOR_DATABASE_URL` **e** dentro da `MOTOR_DATABASE_URL_AR` (o `web_ar` usa o mesmo papel desde a DEC-081) | edite o `.env` **antes** do `\password`, para a janela ficar curta; logo depois dele, `unset MOTOR_DATABASE_URL`, `docker compose -f docker-compose.prod.yml up -d --no-deps web` e a contagem do §9.0, e o mesmo para a AR: `unset MOTOR_DATABASE_URL_AR`, `docker compose -f docker-compose.ar.yml up -d --no-deps web_ar` e a contagem no `motor_expansao_web_ar`. Até cada piloto ser recriado, conexão nova do pool dele falha na senha, e o RBAC pode ficar indisponível por alguns segundos (`banco_conexao.md` §3); depois do corte do P19, o login e as sessões também. As conexões já abertas seguem vivas — o Postgres só confere a senha ao abrir a conexão — até o pool reciclá-las (o `max_lifetime` padrão do `psycopg_pool` 3.3.1 do `constraints.txt`, 1 h, que o `postgres.py` não muda). Por isso esquecer a URL da AR não derruba a AR na hora: ela segue na senha velha até essas conexões acabarem, e daí em diante toda conexão nova falha e, com o login próprio da AR, ninguém entra lá. Recriar o `web_ar` sem corrigir a URL não resolve: antecipa a queda, porque fecha as conexões que ainda funcionavam. E a contagem não prova a senha: prove com o `privilegios` abaixo |
 | `auditoria` | `MOTOR_AUDITORIA_DB_PASSWORD` | nada: nenhum serviço a usa |
+
+**A contagem confere o papel, não a senha.** Quem prova a senha é uma conexão nova: rodado dentro de
+cada container, o `privilegios` lê a `MOTOR_DATABASE_URL` do ambiente dele e conecta do zero. Depois de
+recriar cada piloto:
+
+**No terminal da VPS:**
+```bash
+docker exec motor_expansao_web python -m motor_expansao.db privilegios      # tem de terminar em PRIVILEGIOS OK
+docker exec motor_expansao_web_ar python -m motor_expansao.db privilegios   # idem, com a URL da AR
+```
 
 Depois de qualquer troca, refaça o backup cifrado do `.env` (`secrets/env.enc.env`, §3); senão um
 restore pelo SOPS devolve a senha velha.

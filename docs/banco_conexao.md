@@ -66,8 +66,10 @@ aceitável com o banco fora, um furo com ele no ar e sob carga. A SPA repete o `
 ele: quem barra continua sendo o gate, rota a rota. O log do RBAC indisponível sai uma vez por
 episódio, e não por requisição.
 
-**Depois do corte do P19, banco fora é piloto BR fora:** o `/api/verify` responde 503, o Caddy nega
-tudo que não for 2xx, e ninguém entra — nem quem já estava dentro.
+**Depois do corte do P19, banco fora é piloto BR fora — e piloto AR fora também, desde o corte AR da
+DEC-081 (31/10/2026), que levou o login da AR para o mesmo Postgres:** o `/api/verify` de cada um
+responde 503 (401 a quem chega sem cookie), o Caddy nega tudo que não for 2xx, e ninguém entra — nem
+quem já estava dentro.
 
 ## 4. Como ligar e testar localmente
 

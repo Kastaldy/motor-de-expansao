@@ -204,6 +204,11 @@ para). O autor sai do header `Remote-User`, que o Caddy já repassa ao piloto.
 
 ## 2.2 Controle temporário de acesso por aba (2026-08-13)
 
+> **Dormente nos dois pilotos:** no BR, as abas vêm do RBAC do banco desde 23/10/2026 e o login é o do
+> próprio piloto desde o corte do P19 (27/10/2026); na AR, as duas coisas desde o corte AR da DEC-081
+> (31/10/2026) — último item das regras de operação, abaixo. O texto a seguir descreve o controle de
+> antes, com o Authelia autenticando.
+
 O Authelia autentica; **quem autoriza por aba é o backend do piloto**
 (`web/server/acesso.py`), pelo header `Remote-User` e por um mapa
 `usuário -> [abas]` num JSON **no mesmo volume `:rw` do cadastro**:
@@ -258,9 +263,15 @@ Regras de operação:
   `tests/unit/test_piloto_web_acesso.py` (cobertura obrigatória).
 - Com
   `MOTOR_DATABASE_URL` preenchida, o RBAC por capacidade do banco (`REGRAS_POR_CAPACIDADE`, `web/server/acesso.py`)
-  manda e este JSON não é consultado. É o estado da produção BR desde 23/10/2026; o JSON segue
-  valendo na AR (sem banco) e volta a valer no BR se a URL for esvaziada (§8 do `docs/banco_deploy.md`). Conferir
-  com `grep -c '^MOTOR_DATABASE_URL=.' .env` — `1` é preenchida; o `-c` conta a linha sem imprimir a senha.
+  manda e este JSON não é consultado. É o estado da produção BR desde 23/10/2026 e da AR desde o corte AR
+  da DEC-081 (31/10/2026; o `web_ar` recebe a URL pela `MOTOR_DATABASE_URL_AR` do `.env`). Com o
+  login próprio ligado nos dois, esvaziar a URL não devolve o JSON: tranca todo mundo para fora (§8 do
+  `docs/banco_deploy.md`). Conferir na VPS, de `/opt/motor-expansao/app` — `1` é preenchida; o `-c` conta a
+  linha sem imprimir a senha:
+  ```bash
+  grep -c '^MOTOR_DATABASE_URL=.' .env      # BR
+  grep -c '^MOTOR_DATABASE_URL_AR=.' .env   # AR
+  ```
 
 ---
 
@@ -351,8 +362,9 @@ o artefato entrou no inventário de artefatos — hoje em `/api/acessos/saude-ar
 > Para **fazer** o corte, não use esta seção: siga `docs/archive/repasse_corte_p19.md`, que tem a ordem
 > (chave primeiro, Caddy depois — o inverso derruba o piloto inteiro) e os pré-requisitos.
 >
-> **A instância AR não acompanha o corte** e continua atrás do Authelia — o bloco dela é
-> `deploy/caddy/piloto-ar.Caddyfile.template` e **não muda** (DEC-067, emenda de 25/09/2026).
+> **A instância AR também cortou** (DEC-081, que revogou a emenda de 25/09/2026 da DEC-067; corte AR em
+> 31/10/2026): o bloco dela é `deploy/caddy/piloto-ar.Caddyfile.template`, com o `forward_auth` no
+> `/api/verify` do `web_ar` (gateado por país).
 
 O `Caddyfile` **não está no git** (gitignored, backup cifrado em `secrets/Caddyfile.enc`);
 vive em `/opt/motor-expansao/app/Caddyfile`. O bloco do piloto (o bloco de `dashboard.` hoje só
@@ -386,10 +398,10 @@ docker compose -f docker-compose.prod.yml exec caddy caddy reload --config /etc/
 
 ## 4. Authelia — proteger o subdomínio (editar na VPS)
 
-> **Esta seção vale ANTES do corte do P19, e depois dele SÓ PARA A AR.** Depois do corte quem
-> autoriza o host brasileiro é o portão de sessão do motor, e a regra de `access_control` abaixo
-> deixa de ser consultada para ele. O serviço `authelia` **continua de pé** — a instância
-> argentina depende dele —, então a regra do `piloto-ar.` permanece necessária. Ver
+> **Esta seção é histórica: valia ANTES do corte do P19 no BR e, na AR, antes do corte AR da DEC-081
+> (31/10/2026).** Depois dos cortes quem autoriza os dois hosts é o portão de sessão do motor, e a regra
+> de `access_control` abaixo deixa de ser consultada para eles. O serviço `authelia` segue de pé até o
+> Estágio 3 da DEC-081 (depois de 16/11/2026), só pelo `/tiles/` do `dashboard.` e pelo rollback. Ver
 > `docs/archive/repasse_corte_p19.md`.
 
 Config **não versionada** (backup cifrado `secrets/authelia.configuration.enc.yaml`); vive em
@@ -455,10 +467,19 @@ Abrir `https://piloto.ultra-expansao.tech` → login → piloto (desde o corte d
 aplicada não volta com a imagem (§8 do `docs/banco_deploy.md`).
 
 > **Com a stack AR no ar (§8):** o mesmo bump de `WEB_IMAGE` precisa recriar TAMBÉM a
-> AR — `docker compose -f docker-compose.ar.yml pull web_ar && docker compose -f
-> docker-compose.ar.yml up -d --no-deps web_ar`. O `up -d --no-deps web` do BR **não** recria o container
+> AR, com o bloco abaixo. O `up -d --no-deps web` do BR **não** recria o container
 > AR, e o digest divergiria **em silêncio** (quebra da DEC-047 "uma imagem" que nenhum
-> teste ou healthcheck acusa hoje). Mesma regra no rollback.
+> teste ou healthcheck acusa hoje). Mesma regra no rollback. O `web_ar` também fala com o banco desde o
+> corte AR da DEC-081 (31/10/2026; `MOTOR_DATABASE_URL_AR` no `.env`, mesmo papel `app`): por isso o
+> `unset` da variável DELE antes do `up`, e depois a mesma contagem do BR no container AR, que tem de
+> dar 1 (§9.0 do `docs/banco_deploy.md`).
+
+```bash
+unset MOTOR_DATABASE_URL_AR
+docker compose -f docker-compose.ar.yml pull web_ar
+docker compose -f docker-compose.ar.yml up -d --no-deps web_ar
+docker inspect -f '{{range .Config.Env}}{{println .}}{{end}}' motor_expansao_web_ar | grep -c '^MOTOR_DATABASE_URL=postgresql://app:'   # tem de dar 1
+```
 
 ---
 
@@ -525,6 +546,11 @@ aplicada não volta com a imagem (§8 do `docs/banco_deploy.md`).
 
 ## 8. Subida da instância AR (Bloco E / BLK-INTL-08)
 
+> **Histórico:** é o roteiro da subida de 09/2026, com o Authelia na frente da AR. Desde o corte AR da
+> DEC-081 (31/10/2026), o `web_ar` fala com o banco e o `forward_auth` do `piloto-ar` vai ao
+> `/api/verify` dele; hoje, recriar o `web_ar` é o bloco do §5 (`unset` da `MOTOR_DATABASE_URL_AR`,
+> `--no-deps` e a contagem).
+
 Checklist do deploy **manual** da stack argentina (`docker-compose.ar.yml` — mesma VPS,
 mesma imagem/digest via `WEB_IMAGE`, Caddy e Authelia compartilhados). **Todo comando
 executado na VPS é com aprovação do Felipe, comando a comando (CLAUDE.md §6).** Em
@@ -576,9 +602,16 @@ ordem:
    Felipe, comando a comando)*: primeiro levar o arquivo por `scp` (o checkout da VPS está parado e o compose de produção foi trocado à mão em
    17/10, então `git pull` ali não é passo rotineiro) — é o que traz o
    `docker-compose.ar.yml` e o template para a VPS (o merge deste PR precisa já ter
-   acontecido); depois `docker compose -f docker-compose.ar.yml config`
+   acontecido); depois o `config`
    (a validação sintática final — `docker compose` não roda na máquina de dev) e
-   `docker compose -f docker-compose.ar.yml up -d`. O mesmo `.env` da stack BR
+   o `up` — hoje com o `unset` antes e a contagem depois, porque o `web_ar` fala com o banco (§5):
+   ```bash
+   docker compose -f docker-compose.ar.yml config --quiet && echo OK   # sem --quiet, imprime o compose resolvido, com a senha do app na URL
+   unset MOTOR_DATABASE_URL_AR
+   docker compose -f docker-compose.ar.yml up -d --no-deps web_ar
+   docker inspect -f '{{range .Config.Env}}{{println .}}{{end}}' motor_expansao_web_ar | grep -c '^MOTOR_DATABASE_URL=postgresql://app:'   # tem de dar 1
+   ```
+   O mesmo `.env` da stack BR
    resolve `WEB_IMAGE` → **mesmo digest** (DEC-047: uma imagem, o país vem do
    perfil).
 8. **Validação** *(na VPS, com aprovação do Felipe, comando a comando)*:
@@ -620,13 +653,20 @@ Para ligar *(na VPS, com aprovação do Felipe, comando a comando)*:
    `1000:1000` e arquivos `acesso-AAAA-MM-DD.jsonl` recentes. Sem arquivo, o painel liga
    vazio: rever o `chown` do passo 3 antes de seguir.
 2. **Acrescentar** a linha ao `.env` sem redigitar o arquivo (usuários separados por
-   vírgula, nomes do Authelia): `grep -c '^MOTOR_ACESSOS_ADMIN_USUARIOS' .env` antes,
+   vírgula, logins do cadastro — `usuarios.login_usuario`, que o `/api/verify` devolve como
+   `Remote-User`): `grep -c '^MOTOR_ACESSOS_ADMIN_USUARIOS' .env` antes,
    `echo 'MOTOR_ACESSOS_ADMIN_USUARIOS_AR=<usuario>' >> .env`, o mesmo `grep` depois — a
    contagem sobe em **exatamente 1** e a linha do BR segue igual.
-3. Os usuários da lista precisam estar no grupo `expansao_ar` do `users_database.yml`
-   (passo 6); sem ele o Authelia barra antes do container.
-4. Recriar só o `web_ar`, sem trocar digest:
-   `docker compose -f docker-compose.ar.yml up -d --no-deps web_ar`.
+3. Os usuários da lista precisam de linha ativa em `usuarios`, com o país AR em `usuario_paises`
+   (gate de país da DEC-081) e um perfil com a capacidade `acesso.painel_ver` (o `growth`), e não
+   mais do grupo `expansao_ar` do Authelia: sem o país AR, o `/api/verify` do `web_ar` nega na borda
+   (403); sem a capacidade, o RBAC do banco nega `/api/acessos/` (403), mesmo com o login na lista.
+4. Recriar só o `web_ar`, sem trocar digest, com o `unset` antes e a contagem depois (§5):
+   ```bash
+   unset MOTOR_DATABASE_URL_AR
+   docker compose -f docker-compose.ar.yml up -d --no-deps web_ar
+   docker inspect -f '{{range .Config.Env}}{{println .}}{{end}}' motor_expansao_web_ar | grep -c '^MOTOR_DATABASE_URL=postgresql://app:'   # tem de dar 1
+   ```
 5. Conferir o efeito, não o container: `docker compose -f docker-compose.ar.yml exec
    web_ar printenv MOTOR_ACESSOS_ADMIN_USUARIOS` devolve a lista; no navegador, o admin vê
    o ícone "Acessos e uso do piloto" em `https://piloto-ar.ultra-expansao.tech` e um

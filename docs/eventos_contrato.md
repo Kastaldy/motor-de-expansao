@@ -49,11 +49,11 @@ um valor é editar esta tabela primeiro.
 > rotas respondem **404** enquanto `MOTOR_AUTENTICACAO_PROPRIA` estiver vazia, e aí nenhuma
 > linha de `login` é escrita — não por falta de chamador, mas porque o caminho
 > inteiro fica dormente. Com a chave ligada, as linhas aparecem no mesmo instante, sem mudar
-> uma linha de código. No BR ela está ligada desde o corte do P19 (27/10/2026, `docs/infra_producao.md`); onde ainda está vazia, quem autentica é o Authelia.
+> uma linha de código. No BR ela está ligada desde o corte do P19 (27/10/2026, `docs/infra_producao.md`), e na AR desde o corte AR da DEC-081 (31/10/2026, pela `MOTOR_AUTENTICACAO_PROPRIA_AR` do `.env`); onde ainda está vazia, quem autentica é o Authelia.
 >
 > **Por que isto é reposição, e não conveniência.** O `docs/trilha_acesso_piloto.md` registra as
 > tentativas de login do Authelia — **sucesso e falha**, com usuário e IP — como a **camada 3** da
-> trilha, a que "responde quem entrou e quando". O corte do P19 remove essa camada para o BR (a AR segue no Authelia — DEC-067, emenda de 25/09/2026), que deixa de passar pelo
+> trilha, a que "responde quem entrou e quando". O corte do P19 remove essa camada para o BR (27/10/2026), e o corte AR da DEC-081 (31/10/2026, que revogou a emenda de 25/09/2026 da DEC-067) para a AR, que deixam de passar pelo
 > Authelia; sem estes dois eventos ela ficaria sem substituto.
 >
 > **`login.recusado`**: o que ele pode carregar é pequeno por decisões
