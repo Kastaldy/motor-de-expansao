@@ -27,6 +27,7 @@ from motor_expansao.dashboard.censo_report import (
     CONCLUSAO_REPROVADO,
     CONCLUSAO_RESSALVAS,
     _avaliar_conclusao,
+    _format_number,
     _viab_normalizado,
     gerar_pdf_relatorio_pontual_classico,
 )
@@ -458,11 +459,6 @@ def test_observacoes_nao_repetem_os_valores_das_faixas():
 # --------------------------------------------------------------------------- #
 # Envelope fisico do imovel: E3 x R3                                          #
 # --------------------------------------------------------------------------- #
-def test_e3_metragem_abaixo_do_minimo_reprova():
-    parecer = _parecer(info={"metragem_m2": AREA_MIN_M2 - 1})
-    assert _fin(parecer).status == CONCLUSAO_REPROVADO
-
-
 @pytest.mark.parametrize("pe_direito", [2.0, 3.49, None, float("nan")])
 def test_pe_direito_saiu_da_regua_e_nao_decide_mais_nada(pe_direito):
     """Retirado por Vinicius (2026-08-07). Continua digitado e impresso na pagina de
@@ -473,16 +469,72 @@ def test_pe_direito_saiu_da_regua_e_nao_decide_mais_nada(pe_direito):
     assert "direito" not in _texto(parecer)
 
 
-@pytest.mark.parametrize("metragem", [AREA_IDEAL_MIN_M2 - 1, AREA_IDEAL_MAX_M2 + 1])
-def test_r3_metragem_fora_da_faixa_ideal_e_so_ressalva(metragem):
+@pytest.mark.parametrize(
+    "metragem", [400, 900, AREA_MIN_M2 - 1, AREA_MIN_M2, 1_349, AREA_IDEAL_MIN_M2 - 1]
+)
+def test_r3_metragem_abaixo_do_ideal_e_aviso_no_financeiro_com_selo_aprovado(metragem):
+    """Emenda 2 da DEC-030 (13 e 15/11/2026): UMA regra de metragem, como AVISO.
+
+    Abaixo de 1.500 m2 a metragem aparece no bloco FINANCEIRO e o selo continua APROVADO:
+    o aviso nao pesa no status. O E3 (abaixo de `AREA_MIN_M2` reprovava) saiu -- 400, 900
+    e 1.199 m2 dao o MESMO aviso que 1.349 m2 --, e a praca nao fala de metragem.
+    """
     parecer = _parecer(info={"metragem_m2": metragem})
+    esperado = (
+        f"Metragem de {_format_number(metragem, 0)} m2 abaixo do ideal de "
+        f"{_format_number(AREA_IDEAL_MIN_M2, 0)} m2."
+    )
+    assert _fin(parecer).status == CONCLUSAO_APROVADO
+    assert _fin(parecer).avisos == (esperado,)
+    assert _fin(parecer).ressalvas == () and parecer.eliminatorios == ()
+    assert parecer.demografico.status == CONCLUSAO_APROVADO
+    assert parecer.demografico.avisos == () and parecer.demografico.ressalvas == ()
+
+
+def test_aviso_de_metragem_aparece_no_bloco_financeiro_no_lugar_do_card_verde():
+    """O aviso e' DESENHADO como ressalva (card cinza, barra ambar) no bloco do imovel; o
+    card verde "nenhuma restricao" sai, senao a coluna se contradiria ao lado do aviso."""
+    from motor_expansao.dashboard.censo_report import _conclusao_blocos
+
+    blocos = dict(_conclusao_blocos(_parecer(info={"metragem_m2": 1_349})))
+    assert blocos[CONCLUSAO_EIXO_FINANCEIRO] == (
+        ("Metragem de 1.349 m2 abaixo do ideal de 1.500 m2.", "ressalva"),
+    )
+    assert [sev for _t, sev in blocos[CONCLUSAO_EIXO_DEMOGRAFICO]] == ["confirmacao"]
+
+
+def test_aviso_de_metragem_vem_depois_das_ressalvas_e_nao_muda_o_status():
+    """Com outra ressalva no financeiro, o selo e' o dela e o aviso fecha a lista."""
+    from motor_expansao.dashboard.censo_report import _conclusao_blocos
+
+    parecer = _parecer(info={"metragem_m2": 1_349}, viab={"flag_fora_envelope": True})
     assert _fin(parecer).status == CONCLUSAO_RESSALVAS
-    assert parecer.eliminatorios == ()
+    itens = dict(_conclusao_blocos(parecer))[CONCLUSAO_EIXO_FINANCEIRO]
+    assert itens[-1] == ("Metragem de 1.349 m2 abaixo do ideal de 1.500 m2.", "ressalva")
+    assert len(itens) == 2
 
 
-@pytest.mark.parametrize("metragem", [AREA_IDEAL_MIN_M2, AREA_IDEAL_MAX_M2])
-def test_bordas_da_faixa_ideal_sao_inclusivas(metragem):
-    assert _fin(_parecer(info={"metragem_m2": metragem})).status == CONCLUSAO_APROVADO
+@pytest.mark.parametrize(
+    "metragem", [AREA_IDEAL_MIN_M2, AREA_IDEAL_MAX_M2, AREA_IDEAL_MAX_M2 + 1, 2_400, 5_000]
+)
+def test_metragem_acima_do_ideal_nao_gera_ressalva(metragem):
+    """Sem teto: imovel GRANDE nao gera nada em eixo nenhum (a borda de 1.500 e' inclusiva)."""
+    parecer = _parecer(info={"metragem_m2": metragem})
+    assert parecer.demografico.status == CONCLUSAO_APROVADO
+    assert _fin(parecer).status == CONCLUSAO_APROVADO
+    assert parecer.avisos == ()
+    assert "Metragem" not in _texto(parecer)
+
+
+def test_so_estudo_ignora_a_metragem():
+    """So-estudo nao avalia o imovel (a nota da pagina diz isso): metragem em `info` nao
+    pode rebaixar o unico selo que este modo desenha."""
+    parecer = _avaliar_conclusao(
+        _RESULT_OK, _RESIDUAL_OK, {"metragem_m2": 1_349}, {}, somente_estudo=True
+    )
+    assert parecer.financeiro is None
+    assert parecer.demografico.status == CONCLUSAO_APROVADO
+    assert parecer.ressalvas == () and parecer.avisos == ()
 
 
 # --------------------------------------------------------------------------- #
@@ -1013,7 +1065,9 @@ def test_ponto_ruim_em_tudo_ainda_mostra_os_dois_blocos():
     assert _TITULO_PRACA in pdf_bytes
     assert _TITULO_IMOVEL in pdf_bytes
     assert "zona morta".encode("latin-1") in pdf_bytes  # eliminatorio do eixo demografico
-    assert "abaixo do m\xednimo".encode("latin-1") in pdf_bytes  # eliminatorio do financeiro
+    # Eliminatorio do financeiro: o retorno (E1). Ate' a emenda 2 da DEC-030 era a metragem
+    # abaixo do minimo (E3), que saiu; os 900 m2 viraram aviso no proprio bloco financeiro.
+    assert "Retorno fora da r\xe9gua".encode("latin-1") in pdf_bytes
     assert "n\xe3o exibido".encode("latin-1") in pdf_bytes  # e a truncagem segue declarada
 
 
@@ -1269,9 +1323,10 @@ def test_itens_ordenam_eliminatorios_antes_das_ressalvas():
     from motor_expansao.dashboard.censo_report import _conclusao_blocos
 
     parecer = _parecer(
-        info={"metragem_m2": 900},  # eliminatorio, eixo financeiro
+        info={"aluguel_pedido": 99_999.0},  # eliminatorio (E2), eixo financeiro
         viab={"flag_fora_envelope": True},  # ressalva, eixo financeiro
     )
+    assert _fin(parecer).eliminatorios and _fin(parecer).ressalvas  # senao o teste e' vazio
     for _eixo, itens in _conclusao_blocos(parecer):
         severidades = [sev for _txt, sev in itens]
         assert severidades == sorted(severidades, key=lambda s: s != "eliminatorio")
@@ -1382,7 +1437,7 @@ def test_texto_da_observacao_chega_aos_bytes_do_pdf():
         info_imovel={**_INFO_OK, "metragem_m2": 1_349},
         viabilidade=_VIAB_OK,
     )
-    assert "fora da faixa ideal".encode("latin-1") in pdf_bytes
+    assert "abaixo do ideal".encode("latin-1") in pdf_bytes
 
 
 # Tokens DERIVADOS dos limiares, nunca escritos a mao (DEC-042): estes mesmos testes
@@ -1476,7 +1531,8 @@ def test_gate_e_card_de_aluguel_leem_o_mesmo_par_de_faixas():
 #   A) `flag_viavel=False` NUNCA pode virar "Aprovado" -- se o motor diz que o cenario
 #      nao fecha, o parecer nao pode aprovar. Este e' o invariante forte.
 #   B) `flag_viavel=True` PODE virar "Reprovado" por gate NAO-financeiro (aluguel acima
-#      do maximo, metragem abaixo do minimo, zona morta) -- mas nunca em silencio: tem
+#      do maximo; a metragem abaixo do minimo saiu na emenda 2 da DEC-030) -- mas nunca
+#      em silencio: tem
 #      de haver eliminatorio escrito explicando.
 #
 # Desde a DEC-030 as duas metades apontam para o selo FINANCEIRO, e nao mais para um
@@ -1536,8 +1592,11 @@ def test_conclusao_mais_dura_que_a_tela_sempre_diz_o_porque():
 # Termos que so podem sair de um eixo. Sao trechos LITERAIS dos apontamentos (ver
 # `_conclusao_eixo_financeiro` e o corpo de `_avaliar_conclusao`), e nao rotulos de UI:
 # se um deles aparecer no eixo errado, houve contaminacao entre os eixos.
+# Emenda 2 da DEC-030: a metragem abaixo do ideal (R3) e' AVISO do financeiro, e a
+# varredura abaixo olha os avisos tambem.
 _SO_DO_FINANCEIRO = ("Metragem", "Aluguel pedido", "Retorno fora da régua", "Margem operacional",
-                     "Prazo de retorno", "Cenário fora da régua", "envelope da base de calibração")
+                     "Prazo de retorno", "Cenário fora da régua", "envelope da base de calibração",
+                     "abaixo do ideal de")
 _SO_DO_DEMOGRAFICO = ("zona morta", "Meta não atingida", "Mercado já consumido",
                       "Metas censitárias não avaliadas", "metas censitárias do raio")
 
@@ -1557,8 +1616,12 @@ def test_eixo_demografico_nao_herda_o_veredito_do_cenario():
     """
     aprovados_apesar_de_inviavel = 0
     for viavel, parecer, _dados, _info in _matriz_cenarios():
-        demografico = parecer.demografico.eliminatorios + parecer.demografico.ressalvas
-        financeiro = _fin(parecer).eliminatorios + _fin(parecer).ressalvas
+        demografico = (
+            parecer.demografico.eliminatorios
+            + parecer.demografico.ressalvas
+            + parecer.demografico.avisos
+        )
+        financeiro = _fin(parecer).eliminatorios + _fin(parecer).ressalvas + _fin(parecer).avisos
         for linha in demografico:
             for termo in _SO_DO_FINANCEIRO:
                 assert termo not in linha, f"apontamento financeiro no eixo da praça: {linha!r}"
@@ -1621,7 +1684,7 @@ def test_pagina_de_conclusao_nao_usa_caractere_fora_de_latin1():
         result={"pop_total_raio": 10},
         viab={"flag_zona_morta": True, "motivo_zona_morta": "pop<5000", "flag_fora_envelope": True},
     )
-    for linha in parecer.eliminatorios + parecer.ressalvas:
+    for linha in parecer.eliminatorios + parecer.ressalvas + parecer.avisos:
         linha.encode("latin-1")  # levanta UnicodeEncodeError se houver caractere fora
 
 
@@ -1637,6 +1700,10 @@ def test_pagina_de_conclusao_nao_usa_caractere_fora_de_latin1():
 # por metragem, aluguel e retorno. A coluna demografica e' o que a separacao revela: 4 dos
 # 5 tem a praca limpa, e so Rosa e Silva (residual zero contra SAM de 18.148) sai com
 # ressalva. Um ponto que mudasse de coluna aqui teria mudado de EIXO, nao de nota.
+#
+# Emenda 2 da DEC-030 (13 e 15/11/2026): a metragem virou AVISO do financeiro, sem peso
+# no selo, e NENHUM status abaixo se move. R. Sao Miguel (1.349 m2) segue com ressalva
+# financeira pelo payback de 57 meses (R1) -- nao mais pela metragem, que agora so' avisa.
 _RECIFE = [
     (
         "Av. Pinheiros, 1212",

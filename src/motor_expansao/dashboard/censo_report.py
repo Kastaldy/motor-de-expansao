@@ -15,11 +15,7 @@ from fpdf import FPDF
 from PIL import Image, ImageOps
 
 from motor_expansao.api.maps_geocoder import build_search_url
-from motor_expansao.core.constants import (
-    AREA_IDEAL_MAX_M2,
-    AREA_IDEAL_MIN_M2,
-    AREA_MIN_M2,
-)
+from motor_expansao.core.constants import AREA_IDEAL_MIN_M2
 from motor_expansao.dashboard.censo_point import (
     METODO_RELATORIO_PONTUAL_CENSITARIO,
     RAIO_CENSITARIO_DEFAULT_KM,
@@ -2268,10 +2264,11 @@ def _viabilidade_page(
 #   EIXO FINANCEIRO -- o imovel e o retorno (Informacoes do Imovel + Viabilidade).
 #     E1  margem abaixo da regua E payback acima da regua (os DOIS)    -> Reprovado
 #     E2  aluguel pedido acima da 3a faixa de aluguel-teto (excecao)   -> Reprovado
-#     E3  metragem < AREA_MIN_M2  (pe-direito SAIU: Vinicius, 2026-08-07)  -> Reprovado
+#     R3  metragem < AREA_IDEAL_MIN_M2, sem teto nem piso    -> AVISO (sem peso no selo)
+#         (emenda 2 da DEC-030, 2026-11-13/15: era ressalva fora de 1.500-2.000 e,
+#         abaixo de AREA_MIN_M2, o E3 reprovava; o E3 saiu)
 #     R1  falha em UM dos dois criterios de retorno                    -> Ressalvas
 #     R2  aluguel acima da 2a faixa (teto) e dentro da excecao         -> Ressalvas
-#     R3  metragem fora de AREA_IDEAL_MIN_M2..AREA_IDEAL_MAX_M2        -> Ressalvas
 #     R5  metragem fora do envelope da base de calibracao              -> Ressalvas
 #     R6  campo essencial do imovel nao informado                      -> Ressalvas
 #   Eixo sem nenhum dos dois -> Aprovado.
@@ -2397,9 +2394,11 @@ _CONCLUSAO_APROVADO_TEXTO_DEMOGRAFICO = (
     "Nenhuma restrição encontrada na praça: o ponto atende às metas censitárias do raio "
     "e à leitura de mercado do hexágono."
 )
+# "envelope do imovel" saiu na emenda 2 da DEC-030: a metragem deixou este eixo, e o
+# texto verde afirmaria um criterio que o selo financeiro nao avalia mais.
 _CONCLUSAO_APROVADO_TEXTO_FINANCEIRO = (
-    "Nenhuma restrição encontrada no imóvel nem no retorno: o ponto atende ao envelope "
-    "do imóvel e aos critérios de retorno da Ultra."
+    "Nenhuma restrição encontrada no imóvel nem no retorno: o ponto atende ao aluguel-teto "
+    "e aos critérios de retorno da Ultra."
 )
 _CONCLUSAO_NOTA = (
     # "e pé-direito" saiu junto com o gate (Vinicius, 2026-08-07): a nota descreve a
@@ -2409,8 +2408,9 @@ _CONCLUSAO_NOTA = (
     # O gate E5 passou a valer aqui (emenda da DEC-030): sem esta frase o parecer
     # reprovaria a praca sem que a pagina dissesse por qual regra.
     f"reprovação quando {_CONCLUSAO_METAS_ELIMINATORIO_MIN} das "
-    f"{_CONCLUSAO_METAS_AVALIADAS} metas falham ao mesmo tempo. FINANCEIRO: envelope do "
-    "imóvel (metragem), aluguel-teto e critérios de retorno do cenário simulado. Cada eixo "
+    f"{_CONCLUSAO_METAS_AVALIADAS} metas falham ao mesmo tempo. FINANCEIRO: aluguel-teto e "
+    "critérios de retorno do cenário simulado; metragem abaixo de "
+    f"{_format_number(AREA_IDEAL_MIN_M2, 0)} m2 aparece como aviso, sem mudar o selo. Cada eixo "
     "tem selo próprio e NÃO há veredito único: um item eliminatório reprova o eixo sozinho; "
     "os demais rebaixam aquele eixo para 'Aprovado com ressalvas'. Dado ausente nunca "
     "reprova, apenas deixa o item sem avaliar."
@@ -2635,15 +2635,26 @@ _CONCLUSAO_ALUGUEL_GAP = 12.0
 
 @dataclass(frozen=True)
 class _ConclusaoEixo:
-    """Parecer de UM eixo: status bruto + observacoes ja redigidas, na ordem de leitura."""
+    """Parecer de UM eixo: status bruto + observacoes ja redigidas, na ordem de leitura.
+
+    `avisos` (emenda 2 da DEC-030) sao ressalvas que a pagina MOSTRA -- mesmo card cinza
+    com barra ambar -- mas que NAO entram no status: o selo pode sair "Aprovado" com um
+    aviso listado no bloco dele. Hoje o unico e' a metragem abaixo do ideal.
+    """
 
     status: str
     eliminatorios: tuple[str, ...]
     ressalvas: tuple[str, ...]
+    avisos: tuple[str, ...] = ()
 
 
-def _conclusao_eixo(eliminatorios: list[str], ressalvas: list[str]) -> _ConclusaoEixo:
-    """Fecha um eixo aplicando a gramatica "1 grave OU N medios" -- so aqui, uma vez."""
+def _conclusao_eixo(
+    eliminatorios: list[str], ressalvas: list[str], avisos: list[str] | None = None
+) -> _ConclusaoEixo:
+    """Fecha um eixo aplicando a gramatica "1 grave OU N medios" -- so aqui, uma vez.
+
+    `avisos` nao pesam: o status sai SO de eliminatorios e ressalvas.
+    """
     if eliminatorios:
         status = CONCLUSAO_REPROVADO
     elif ressalvas:
@@ -2651,7 +2662,10 @@ def _conclusao_eixo(eliminatorios: list[str], ressalvas: list[str]) -> _Conclusa
     else:
         status = CONCLUSAO_APROVADO
     return _ConclusaoEixo(
-        status=status, eliminatorios=tuple(eliminatorios), ressalvas=tuple(ressalvas)
+        status=status,
+        eliminatorios=tuple(eliminatorios),
+        ressalvas=tuple(ressalvas),
+        avisos=tuple(avisos or ()),
     )
 
 
@@ -2687,6 +2701,12 @@ class _ConclusaoPonto:
     def ressalvas(self) -> tuple[str, ...]:
         fin = self.financeiro.ressalvas if self.financeiro else ()
         return self.demografico.ressalvas + fin
+
+    @property
+    def avisos(self) -> tuple[str, ...]:
+        """Avisos (mostrados, sem peso no selo), demografico antes de financeiro."""
+        fin = self.financeiro.avisos if self.financeiro else ()
+        return self.demografico.avisos + fin
 
 
 def _conclusao_valor(value: Any) -> float | None:
@@ -2874,25 +2894,18 @@ def _conclusao_eixo_financeiro(
     elif dados_viab.get("flag_viavel") is False:
         ressalvas.append("Cenário fora da régua de viabilidade da Ultra.")
 
-    # --- Envelope fisico do imovel (E3 / R3) ---
-    # Primeira aplicacao real de AREA_MIN_M2/AREA_IDEAL_*: eram canonicos declarados em
-    # config.py e travados em teste de contrato, mas nao comparados com nada em lugar
-    # nenhum. `PE_DIREITO_MIN` continua FORA daqui: o pe-direito foi retirado da regua a
-    # pedido de Vinicius (2026-08-07) e volta a ser so um campo digitado e impresso na
-    # pagina de informacoes do imovel.
-    metragem = _conclusao_valor(info.get("metragem_m2"))
-    if metragem is not None:
-        if metragem < AREA_MIN_M2:
-            eliminatorios.append(
-                f"Metragem de {_format_number(metragem, 0)} m2 abaixo do mínimo de "
-                f"{_format_number(AREA_MIN_M2, 0)} m2."
-            )
-        elif not AREA_IDEAL_MIN_M2 <= metragem <= AREA_IDEAL_MAX_M2:
-            ressalvas.append(
-                f"Metragem de {_format_number(metragem, 0)} m2 fora da faixa ideal de "
-                f"{_format_number(AREA_IDEAL_MIN_M2, 0)} a "
-                f"{_format_number(AREA_IDEAL_MAX_M2, 0)} m2."
-            )
+    # --- Metragem: AVISO, sem peso no selo (emenda 2 da DEC-030, 2026-11-13) ---
+    # O E3 (< AREA_MIN_M2 reprovava) e o R3 (fora de 1.500-2.000, ressalva) viraram UMA
+    # regra so': metragem abaixo de AREA_IDEAL_MIN_M2 e' listada neste bloco como aviso --
+    # o card de ressalva aparece, e o selo financeiro NAO cai por ela. Ver
+    # `_conclusao_metragem_abaixo_do_ideal`. `PE_DIREITO_MIN` segue fora da regua desde
+    # 2026-08-07 (Vinicius). O R6 ("Metragem nao informado") e o R5 (envelope da base de
+    # calibracao) continuam ressalvas de verdade.
+    avisos: list[str] = []
+    aviso_metragem = _conclusao_metragem_abaixo_do_ideal(info)
+    if aviso_metragem is not None:
+        avisos.append(aviso_metragem)
+
     # --- Aluguel pedido x faixas de aluguel-teto (E2 / R2) ---
     # MESMO par que o card imprime (`_conclusao_faixas_aluguel`): resolver separado fazia
     # o gate ficar mudo com o card vermelho ao lado, na mesma pagina.
@@ -2925,7 +2938,7 @@ def _conclusao_eixo_financeiro(
                 f"{rotulo} não informado: o critério correspondente não pôde ser avaliado."
             )
 
-    return _conclusao_eixo(eliminatorios, ressalvas)
+    return _conclusao_eixo(eliminatorios, ressalvas, avisos)
 
 
 # --- Canibalizacao: unidade Ultra DENTRO do raio do estudo -------------------
@@ -3094,6 +3107,24 @@ _CONCLUSAO_RECOMENDACAO_DISPUTA = (
     "então entrar aqui é brigar por aluno de concorrente. O imóvel precisa superar as "
     "unidades vizinhas em metragem e estrutura para sustentar a disputa."
 )
+
+
+def _conclusao_metragem_abaixo_do_ideal(info: Mapping[str, Any]) -> str | None:
+    """R3: a UNICA regra de metragem da Conclusao -- aviso abaixo de `AREA_IDEAL_MIN_M2`.
+
+    Emenda 2 da DEC-030 (pedido de Juan, 13 e 15/11/2026): uma faixa so', sem teto (imovel
+    GRANDE nao gera nada) e sem piso eliminatorio (o E3, que reprovava abaixo de
+    `AREA_MIN_M2`, saiu: 900 m2 e' o mesmo aviso que 1.400 m2). Mora no bloco FINANCEIRO
+    como AVISO: aparece como ressalva na pagina, mas o selo continua o que os outros gates
+    decidirem. Dado ausente ou `NaN` nao avalia.
+    """
+    metragem = _conclusao_valor(info.get("metragem_m2"))
+    if metragem is None or metragem >= AREA_IDEAL_MIN_M2:
+        return None
+    return (
+        f"Metragem de {_format_number(metragem, 0)} m2 abaixo do ideal de "
+        f"{_format_number(AREA_IDEAL_MIN_M2, 0)} m2."
+    )
 
 
 def _avaliar_conclusao(
@@ -3412,6 +3443,10 @@ def _conclusao_itens(eixo: _ConclusaoEixo, confirmacao: str) -> tuple[tuple[str,
     """
     itens = [(texto, "eliminatorio") for texto in eixo.eliminatorios]
     itens += [(texto, "ressalva") for texto in eixo.ressalvas]
+    # Aviso (emenda 2 da DEC-030): desenhado como ressalva, por ultimo. Com SO avisos, ele
+    # substitui o card verde -- "nenhuma restricao encontrada" ao lado de um aviso seria
+    # contradicao na mesma coluna; o selo, esse sim, segue verde.
+    itens += [(texto, "ressalva") for texto in eixo.avisos]
     return tuple(itens) or ((confirmacao, "confirmacao"),)
 
 
