@@ -213,6 +213,9 @@ def _flags(prev: PrevisaoV2) -> dict[str, Any]:
         "flag_extrapolacao": bool(prev.flag_extrapolacao),
         "fora_do_envelope": list(prev.fora_do_envelope),
         "faixa_provisoria": bool(prev.faixa_provisoria),
+        # DEC-086: a metragem que o modelo usou (ate' o teto) e se o teto cortou a digitada.
+        "teto_m2_aplicado": bool(prev.teto_m2_aplicado),
+        "m2_modelo": _n(prev.m2_modelo, 2),
     }
 
 

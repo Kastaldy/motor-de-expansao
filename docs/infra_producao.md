@@ -1113,6 +1113,61 @@ produto aos 10 meses na consulta seguinte.
 reiniciar container ou fazer deploy. Portão reprovado (`rc=2`): nada publicado, arquivo
 anterior intacto, aviso no chat. Log em `/var/log/motor-snapshots/pico_por_uf_*.log`.
 
+## Entradas do modelo de praça da aba de imóveis (DEC-086)
+
+> Decisão em `docs/decisions/DEC-086.md`. O cabeçalho do script é o runbook detalhado.
+
+A aba de oportunidades imobiliárias projeta o faturamento de cada imóvel pelo modelo de
+praça do simulador. O modelo precisa de três entradas do ponto (`pop_c10`, `dom_c10`,
+`renda_pc_c10`), tiradas da isócrona de 10 min (Valhalla) e da malha de setores. Elas são
+calculadas à noite, por coordenada, e gravadas em
+`/opt/motor-expansao/data/oportunidades/entradas_c10.parquet`, ao lado do `viaveis.parquet`.
+Sem a entrada do imóvel, a aba usa a curva de densidade de antes.
+
+**Script versionado:** `scripts/cron/run_entradas_oportunidades.sh`. Roda
+`python -m motor_expansao.dimensionamento.entradas_oportunidades` num
+`docker compose run --rm --no-deps web`: a imagem, o `MOTOR_ROTAS_URL` e a malha são os do
+site, e o cálculo é o da sugestão da Viabilidade. A pasta da lista entra uma segunda vez,
+gravável, em `/oportunidades-rw`.
+
+- **Incremental:** só calcula a coordenada que ainda não está no arquivo.
+  - A 1ª rodada leva ~1,2 h (8.010 coordenadas × 0,54 s, medido em 13/11/2026, pico de 651 MB).
+  - As seguintes só calculam os imóveis novos de cada envio da lista. Sem novidade, saem em segundos e não regravam o arquivo.
+- **Falhas:**
+  - Falha permanente do ponto (sem via a 300 m, área grande demais, sem setor) fica gravada com o motivo.
+  - Falha do Valhalla ou de insumo (malha municipal ausente, partição de setores ausente ou ilegível) não grava e volta na noite seguinte. Com 20 falhas seguidas o lote para com `rc=3`, guarda o que já fez e avisa o chat de ops; o motivo vai em `ultima_falha_do_servico`, no resumo do log.
+- **Gravação:** por temporário + rename, a cada 500 pontos.
+
+**Sem restart:** a aba relê lista e entradas quando o mtime ou o tamanho mudam.
+**Desfazer:** apagar `entradas_c10.parquet` devolve a aba inteira à curva de densidade
+na leitura seguinte. A chave `MOTOR_VIABILIDADE_V2=0` também, junto com o simulador.
+
+**Instalação (uma vez, manual, comando a comando — §6), DEPOIS da imagem web nova:**
+
+```bash
+# na estação, pela conta deploy:
+scp -i ~/.ssh/id_ultra_deploy scripts/cron/run_entradas_oportunidades.sh deploy@2.25.137.241:
+# na VPS, como root:
+install -m 0755 -o root -g root /home/deploy/run_entradas_oportunidades.sh /opt/motor-expansao-infra/run_entradas_oportunidades.sh
+sha256sum /opt/motor-expansao-infra/run_entradas_oportunidades.sh   # tem de bater com o da main
+DRY_RUN=1 /opt/motor-expansao-infra/run_entradas_oportunidades.sh   # 5 pontos, grava só no /tmp do container
+/opt/motor-expansao-infra/run_entradas_oportunidades.sh             # 1ª rodada (~1,2 h), fora do horário de uso
+```
+
+**Linha de crontab (todo dia, 04:15 UTC = 01:15 BRT):**
+
+```cron
+15 4 * * * /opt/motor-expansao-infra/run_entradas_oportunidades.sh
+```
+
+**Tiles novos do Valhalla:** as entradas antigas não se recalculam sozinhas. Depois de
+reconstruir os tiles, rodar uma vez com `--recalcular-tudo`, pelo mesmo
+`docker compose run` do script (o arquivo antigo segue valendo até cada ponto ser refeito).
+
+**O que o job NUNCA faz:** escrever fora de `oportunidades/entradas_c10.parquet`, tocar
+o `viaveis.parquet` ou o M1, reiniciar container ou fazer deploy. Log em
+`/var/log/motor-snapshots/entradas_oportunidades_*.log`.
+
 ## Serviço de rotas (Valhalla, DEC-074) — isócronas de "5 min" e "10 min de carro"
 
 Stack **separada e opcional** em `/opt/valhalla-infra` (versionada em `valhalla-infra/`, molde

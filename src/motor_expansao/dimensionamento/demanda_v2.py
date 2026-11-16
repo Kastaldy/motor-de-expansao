@@ -54,8 +54,12 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any
 
+from motor_expansao.dimensionamento.config import V2_TETO_M2
+
 # Ordem das colunas de X (e de `xtx_inv`). Mudar a ordem muda o significado da matriz.
 ORDEM_X = ("intercepto", "ln_m2", "ln_renda_dom_c10", "ln_pop_c10", "studios")
+# O teto de metragem em LOG (DEC-086), calculado UMA vez com o mesmo `math.log` da entrada.
+_LN_TETO_M2 = math.log(V2_TETO_M2)
 COVARIAVEIS_ENVELOPE = ("ln_m2", "ln_renda_dom_c10", "ln_pop_c10")
 _CHAVES_TOPO = frozenset(
     {
@@ -141,6 +145,9 @@ class PrevisaoV2:
     fora_do_envelope: tuple[str, ...]
     faixa_provisoria: bool
     ep_log: float  # erro-padrao da previsao em log (diagnostico)
+    # A metragem que o MODELO usou: a da entrada ate' `V2_TETO_M2`, o teto acima (DEC-086).
+    m2_modelo: float = 0.0
+    teto_m2_aplicado: bool = False
 
 
 def studios_binario(n_studios: int | None) -> int:
@@ -292,14 +299,21 @@ def _ln_positivo(valor: float, nome: str) -> float:
 
 
 def prever_faturamento_v2(entradas: EntradasV2, coef: CoeficientesV2) -> PrevisaoV2:
-    """Faturamento mensal maduro p10/p50/p90 e flags. Puro: nenhum I/O."""
+    """Faturamento mensal maduro p10/p50/p90 e flags. Puro: nenhum I/O.
+
+    A metragem entra no modelo ate' `V2_TETO_M2` (DEC-086): acima dele o p50 e' o do teto,
+    e a metragem nao vira extrapolacao (o teto e' o topo do envelope do treino). Corta em
+    LOG, com o mesmo `math.log` que o envelope compara, para a borda nao virar flag.
+    """
     if entradas.studios not in (0, 1):
         raise EntradasInvalidas("studios é binário no modelo (0 ou 1)")
     dom = float(entradas.dom_c10)
     if not math.isfinite(dom) or dom <= 0:
         raise EntradasInvalidas("domicílios da isócrona têm de ser positivos")
+    ln_m2_entrada = _ln_positivo(entradas.m2, "m2")
+    teto_m2_aplicado = ln_m2_entrada > _LN_TETO_M2
     ln = {
-        "ln_m2": _ln_positivo(entradas.m2, "m2"),
+        "ln_m2": _LN_TETO_M2 if teto_m2_aplicado else ln_m2_entrada,
         "ln_renda_dom_c10": _ln_positivo(entradas.renda_dom_c10, "renda domiciliar"),
         "ln_pop_c10": _ln_positivo(entradas.pop_c10, "população"),
     }
@@ -323,6 +337,8 @@ def prever_faturamento_v2(entradas: EntradasV2, coef: CoeficientesV2) -> Previsa
         fora_do_envelope=fora,
         faixa_provisoria=bool(coef.faixa_provisoria),
         ep_log=ep,
+        m2_modelo=V2_TETO_M2 if teto_m2_aplicado else float(entradas.m2),
+        teto_m2_aplicado=teto_m2_aplicado,
     )
 
 

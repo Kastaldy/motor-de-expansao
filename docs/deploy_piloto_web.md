@@ -128,12 +128,12 @@ scp -i ~/.ssh/id_ultra_mcp <arquivo> root@2.25.137.241:/opt/motor-expansao/data/
 
 > ### ⚠ `scp` sem restart não acende nada — e o `/api/health` fica verde mentindo
 >
-> Os leitores do backend **memoizam a ausência**, por dois mecanismos diferentes:
-> `@functools.lru_cache(maxsize=1)` em `carregar_independentes` e `carregar_redes`, e um global de
-> módulo (`_OPORTUNIDADES_CACHE`) em `_carregar_oportunidades`. Nenhum dos dois é invalidado em
-> runtime — `limpar_caches()` é helper de teste, não rota. Se o arquivo chegar com o container de
-> pé, o leitor já guardou o `None` da primeira requisição e continuará devolvendo `None` até o
-> processo morrer.
+> Os leitores do backend **memoizam a ausência**: `@functools.lru_cache(maxsize=1)` em
+> `carregar_independentes` e `carregar_redes`, que não é invalidado em runtime — `limpar_caches()`
+> é helper de teste, não rota. Se o arquivo chegar com o container de pé, o leitor já guardou o
+> `None` da primeira requisição e continuará devolvendo `None` até o processo morrer. (A lista de
+> imóveis, `_carregar_oportunidades`, deixou de ser um deles na DEC-086: ela remonta sozinha pela
+> assinatura do arquivo.)
 >
 > O `/api/health`, por outro lado, faz `exists()` **a cada chamada** — então ele fica **verde na
 > hora**, com a camada ainda invisível na tela. É a pior combinação possível: o sinal que o
@@ -312,18 +312,24 @@ scp -i ~/.ssh/id_ultra_mcp -r \
   root@2.25.137.241:/opt/motor-expansao/data/oportunidades/dossies/
 ```
 
-**Depois de trocar o parquet, RESTARTAR o `web`:**
+**Depois de trocar o parquet, NÃO precisa mais de restart (DEC-086, 13/11/2026).**
+`_carregar_oportunidades()` compara caminho, mtime e tamanho da lista e das entradas do
+modelo de praça (e o sha dos coeficientes) a cada leitura e remonta sozinho quando algo
+mudou. Até a DEC-086 o cache nunca invalidava e o `restart web` era obrigatório (a
+consequência (ii) da DEC-037). Os **dossiês** seguem como antes: `_dossie_index()`
+reescaneia o diretório a cada chamada.
+
+**O faturamento projetado dos imóveis novos.** O número da aba vem do modelo de praça
+quando o imóvel tem as entradas da isócrona em `entradas_c10.parquet` (mesma pasta). Quem
+grava esse arquivo é o cron noturno `run_entradas_oportunidades.sh` (04:15 UTC; ver
+`docs/infra_producao.md`, "Entradas do modelo de praça da aba de imóveis"). Até ele
+rodar, o imóvel novo aparece com a curva de densidade de antes. Para não esperar a noite,
+rodar o wrapper à mão depois do envio (é o mesmo comando do cron; incremental, só calcula
+o que falta):
 
 ```bash
-docker compose -f docker-compose.prod.yml restart web
+/opt/motor-expansao-infra/run_entradas_oportunidades.sh
 ```
-
-> Isto **não é opcional**. `_carregar_oportunidades()` guarda a lista inteira num global
-> (`_OPORTUNIDADES_CACHE`) que **nunca é invalidado** — o backend lê o parquet uma única
-> vez, na primeira requisição do processo. Sem restart, um parquet novo **não aparece**, e
-> pior: se ele estava ausente naquela primeira leitura, o cache guardou lista **vazia** e
-> a aba continua vazia para sempre. Os **dossiês** são a exceção: `_dossie_index()`
-> reescaneia o diretório a cada chamada, então PDF novo vale na hora.
 
 **Conferir no ar:**
 

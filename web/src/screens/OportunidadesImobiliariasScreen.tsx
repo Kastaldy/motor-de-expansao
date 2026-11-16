@@ -21,8 +21,11 @@ import {
   ACC_ON,
   ACC_TX,
   COR_TIPO,
+  avisoDaProjecao,
   corTipo,
   custoOcup,
+  faixaDoModelo,
+  faixaDoModeloCurta,
   labelFaixa,
   labelTipo,
   rsM2,
@@ -103,8 +106,9 @@ export interface PontoNoMapa {
   imovelId?: string
 }
 
-/** Faturamento projetado/mes = alunos p50 da curva tamanho->densidade (simulador de
- *  Viabilidade, servido pronto pelo backend em `fat_proj`) x ticket. NAO usa residual. */
+/** Faturamento projetado/mes (p50), servido pronto pelo backend em `fat_proj`: o modelo de
+ *  praca do simulador ou, sem as entradas do imovel, a curva de densidade (DEC-086). NAO
+ *  usa residual. */
 const projFatDe = (o: Oportunidade): number | null => o.fat_proj ?? null
 
 type Ordem = 'residual' | 'faturamento' | 'rs_m2' | 'area' | 'aluguel'
@@ -629,8 +633,9 @@ function Ficha({
             <HeroStat label="Aluguel" valor={op.aluguel == null ? '—' : num(op.aluguel)} unidade="R$/mês" />
             <HeroStat label="R$/m²" valor={r == null ? '—' : num(r, 0)} unidade="/mês" />
             <HeroStat label="Projeção fat." valor={projFat == null ? '—' : brlCurto(projFat)} unidade="/mês" cor="var(--pos-text)"
-              nota={alunosProj != null ? `${num(alunosProj)} alunos p50/m²` : ''} />
+              nota={faixaDoModeloCurta(op) ?? (alunosProj != null ? `${num(alunosProj)} alunos p50/m²` : '')} />
           </div>
+          {avisoDaProjecao(op) && <AvisoProjecao texto={avisoDaProjecao(op) ?? ''} />}
         </Glass>
       ) : (
         /* `flexShrink: 0` nao e' enfeite. Este <article> e' filho DIRETO de um flex
@@ -690,7 +695,8 @@ function Ficha({
                 <HeroStat label="Aluguel" valor={op.aluguel == null ? '—' : num(op.aluguel)} unidade="R$/mês" nota={r != null ? `R$ ${num(r, 0)}/m²` : ''} />
                 <HeroStat label="Custo de ocupação" valor={ocupacao > 0 ? num(ocupacao) : '—'} unidade="R$/mês" nota="com IPTU e condomínio" />
                 <HeroStat label="Projeção de faturamento" valor={projFat == null ? '—' : brl(projFat, true)} unidade="/mês" cor="var(--pos-text)"
-                  nota={alunosProj != null ? `${num(alunosProj)} alunos (p50/m²) × R$ ${num(op.ticket_proj ?? 0)}` : 'sem base de m² p/ estimar'} />
+                  nota={faixaDoModelo(op) ?? (alunosProj != null ? `${num(alunosProj)} alunos (p50/m²) × R$ ${num(op.ticket_proj ?? 0)}` : 'sem base de m² p/ estimar')} />
+                {avisoDaProjecao(op) && <AvisoProjecao texto={avisoDaProjecao(op) ?? ''} />}
               </div>
               {/* O link fica COLADO na Projeção de faturamento (pedido do Felipe,
                   2026-09-23): é neste número que a pessoa decide se o imóvel merece
@@ -1082,6 +1088,16 @@ function HeroStat({ label, valor, unidade, nota, cor }: { label: string; valor: 
         {unidade && <span style={{ font: '400 12px/1 var(--f-ui)', color: 'var(--tx-sub)' }}>{unidade}</span>}
       </div>
       {nota && <div style={{ font: '400 10.5px/1.3 var(--f-ui)', color: 'var(--tx-sub)', marginTop: 5 }}>{nota}</div>}
+    </div>
+  )
+}
+
+/** Aviso do modelo de praça sob a projeção (o mesmo texto e o mesmo tom do simulador).
+ *  `flexBasis: 100%` o põe numa linha própria quando cai dentro da fileira de números. */
+function AvisoProjecao({ texto }: { texto: string }) {
+  return (
+    <div style={{ flexBasis: '100%', font: '400 11px/1.4 var(--f-ui)', color: 'var(--warn-text)', marginTop: 8 }}>
+      {texto}
     </div>
   )
 }

@@ -69,9 +69,10 @@ def _linha(
 def apontar(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
     """Escreve um parquet de teste e aponta a rota para ele, zerando o cache global.
 
-    `_OPORTUNIDADES_CACHE` é um global que NUNCA invalida (por desenho: em produção o
-    artefato só muda por deploy). Sem zerar aqui, o primeiro teste contaminaria todos
-    os outros — e o cache também guarda lista vazia, então a ordem importaria.
+    `_OPORTUNIDADES_CACHE` só remonta quando a lista, as entradas do modelo de praça ou os
+    coeficientes mudam (assinatura de arquivo, DEC-086). Cada teste escreve o seu parquet no
+    MESMO caminho, às vezes no mesmo instante: zerar aqui garante que nenhum teste herde o
+    cache do anterior por coincidência de mtime e tamanho.
     """
 
     def _apontar(linhas: list[dict[str, object]]) -> None:

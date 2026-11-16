@@ -784,6 +784,10 @@ export interface DemandaV2Out {
   flag_extrapolacao: boolean
   fora_do_envelope: string[]
   faixa_provisoria: boolean
+  /** DEC-086: a metragem que o modelo usou (até o teto) e se o teto cortou a digitada.
+   *  Opcionais: servidor de antes do teto não as manda. */
+  teto_m2_aplicado?: boolean
+  m2_modelo?: number | null
   coeficientes: { versao: string; sha256: string; data: string }
   token: string
   /** Só na resposta conferida pela Viabilidade. */
@@ -834,12 +838,26 @@ export interface Oportunidade {
   lat: number | null
   lng: number | null
   url: string | null
-  /** Alunos p50 da curva tamanho->densidade (simulador de Viabilidade), pela área. */
+  /** Alunos p50: no modelo de praça, o faturamento convertido pelas premissas padrão do
+   *  simulador; na curva de densidade, o p50 de alunos pela área. */
   alunos_p50?: number | null
-  /** Faturamento projetado/mês = alunos_p50 × ticket (servido pronto pelo backend). */
+  /** Faturamento projetado/mês (p50), servido pronto pelo backend (DEC-086). */
   fat_proj?: number | null
-  /** Ticket (mensalidade balcão) usado no fat_proj — do dimensionamento/config. */
+  /** Ticket (mensalidade balcão) da curva de densidade — do dimensionamento/config. */
   ticket_proj?: number | null
+  /** De onde veio o `fat_proj` (DEC-086): o modelo de praça do simulador, quando o lote
+   *  noturno tem as entradas do imóvel, ou a curva de densidade (o fallback). */
+  fat_fonte?: 'praca' | 'densidade' | null
+  /** Faixa do modelo de praça (p10–p90 do faturamento/mês); `null` na densidade. */
+  fat_p10?: number | null
+  fat_p90?: number | null
+  /** O ponto saiu do intervalo das unidades do ajuste (só no modelo de praça). */
+  fat_extrapolacao?: boolean | null
+  /** Metragem que o modelo de praça usou: a do anúncio até o teto do modelo (`V2_TETO_M2`). */
+  m2_modelo?: number | null
+  /** O teto do modelo cortou a área do anúncio? Vem do MODELO (nunca comparar `m2_modelo`
+   *  com `area` na tela: arredondamento pareceria corte). `null` fora do modelo de praça. */
+  teto_m2_aplicado?: boolean | null
   /** Se o coletor gerou um dossiê PDF para este imóvel (top-N por praça). */
   tem_dossie?: boolean
 }
