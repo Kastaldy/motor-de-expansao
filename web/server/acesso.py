@@ -27,10 +27,12 @@ from __future__ import annotations
 import json
 import logging
 import os
+import re
 from pathlib import Path
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
+    from motor_expansao.db.rbac import Identidade
     from motor_expansao.perfil import Perfil
 
 _LOG = logging.getLogger("piloto.acesso")
@@ -743,8 +745,61 @@ CAPACIDADES_SENSIVEIS = frozenset(
         "concorrente.anotar",
         # 024 (DEC-085): ESCRITA no cadastro das unidades Ultra. Mesmo raciocinio.
         "rede.unidade_incluir",
+        # 025 (DEC-087): o financeiro da rede, recortado as unidades do master. Hoje nenhuma rota
+        # de `REGRAS_POR_CAPACIDADE` exige ESTA chave (o gate a aceita no lugar de `rede.ver`, que
+        # ja' e' sensivel, entao a degradacao com o banco fora ja' nega o master). Ela esta' aqui
+        # para que uma rota que um dia a exija direto nasca fechada no fail-closed, e nao aberta.
+        "rede.ver_propria",
     }
 )
+
+#: A capacidade do perfil `master` (migration 025, DEC-087, decisao de 17/11/2026): a Visao
+#: Executiva RECORTADA as unidades cujo `master_franquia` no cadastro e' o da pessoa
+#: (`usuario_masters`). Nao e' um `rede.ver` com filtro -- e' outra chave, e o gate so' a aceita
+#: nas rotas de `rota_da_rede_propria`. O recorte em si e' da ROTA (`_recorte_da_rede`, no
+#: `app.py`): o gate decide se a requisicao CHEGA la', nao o que ela devolve.
+CAPACIDADE_REDE_PROPRIA = "rede.ver_propria"
+
+#: Os metodos que `rede.ver_propria` alcanca: so' leitura. Editar o cadastro e' `rede.cadastro_editar`,
+#: que o master nao tem; e um metodo novo de leitura (HEAD) nao entra sem decisao.
+METODOS_DA_REDE_PROPRIA = frozenset({"GET"})
+
+#: Segmento de id de unidade: `[^/.]+`. SEM PONTO de proposito -- e' o ponto que separa a ficha
+#: (`/api/rede/unidade/{id}`) do PDF dela (`/api/rede/unidade/{id}.pdf`). O id da rede e' slug
+#: ASCII (`rede_metricas._slug`: `[a-z0-9-]`), entao nenhuma unidade de verdade fica de fora; um
+#: `%2E` codificado chega aqui ja' decodificado pelo servidor e cai na mesma regra.
+_ID_DA_UNIDADE = r"[^/.]+"
+
+#: As rotas de `/api/rede/` que `rede.ver_propria` alcanca. ALLOWLIST FECHADA, casada com
+#: `fullmatch` (o caminho INTEIRO, sem sufixo), e nao por prefixo como o resto deste modulo --
+#: o prefixo `/api/rede/` cobre tambem os exports (`carteira.csv`/`.xlsx`/`.pdf`, `unidade/{id}.pdf`,
+#: `unidade/{id}/concorrencia.pdf`), as unidades fora da rede e a escrita do cadastro, que o master
+#: NAO alcanca. Por isso aqui e' o contrario do resto: rota nova de `/api/rede/` nasce FORA do
+#: master ate' alguem a acrescentar nesta tupla -- e o contrato
+#: `tests/contracts/test_master_so_alcanca_a_executiva.py` falha se a lista do que passa mudar.
+#: Toda rota desta lista tem de aplicar o recorte (`_recorte_da_rede`); acrescentar uma sem isso
+#: entrega a rede inteira ao master.
+ROTAS_DA_REDE_PROPRIA: tuple[re.Pattern[str], ...] = (
+    re.compile(r"/api/rede/filtros"),
+    re.compile(r"/api/rede/carteira"),
+    re.compile(r"/api/rede/inteligencia"),
+    re.compile(rf"/api/rede/unidade/{_ID_DA_UNIDADE}"),
+    re.compile(rf"/api/rede/unidade/{_ID_DA_UNIDADE}/inteligencia"),
+    re.compile(rf"/api/rede/unidade/{_ID_DA_UNIDADE}/setores"),
+)
+
+
+def rota_da_rede_propria(path: str, metodo: str) -> bool:
+    """`True` = esta rota+metodo esta' no alcance de `rede.ver_propria` (allowlist fechada).
+
+    Responde so' "o master pode CHEGAR aqui". Quem nao tem `rede.ver_propria` nao e' afetado: o
+    gate so' consulta esta funcao depois de a pessoa NAO ter `rede.ver`.
+    """
+    if not isinstance(path, str) or not isinstance(metodo, str):
+        return False
+    if metodo.upper() not in METODOS_DA_REDE_PROPRIA:
+        return False
+    return any(padrao.fullmatch(path) for padrao in ROTAS_DA_REDE_PROPRIA)
 
 
 def banco_no_comando() -> bool:
@@ -879,9 +934,21 @@ def motivo_bloqueio_por_banco(path: str, metodo: str, usuario: object) -> str | 
 
     _rbac_respondeu()  # banco respondeu: o proximo episodio volta a logar
 
-    if quem is None or not quem.pode(necessaria):
+    if quem is None:
         return "Seu usuário não tem acesso a esta área do piloto. Fale com o Felipe."
-    return None
+    if quem.pode(necessaria):
+        return None
+    # O perfil `master` (DEC-087): sem `rede.ver`, mas com `rede.ver_propria`, passa SO' nas
+    # leituras da allowlist fechada -- e a rota recorta as unidades dele. A troca vale apenas no
+    # lugar de `rede.ver`: nenhuma outra capacidade tem substituta, e quem ja' tem `rede.ver` nem
+    # chega aqui (o ramo de cima responde antes, e o comportamento dele nao muda).
+    if (
+        necessaria == "rede.ver"
+        and quem.pode(CAPACIDADE_REDE_PROPRIA)
+        and rota_da_rede_propria(path, metodo)
+    ):
+        return None
+    return "Seu usuário não tem acesso a esta área do piloto. Fale com o Felipe."
 
 
 #: Capacidade que SUSTENTA cada aba da SPA. O `/api/me` responde em ABAS mesmo com o banco
@@ -904,6 +971,22 @@ CAPACIDADE_QUE_SUSTENTA_A_ABA: dict[str, str] = {
     "viabilidade": "viabilidade.simular",
     "executiva": "rede.ver",
 }
+
+#: Capacidades que TAMBEM sustentam uma aba, alem da principal acima (DEC-087). O master tem a
+#: Visao Executiva sem ter `rede.ver`: a aba aparece para ele por `rede.ver_propria`, e o gate o
+#: deixa so' nas leituras recortadas. Mapa SEPARADO de proposito: `CAPACIDADE_QUE_SUSTENTA_A_ABA`
+#: e' espelhado pelo `scripts/conferir_usuarios_banco.py` (o de-para do corte do Authelia), e o
+#: teste que o trava pede a MESMA forma -- uma capacidade por aba.
+CAPACIDADES_ALTERNATIVAS_DA_ABA: dict[str, frozenset[str]] = {
+    "executiva": frozenset({CAPACIDADE_REDE_PROPRIA}),
+}
+
+
+def _sustenta_a_aba(quem: Identidade, aba: str, capacidade: str) -> bool:
+    """A pessoa tem a capacidade principal da aba, ou uma das alternativas dela."""
+    if quem.pode(capacidade):
+        return True
+    return any(quem.pode(c) for c in CAPACIDADES_ALTERNATIVAS_DA_ABA.get(aba, ()))
 
 
 def abas_do_usuario_por_banco(usuario: object) -> frozenset[str]:
@@ -941,7 +1024,7 @@ def abas_do_usuario_por_banco(usuario: object) -> frozenset[str]:
     return frozenset(
         aba
         for aba, capacidade in CAPACIDADE_QUE_SUSTENTA_A_ABA.items()
-        if quem.pode(capacidade)
+        if _sustenta_a_aba(quem, aba, capacidade)
     )
 
 

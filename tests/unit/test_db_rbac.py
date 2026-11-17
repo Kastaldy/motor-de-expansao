@@ -209,3 +209,70 @@ def test_a_leitura_de_identidade_e_read_only(monkeypatch: pytest.MonkeyPatch) ->
     con = _instalar(monkeypatch, [(1, "expansao", "ponto.analisar", "BR")])
     rbac.identidade("alguem")
     assert con.executados[0][0] == postgres.SQL_SOMENTE_LEITURA
+
+
+# --------------------------------------------------------------------------------------
+# Os masters de uma pessoa (perfil `master`, migration 025, DEC-087)
+# --------------------------------------------------------------------------------------
+
+
+def test_masters_do_usuario_devolve_os_vinculos(monkeypatch: pytest.MonkeyPatch) -> None:
+    con = _instalar(monkeypatch, [("Dalmo Ribeiro",), ("Outro Master",)])
+    assert rbac.masters_do_usuario(42) == frozenset({"Dalmo Ribeiro", "Outro Master"})
+    sql, params = con.executados[-1]
+    assert sql == rbac.SQL_MASTERS_DO_USUARIO
+    assert params == (42,)
+
+
+def test_sem_vinculo_e_conjunto_VAZIO_e_nao_erro(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Vazio e' resposta legitima, e e' o que mantem o master fechado: quem chama trata vazio
+    como "nenhuma unidade", nunca como "sem recorte"."""
+    _instalar(monkeypatch, [])
+    assert rbac.masters_do_usuario(42) == frozenset()
+
+
+def test_a_consulta_dos_masters_filtra_por_ativo_e_e_read_only(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Pessoa desativada entre a identidade e o recorte sai sem master nenhum; e ler o vinculo
+    nao escreve nada -- a transacao READ ONLY e' do servidor, nao da boa intencao."""
+    con = _instalar(monkeypatch, [("Dalmo Ribeiro",)])
+    rbac.masters_do_usuario(7)
+    assert con.executados[0][0] == postgres.SQL_SOMENTE_LEITURA
+    assert "u.ativo" in rbac.SQL_MASTERS_DO_USUARIO
+    assert "usuario_masters" in rbac.SQL_MASTERS_DO_USUARIO
+
+
+def test_a_identidade_continua_numa_consulta_so(monkeypatch: pytest.MonkeyPatch) -> None:
+    """O vinculo de master NAO entra no `SQL_IDENTIDADE`: ele roda em toda requisicao controlada
+    de todo perfil, e um terceiro JOIN multiplicaria as linhas de todo mundo por um dado que so'
+    o recorte da Executiva usa."""
+    assert "usuario_masters" not in rbac.SQL_IDENTIDADE
+    con = _instalar(monkeypatch, [(1, "master", "rede.ver_propria", "BR")])
+    quem = rbac.identidade("dalmo_ribeiro")
+    assert quem is not None and quem.pode("rede.ver_propria") and not quem.pode("rede.ver")
+    assert [sql for sql, _ in con.executados if "usuario_masters" in sql] == []
+
+
+@pytest.mark.parametrize("ruim", [True, None, "7", 7.0])
+def test_id_que_nao_e_int_e_recusado_antes_do_banco(
+    monkeypatch: pytest.MonkeyPatch, ruim: Any
+) -> None:
+    """`True` viraria a pessoa de id 1 e um login no lugar do id viraria erro cru do Postgres."""
+    con = _instalar(monkeypatch, [("Dalmo Ribeiro",)])
+    with pytest.raises(TypeError):
+        rbac.masters_do_usuario(ruim)
+    assert con.executados == []
+
+
+def test_banco_fora_nos_masters_levanta_e_nao_vira_vazio(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Mesma politica de `identidade`: quem decide e' o chamador (503). Devolver vazio aqui seria
+    defensavel para o master, mas apagaria o incidente -- e devolver a rede seria o vazamento."""
+    monkeypatch.setenv(postgres.ENV_URL, "postgresql://fake/motor")
+
+    def explode(**_kwargs: Any) -> Any:
+        raise OSError("connection refused")
+
+    monkeypatch.setattr(postgres, "_driver", lambda: explode)
+    with pytest.raises(db.BancoIndisponivel):
+        rbac.masters_do_usuario(42)
