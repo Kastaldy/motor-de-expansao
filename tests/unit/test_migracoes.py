@@ -40,8 +40,10 @@ MANIFESTO = MIGRACOES / "manifesto.json"
 #: que ela morreu.
 #: A 021 (DEC-081, `usuario_paises`) somou 1 TABELA, 1 CHECK (`chk_usuario_paises_sigla`) e 1 FK
 #: (`id_usuario`), e NENHUM indice explicito (so' o da PK composta) nem trigger/funcao.
+#: A 025 (DEC-087, `usuario_masters`) e' o mesmo molde: 1 TABELA, 1 CHECK, 1 FK, so' o indice da
+#: PK composta e nenhuma trigger/funcao.
 OBJETOS_ESPERADOS = {
-    "CREATE TABLE": 17,  # a 022 (DEC-083): sso_tickets; a 023 (anotacoes de concorrente): a tabela viva e o historico; a 024 (DEC-085): unidades_ultra_site
+    "CREATE TABLE": 18,  # a 022 (DEC-083): sso_tickets; a 023 (anotacoes de concorrente): a tabela viva e o historico; a 024 (DEC-085): unidades_ultra_site; a 025 (DEC-087): usuario_masters
     "CREATE TRIGGER": 16,  # a 023: guarda, historico e as quatro recusas de remocao; a 024: guarda e as duas recusas
 }
 INDICES_ESPERADOS = 47  # +1 na D23 (login), +3 na D24 (metadados), +2 na D30 (sessoes), +2 na 022 (DEC-083, sso_tickets: UNIQUE do token + idx id_usuario) e +5 na 023 e +5 na 024 (4 + o UNIQUE parcial do nome vivo)
@@ -56,7 +58,8 @@ FUNCOES_ESPERADAS = 13  # +1 na D29 (`exige_geom_coerente`, uma so' para as duas
 #: A 022 (DEC-083, sso_tickets) acrescentou dois, levando de 15 a 17. A 023 (anotacoes de
 #: concorrente) acrescentou dez nomeados -- nove na tabela viva e o da acao no historico --,
 #: levando de 17 a 27. A 024 (DEC-085, unidades do site) acrescentou seis nomeados, levando a 33.
-CHECKS_ESPERADOS = 33
+#: A 025 (DEC-087, perfil master) acrescentou `chk_usuario_masters_nome`, levando a 34.
+CHECKS_ESPERADOS = 34
 
 
 def _sql() -> list[Path]:
@@ -227,6 +230,7 @@ def test_a_varredura_de_CHECK_ainda_enxerga_os_nomeados() -> None:
     assert "ck_usuarios_prazo_exige_troca" in nomeados, "a varredura perdeu o CHECK da 019"
     assert "chk_sessao_expira_apos_criacao" in nomeados, "a varredura perdeu o CHECK da 018"
     assert "chk_usuario_paises_sigla" in nomeados, "a varredura perdeu o CHECK da 021"
+    assert "chk_usuario_masters_nome" in nomeados, "a varredura perdeu o CHECK da 025"
     assert "chk_evento_entidade_valor" in nomeados, (
         "o recriado pela 014 sumiu: DROP/ADD fora de ordem"
     )

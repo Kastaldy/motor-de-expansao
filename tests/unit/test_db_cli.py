@@ -88,14 +88,15 @@ def test_hash_ignora_fim_de_linha(tmp_path: Path, monkeypatch: pytest.MonkeyPatc
     assert cli._sha256_do_arquivo("x.sql") == com_crlf
 
 
-def test_o_contrato_conferido_cobre_as_17_tabelas_do_modelo() -> None:
+def test_o_contrato_conferido_cobre_as_18_tabelas_do_modelo() -> None:
     """A lista de `conferir` e a da §0 da `verificacao.md` tem de ser a MESMA: se
     divergirem, a ferramenta passa a atestar um contrato que o documento nao descreve.
 
     Eram ONZE ate' a D30, que somou `sessoes` (migration 018), e DOZE ate' a 021 (DEC-081),
     que somou `usuario_paises` -> 13, QUATORZE desde a 022 (DEC-083: `sso_tickets`) e
-    DEZESSEIS desde a 023 (`observacoes_concorrente` e o historico) e DEZESSETE desde a 024
-    (DEC-085: `unidades_ultra_site`). O nome deste teste carrega o numero pelo mesmo motivo
+    DEZESSEIS desde a 023 (`observacoes_concorrente` e o historico), DEZESSETE desde a 024
+    (DEC-085: `unidades_ultra_site`) e DEZOITO desde a 025 (DEC-087: `usuario_masters`). O nome
+    deste teste carrega o numero pelo mesmo motivo
     que o do `..._as_8_funcoes` logo abaixo: numero no nome que deixou de ser o numero e' a
     deriva doc-contra-codigo que esta suite existe para pegar.
 
@@ -104,7 +105,7 @@ def test_o_contrato_conferido_cobre_as_17_tabelas_do_modelo() -> None:
     A nota da 018 dizia "tres lugares" ate' esta assercao ficar vermelha com `12 == 11`, e
     foi corrigida la'.
     """
-    assert len(cli.TABELAS_DO_MODELO) == 17
+    assert len(cli.TABELAS_DO_MODELO) == 18
     assert postgres.TABELA_MIGRACOES not in cli.TABELAS_DO_MODELO, (
         "a tabela de controle e' do motor, nao do modelo — some-la mudaria os seis numeros"
     )
@@ -166,7 +167,8 @@ def test_contagens_conferem_com_os_seis_numeros_da_secao_zero() -> None:
         # explicito (o `INDICES_ESPERADOS` do `test_migracoes.py` segue 35), entao 49 -> 50.
         # 022 (DEC-083): +3 de sso_tickets (PK + UNIQUE do token + idx de id_usuario) -> 53.
         # 023 (anotacoes de concorrente): +5 explicitos e +2 PK -> 60.
-        "indices": 66,  # 024 (DEC-085, unidades do site): +5 explicitos (um UNIQUE parcial) e +1 PK
+        # 024 (DEC-085, unidades do site): +5 explicitos (um UNIQUE parcial) e +1 PK -> 66.
+        "indices": 67,  # 025 (DEC-087, perfil master): +1 pela PK composta de `usuario_masters`
 
         # 14 desde a 019: `ck_usuarios_prazo_exige_troca`, que impede senha PROPRIA com prazo
         # de validade -- o estado que faria a pessoa ser barrada com a senha certa. Era 13 desde
@@ -178,14 +180,16 @@ def test_contagens_conferem_com_os_seis_numeros_da_secao_zero() -> None:
         # 15 desde a 021 (DEC-081): `chk_usuario_paises_sigla` (sigla ISO de 2 letras MAIUSCULAS).
         # 022 (DEC-083): +2 (chk_sso_ticket_sigla, chk_sso_ticket_expira_apos_criacao) -> 17.
         # 023: +10 (nove na tabela viva e o da acao no historico) -> 27.
-        "constraints CHECK": 33,  # 024 (DEC-085): +6 (pais, coordenada, textos, hexagono e os dois pares)
+        # 024 (DEC-085): +6 (pais, coordenada, textos, hexagono e os dois pares) -> 33.
+        "constraints CHECK": 34,  # 025 (DEC-087): `chk_usuario_masters_nome` (tamanho e sem espaco nas pontas)
         # 12 desde a D30: `sessoes.id_usuario`, a UNICA FK do modelo com ON DELETE CASCADE
         # (sessao nao e' registro a preservar, e sessao orfa decidindo acesso e' o que nao
         # se quer). Toda FK ganha indice, e e' por isso que os indices somaram 3 e nao 2.
         # 13 desde a 021 (DEC-081): `usuario_paises.id_usuario` -> usuarios, ON DELETE CASCADE.
         # 022 (DEC-083): +2 (sso_tickets.id_usuario, sso_tickets.id_sessao_origem) -> 15.
         # 023: +2 (autor e `apagada_por` -> usuarios) -> 17.
-        "chaves estrangeiras": 20,  # 024: +3 (quem incluiu, `alterada_por`, `removida_por`)
+        # 024: +3 (quem incluiu, `alterada_por`, `removida_por`) -> 20.
+        "chaves estrangeiras": 21,  # 025 (DEC-087): `usuario_masters.id_usuario`, ON DELETE CASCADE
         # 7 desde a D29: a guarda de coerencia (migration 017) poe uma trigger em
         # `areas_estudo` e outra em `contratos`. Mesma regra do numero acima -- este e o da
         # §0 da `verificacao.md` andam JUNTOS, senao um banco correto acusa DIVERGENTE.
@@ -293,6 +297,8 @@ _D20_DE_PE: dict[str, Any] = {
     "'observacoes_concorrente', 'INSERT'": True,
     # As unidades incluidas pelo site (024, DEC-085): ler e escrever sim, apagar NAO.
     "'unidades_ultra_site', 'INSERT'": True,
+    # Os vinculos de master franquia (025, DEC-087): o piloto le para servir o recorte.
+    "'usuario_masters', 'SELECT'": True,
     "tgenabled": "A",
     # A ACL das funcoes de auditoria (secao 2 do D20), acrescentada em 05/10/2026: era a
     # TERCEIRA camada que o script endurecia e nenhum instrumento conferia. `False` aqui
@@ -2393,6 +2399,9 @@ def test_privilegios_COBRE_sessoes() -> None:
     )
     assert "unidades_ultra_site_id_unidade_site_seq" in positivas, (
         "a sequence das unidades do site (024): sem o USAGE nela o botao de incluir nao grava"
+    )
+    assert "'usuario_masters', 'SELECT'" in positivas, (
+        "os vinculos de master (025, DEC-087): sem o SELECT o recorte do master morre em runtime"
     )
 
     _seqs = [s for s in positivas.split(" | ") if "has_sequence_privilege" in s]

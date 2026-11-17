@@ -176,6 +176,13 @@
       "documento": "024-unidades-ultra-site.md",
       "sha256_bloco": "58ca9d9fa5fef4921e8610c521466b3f6b7133c89e72a4fa367f502ccf378b41",
       "sha256_arquivo": "cbd2336168d70d2c5ab48a24bacfe8cb1e17cd874c947a642df451d81a44c350"
+    },
+    {
+      "versao": "025",
+      "arquivo": "025-perfil-master.sql",
+      "documento": "025-perfil-master.md",
+      "sha256_bloco": "8edccc88f02e830436c1e9bdc74b86a57dd0bf189db66220c083542cdb519aec",
+      "sha256_arquivo": "af3da6d5de2c1d9241447f1b475b3b7fde1a51db5c904862f3c1049e748f1e2b"
     }
   ]
 }

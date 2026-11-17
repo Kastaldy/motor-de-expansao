@@ -83,11 +83,12 @@ TABELAS_DO_MODELO = (
     "observacoes_concorrente",
     "observacoes_concorrente_historico",
     "unidades_ultra_site",
+    "usuario_masters",
 )
 NUMEROS_DA_SECAO_ZERO = {
-    "indices": 66,  # 46 explicitos + 17 de PK + 3 de UNIQUE (a 022/DEC-083 somou 3 em sso_tickets: PK + UNIQUE do token + idx de id_usuario; a 023, 5 explicitos e 2 PK; a 024/DEC-085, 5 explicitos e 1 PK)
-    "constraints CHECK": 33,  # a 018 (D30), a 019 (`ck_usuarios_prazo_exige_troca`), a 021/DEC-081 (`chk_usuario_paises_sigla`), a 022/DEC-083 (`chk_sso_ticket_sigla`, `chk_sso_ticket_expira_apos_criacao`) os 10 da 023 e os 6 da 024 (DEC-085)
-    "chaves estrangeiras": 20,  # a 018 (D30): `sessoes.id_usuario`; a 021/DEC-081: `usuario_paises.id_usuario`; a 022/DEC-083: `sso_tickets.id_usuario` e `sso_tickets.id_sessao_origem`; a 023: autor e `apagada_por`; a 024: quem incluiu, `alterada_por` e `removida_por`
+    "indices": 67,  # 46 explicitos + 18 de PK + 3 de UNIQUE (a 022/DEC-083 somou 3 em sso_tickets: PK + UNIQUE do token + idx de id_usuario; a 023, 5 explicitos e 2 PK; a 024/DEC-085, 5 explicitos e 1 PK; a 025/DEC-087, so' a PK composta de `usuario_masters`)
+    "constraints CHECK": 34,  # a 018 (D30), a 019 (`ck_usuarios_prazo_exige_troca`), a 021/DEC-081 (`chk_usuario_paises_sigla`), a 022/DEC-083 (`chk_sso_ticket_sigla`, `chk_sso_ticket_expira_apos_criacao`) os 10 da 023, os 6 da 024 (DEC-085) e o da 025 (DEC-087, `chk_usuario_masters_nome`)
+    "chaves estrangeiras": 21,  # a 018 (D30): `sessoes.id_usuario`; a 021/DEC-081: `usuario_paises.id_usuario`; a 022/DEC-083: `sso_tickets.id_usuario` e `sso_tickets.id_sessao_origem`; a 023: autor e `apagada_por`; a 024: quem incluiu, `alterada_por` e `removida_por`; a 025/DEC-087: `usuario_masters.id_usuario`
     "triggers": 16,  # 5 ate' a 016; a 017 (D29) somou a guarda de coerencia nas duas regioes; a 023, seis; a 024, tres
     "colunas geometricas": 7,
 }
@@ -942,6 +943,14 @@ def _checagens_positivas() -> list[tuple[str, str, str]]:
             "SELECT has_sequence_privilege(current_user, "
             "'unidades_ultra_site_id_unidade_site_seq', 'USAGE')",
             "mesma armadilha da sequence de eventos: `GRANT INSERT` na tabela NAO a cobre",
+        ),
+        # 025 (DEC-087): a mesma armadilha, numa tabela que o piloto so' precisa LER para servir
+        # o recorte do master. Sem `SELECT`, a consulta do recorte morre por permissao negada e o
+        # master nao abre a Visao Executiva -- so' em runtime. Sem sequence: a PK e' composta.
+        (
+            "ler os vinculos de master franquia",
+            "SELECT has_table_privilege(current_user, 'usuario_masters', 'SELECT')",
+            "sem isto o perfil master nao alcanca as proprias unidades na Visao Executiva",
         ),
     ]
 

@@ -770,3 +770,178 @@ def test_o_episodio_do_me_fecha_tambem_quando_o_GATE_ve_o_banco_voltar(
     _fora(monkeypatch)
     acesso.abas_do_usuario_por_banco("ana")
     assert linhas() == 2
+
+
+# --------------------------------------------------------------------------------------
+# O perfil `master` (migration 025, DEC-087): a Visão Executiva só das próprias unidades
+# --------------------------------------------------------------------------------------
+
+#: As leituras que o master alcança — a allowlist FECHADA de `acesso.rota_da_rede_propria`. O
+#: recorte às unidades dele é da rota (`_recorte_da_rede`); aqui se prova só que ele CHEGA nelas.
+_LEITURAS_DO_MASTER = (
+    "/api/rede/filtros",
+    "/api/rede/carteira",
+    "/api/rede/inteligencia",
+    "/api/rede/unidade/dalmo-centro-sp",
+    "/api/rede/unidade/dalmo-centro-sp/inteligencia",
+    "/api/rede/unidade/dalmo-centro-sp/setores",
+)
+
+#: O que o master NÃO alcança: exports, escrita do cadastro, unidades fora da rede, a Executiva
+#: legada e tudo fora de `/api/rede/` (mapa, oportunidades, viabilidade, anotações, acessos).
+_FORA_DO_MASTER = (
+    ("PUT", "/api/rede/cadastro/dalmo-centro-sp"),
+    ("GET", "/api/rede/carteira.csv"),
+    ("GET", "/api/rede/carteira.xlsx"),
+    ("GET", "/api/rede/carteira.pdf"),
+    ("GET", "/api/rede/unidade/dalmo-centro-sp.pdf"),
+    ("GET", "/api/rede/unidade/dalmo-centro-sp/concorrencia.pdf"),
+    ("GET", "/api/rede/unidades-sem-rede"),
+    ("GET", "/api/rede/unidade-sem-rede/x"),
+    ("GET", "/api/executiva/SP"),
+    ("GET", "/api/uf/SP"),
+    ("GET", "/api/mapa/unidades"),
+    ("GET", "/api/oportunidades"),
+    ("POST", "/api/viabilidade"),
+    ("GET", "/api/concorrente/observacoes"),
+    ("POST", "/api/concorrente/observacoes"),
+    ("POST", "/api/acessos/usuarios"),
+)
+
+
+@pytest.mark.parametrize("path", _LEITURAS_DO_MASTER)
+def test_o_master_passa_nas_leituras_da_executiva(
+    monkeypatch: pytest.MonkeyPatch, path: str
+) -> None:
+    _identidade(monkeypatch, {acesso.CAPACIDADE_REDE_PROPRIA})
+    assert acesso.motivo_bloqueio_por_banco(path, "GET", "dalmo_ribeiro") is None
+
+
+@pytest.mark.parametrize(("metodo", "path"), _FORA_DO_MASTER)
+def test_o_master_e_barrado_fora_da_allowlist(
+    monkeypatch: pytest.MonkeyPatch, metodo: str, path: str
+) -> None:
+    _identidade(monkeypatch, {acesso.CAPACIDADE_REDE_PROPRIA})
+    detalhe = acesso.motivo_bloqueio_por_banco(path, metodo, "dalmo_ribeiro")
+    assert detalhe is not None and "não tem acesso" in detalhe
+
+
+@pytest.mark.parametrize("metodo", ["POST", "PUT", "PATCH", "DELETE", "HEAD"])
+def test_o_master_so_le(monkeypatch: pytest.MonkeyPatch, metodo: str) -> None:
+    """A allowlist é de LEITURA: o mesmo caminho com outro método não passa — nem HEAD, que o
+    servidor responderia com a mesma consulta e que não entra sem decisão."""
+    _identidade(monkeypatch, {acesso.CAPACIDADE_REDE_PROPRIA})
+    for path in _LEITURAS_DO_MASTER:
+        assert acesso.motivo_bloqueio_por_banco(path, metodo, "dalmo_ribeiro") is not None
+
+
+@pytest.mark.parametrize(
+    "path",
+    [
+        "/api/rede/carteira/",  # barra a mais: não é a rota da allowlist
+        "/api/rede/unidade/",  # id vazio
+        "/api/rede/unidade/a/b",  # segmento a mais
+        "/api/rede/unidade/x.pdf",  # o ponto separa a ficha do PDF dela
+        "/api/rede/unidade/x.csv",
+        "/api/rede/unidade/x/setores.csv",
+        "/api/rede/unidade/x/concorrencia.pdf",
+        "/api/rede/CARTEIRA",  # caixa diferente não é a mesma rota
+        "/api/rede/carteira\n",  # fullmatch, e não a âncora de fim, que aceitaria a quebra de linha
+        "/api/rede/cadastro/x",  # GET no cadastro cai em `rede.ver`, e não está na lista
+        "/api/rede/unidades",
+    ],
+)
+def test_a_allowlist_do_master_e_fechada(path: str) -> None:
+    assert acesso.rota_da_rede_propria(path, "GET") is False
+
+
+def test_a_allowlist_do_master_aceita_exatamente_as_seis_leituras() -> None:
+    for path in _LEITURAS_DO_MASTER:
+        assert acesso.rota_da_rede_propria(path, "GET") is True
+        assert acesso.rota_da_rede_propria(path, "get") is True
+    assert len(acesso.ROTAS_DA_REDE_PROPRIA) == len(_LEITURAS_DO_MASTER)
+
+
+def test_a_allowlist_nao_aceita_entrada_que_nao_e_texto() -> None:
+    assert acesso.rota_da_rede_propria(None, "GET") is False  # type: ignore[arg-type]
+    assert acesso.rota_da_rede_propria("/api/rede/carteira", None) is False  # type: ignore[arg-type]
+
+
+def test_rede_ver_propria_so_substitui_rede_ver(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A troca vale só no lugar de `rede.ver`. Se o gate aceitasse `rede.ver_propria` no lugar de
+    qualquer capacidade de uma rota da allowlist, um remapeamento futuro (ex.: a ficha passar a
+    exigir outra chave) abriria a rota ao master por acidente."""
+    _identidade(monkeypatch, {acesso.CAPACIDADE_REDE_PROPRIA})
+    monkeypatch.setattr(acesso, "capacidade_necessaria", lambda _p, _m: "territorio.explorar")
+    assert acesso.motivo_bloqueio_por_banco("/api/rede/carteira", "GET", "x") is not None
+
+
+def test_as_abas_do_master_sao_so_a_executiva(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A interface conta a mesma história que o gate: a aba Executiva aparece, e nenhuma outra."""
+    _identidade(monkeypatch, {acesso.CAPACIDADE_REDE_PROPRIA})
+    assert acesso.abas_do_usuario_por_banco("dalmo_ribeiro") == frozenset({"executiva"})
+
+
+def test_quem_tem_rede_ver_continua_igual(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Consultoria, líderes e growth: a rede inteira, os exports e a Executiva legada seguem
+    abertos, e a escrita do cadastro segue dependendo de `rede.cadastro_editar`."""
+    _identidade(monkeypatch, {"rede.ver"})
+    for metodo, path in [
+        ("GET", "/api/rede/carteira"),
+        ("GET", "/api/rede/carteira.csv"),
+        ("GET", "/api/rede/carteira.xlsx"),
+        ("GET", "/api/rede/carteira.pdf"),
+        ("GET", "/api/rede/unidade/x.pdf"),
+        ("GET", "/api/rede/unidade/x/concorrencia.pdf"),
+        ("GET", "/api/rede/unidades-sem-rede"),
+        ("GET", "/api/executiva/SP"),
+    ]:
+        assert acesso.motivo_bloqueio_por_banco(path, metodo, "x") is None, path
+    assert acesso.motivo_bloqueio_por_banco("/api/rede/cadastro/x", "PUT", "x") is not None
+    assert acesso.abas_do_usuario_por_banco("x") == frozenset({"executiva"})
+
+
+def test_ter_as_duas_chaves_nao_estreita_ninguem(monkeypatch: pytest.MonkeyPatch) -> None:
+    """`rede.ver` responde antes: quem tem as duas segue com a rede inteira e os exports."""
+    _identidade(monkeypatch, {"rede.ver", acesso.CAPACIDADE_REDE_PROPRIA})
+    assert acesso.motivo_bloqueio_por_banco("/api/rede/carteira.csv", "GET", "x") is None
+
+
+def test_rede_ver_propria_tem_seed_e_e_sensivel() -> None:
+    """Sem seed, o perfil master nunca teria a chave; fora das sensíveis, uma rota que um dia a
+    exija direto nasceria aberta na degradação com o banco fora."""
+    do_seed = _capacidades_semeadas()
+    assert acesso.CAPACIDADE_REDE_PROPRIA == "rede.ver_propria"
+    assert acesso.CAPACIDADE_REDE_PROPRIA in do_seed
+    assert acesso.CAPACIDADE_REDE_PROPRIA in acesso.CAPACIDADES_SENSIVEIS
+    for aba, alternativas in acesso.CAPACIDADES_ALTERNATIVAS_DA_ABA.items():
+        assert aba in acesso.ABAS_VALIDAS, aba
+        assert alternativas <= do_seed, sorted(alternativas - do_seed)
+
+
+def test_banco_fora_em_producao_nega_o_master(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A degradação não sabe QUEM pede: as rotas da allowlist exigem `rede.ver`, que é sensível,
+    e por isso ficam negadas para todo mundo — o master não ganha a rede por um incidente."""
+    from motor_expansao import db
+
+    def explode(_remote_user: object) -> Any:
+        raise db.BancoIndisponivel("connection refused")
+
+    monkeypatch.setattr(rbac, "identidade", explode)
+    monkeypatch.setenv("MOTOR_CADASTRO_DIR", "/app/cadastro")  # sinal de produção
+    for path in _LEITURAS_DO_MASTER:
+        assert acesso.motivo_bloqueio_por_banco(path, "GET", "dalmo_ribeiro") is not None
+    assert "executiva" not in acesso.abas_do_usuario_por_banco("dalmo_ribeiro")
+
+
+def test_banco_ocupado_sem_prova_da_503_tambem_ao_master(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Sem prova de queda o gate responde 503 (`RbacSemProvaDeQueda`), e não a degradação."""
+    from motor_expansao import db
+
+    def ocupado(_remote_user: object) -> Any:
+        raise db.BancoSemProvaDeQueda("pool saturado")
+
+    monkeypatch.setattr(rbac, "identidade", ocupado)
+    monkeypatch.setattr(acesso, "banco_em_falha", lambda: False)
+    with pytest.raises(acesso.RbacSemProvaDeQueda):
+        acesso.motivo_bloqueio_por_banco("/api/rede/carteira", "GET", "dalmo_ribeiro")
