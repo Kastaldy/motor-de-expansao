@@ -132,8 +132,10 @@ SELECT id_usuario, ' Exemplo ' FROM usuarios LIMIT 1;
 
 ## Vincular uma pessoa (operação, não vai para a migration)
 
-A pessoa é criada pela tela de Acessos com o perfil `master` e o país dela; o vínculo, por enquanto,
-é dado pelo dono, com o texto EXATO do `master_franquia` do cadastro:
+Desde 17/11/2026 (emenda 1 da DEC-087) a pessoa é criada **e vinculada** pela aba Acessos: com o
+perfil `master`, o campo "Master franquia" oferece os nomes do cadastro e grava a grafia de lá.
+O SQL abaixo fica só como contingência (tela fora do ar), com o texto EXATO do `master_franquia`
+do cadastro — e ele não deixa o evento `usuario.masters_alterados` que a tela grava:
 
 ```text
 INSERT INTO usuario_masters (id_usuario, master_franquia)

@@ -322,6 +322,7 @@ em `metadados` (chaves abaixo) — exceto nos `usuario.*`, onde o alvo é `entid
 | `usuario.senha_redefinida` | admin redefiniu senha de alguém | `tinha_senha_propria`, `validade_horas` |
 | `usuario.troca_exigida` | admin forçou troca de senha | (NULL) |
 | `usuario.pais_atribuido` / `usuario.pais_removido` | (des)atribuiu país | `pais` |
+| `usuario.masters_alterados` | mudou o vínculo com master franquia | `antes`, `depois` (contagens) |
 
 ## O que o banco **não** responde (está só em arquivo/log, ou não é gravado)
 

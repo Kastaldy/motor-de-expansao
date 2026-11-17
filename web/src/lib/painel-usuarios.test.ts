@@ -1,8 +1,18 @@
 import { describe, expect, it } from 'vitest'
 
 import {
+  alternarMaster,
+  chaveMaster,
   COLUNA_SENHA,
+  DICA_CAMPO_MASTER,
   dicaDoFormulario,
+  faltaMaster,
+  mastersDaCriacao,
+  recadoDaAlteracao,
+  ROTULO_CAMPO_MASTER,
+  SEM_MASTERS_NO_CADASTRO,
+  selecaoInicialDeMasters,
+  TITULO_MASTER_FORA_DO_CADASTRO,
   loginProprioDoPayload,
   mensagemDeErroDoPainel,
   recadoDaCriacao,
@@ -192,5 +202,111 @@ describe('o recado de erro do painel', () => {
   it('outros status: o texto do servidor, ou o status quando não há texto', () => {
     expect(mensagemDeErroDoPainel(409, 'Login em uso.')).toBe('Login em uso.')
     expect(mensagemDeErroDoPainel(500, '500')).toBe('O servidor recusou o pedido (500).')
+  })
+})
+
+describe('o campo Master franquia (emenda 1 da DEC-087)', () => {
+  const cadastro = ['Dalmo Ribeiro', 'Luana Ribeiro', 'Zé Master']
+
+  it('a chave é a do servidor: sem caixa, sem espaço nas pontas, espaços internos colapsados', () => {
+    expect(chaveMaster('  dalmo   RIBEIRO ')).toBe('dalmo ribeiro')
+    expect(chaveMaster('Dalmo Ribeiro')).toBe(chaveMaster('dalmo ribeiro'))
+  })
+
+  it('a edição abre com a grafia do cadastro, e separa o que o cadastro não tem mais', () => {
+    expect(selecaoInicialDeMasters(['dalmo ribeiro', 'Master Antigo'], cadastro)).toEqual({
+      selecionados: ['Dalmo Ribeiro'],
+      foraDoCadastro: ['Master Antigo'],
+    })
+    expect(selecaoInicialDeMasters([], cadastro)).toEqual({ selecionados: [], foraDoCadastro: [] })
+  })
+
+  it('sem cadastro no servidor, nenhum nome é dado como fora dele (mesma regra do chip)', () => {
+    // O cadastro indisponível não é o nome que saiu: a edição não pode dizer "sai ao salvar".
+    expect(selecaoInicialDeMasters(['Dalmo Ribeiro'], [])).toEqual({
+      selecionados: [],
+      foraDoCadastro: [],
+    })
+  })
+
+  it('marcar e desmarcar mantém a ordem do cadastro', () => {
+    expect(alternarMaster([], 'Zé Master', cadastro)).toEqual(['Zé Master'])
+    expect(alternarMaster(['Zé Master'], 'Dalmo Ribeiro', cadastro)).toEqual([
+      'Dalmo Ribeiro',
+      'Zé Master',
+    ])
+    expect(alternarMaster(['Dalmo Ribeiro', 'Zé Master'], 'Dalmo Ribeiro', cadastro)).toEqual([
+      'Zé Master',
+    ])
+  })
+
+  it('só o perfil Master exige master, e só ele o manda na criação', () => {
+    expect(faltaMaster('master', [])).toBe(true)
+    expect(faltaMaster('master', ['Dalmo Ribeiro'])).toBe(false)
+    expect(faltaMaster('consultoria', [])).toBe(false)
+    expect(mastersDaCriacao('master', ['Dalmo Ribeiro'])).toEqual(['Dalmo Ribeiro'])
+    expect(mastersDaCriacao('consultoria', ['Dalmo Ribeiro'])).toBeUndefined()
+  })
+
+  it('os textos do campo são curtos, em português, e citam a Visão Executiva', () => {
+    expect(ROTULO_CAMPO_MASTER).toBe('Master franquia')
+    expect(DICA_CAMPO_MASTER).toContain('ao menos um')
+    expect(DICA_CAMPO_MASTER).toContain('Visão Executiva')
+    expect(SEM_MASTERS_NO_CADASTRO).toContain('cadastro de unidades')
+    expect(TITULO_MASTER_FORA_DO_CADASTRO).toContain('não vê nenhuma unidade')
+  })
+})
+
+describe('o recado depois de uma alteração', () => {
+  const rot = (p: string) => ({ master: 'Master', consultoria: 'Consultoria' })[p] ?? p
+
+  it('virar Master diz o perfil e o master na mesma frase', () => {
+    expect(
+      recadoDaAlteracao(
+        'luana',
+        {
+          perfil: { de: 'consultoria', para: 'master', mudou: true },
+          masters: { para: ['Dalmo Ribeiro'], mudou: true },
+        },
+        rot,
+      ),
+    ).toBe('luana: Consultoria → Master, com master franquia Dalmo Ribeiro.')
+  })
+
+  it('sair de Master diz que o vínculo saiu', () => {
+    expect(
+      recadoDaAlteracao(
+        'luana',
+        {
+          perfil: { de: 'master', para: 'consultoria', mudou: true },
+          masters: { para: [], mudou: true },
+        },
+        rot,
+      ),
+    ).toBe('luana: Master → Consultoria; vínculo com master franquia removido.')
+  })
+
+  it('trocar só o master', () => {
+    expect(
+      recadoDaAlteracao('dalmo', { masters: { para: ['Dalmo Ribeiro', 'Luana Ribeiro'], mudou: true } }, rot),
+    ).toBe('dalmo: master franquia agora Dalmo Ribeiro, Luana Ribeiro.')
+  })
+
+  it('os recados de antes continuam iguais', () => {
+    expect(
+      recadoDaAlteracao('ana', { perfil: { de: 'consultoria', para: 'master', mudou: true } }, rot),
+    ).toBe('ana: Consultoria → Master.')
+    expect(recadoDaAlteracao('ana', { status: { ativo: false, mudou: true } }, rot)).toBe(
+      'ana foi desativado.',
+    )
+    expect(recadoDaAlteracao('ana', { paises: { para: ['AR', 'BR'], mudou: true } }, rot)).toBe(
+      'ana: países agora AR, BR.',
+    )
+  })
+
+  it('mudou: false nunca vira alteração', () => {
+    expect(recadoDaAlteracao('ana', { masters: { para: ['Dalmo Ribeiro'], mudou: false } }, rot)).toBe(
+      'ana já estava assim — nada foi alterado.',
+    )
   })
 })

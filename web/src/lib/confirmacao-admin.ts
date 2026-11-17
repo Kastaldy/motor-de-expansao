@@ -29,13 +29,21 @@
  * é um REBAIXAMENTO, quando na verdade é uma troca de área: a pessoa perde a carteira
  * de imóveis e ganha a Visão Executiva, que Expansão não tem. Dizer "vai perder acesso"
  * ali seria mentir na tela que existe para não deixar ninguém errar.
+ *
+ * `master` (DEC-087) é o MENOR: só a Visão Executiva, e só das próprias unidades — tudo isso
+ * está contido no que Consultoria vê (a rede inteira). Fica `master ⊂ consultoria ⊂ lideres ⊂
+ * growth`; com Expansão ele é incomparável, como Consultoria (troca de área).
  */
 const CONTIDOS_EM: Readonly<Record<string, readonly string[]>> = {
-  growth: ['growth', 'lideres', 'expansao', 'consultoria'],
-  lideres: ['lideres', 'expansao', 'consultoria'],
+  growth: ['growth', 'lideres', 'expansao', 'consultoria', 'master'],
+  lideres: ['lideres', 'expansao', 'consultoria', 'master'],
   expansao: ['expansao'],
-  consultoria: ['consultoria'],
+  consultoria: ['consultoria', 'master'],
+  master: ['master'],
 }
+
+/** O perfil que leva vínculo com master franquia (DEC-087). Identificador, sem acento. */
+export const PERFIL_MASTER = 'master'
 
 /** O perfil que dá poder de administrar gente — o único com atrito extra. */
 export const PERFIL_ADMINISTRADOR = 'growth'
@@ -60,6 +68,7 @@ export function relacaoEntrePerfis(de: string, para: string): Relacao {
 }
 
 const NOMES: Readonly<Record<string, string>> = {
+  master: 'Master',
   consultoria: 'Consultoria',
   expansao: 'Expansão',
   lideres: 'Líderes',
@@ -91,6 +100,8 @@ export type AcaoAdmin =
       /** O login próprio está LIGADO? Muda o que a confirmação pode prometer sobre a senha.
        *  Ausente = desligado, o estado de produção até o corte do P19. */
       loginProprio?: boolean
+      /** Masters franquia do perfil Master (emenda 1 da DEC-087). Só vem para ele. */
+      masters?: string[]
     }
   | {
       tipo: 'trocar-perfil'
@@ -100,11 +111,24 @@ export type AcaoAdmin =
       para: string
       capacidadesDe?: number
       capacidadesPara?: number
+      /** O vínculo de hoje com master franquia: quem SAI de Master o perde. */
+      mastersDe?: string[]
+      /** O vínculo escolhido para quem VIRA Master (obrigatório na tela). */
+      mastersPara?: string[]
     }
   | { tipo: 'definir-ativo'; nome: string; login: string; perfil: string; ativo: boolean }
   | { tipo: 'redefinir-senha'; nome: string; login: string; senhaPropria: boolean }
   | { tipo: 'exigir-troca'; nome: string; login: string }
   | { tipo: 'editar-paises'; nome: string; login: string; de: string[]; para: string[] }
+  | { tipo: 'editar-masters'; nome: string; login: string; de: string[]; para: string[] }
+
+/** A frase do recorte de quem é Master: o que ele passa a ver, com os nomes do vínculo. */
+function fraseDoRecorte(masters: string[]): string {
+  return (
+    `Master franquia: ${masters.join(', ')}. Na Visão Executiva, a pessoa vê só as unidades ` +
+    (masters.length > 1 ? 'desses masters.' : 'desse master.')
+  )
+}
 
 export interface Confirmacao {
   /** Tarja curta acima do título. Caixa alta no componente. */
@@ -169,6 +193,9 @@ export function montarConfirmacao(
             'desativar e trocar o perfil de quem já existe.'
           : `Perfil ${rot(acao.perfil)}.` + contagem(undefined, acao.capacidades),
         ...(acao.paises?.length ? [`Com acesso a: ${acao.paises.join(', ')}.`] : []),
+        ...(acao.perfil === PERFIL_MASTER && acao.masters?.length
+          ? [fraseDoRecorte(acao.masters)]
+          : []),
         // A promessa sobre a senha depende do login próprio (decisão do dono, 24/10/2026).
         // Desligado, "nasce com a senha inicial e é levada a trocá-la" seria falso: a senha do
         // banco não é conferida na entrada. Até 16/11/2026 os dois ramos pediam também o
@@ -205,12 +232,25 @@ export function montarConfirmacao(
               `não é promoção nem rebaixamento.${nums}`
             : `As duas faixas de acesso são diferentes.${nums}`
 
+    // O vínculo com master franquia acompanha o perfil (emenda 1 da DEC-087): quem vira Master
+    // leva os nomes escolhidos, e quem sai de Master perde os dele na mesma gravação.
+    const vinculo: string[] = []
+    if (acao.para === PERFIL_MASTER && acao.de !== PERFIL_MASTER && acao.mastersPara?.length) {
+      vinculo.push(fraseDoRecorte(acao.mastersPara))
+    }
+    if (acao.de === PERFIL_MASTER && acao.para !== PERFIL_MASTER && acao.mastersDe?.length) {
+      vinculo.push(
+        `O vínculo com master franquia (${acao.mastersDe.join(', ')}) será removido.`,
+      )
+    }
+
     return {
       eyebrow: viraAdmin ? 'Conceder poder de administrador' : 'Mudar o acesso de alguém',
       titulo: `${acao.nome} vai passar de ${rot(acao.de)} para ${rot(acao.para)}`,
       apoio: [
         `Login ${acao.login}.`,
         consequencia,
+        ...vinculo,
         viraAdmin
           ? `${rot(acao.para)} pode criar, desativar e trocar o perfil de outras pessoas — ` +
             'menos o dele próprio. Digite o login abaixo para liberar.'
@@ -282,6 +322,23 @@ export function montarConfirmacao(
         'Concede ou retira o acesso aos sites de cada país. Fica registrado com o seu nome e a data.',
       ],
       rotuloConfirmar: `Salvar países de ${acao.nome}`,
+      gravidade: 'media',
+      loginParaDigitar: null,
+    }
+  }
+
+  if (acao.tipo === 'editar-masters') {
+    return {
+      eyebrow: 'Mudar o master franquia',
+      titulo: `Master franquia de ${acao.nome}`,
+      apoio: [
+        `Login ${acao.login}.`,
+        `De ${acao.de.join(', ') || '(nenhum)'} para ${acao.para.join(', ')}.`,
+        'Na Visão Executiva, a pessoa passa a ver só as unidades ' +
+          (acao.para.length > 1 ? 'desses masters' : 'desse master') +
+          '. Fica registrado com o seu nome e a data.',
+      ],
+      rotuloConfirmar: `Salvar master de ${acao.nome}`,
       gravidade: 'media',
       loginParaDigitar: null,
     }

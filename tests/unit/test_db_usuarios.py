@@ -22,9 +22,11 @@ from motor_expansao import db
 from motor_expansao.db import postgres
 from motor_expansao.db import usuarios as mod
 
-#: (id, login, nome, email, perfil, ativo, criado, atualizado, senha_propria, deve_trocar_senha)
-# As duas ultimas vem da 016. O Vinícius ja' definiu a dele; o `inativo` do teste abaixo nunca
-# definiu — e' o par que a tela precisa distinguir.
+#: (id, login, nome, email, perfil, ativo, criado, atualizado, senha_propria, deve_trocar_senha,
+#:  paises, masters)
+# senha_propria/deve_trocar vem da 016. O Vinícius ja' definiu a dele; o `inativo` do teste abaixo
+# nunca definiu — e' o par que a tela precisa distinguir. `masters` (025, emenda 1 da DEC-087) e'
+# vazio para quem nao e' master.
 LINHA_LISTA = (
     7,
     "vinicius",
@@ -37,6 +39,7 @@ LINHA_LISTA = (
     True,
     False,
     ["BR", "AR"],
+    [],
 )
 
 
@@ -207,6 +210,7 @@ def test_listar_traz_inativos(monkeypatch: pytest.MonkeyPatch) -> None:
         False,
         True,
         ["BR"],
+        [],
     )
     con = _instalar(monkeypatch, {"FROM usuarios u": [LINHA_LISTA, inativo]})
     lista = mod.listar()
@@ -237,6 +241,7 @@ def test_listar_traz_o_estado_da_senha_de_cada_um(monkeypatch: pytest.MonkeyPatc
         False,
         True,
         ["BR"],
+        [],
     )
     _instalar(monkeypatch, {"FROM usuarios u": [LINHA_LISTA, inativo]})
     lista = mod.listar()
@@ -1361,3 +1366,367 @@ def test_alterar_acesso_normaliza_as_siglas_dos_paises(monkeypatch: pytest.Monke
     mod.alterar_acesso(9, paises=["br", " ar "], autor=7)
     inserts = con.sql_que_contem("INSERT INTO usuario_paises")
     assert [p for _s, p in inserts] == [(9, "AR")]
+
+
+# ---------------------------------------------------------------------------
+# Emenda 1 da DEC-087: o vinculo com master franquia pela aba Acessos
+# ---------------------------------------------------------------------------
+
+_LER_MASTERS = "SELECT master_franquia FROM usuario_masters"
+
+
+def _con_masters(
+    monkeypatch: pytest.MonkeyPatch, *, perfil: str, atuais: list[str], ativo: bool = True
+) -> FakeConexao:
+    return _instalar(
+        monkeypatch,
+        {
+            "FOR UPDATE OF u": [(9, "alvo", perfil, ativo)],
+            "FROM perfis WHERE nome_perfil": [(3,)],
+            _LER_MASTERS: [(m,) for m in atuais],
+        },
+    )
+
+
+def _escritas(con: FakeConexao) -> list[tuple[str, Any]]:
+    """Toda escrita (INSERT/UPDATE/DELETE). O `FOR UPDATE` da trava e' leitura e nao entra."""
+    return [
+        (s, p)
+        for s, p in con.executados
+        if s.lstrip().startswith(("INSERT INTO", "UPDATE ", "DELETE FROM"))
+    ]
+
+
+def test_listar_traz_os_masters_de_cada_um(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A tela mostra o vinculo na linha do master: vem agregado no MESMO SELECT, como os paises."""
+    master = (
+        12,
+        "dalmo_ribeiro",
+        "Dalmo",
+        "d@u.com",
+        "master",
+        True,
+        None,
+        None,
+        True,
+        False,
+        ["BR"],
+        ["Dalmo Ribeiro"],
+    )
+    _instalar(monkeypatch, {"FROM usuarios u": [LINHA_LISTA, master]})
+    lista = mod.listar()
+    assert [u.masters for u in lista] == [(), ("Dalmo Ribeiro",)]
+    assert lista[1].como_json()["masters"] == ["Dalmo Ribeiro"]
+    assert lista[0].como_json()["masters"] == []
+    assert "FROM usuario_masters um WHERE um.id_usuario = u.id_usuario" in mod.SQL_LISTAR
+
+
+def test_criar_master_grava_o_vinculo_na_mesma_transacao(
+    monkeypatch: pytest.MonkeyPatch, _sem_argon2: None
+) -> None:
+    """Perfil master nasce COM vinculo: a linha, o pais, o master e os eventos, numa transacao."""
+    con = _con_criacao(monkeypatch, id_novo=42)
+    saida = mod.criar(
+        login="dalmo_ribeiro",
+        nome="Dalmo",
+        email="d@ultra.com",
+        perfil="master",
+        paises=["BR"],
+        masters=["Dalmo Ribeiro"],
+        autor=7,
+    )
+    assert [p for _s, p in con.sql_que_contem("INSERT INTO usuario_masters")] == [
+        (42, "Dalmo Ribeiro")
+    ]
+    assert [s for s, _p in con.executados].count(postgres.SQL_DEFINIR_AUTOR) == 1
+    assert [e[1] for e in con.eventos] == [mod.EVENTO_CRIADO, mod.EVENTO_MASTERS_ALTERADOS]
+    assert con.eventos[1][4].obj == {"antes": 0, "depois": 1}
+    assert all(e[0] == 7 and e[3] == 42 for e in con.eventos), "autor e alvo trocaram de lugar"
+    assert saida["masters"] == ["Dalmo Ribeiro"]
+
+
+def test_criar_sem_master_nao_grava_vinculo_nem_evento_dele(
+    monkeypatch: pytest.MonkeyPatch, _sem_argon2: None
+) -> None:
+    con = _con_criacao(monkeypatch)
+    saida = mod.criar(
+        login="ana", nome="Ana", email="ana@ultra.com", perfil="expansao", paises=["BR"], autor=7
+    )
+    assert con.sql_que_contem("usuario_masters") == []
+    assert [e[1] for e in con.eventos] == [mod.EVENTO_CRIADO]
+    assert saida["masters"] == []
+
+
+@pytest.mark.parametrize(
+    ("perfil", "masters", "mensagem"),
+    [
+        ("master", None, mod.MSG_MASTER_OBRIGATORIO),
+        ("master", [], mod.MSG_MASTER_OBRIGATORIO),
+        ("consultoria", ["Dalmo Ribeiro"], mod.MSG_MASTER_SO_DO_PERFIL_MASTER),
+    ],
+)
+def test_criar_recusa_master_sem_vinculo_e_vinculo_sem_master_antes_do_banco(
+    monkeypatch: pytest.MonkeyPatch,
+    _sem_argon2: None,
+    perfil: str,
+    masters: list[str] | None,
+    mensagem: str,
+) -> None:
+    """As duas recusas vem ANTES de abrir transacao: nada vai ao banco, nem o hash e' pago."""
+    con = _con_criacao(monkeypatch)
+    with pytest.raises(ValueError, match=mensagem):
+        mod.criar(
+            login="ana",
+            nome="Ana",
+            email="ana@ultra.com",
+            perfil=perfil,
+            paises=["BR"],
+            masters=masters,
+            autor=7,
+        )
+    assert con.executados == []
+
+
+def test_criar_normaliza_os_nomes_do_master(
+    monkeypatch: pytest.MonkeyPatch, _sem_argon2: None
+) -> None:
+    """Pontas aparadas, espaco duplo colapsado e repetido sem caixa removido (fica a 1a grafia)."""
+    con = _con_criacao(monkeypatch, id_novo=42)
+    mod.criar(
+        login="dalmo_ribeiro",
+        nome="Dalmo",
+        email="d@ultra.com",
+        perfil="master",
+        paises=["BR"],
+        masters=["  Dalmo   Ribeiro ", "dalmo ribeiro"],
+        autor=7,
+    )
+    assert [p for _s, p in con.sql_que_contem("INSERT INTO usuario_masters")] == [
+        (42, "Dalmo Ribeiro")
+    ]
+
+
+@pytest.mark.parametrize("ruim", ["", "   ", "M", "x" * 121])
+def test_normalizar_masters_recusa_o_que_o_CHECK_da_025_recusaria(ruim: str) -> None:
+    with pytest.raises(ValueError, match="Nome de master inválido"):
+        mod._normalizar_masters([ruim])
+
+
+def test_normalizar_masters_aceita_lista_vazia() -> None:
+    """Vazio e' legitimo aqui (quem nao e' master); a regra do perfil mora em outro lugar."""
+    assert mod._normalizar_masters([]) == []
+
+
+def test_alterar_acesso_substitui_os_masters(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Replace-all: sai o que nao veio, entra o novo, UM evento so' com as contagens."""
+    con = _con_masters(monkeypatch, perfil="master", atuais=["Master A"])
+    r = mod.alterar_acesso(9, masters=["Master B", "Master A", "Master C"], autor=7)
+    assert con.sql_que_contem("DELETE FROM usuario_masters") == []
+    assert [p for _s, p in con.sql_que_contem("INSERT INTO usuario_masters")] == [
+        (9, "Master B"),
+        (9, "Master C"),
+    ]
+    assert [e[1] for e in con.eventos] == [mod.EVENTO_MASTERS_ALTERADOS]
+    assert con.eventos[0][4].obj == {"antes": 1, "depois": 3}
+    assert r["masters"] == {
+        "id_usuario": 9,
+        "de": ["Master A"],
+        "para": ["Master A", "Master B", "Master C"],
+        "mudou": True,
+    }
+
+
+def test_alterar_acesso_troca_master_e_grafia(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Trocar a grafia gravada pela do cadastro e' mudanca: DELETE da velha, INSERT da nova."""
+    con = _con_masters(monkeypatch, perfil="master", atuais=["dalmo ribeiro", "Master A"])
+    mod.alterar_acesso(9, masters=["Dalmo Ribeiro"], autor=7)
+    assert [p for _s, p in con.sql_que_contem("DELETE FROM usuario_masters")] == [
+        (9, "Master A"),
+        (9, "dalmo ribeiro"),
+    ]
+    assert [p for _s, p in con.sql_que_contem("INSERT INTO usuario_masters")] == [
+        (9, "Dalmo Ribeiro")
+    ]
+    assert con.eventos[0][4].obj == {"antes": 2, "depois": 1}
+
+
+def test_alterar_acesso_masters_sem_mudanca_nao_grava_nem_registra(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    con = _con_masters(monkeypatch, perfil="master", atuais=["Master A"])
+    r = mod.alterar_acesso(9, masters=["Master A"], autor=7)
+    assert _escritas(con) == []
+    assert r["masters"]["mudou"] is False
+
+
+def test_alterar_acesso_master_com_lista_vazia_e_recusado_sem_escrever(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    con = _con_masters(monkeypatch, perfil="master", atuais=["Master A"])
+    with pytest.raises(ValueError, match=mod.MSG_MASTER_OBRIGATORIO):
+        mod.alterar_acesso(9, masters=[], autor=7)
+    assert _escritas(con) == []
+
+
+def test_alterar_acesso_vinculo_para_quem_nao_e_master_e_recusado(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    con = _con_masters(monkeypatch, perfil="consultoria", atuais=[])
+    with pytest.raises(ValueError, match=mod.MSG_MASTER_SO_DO_PERFIL_MASTER):
+        mod.alterar_acesso(9, masters=["Master A"], autor=7)
+    assert _escritas(con) == []
+
+
+def test_alterar_acesso_master_para_consultoria_com_master_e_recusado(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """O perfil RESULTANTE decide: trocar para consultoria e mandar master juntos nao passa."""
+    con = _con_masters(monkeypatch, perfil="master", atuais=["Master A"])
+    with pytest.raises(ValueError, match=mod.MSG_MASTER_SO_DO_PERFIL_MASTER):
+        mod.alterar_acesso(9, perfil="consultoria", masters=["Master A"], autor=7)
+    assert _escritas(con) == []
+
+
+def test_sair_de_master_apaga_o_vinculo_na_mesma_transacao(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Quem deixa de ser master perde o vinculo junto com o perfil, com um evento para cada."""
+    con = _con_masters(monkeypatch, perfil="master", atuais=["Master A", "Master B"])
+    r = mod.alterar_acesso(9, perfil="consultoria", autor=7)
+    assert con.sql_que_contem("UPDATE usuarios SET id_perfil")
+    assert [p for _s, p in con.sql_que_contem("DELETE FROM usuario_masters")] == [
+        (9, "Master A"),
+        (9, "Master B"),
+    ]
+    assert [s for s, _p in con.executados].count(postgres.SQL_DEFINIR_AUTOR) == 1
+    assert [e[1] for e in con.eventos] == [
+        mod.EVENTO_PERFIL_ALTERADO,
+        mod.EVENTO_MASTERS_ALTERADOS,
+    ]
+    assert con.eventos[1][4].obj == {"antes": 2, "depois": 0}
+    assert r["masters"]["para"] == [] and r["masters"]["mudou"] is True
+
+
+def test_alterar_perfil_tambem_apaga_o_vinculo_de_quem_sai_de_master(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A regra tem UMA redacao (`_masters_resultantes`): a funcao de sempre a segue tambem."""
+    con = _con_masters(monkeypatch, perfil="master", atuais=["Master A"])
+    mod.alterar_perfil(9, "consultoria", autor=7)
+    assert [p for _s, p in con.sql_que_contem("DELETE FROM usuario_masters")] == [(9, "Master A")]
+
+
+def test_virar_master_sem_escolher_master_e_recusado(monkeypatch: pytest.MonkeyPatch) -> None:
+    con = _con_masters(monkeypatch, perfil="consultoria", atuais=[])
+    with pytest.raises(ValueError, match=mod.MSG_MASTER_OBRIGATORIO):
+        mod.alterar_acesso(9, perfil="master", autor=7)
+    assert _escritas(con) == []
+
+
+def test_virar_master_com_master_grava_perfil_e_vinculo(monkeypatch: pytest.MonkeyPatch) -> None:
+    con = _con_masters(monkeypatch, perfil="consultoria", atuais=[])
+    r = mod.alterar_acesso(9, perfil="master", masters=["Master A"], autor=7)
+    assert con.sql_que_contem("UPDATE usuarios SET id_perfil")
+    assert [p for _s, p in con.sql_que_contem("INSERT INTO usuario_masters")] == [(9, "Master A")]
+    assert [e[1] for e in con.eventos] == [
+        mod.EVENTO_PERFIL_ALTERADO,
+        mod.EVENTO_MASTERS_ALTERADOS,
+    ]
+    assert r["perfil"]["para"] == "master" and r["masters"]["para"] == ["Master A"]
+
+
+def test_virar_master_com_vinculo_orfao_sem_escolher_e_recusado(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Linha de `usuario_masters` de quem NAO e' master e' sobra (antes da emenda 1 a troca de
+    perfil nao a apagava, e a 025 ja' estava no ar). Ela nao pode virar o recorte sozinha: quem
+    vira master escolhe de novo, ou o nome velho passaria sem conferencia no cadastro e sem
+    evento do vinculo."""
+    con = _con_masters(monkeypatch, perfil="consultoria", atuais=["Master Velho"])
+    with pytest.raises(ValueError, match=mod.MSG_MASTER_OBRIGATORIO):
+        mod.alterar_acesso(9, perfil="master", autor=7)
+    assert _escritas(con) == []
+    assert con.eventos == []
+
+
+def test_alterar_perfil_para_master_e_sempre_recusado(monkeypatch: pytest.MonkeyPatch) -> None:
+    """`alterar_perfil` nao recebe o vinculo, e o gravado nao conta: virar master por ela e'
+    recusado mesmo com linha orfa. O caminho e' o `alterar_acesso` com `masters`."""
+    con = _con_masters(monkeypatch, perfil="consultoria", atuais=["Master Velho"])
+    with pytest.raises(ValueError, match=mod.MSG_MASTER_OBRIGATORIO):
+        mod.alterar_perfil(9, "master", autor=7)
+    assert _escritas(con) == []
+
+
+def test_virar_master_escolhendo_o_nome_orfao_registra_o_vinculo(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Escolher de novo o MESMO nome que sobrou nao muda o conjunto, mas o recorte foi DADO neste
+    gesto: o evento do vinculo sai (a trilha diz quem deu), e a resposta diz que mudou."""
+    con = _con_masters(monkeypatch, perfil="consultoria", atuais=["Master Velho"])
+    r = mod.alterar_acesso(9, perfil="master", masters=["Master Velho"], autor=7)
+    assert con.sql_que_contem("INSERT INTO usuario_masters") == []
+    assert con.sql_que_contem("DELETE FROM usuario_masters") == []
+    assert [e[1] for e in con.eventos] == [
+        mod.EVENTO_PERFIL_ALTERADO,
+        mod.EVENTO_MASTERS_ALTERADOS,
+    ]
+    assert con.eventos[1][4].obj == {"antes": 1, "depois": 1}
+    assert r["masters"] == {
+        "id_usuario": 9,
+        "de": ["Master Velho"],
+        "para": ["Master Velho"],
+        "mudou": True,
+    }
+
+
+def test_virar_master_com_outro_nome_troca_o_vinculo_orfao(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    con = _con_masters(monkeypatch, perfil="consultoria", atuais=["Master Velho"])
+    mod.alterar_acesso(9, perfil="master", masters=["Master Novo"], autor=7)
+    assert [p for _s, p in con.sql_que_contem("DELETE FROM usuario_masters")] == [
+        (9, "Master Velho")
+    ]
+    assert [p for _s, p in con.sql_que_contem("INSERT INTO usuario_masters")] == [
+        (9, "Master Novo")
+    ]
+
+
+def test_desativar_master_sem_vinculo_nao_e_barrado(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A exigencia de vinculo vale para quem VIRA master ou tem o vinculo pedido; desativar um
+    master que ficou sem vinculo (cadastro antigo) nao pode depender disso."""
+    con = _con_masters(monkeypatch, perfil="master", atuais=[])
+    r = mod.alterar_acesso(9, ativo=False, autor=7)
+    assert r["status"]["mudou"] is True
+    assert "masters" not in r
+    assert con.sql_que_contem(_LER_MASTERS) == []
+
+
+def test_mexer_em_outro_campo_de_quem_nao_e_master_nao_le_o_vinculo(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    con = _con_masters(monkeypatch, perfil="consultoria", atuais=[])
+    r = mod.alterar_acesso(9, perfil="growth", autor=7)
+    assert "masters" not in r
+    assert con.sql_que_contem("usuario_masters") == []
+
+
+def test_metadados_do_vinculo_nao_carregam_o_nome_do_master(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Nome de master e' nome de pessoa: so' as contagens vao para `metadados` (§5)."""
+    con = _con_masters(monkeypatch, perfil="master", atuais=["Dalmo Ribeiro"])
+    mod.alterar_acesso(9, masters=["Luana Ribeiro"], autor=7)
+    achatado = " ".join(str(v) for v in con.eventos[0][4].obj.values()).lower()
+    assert "ribeiro" not in achatado
+
+
+def test_o_tipo_do_evento_do_vinculo_esta_no_contrato() -> None:
+    from pathlib import Path
+
+    assert mod.EVENTO_MASTERS_ALTERADOS == "usuario.masters_alterados"
+    contrato = (Path(__file__).resolve().parents[2] / "docs" / "eventos_contrato.md").read_text(
+        encoding="utf-8"
+    )
+    assert f"`{mod.EVENTO_MASTERS_ALTERADOS}`" in contrato

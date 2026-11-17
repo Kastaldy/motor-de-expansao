@@ -66,9 +66,19 @@ EVENTO_TROCA_EXIGIDA = "usuario.troca_exigida"
 #: Os paises de uma pessoa (DEC-081, Fase 2 do P4). metadados = {"pais": sigla}, sem PII.
 EVENTO_PAIS_ATRIBUIDO = "usuario.pais_atribuido"
 EVENTO_PAIS_REMOVIDO = "usuario.pais_removido"
+#: O vinculo da pessoa com master(s) franquia mudou (emenda 1 da DEC-087). UM evento por gesto,
+#: e nao um por nome como nos paises: o nome do master e' nome de PESSOA, e PII fica fora de
+#: `metadados` (convencoes §5). Sobram as contagens `{"antes": n, "depois": n}`; quem audita
+#: le o estado atual em `usuario_masters`.
+EVENTO_MASTERS_ALTERADOS = "usuario.masters_alterados"
 
 #: Valor de `entidade` para os eventos daqui (D24).
 ENTIDADE_USUARIO = "usuario"
+
+#: O perfil do master franqueado (DEC-087, migration 025). E' o UNICO perfil que leva vinculo em
+#: `usuario_masters`: o recorte da Visao Executiva casa esses nomes com o `master_franquia` do
+#: cadastro, e master sem vinculo ve a carteira vazia. Identificador, sem acento.
+PERFIL_MASTER = "master"
 
 
 class UsuarioDesconhecido(LookupError):
@@ -112,7 +122,10 @@ SELECT u.id_usuario, u.login_usuario, u.nome_usuario, u.email,
        (u.senha_definida_em_usuario IS NOT NULL) AS senha_propria,
        u.deve_trocar_senha_usuario,
        COALESCE((SELECT array_agg(up.pais ORDER BY up.pais)
-                 FROM usuario_paises up WHERE up.id_usuario = u.id_usuario), ARRAY[]::text[]) AS paises
+                 FROM usuario_paises up WHERE up.id_usuario = u.id_usuario), ARRAY[]::text[]) AS paises,
+       COALESCE((SELECT array_agg(um.master_franquia ORDER BY um.master_franquia)
+                 FROM usuario_masters um WHERE um.id_usuario = u.id_usuario),
+                ARRAY[]::text[]) AS masters
 FROM usuarios u
 JOIN perfis p ON p.id_perfil = u.id_perfil
 ORDER BY u.ativo DESC, u.login_usuario
@@ -181,6 +194,36 @@ DELETE FROM usuario_paises WHERE id_usuario = %s AND pais = %s
 SQL_PAISES_DO_USUARIO = """
 SELECT pais FROM usuario_paises WHERE id_usuario = %s ORDER BY pais
 """
+
+# O vinculo pessoa -> master franquia (025, DEC-087), no molde dos tres de cima: INSERT por nome
+# novo, DELETE por nome que saiu, e a leitura do conjunto atual para o diff do replace-all. A
+# PK composta recusa o mesmo nome duas vezes; o CHECK `chk_usuario_masters_nome` recusa espaco nas
+# pontas e tamanho fora de 2 a 120 -- `_normalizar_masters` adianta as duas recusas com mensagem.
+#
+# A leitura NAO filtra `u.ativo`, ao contrario do `rbac.SQL_MASTERS_DO_USUARIO`: aquela decide o
+# recorte de quem ESTA' entrando; esta serve a quem administra, que precisa ver e mexer no vinculo
+# de quem esta' inativo tambem (reativar devolve o mesmo recorte).
+SQL_CRIAR_MASTER = """
+INSERT INTO usuario_masters (id_usuario, master_franquia) VALUES (%s, %s)
+"""
+
+SQL_REMOVER_MASTER = """
+DELETE FROM usuario_masters WHERE id_usuario = %s AND master_franquia = %s
+"""
+
+SQL_MASTERS_DO_ALVO = """
+SELECT master_franquia FROM usuario_masters WHERE id_usuario = %s ORDER BY master_franquia
+"""
+
+#: Mesma regra do CHECK `chk_usuario_masters_nome` (025): de 2 a 120 caracteres, sem espaco nas
+#: pontas (o `_normalizar_masters` apara antes de medir).
+_MASTER_TAMANHO_MIN = 2
+_MASTER_TAMANHO_MAX = 120
+
+#: As duas recusas de vinculo que dependem do PERFIL. Constantes porque a rota e os testes citam o
+#: mesmo texto, e a tela o mostra como veio (422).
+MSG_MASTER_OBRIGATORIO = "Escolha ao menos um master para o perfil Master."
+MSG_MASTER_SO_DO_PERFIL_MASTER = "Master franquia só se vincula ao perfil Master."
 
 #: Mesma regra do CHECK `chk_usuario_paises_sigla` (021:19) e do `perfil._RE_PAIS`: 2 letras
 #: MAIUSCULAS. Replicado aqui (e nao importado de `perfil`, outra camada) para a camada de dados
@@ -304,6 +347,9 @@ class UsuarioAdmin:
     deve_trocar_senha: bool = True
     #: Paises que a pessoa pode acessar (DEC-081, siglas). Tupla (imutavel) p/ o frozen dataclass.
     paises: tuple[str, ...] = ()
+    #: Masters franquia vinculados (`usuario_masters`, emenda 1 da DEC-087), na grafia gravada.
+    #: So' o perfil `master` os tem; para os outros, vazio.
+    masters: tuple[str, ...] = ()
 
     def como_json(self) -> dict[str, Any]:
         return {
@@ -319,6 +365,7 @@ class UsuarioAdmin:
             "senha_propria": self.senha_propria,
             "deve_trocar_senha": self.deve_trocar_senha,
             "paises": list(self.paises),
+            "masters": list(self.masters),
         }
 
 
@@ -341,6 +388,7 @@ def listar() -> list[UsuarioAdmin]:
             senha_propria=bool(linha[8]),
             deve_trocar_senha=bool(linha[9]),
             paises=tuple(linha[10] or ()),
+            masters=tuple(linha[11] or ()),
         )
         for linha in linhas
     ]
@@ -466,13 +514,112 @@ def _aplicar_paises(
     return {"id_usuario": id_alvo, "de": de, "para": para, "mudou": True}
 
 
+def _masters_do_alvo(con: Any, id_alvo: int) -> list[str]:
+    """Os masters vinculados agora, DENTRO da transacao (a linha de `usuarios` ja' travada)."""
+    return [str(r[0]) for r in con.execute(SQL_MASTERS_DO_ALVO, (id_alvo,)).fetchall()]
+
+
+def _aplicar_masters(
+    con: Any,
+    id_alvo: int,
+    masters_antes: list[str],
+    masters_desejados: list[str],
+    virando_master: bool = False,
+    *,
+    autor: int,
+) -> dict[str, Any]:
+    """O passo de ajustar o vinculo com masters franquia (replace-all), DENTRO de uma transacao.
+
+    Mesma forma do `_aplicar_paises`: diff contra o conjunto atual, um INSERT por nome novo e um
+    DELETE por nome que saiu, e "sem mudanca, sem evento". Tres diferencas, todas de proposito:
+      * conjunto VAZIO e' aceito aqui -- e' assim que quem deixa de ser master perde o vinculo. A
+        regra "perfil master exige ao menos um" e' do chamador, que conhece o perfil resultante;
+      * UM evento por gesto (`usuario.masters_alterados`), so' com as contagens: o nome do master
+        e' nome de pessoa, e nao vai para `metadados`;
+      * `virando_master`: quem VIRA master tem o recorte DADO naquele gesto, mesmo que o conjunto
+        escolhido coincida com linhas que sobraram de antes (o vinculo de quem nao era master nao
+        recortava nada). Sem diff, nada e' escrito, mas o evento sai e `mudou` e' verdadeiro --
+        senao a trilha mostraria so' a troca de perfil e ninguem saberia quem deu aquele recorte.
+    A comparacao e' EXATA (com caixa): trocar "dalmo ribeiro" por "Dalmo Ribeiro" e' mudanca de
+    grafia gravada, e a grafia do cadastro e' a que deve ficar.
+    """
+    antes = set(masters_antes)
+    adicionar = [m for m in masters_desejados if m not in antes]
+    remover = sorted(antes - set(masters_desejados))
+    de, para = sorted(antes), sorted(set(masters_desejados))
+    if not adicionar and not remover and not virando_master:
+        return {"id_usuario": id_alvo, "de": de, "para": para, "mudou": False}
+    for nome in remover:
+        con.execute(SQL_REMOVER_MASTER, (id_alvo, nome))
+    for nome in adicionar:
+        con.execute(SQL_CRIAR_MASTER, (id_alvo, nome))
+    _registrar(
+        con,
+        autor=autor,
+        tipo=EVENTO_MASTERS_ALTERADOS,
+        id_alvo=id_alvo,
+        metadados={"antes": len(de), "depois": len(para)},
+    )
+    return {"id_usuario": id_alvo, "de": de, "para": para, "mudou": True}
+
+
+def _masters_resultantes(
+    con: Any,
+    id_alvo: int,
+    *,
+    perfil_antes: str,
+    perfil_final: str,
+    masters_norm: list[str] | None,
+) -> tuple[list[str], list[str], bool] | None:
+    """Decide o vinculo final ANTES de qualquer escrita. `None` = nao mexer no vinculo.
+
+    Devolve `(antes, desejados, virando_master)`, na ordem dos parametros do `_aplicar_masters`.
+    As regras, todas pelo perfil RESULTANTE da mesma chamada:
+      * perfil final `master` com vinculo pedido: o pedido nao pode ser vazio -- master sem
+        vinculo entraria e veria a carteira vazia sem nada acusar;
+      * quem VIRA master agora tem de mandar o vinculo, SEMPRE. O que esta' gravado nao conta:
+        linha de quem nao e' master e' sobra (antes da emenda 1 da DEC-087 a troca de perfil nao
+        apagava o vinculo, e a 025 ja' estava no ar), e voltar a ser master exige escolher de
+        novo, nao herdar um nome velho sem conferencia no cadastro e sem evento. Por isso
+        `alterar_perfil(.., 'master')` e' sempre recusado: o caminho e' o `alterar_acesso` com
+        `masters`;
+      * quem JA' era master e nao teve o vinculo pedido nao e' conferido: desativar um master sem
+        vinculo nao pode ser barrado por isso;
+      * perfil final de outro tipo: pedir nome e' erro; quem SAI de master perde o vinculo
+        inteiro, na mesma transacao da troca de perfil (o vinculo de quem nao e' master nao
+        recorta nada).
+    """
+    if perfil_final == PERFIL_MASTER:
+        virando_master = perfil_antes != PERFIL_MASTER
+        if masters_norm is None:
+            if virando_master:
+                raise ValueError(MSG_MASTER_OBRIGATORIO)
+            return None
+        if not masters_norm:
+            raise ValueError(MSG_MASTER_OBRIGATORIO)
+        return _masters_do_alvo(con, id_alvo), masters_norm, virando_master
+    if masters_norm:
+        raise ValueError(MSG_MASTER_SO_DO_PERFIL_MASTER)
+    if masters_norm is not None or perfil_antes == PERFIL_MASTER:
+        return _masters_do_alvo(con, id_alvo), [], False
+    return None
+
+
 def alterar_perfil(id_alvo: int, novo_perfil: str, *, autor: int) -> dict[str, Any]:
     """Troca o perfil e registra `usuario.perfil_alterado`. Devolve o de-para aplicado."""
     _recusar_auto_alvo(id_alvo, autor)
 
     with transacao(id_usuario=autor) as con:
         perfil_antes, _ = _estado_atual(con, id_alvo)
+        # A regra do vinculo com master vale aqui tambem (uma redacao so', `_masters_resultantes`):
+        # virar master por aqui e' sempre recusado (esta funcao nao recebe o vinculo, e o gravado
+        # nao conta), e sair de master leva o vinculo junto.
+        plano = _masters_resultantes(
+            con, id_alvo, perfil_antes=perfil_antes, perfil_final=novo_perfil, masters_norm=None
+        )
         resultado = _aplicar_perfil(con, id_alvo, perfil_antes, novo_perfil, autor=autor)
+        if plano is not None:
+            _aplicar_masters(con, id_alvo, *plano, autor=autor)
     return resultado
 
 
@@ -499,8 +646,9 @@ def alterar_acesso(
     perfil: str | None = None,
     ativo: bool | None = None,
     paises: list[str] | None = None,
+    masters: list[str] | None = None,
 ) -> dict[str, Any]:
-    """Perfil, status e/ou paises de UMA pessoa numa transacao SO', com um evento por mudanca.
+    """Perfil, status, paises e/ou masters de UMA pessoa numa transacao SO', com um evento por mudanca.
 
     E' o que o `PATCH /api/acessos/usuarios/{id}` chama (#463, follow-up B). Ate' 24/10/2026 a
     rota chamava `alterar_perfil` e `definir_ativo` em sequencia -- DUAS transacoes. Se a
@@ -515,17 +663,31 @@ def alterar_acesso(
 
     `alterar_perfil` e `definir_ativo` ficam com a assinatura de sempre; as tres compartilham os
     passos (`_aplicar_perfil`, `_aplicar_ativo`), entao cada regra tem UMA redacao.
+
+    `masters` (emenda 1 da DEC-087) e' o conjunto DESEJADO de masters franquia (replace-all);
+    `None` = nao mexe. As regras que dependem do perfil resultante estao em `_masters_resultantes`
+    e rodam ANTES de qualquer escrita; quem sai de master perde o vinculo nesta mesma transacao,
+    e a resposta traz o bloco `masters` tambem nesse caso. Os nomes chegam ja' na grafia do
+    cadastro: conferir que existem e' da rota, que conhece o cadastro.
     """
-    if perfil is None and ativo is None and paises is None:
-        raise ValueError("Informe `perfil`, `ativo`, `paises`, ou uma combinação.")
+    if perfil is None and ativo is None and paises is None and masters is None:
+        raise ValueError("Informe `perfil`, `ativo`, `paises`, `masters`, ou uma combinação.")
     _recusar_auto_alvo(id_alvo, autor)
     # Normaliza/valida FORA da transacao (recusa vazio cedo -- vazio e' o bug do P4); o
     # pertencimento ao catalogo (BR/AR) ja' foi conferido na rota.
     paises_norm = _normalizar_paises(paises) if paises is not None else None
+    masters_norm = _normalizar_masters(masters) if masters is not None else None
 
     resultado: dict[str, Any] = {"id_usuario": id_alvo}
     with transacao(id_usuario=autor) as con:
         perfil_antes, ativo_antes = _estado_atual(con, id_alvo)
+        plano_masters = _masters_resultantes(
+            con,
+            id_alvo,
+            perfil_antes=perfil_antes,
+            perfil_final=perfil if perfil is not None else perfil_antes,
+            masters_norm=masters_norm,
+        )
         if perfil is not None:
             resultado["perfil"] = _aplicar_perfil(con, id_alvo, perfil_antes, perfil, autor=autor)
         if ativo is not None:
@@ -537,6 +699,8 @@ def alterar_acesso(
             resultado["paises"] = _aplicar_paises(
                 con, id_alvo, paises_antes, paises_norm, autor=autor
             )
+        if plano_masters is not None:
+            resultado["masters"] = _aplicar_masters(con, id_alvo, *plano_masters, autor=autor)
     return resultado
 
 
@@ -593,6 +757,34 @@ def _normalizar_paises(paises: list[str]) -> list[str]:
     return vistos
 
 
+def _normalizar_masters(masters: list[str]) -> list[str]:
+    """Normaliza os nomes de master franquia de um vinculo (emenda 1 da DEC-087).
+
+    Apara as pontas e colapsa espacos internos (um espaco duplo que ninguem ve faria o vinculo
+    nunca casar com o cadastro), e remove repetidos SEM CAIXA, mantendo a primeira grafia --
+    "Dalmo Ribeiro" e "dalmo ribeiro" sao o mesmo master. Recusa nome fora de 2 a 120 caracteres,
+    a regra do CHECK `chk_usuario_masters_nome` (025), com mensagem em vez do 500 cru do banco.
+
+    Lista vazia NAO e' recusada aqui, ao contrario dos paises: vazio e' legitimo para quem nao e'
+    master. A regra "master exige ao menos um" depende do perfil e mora em `criar` e em
+    `_masters_resultantes`. Que o nome EXISTE no cadastro e' conferido na rota.
+    """
+    vistos: list[str] = []
+    chaves: set[str] = set()
+    for bruto in masters:
+        nome = " ".join(str(bruto).split())
+        if not _MASTER_TAMANHO_MIN <= len(nome) <= _MASTER_TAMANHO_MAX:
+            raise ValueError(
+                f"Nome de master inválido: {bruto!r}. Use de {_MASTER_TAMANHO_MIN} a "
+                f"{_MASTER_TAMANHO_MAX} caracteres."
+            )
+        chave = nome.casefold()
+        if chave not in chaves:
+            chaves.add(chave)
+            vistos.append(nome)
+    return vistos
+
+
 def _validar_login(login: str) -> None:
     """Recusa o login que o piloto nao consegue carregar inteiro (revisao de seguranca de 06/11/2026).
 
@@ -619,9 +811,21 @@ def _validar_login(login: str) -> None:
 
 
 def criar(
-    *, login: str, nome: str, email: str, perfil: str, paises: list[str], autor: int
+    *,
+    login: str,
+    nome: str,
+    email: str,
+    perfil: str,
+    paises: list[str],
+    autor: int,
+    masters: list[str] | None = None,
 ) -> dict[str, Any]:
     """Cria a pessoa com a senha INICIAL e registra `usuario.criado`. Devolve o id novo.
+
+    `masters` (emenda 1 da DEC-087): o vinculo com master(s) franquia, gravado na MESMA transacao
+    da criacao. O perfil `master` EXIGE ao menos um (sem vinculo, a pessoa entraria e veria a
+    carteira vazia); qualquer outro perfil o RECUSA. Quando ha' vinculo, sai tambem o evento
+    `usuario.masters_alterados` (de 0 para n), para a trilha dizer quem deu aquele recorte.
 
     E' o unico caso desta camada em que o alvo NAO existe antes da chamada -- logo, nao ha
     `_estado_atual`, nao ha `FOR UPDATE` e nao ha `_recusar_auto_alvo`: ninguem cria a si mesmo,
@@ -648,6 +852,11 @@ def criar(
     if "@" not in email:
         raise ValueError("E-mail inválido.")
     paises_norm = _normalizar_paises(paises)
+    masters_norm = _normalizar_masters(masters or [])
+    if perfil == PERFIL_MASTER and not masters_norm:
+        raise ValueError(MSG_MASTER_OBRIGATORIO)
+    if perfil != PERFIL_MASTER and masters_norm:
+        raise ValueError(MSG_MASTER_SO_DO_PERFIL_MASTER)
 
     # Fora da transacao de proposito: hashear custa ~64 MB e ~100 ms, e segurar uma transacao
     # aberta durante isso prenderia a linha de `perfis` sem motivo.
@@ -688,11 +897,18 @@ def criar(
             metadados={"perfil": perfil},
         )
 
+        # O vinculo com master(s), tambem na transacao da criacao: perfil `master` sem vinculo
+        # nunca chega a existir. O evento proprio vem DEPOIS do `usuario.criado`, na ordem em que
+        # as coisas aconteceram, e so' com contagens (nome de master e' PII).
+        if masters_norm:
+            _aplicar_masters(con, id_novo, [], masters_norm, autor=autor)
+
     return {
         "id_usuario": id_novo,
         "login": login,
         "perfil": perfil,
         "paises": paises_norm,
+        "masters": sorted(masters_norm),
     }
 
 

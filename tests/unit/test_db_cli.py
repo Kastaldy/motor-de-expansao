@@ -297,7 +297,8 @@ _D20_DE_PE: dict[str, Any] = {
     "'observacoes_concorrente', 'INSERT'": True,
     # As unidades incluidas pelo site (024, DEC-085): ler e escrever sim, apagar NAO.
     "'unidades_ultra_site', 'INSERT'": True,
-    # Os vinculos de master franquia (025, DEC-087): o piloto le para servir o recorte.
+    # Os vinculos de master franquia (025, DEC-087): o piloto le para servir o recorte e a aba
+    # Acessos grava (emenda 1): SELECT, INSERT e DELETE numa consulta so', como a da 024.
     "'usuario_masters', 'SELECT'": True,
     "tgenabled": "A",
     # A ACL das funcoes de auditoria (secao 2 do D20), acrescentada em 05/10/2026: era a
@@ -2402,6 +2403,14 @@ def test_privilegios_COBRE_sessoes() -> None:
     )
     assert "'usuario_masters', 'SELECT'" in positivas, (
         "os vinculos de master (025, DEC-087): sem o SELECT o recorte do master morre em runtime"
+    )
+    assert "'usuario_masters', 'INSERT'" in positivas, (
+        "a aba Acessos grava o vinculo (emenda 1 da DEC-087): sem o INSERT criar master morre"
+    )
+    assert "'usuario_masters', 'DELETE'" in positivas, (
+        "trocar o master ou tirar alguem do perfil master apaga linha de `usuario_masters`; o "
+        "DELETE vem de GRANT explicito (o default privilege do dono nao o da'), e e' o que falta "
+        "primeiro num banco novo"
     )
 
     _seqs = [s for s in positivas.split(" | ") if "has_sequence_privilege" in s]

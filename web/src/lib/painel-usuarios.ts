@@ -23,6 +23,8 @@
    texto é a parte que pode mentir. Mesma divisão de `confirmacao-admin.ts`.
    --------------------------------------------------------------------------------- */
 
+import { PERFIL_MASTER } from './confirmacao-admin'
+
 /**
  * O rótulo da coluna da senha. "(banco)" porque o selo descreve a senha do BANCO — a que o
  * login próprio confere. Era ela que separava a senha do banco da do Authelia, enquanto ele
@@ -169,4 +171,121 @@ export function mensagemDeErroDoPainel(
       : frase
   }
   return semTexto ? `O servidor recusou o pedido (${status}).` : texto
+}
+
+/* ---------------------------------------------------------------------------
+   O vínculo com MASTER FRANQUIA (emenda 1 da DEC-087, 17/11/2026).
+
+   O perfil Master vê na Visão Executiva só as unidades cujo `master_franquia` do cadastro está
+   vinculado a ele. Até esta emenda o vínculo era um INSERT manual no banco; agora é um campo da
+   aba Acessos, obrigatório para o perfil Master e ausente para os outros. As opções vêm do
+   cadastro das unidades (`masters_disponiveis`), e o servidor recusa nome que não esteja lá.
+   --------------------------------------------------------------------------- */
+
+/** O rótulo do campo, no formulário de criação e na edição da linha. */
+export const ROTULO_CAMPO_MASTER = 'Master franquia'
+
+/** A dica abaixo das opções do campo. */
+export const DICA_CAMPO_MASTER =
+  'Escolha ao menos um. Na Visão Executiva, a pessoa vê só as unidades desses masters.'
+
+/** Sem cadastro de unidades no servidor não há o que escolher (e o servidor recusaria). */
+export const SEM_MASTERS_NO_CADASTRO =
+  'O cadastro de unidades não está disponível neste servidor: não há master para escolher.'
+
+/** A dica do chip de um master vinculado que o cadastro não tem mais (renomeado ou removido). */
+export const TITULO_MASTER_FORA_DO_CADASTRO =
+  'Este nome não está no cadastro de unidades: por ele, a pessoa não vê nenhuma unidade.'
+
+/** A mesma chave do servidor (`_chave_master`): sem espaço nas pontas, espaços internos
+ *  colapsados e sem caixa. É por ela que um vínculo antigo casa com a grafia do cadastro. */
+export function chaveMaster(nome: string): string {
+  return nome.trim().split(/\s+/).join(' ').toLocaleLowerCase('pt-BR')
+}
+
+/**
+ * A seleção com que a edição abre: os masters de hoje trocados pela grafia do cadastro, e à
+ * parte os que o cadastro não tem mais. Esses não viram opção — salvar com eles seria recusado
+ * —, e a tela avisa que saem ao salvar.
+ *
+ * Sem cadastro no servidor (`disponiveis` vazio: AR, ou o volume fora do ar) não dá para dizer
+ * que um nome SAIU dele — a mesma regra do chip da linha, que fica cinza nesse caso. Nada vai
+ * para `foraDoCadastro`, e a tela não promete "sai ao salvar" (o Salvar fica travado sem opção).
+ */
+export function selecaoInicialDeMasters(
+  atuais: string[],
+  disponiveis: string[],
+): { selecionados: string[]; foraDoCadastro: string[] } {
+  if (disponiveis.length === 0) return { selecionados: [], foraDoCadastro: [] }
+  const porChave = new Map(disponiveis.map((d) => [chaveMaster(d), d]))
+  const selecionados: string[] = []
+  const foraDoCadastro: string[] = []
+  for (const nome of atuais) {
+    const doCadastro = porChave.get(chaveMaster(nome))
+    if (doCadastro === undefined) foraDoCadastro.push(nome)
+    else if (!selecionados.includes(doCadastro)) selecionados.push(doCadastro)
+  }
+  return { selecionados, foraDoCadastro }
+}
+
+/** Marca ou desmarca um master, mantendo a ordem do cadastro. */
+export function alternarMaster(
+  selecionados: string[],
+  nome: string,
+  disponiveis: string[],
+): string[] {
+  const marcados = new Set(selecionados)
+  if (marcados.has(nome)) marcados.delete(nome)
+  else marcados.add(nome)
+  return disponiveis.filter((d) => marcados.has(d))
+}
+
+/** O perfil Master ainda sem master escolhido: trava o botão de criar ou salvar. */
+export function faltaMaster(perfil: string, masters: string[]): boolean {
+  return perfil === PERFIL_MASTER && masters.length === 0
+}
+
+/** O que vai no corpo da criação: os masters só com o perfil Master (os outros o recusam). */
+export function mastersDaCriacao(perfil: string, masters: string[]): string[] | undefined {
+  return perfil === PERFIL_MASTER ? masters : undefined
+}
+
+/** O bloco de resposta do PATCH que a tela usa para o recado. */
+interface Mudanca {
+  mudou: boolean
+}
+
+/**
+ * O recado depois de uma alteração, montado da RESPOSTA do servidor — nunca do que foi pedido:
+ * `mudou: false` é "já estava assim", e a tela não pode chamar isso de alteração.
+ *
+ * `rotulo` é o `rotuloPerfil` de `confirmacao-admin.ts` (passado, e não importado, para este
+ * módulo seguir só de textos).
+ */
+export function recadoDaAlteracao(
+  login: string,
+  r: {
+    perfil?: Mudanca & { de: string; para: string }
+    status?: Mudanca & { ativo: boolean }
+    paises?: Mudanca & { para: string[] }
+    masters?: Mudanca & { para: string[] }
+  },
+  rotulo: (perfil: string) => string,
+): string {
+  const masters = r.masters?.mudou ? r.masters.para : null
+  if (r.perfil?.mudou) {
+    const troca = `${login}: ${rotulo(r.perfil.de)} → ${rotulo(r.perfil.para)}`
+    if (masters === null) return `${troca}.`
+    return masters.length
+      ? `${troca}, com master franquia ${masters.join(', ')}.`
+      : `${troca}; vínculo com master franquia removido.`
+  }
+  if (r.status?.mudou) return `${login} foi ${r.status.ativo ? 'reativado' : 'desativado'}.`
+  if (r.paises?.mudou) return `${login}: países agora ${r.paises.para.join(', ')}.`
+  if (masters !== null) {
+    return masters.length
+      ? `${login}: master franquia agora ${masters.join(', ')}.`
+      : `${login}: vínculo com master franquia removido.`
+  }
+  return `${login} já estava assim — nada foi alterado.`
 }
