@@ -10871,12 +10871,25 @@ def _rede_periodo(inicio: str, fim: str) -> dict[str, Any]:
     financeiro = _rede_faturamento_financeiro()
     financeiro = financeiro if len(financeiro) else None
 
-    atual_cru = rede_metricas.fechamento_periodo(base, ini, term, financeiro=financeiro)
+    # Churn Médio (DEC-088): com um ou mais meses FECHADOS na janela, o churn de cada
+    # unidade é a média do churn desses meses -- lido do MESMO fechamento mensal (`cheio`)
+    # que desenha a série, para que o número da carteira e os pontos do gráfico sejam uma
+    # conta só. Sem mês fechado (o mês em curso), segue a conta da janela.
+    ultimo_dado = pd.Timestamp(base["_data"].max())
+    atual_cru = rede_metricas.fechamento_periodo(
+        base, ini, term, financeiro=financeiro, mensal=cheio
+    )
     if not len(atual_cru):
         raise HTTPException(404, f"Sem dados da rede entre {inicio} e {fim}.")
 
     ini_ant, fim_ant = _rede_periodo_anterior(ini, term)
-    anterior_cru = rede_metricas.fechamento_periodo(base, ini_ant, fim_ant, financeiro=financeiro)
+    anterior_cru = rede_metricas.fechamento_periodo(
+        base, ini_ant, fim_ant, financeiro=financeiro, mensal=cheio
+    )
+    meses_churn = [str(m) for m in rede_metricas.meses_fechados(ini, term, ultimo_dado)]
+    meses_churn_anterior = [
+        str(m) for m in rede_metricas.meses_fechados(ini_ant, fim_ant, ultimo_dado)
+    ]
 
     ini_sss, fim_sss = _rede_periodo_ano_anterior(ini, term)
     ano_anterior = rede_metricas.fechamento_periodo(base, ini_sss, fim_sss, financeiro=financeiro)
@@ -10928,6 +10941,10 @@ def _rede_periodo(inicio: str, fim: str) -> dict[str, Any]:
             and referencia >= term - pd.Timedelta(days=rede_metricas.TOLERANCIA_FIM_DE_MES_DIAS)
         ),
         "competencia_diagnostico": competencia_diagnostico,
+        # A janela tem mês fechado: o churn é o Churn Médio (DEC-088) e a tela rotula assim.
+        "churn_medio": bool(meses_churn),
+        "meses_churn": meses_churn,
+        "meses_churn_anterior": meses_churn_anterior,
         "atual": contexto,
         "m1": anterior_cru.set_index("unidade_id"),
         "ano_anterior": ano_anterior,
@@ -10992,11 +11009,7 @@ def _rede_series(recorte: pd.DataFrame, contexto: dict[str, Any]) -> dict[str, l
     if not meses or not len(recorte):
         return {chave: [None] * len(meses) for chave in chaves}
 
-    cheio = contexto["cheio"]
-    do_recorte = cheio[cheio["unidade_id"].isin(set(recorte["unidade_id"]))]
-    # Agrupa UMA vez por competência (chave em texto: a coluna é `Period` e o resto do
-    # payload trafega mês como string).
-    grupos = {str(mes): grupo for mes, grupo in do_recorte.groupby("competencia", observed=True)}
+    grupos = _rede_grupos_por_mes(contexto["cheio"], recorte["unidade_id"])
 
     series: dict[str, list[float | None]] = {}
     for chave in _REDE_SERIES_SOMA:
@@ -11006,11 +11019,52 @@ def _rede_series(recorte: pd.DataFrame, contexto: dict[str, Any]) -> dict[str, l
             else None
             for mes in meses
         ]
-    for chave, peso in _REDE_SERIES_MEDIA.items():
+    for chave in _REDE_SERIES_MEDIA:
         series[chave] = [
-            _wavg(grupos[mes][chave], grupos[mes][peso]) if mes in grupos else None for mes in meses
+            _rede_ponto_de_taxa(grupos[mes], chave) if mes in grupos else None for mes in meses
         ]
     return series
+
+
+def _rede_grupos_por_mes(cheio: pd.DataFrame, ids: Collection[Any]) -> dict[str, pd.DataFrame]:
+    """O fechamento mensal das unidades `ids`, agrupado UMA vez por competência.
+
+    Chave em texto: a coluna pode chegar como `Period`, e o resto do payload trafega mês
+    como string.
+    """
+    do_recorte = cheio[cheio["unidade_id"].isin(set(ids))]
+    return {str(mes): grupo for mes, grupo in do_recorte.groupby("competencia", observed=True)}
+
+
+def _rede_ponto_de_taxa(grupo: pd.DataFrame, chave: str) -> float | None:
+    """UM ponto mensal de uma taxa do recorte: a média ponderada do gráfico de evolução.
+
+    Função própria porque o Churn Médio do topo (DEC-088) é a média DESTES pontos: uma
+    conta só para o gráfico e para o KPI, ou o "12 meses" do topo deixaria de ser a média
+    dos 12 pontos desenhados logo abaixo.
+    """
+    return _wavg(grupo[chave], grupo[_REDE_SERIES_MEDIA[chave]])
+
+
+def _rede_churn_medio(
+    cheio: pd.DataFrame, ids: Collection[Any], meses: list[str]
+) -> float | None:
+    """Churn Médio do recorte (DEC-088): a média SIMPLES dos pontos mensais de churn.
+
+    Cada ponto é EXATAMENTE o do gráfico de evolução (`_rede_ponto_de_taxa`) para as mesmas
+    unidades; mês sem ponto (nenhuma unidade com base) fica fora do divisor, como na média
+    por unidade. `None` sem nenhum ponto.
+    """
+    ids = list(ids)
+    if not meses or not ids:
+        return None
+    grupos = _rede_grupos_por_mes(cheio[cheio["competencia"].astype(str).isin(set(meses))], ids)
+    pontos = [
+        ponto
+        for ponto in (_rede_ponto_de_taxa(grupos[mes], "churn_pct") for mes in meses if mes in grupos)
+        if ponto is not None
+    ]
+    return float(sum(pontos) / len(pontos)) if pontos else None
 
 
 def _rede_faturamento_fechado(contexto: dict[str, Any]) -> dict[str, dict[str, Any]]:
@@ -11367,24 +11421,58 @@ def _rede_casas(chave: str) -> int:
     return 0
 
 
-def _rede_quarteto(linha: pd.Series, m1: pd.Series | None, chave: str) -> dict[str, Any]:
+def _rede_operou_o_anterior(linha: pd.Series, m1: pd.Series | None) -> bool:
+    """A unidade operou o período ANTERIOR inteiro? Só então ela ganha seta (DEC-088).
+
+    Sem isso, a unidade inaugurada no meio do período anterior aparecia com "churn subiu
+    3 pts" contra uma janela em que ela mal existia -- seta de rampa, não de desempenho. Lê
+    o gate do próprio quadro anterior (`operacao_periodo_cheio`, ou o mensal) e confere a
+    inauguração do quadro ATUAL contra o início dele: no quadro anterior, uma inauguração
+    posterior ao último dia com dado é descartada como inválida e o gate sairia verdadeiro.
+    """
+    if m1 is None:
+        return False
+    coluna = next((c for c in ("operacao_periodo_cheio", "operacao_mes_cheio") if c in m1.index), None)
+    if coluna is not None:
+        cheio = m1.get(coluna)
+        if cheio is None or pd.isna(cheio) or not bool(cheio):
+            return False
+    inauguracao = linha.get("inauguracao")
+    inicio_anterior = m1.get("periodo_inicio")
+    if inauguracao is not None and inicio_anterior is not None:
+        if pd.notna(inauguracao) and pd.notna(inicio_anterior):
+            return bool(pd.Timestamp(inauguracao) <= pd.Timestamp(inicio_anterior))
+    return True
+
+
+def _rede_quarteto(
+    linha: pd.Series, m1: pd.Series | None, chave: str, *, com_seta: bool | None = None
+) -> dict[str, Any]:
     """`MÊS | M-1 | Ranking N/total | % vs Média Rede` para uma métrica.
 
     Eles nunca olham um número sozinho: leem "estou 64% abaixo da média da rede e
     sou 79º de 89". Esse trio de contexto É o semáforo deles, e diz mais que um
     chip colorido porque informa o tamanho e a posição do problema.
+
+    `com_seta=False` (a unidade não operou o período anterior inteiro): o M-1 continua no
+    quarteto, mas sem `delta_pct`, e a chave `m1_parcial` diz à tela que não há seta. A
+    chave é necessária porque churn e NPS variam em PONTOS na tela, contados de `atual - m1`,
+    e só o `delta_pct` nulo não apagaria a seta deles. Vai só quando verdadeira (o quarteto
+    é a maior parte do payload da carteira).
     """
     casas = _rede_casas(chave)
     atual = _numf(linha.get(chave))
     anterior = _numf(m1.get(chave)) if m1 is not None else None
     rank = _numf(linha.get(f"rank_{chave}"))
     total = _numf(linha.get(f"rank_total_{chave}"))
+    if com_seta is None:
+        com_seta = _rede_operou_o_anterior(linha, m1)
     delta = (
         100.0 * (atual - anterior) / anterior
-        if (atual is not None and anterior not in (None, 0))
+        if (com_seta and atual is not None and anterior not in (None, 0))
         else None
     )
-    return {
+    quarteto: dict[str, Any] = {
         "atual": _num(atual, casas),
         "m1": _num(anterior, casas),
         "delta_pct": _num(delta, 1),
@@ -11392,6 +11480,9 @@ def _rede_quarteto(linha: pd.Series, m1: pd.Series | None, chave: str) -> dict[s
         "rank_total": int(total) if total else None,
         "vs_media_pct": _num(_numf(linha.get(f"vs_media_{chave}")), 1),
     }
+    if m1 is not None and not com_seta:
+        quarteto["m1_parcial"] = True
+    return quarteto
 
 
 def _rede_serie(cheio: pd.DataFrame, unidade_id: str, ate: str, meses: int) -> pd.DataFrame:
@@ -11419,6 +11510,7 @@ def _rede_unidade_dict(
     unidade_id = str(linha["unidade_id"])
     registro = cadastro.de(unidade_id)
     anterior = m1.loc[unidade_id] if unidade_id in m1.index else None
+    com_seta = _rede_operou_o_anterior(linha, anterior)
     diagnostico = diagnosticos.get(unidade_id)
     coordenada = _coord_da_unidade(str(linha.get("unidade_cru", "")), str(linha.get("uf", "")))
     inauguracao = linha.get("inauguracao")
@@ -11463,13 +11555,22 @@ def _rede_unidade_dict(
             {"codigo": a.codigo, "titulo": a.titulo, "detalhe": a.detalhe, "nivel": a.nivel}
             for a in (diagnostico.alertas if diagnostico else ())
         ],
-        "metricas": {c: _rede_quarteto(linha, anterior, c) for c in metricas},
+        "metricas": {
+            c: _rede_quarteto(linha, anterior, c, com_seta=com_seta) for c in metricas
+        },
         "sparkline": serie,
     }
 
 
-def _rede_kpis(unidades: pd.DataFrame, m1: pd.DataFrame) -> dict[str, Any]:
-    """KPIs do recorte. `atual` = todos; `m1`/delta na cesta com M-1 (comparável)."""
+def _rede_kpis(
+    unidades: pd.DataFrame, m1: pd.DataFrame, contexto: dict[str, Any] | None = None
+) -> dict[str, Any]:
+    """KPIs do recorte. `atual` = todos; `m1`/delta na cesta com M-1 (comparável).
+
+    `contexto` (o de `_rede_periodo`) liga o Churn Médio (DEC-088): com mês fechado na
+    janela, o churn do recorte é a média dos pontos mensais do gráfico nesses meses, e não a
+    média ponderada do quadro do período (ver `_rede_kpi_churn_medio`).
+    """
     if not len(unidades):
         return {c: {"atual": None, "m1": None, "delta_pct": None} for c in _REDE_KPIS_SOMA}
     indexado = unidades.set_index("unidade_id")
@@ -11506,7 +11607,41 @@ def _rede_kpis(unidades: pd.DataFrame, m1: pd.DataFrame) -> dict[str, Any]:
             else None
         )
         saida[chave] = {"atual": _num(atual, 2), "m1": _num(anterior, 2), "delta_pct": _num(delta, 1)}
+    if contexto is not None and contexto.get("churn_medio"):
+        saida["churn_pct"] = _rede_kpi_churn_medio(indexado, m1, comuns, contexto)
     return saida
+
+
+def _rede_kpi_churn_medio(
+    indexado: pd.DataFrame, m1: pd.DataFrame, comuns: pd.Index, contexto: dict[str, Any]
+) -> dict[str, Any]:
+    """O KPI de churn no modo Churn Médio (DEC-088): a média dos pontos do gráfico.
+
+    Cada ponto é o do gráfico de evolução (`_rede_churn_medio`) para as MESMAS unidades:
+    doze meses fechados no topo leem exatamente a média dos doze pontos desenhados abaixo.
+    O delta segue a regra dos demais KPIs -- a MESMA cesta dos dois lados (`comuns`) -- com
+    a mesma conta na janela anterior. Se a janela anterior não tiver mês fechado, o lado
+    de lá é a conta dela, a média ponderada do quadro anterior, que é o que cada unidade
+    também leva no M-1.
+    """
+    cheio: pd.DataFrame = contexto["cheio"]
+    meses: list[str] = contexto["meses_churn"]
+    meses_antes: list[str] = contexto.get("meses_churn_anterior") or []
+    atual = _rede_churn_medio(cheio, indexado.index, meses)
+    anterior = atual_cesta = None
+    if len(comuns):
+        atual_cesta = _rede_churn_medio(cheio, comuns, meses)
+        anterior = (
+            _rede_churn_medio(cheio, comuns, meses_antes)
+            if meses_antes
+            else _wavg(m1.loc[comuns, "churn_pct"], m1.loc[comuns, "pagantes"])
+        )
+    delta = (
+        100.0 * (atual_cesta - anterior) / anterior
+        if (atual_cesta is not None and anterior)
+        else None
+    )
+    return {"atual": _num(atual, 2), "m1": _num(anterior, 2), "delta_pct": _num(delta, 1)}
 
 
 #: Colunas da linha "rede inteira" da Carteira: as métricas da tabela mais a contagem
@@ -11523,7 +11658,8 @@ def _rede_linha_rede(contexto: dict[str, Any], *, com_total: bool = True) -> dic
       ali. Só entra quem operou a janela inteira, como no ranking.
     - `total`: o que os KPIs do topo calculam (`_rede_kpis`): soma para volume e taxa
       PONDERADA para churn (por pagantes) e NPS (por ativos) -- somar taxa não significa
-      nada.
+      nada. Com mês fechado no período, o churn do total é o Churn Médio (DEC-088): a
+      média dos pontos mensais da rede, como no KPI.
 
     As duas são da rede INTEIRA, nunca do recorte: o filtro muda as linhas da tabela, e a
     linha da rede é a referência fixa contra a qual o recorte se compara (é por isso que o
@@ -11540,7 +11676,7 @@ def _rede_linha_rede(contexto: dict[str, Any], *, com_total: bool = True) -> dic
     m1: pd.DataFrame = contexto["m1"]
     total: dict[str, Any] | None = None
     if com_total:
-        kpis = _rede_kpis(atual, m1)
+        kpis = _rede_kpis(atual, m1, contexto)
         total = {c: kpis[c] for c in _REDE_LINHA_REDE if c in kpis}
 
     mascara = rede_metricas.mascara_comparaveis(atual)
@@ -11639,16 +11775,32 @@ def _notas_da_fonte(
     return notas
 
 
+#: Nota do Churn Médio (DEC-088). Sem tipografia fora de latin-1: vai para o PDF.
+_NOTA_CHURN_MEDIO = (
+    "Churn Médio: média do churn de cada mês fechado do período; o mês em curso fica fora."
+)
+
+
 def _rede_notas(
-    contexto: dict[str, Any], recorte: pd.DataFrame, *, restrito: bool = False
+    contexto: dict[str, Any],
+    recorte: pd.DataFrame,
+    *,
+    restrito: bool = False,
+    com_churn_medio: bool = True,
 ) -> list[str]:
-    """Notas de método. Toda degradação é DITA, nunca silenciosa."""
+    """Notas de método. Toda degradação é DITA, nunca silenciosa.
+
+    `com_churn_medio=False` na ficha: ela é sempre um mês só e não rotula "Churn Médio", e
+    a nota explicaria um rótulo que a tela dela não mostra.
+    """
     notas = [
         "Receita por recorrente = faturamento sem agregador dos últimos 30 dias "
         "dividido pelos recorrentes ativos. NÃO é o TICKET_MEDIO do PowerBI, que vem "
         "da venda individual (tabela que a API Growth não expõe).",
     ]
     notas.extend(_notas_da_fonte(contexto, recorte, restrito=restrito))
+    if com_churn_medio and contexto.get("churn_medio"):
+        notas.append(_NOTA_CHURN_MEDIO)
     if contexto["competencia_diagnostico"] and contexto["competencia_diagnostico"] != contexto["mes"]:
         notas.append(
             f"Diagnóstico e alertas calculados sobre {contexto['competencia_diagnostico']}, "
@@ -12107,7 +12259,7 @@ def _rede_carteira_payload(
     # Tudo daqui para baixo é do RECORTE, nunca da rede inteira. `ids` sai da carteira já
     # filtrada e é o que faltava ao SSS.
     ids = list(recorte["unidade_id"])
-    kpis = _rede_kpis(recorte, contexto["m1"])
+    kpis = _rede_kpis(recorte, contexto["m1"], contexto)
     series = _rede_series(recorte, contexto)
     sss = _rede_sss(contexto["atual"], contexto["ano_anterior"], ids)
     sss["serie"] = _rede_sss_serie(contexto["cheio"], contexto["serie_meses"], ids)
@@ -12124,6 +12276,9 @@ def _rede_carteira_payload(
             "fim": contexto["fim"].strftime("%Y-%m-%d"),
             "dias": contexto["dias"],
             "mes_inteiro": bool(contexto["mes_inteiro"]),
+            # A janela tem mês FECHADO: o churn da tela é o Churn Médio (DEC-088), e a tela
+            # troca o rótulo. Sem mês fechado (o mês em curso), o rótulo é só "Churn".
+            "churn_medio": bool(contexto["churn_medio"]),
         },
         "periodo_anterior": {
             "inicio": contexto["inicio_anterior"].strftime("%Y-%m-%d"),
@@ -12436,7 +12591,9 @@ def _rede_ficha_payload(
         },
         "reguas": rede_diagnostico.REGUAS_VIGENTES,
         "meta_nps": rede_diagnostico.META_NPS,
-        "notas": _rede_notas(contexto, linhas, restrito=permitidos is not None),
+        "notas": _rede_notas(
+            contexto, linhas, restrito=permitidos is not None, com_churn_medio=False
+        ),
         # A ficha mostra faturamento em quatro lugares (quarteto, série de 12 meses, rosca e
         # benchmark de coorte) e o PDF dela vai para o franqueado. Sem isto, o rodapé do PDF
         # continuava creditando a Growth por um número que já vem do Financeiro.

@@ -32,6 +32,16 @@ describe('linhaDaRede — média e total da rede na Carteira', () => {
     expect(l?.metricas.churn_pct.delta_pct).toBe(-2)
   })
 
+  it('com mês fechado no período, o total diz que o churn é o Churn Médio (DEC-088)', () => {
+    // O churn do total passa a ser a média dos pontos mensais da rede: dizer "churn
+    // ponderado" seria mentir. O NPS continua ponderado.
+    const l = linhaDaRede(REDE, 'total', true)
+    expect(l?.detalhe).toBe('92 unidades · Churn Médio dos meses fechados, NPS ponderado')
+    expect(linhaDaRede(REDE, 'total', false)?.detalhe).toBe('92 unidades · churn e NPS ponderados')
+    // A média por unidade não muda de detalhe.
+    expect(linhaDaRede(REDE, 'media', true)?.detalhe).toBe('por unidade · 90 comparáveis')
+  })
+
   it('ranking e % vs média não existem para a própria rede', () => {
     const m = linhaDaRede(REDE, 'media')?.metricas.churn_pct
     expect(m).toMatchObject({ rank: null, rank_total: null, vs_media_pct: null })

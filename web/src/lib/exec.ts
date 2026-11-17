@@ -177,6 +177,10 @@ export function lerDelta(
   emPontos = false,
 ): LeituraDelta | null {
   if (!metrica) return null
+  // A unidade não operou o período anterior inteiro (DEC-088): o M-1 existe, mas a seta
+  // mediria rampa de abertura, não desempenho. O servidor marca; a leitura em pontos, que
+  // não passa pelo `delta_pct`, também obedece.
+  if (metrica.m1_parcial) return null
   if (emPontos) {
     if (metrica.atual === null || metrica.m1 === null) return null
     const d = metrica.atual - metrica.m1
@@ -197,6 +201,21 @@ export function lerDelta(
     bom: d > 0 === bomSubindo,
     estavel: Math.abs(d) < RUIDO,
   }
+}
+
+/**
+ * Rótulo do churn (DEC-088, decisão do Felipe em 17/11/2026): "Churn Médio" quando o
+ * período tem mês FECHADO — o número é a média do churn de cada mês fechado —, e "Churn"
+ * no mês em curso, que é a conta da janela. Nunca "mensal". O mesmo par vale no CSV, no
+ * XLSX e no PDF (`rotulo_do_churn`, `rede_export.py`).
+ */
+export function rotuloDoChurn(churnMedio: boolean | null | undefined): string {
+  return churnMedio ? 'Churn Médio' : 'Churn'
+}
+
+/** Rótulo de exibição de uma métrica da carteira: só o churn muda com o período. */
+export function rotuloDaMetrica(chave: string, rotulo: string, churnMedio: boolean | null | undefined): string {
+  return chave === 'churn_pct' ? rotuloDoChurn(churnMedio) : rotulo
 }
 
 /** Métricas cuja variação se lê em PONTOS, não em percentual do percentual. */
@@ -664,9 +683,14 @@ export function temTotalDaRede(rede: RedeLinhaRede | undefined | null): boolean 
   return Boolean(rede?.total)
 }
 
+/**
+ * `churnMedio` (DEC-088): com mês fechado no período, o churn do TOTAL é a média dos pontos
+ * mensais da rede, e o detalhe deixa de dizer "churn ponderado" — o NPS segue ponderado.
+ */
 export function linhaDaRede(
   rede: RedeLinhaRede | undefined,
   leitura: LeituraDaRede,
+  churnMedio = false,
 ): LinhaDaRede | null {
   if (!rede) return null
   // Sem o total no payload, "total" cai na média: nunca uma linha de traços com o rótulo
@@ -686,7 +710,9 @@ export function linhaDaRede(
       }
     : {
         rotulo: 'Total da rede',
-        detalhe: `${num(rede.n_unidades)} unidades · churn e NPS ponderados`,
+        detalhe: churnMedio
+          ? `${num(rede.n_unidades)} unidades · Churn Médio dos meses fechados, NPS ponderado`
+          : `${num(rede.n_unidades)} unidades · churn e NPS ponderados`,
         metricas,
       }
 }

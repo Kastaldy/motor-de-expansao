@@ -395,3 +395,191 @@ def test_fechamento_periodo_e_vetorizado() -> None:
     duracao = time.perf_counter() - inicio
     assert len(fech) == 100
     assert duracao < 3.0, f"fechamento_periodo levou {duracao:.2f}s - laço por unidade?"
+
+
+# ---------------------------------------------------------------------------
+# Churn Médio (DEC-088): a janela com mês FECHADO não acumula o churn
+# ---------------------------------------------------------------------------
+
+#: Doze meses fechados (nov/2025 a out/2026) + a base de outubro/2025 + 17 dias de
+#: novembro/2026, que é o mês em curso e nunca entra na conta.
+_MESES_DA_SERIE: tuple[tuple[int, int], ...] = (
+    (2025, 10),
+    (2025, 11),
+    (2025, 12),
+    *((2026, m) for m in range(1, 12)),
+)
+DOZE_MESES = (pd.Timestamp("2025-11-01"), pd.Timestamp("2026-10-31"))
+
+
+def _serie_de_um_ano(
+    nome: str = "X", *, desde: tuple[int, int] = (2025, 10), **kwargs: object
+) -> list[dict[str, object]]:
+    """Uma unidade com recorrentes e cancelados que MUDAM mês a mês (churn diferente em
+    cada mês), até 17/11/2026. `desde` corta o começo da série (unidade nova)."""
+    linhas: list[dict[str, object]] = []
+    for ordem, (ano, numero_mes) in enumerate(_MESES_DA_SERIE):
+        if (ano, numero_mes) < desde:
+            continue
+        linhas += unidade_saudavel(
+            nome,
+            ano,
+            numero_mes,
+            dias=17 if (ano, numero_mes) == (2026, 11) else None,
+            snapshots={"pagantes": 1_000.0 + 25.0 * ordem},
+            cumulativas={"cancelados": 40.0 + 7.0 * (ordem % 4), "faturamento": 200_000.0},
+            **kwargs,
+        )
+    return linhas
+
+
+def _churn_mensal(df: pd.DataFrame, unidade_cru: str, meses: list[str]) -> list[float]:
+    """O churn de cada mês pelo caminho MENSAL do motor (o dos pontos da série)."""
+    mensal = rm.fechamento_mensal(df)
+    linhas = mensal[(mensal["unidade_cru"] == unidade_cru) & mensal["competencia"].isin(meses)]
+    return [float(v) for v in linhas.sort_values("competencia")["churn_pct"] if pd.notna(v)]
+
+
+@pytest.mark.parametrize(
+    "descricao, inicio, fim, esperado",
+    [
+        (
+            "doze meses fechados",
+            "2025-11-01",
+            "2026-10-31",
+            ["2025-11", "2025-12"] + [f"2026-{m:02d}" for m in range(1, 11)],
+        ),
+        ("atravessa a virada sem mês inteiro", "2026-10-17", "2026-11-16", []),
+        ("mês em curso, do dia 1 ao último dado", "2026-11-01", "2026-11-17", []),
+        ("mês em curso pedido inteiro no calendário", "2026-11-01", "2026-11-30", []),
+        ("só o mês do meio é inteiro", "2026-06-10", "2026-08-05", ["2026-07"]),
+        ("mês civil fechado", "2026-10-01", "2026-10-31", ["2026-10"]),
+    ],
+)
+def test_meses_fechados_da_janela(descricao: str, inicio: str, fim: str, esperado: list[str]) -> None:
+    """Mês fechado = mês civil INTEIRO na janela e já encerrado na base (último dado 17/11)."""
+    meses = rm.meses_fechados(pd.Timestamp(inicio), pd.Timestamp(fim), pd.Timestamp("2026-11-17"))
+    assert [str(m) for m in meses] == esperado, descricao
+
+
+def test_meses_fechados_sem_base_nao_inventa_mes() -> None:
+    assert rm.meses_fechados(*DOZE_MESES, None) == []
+    assert rm.meses_fechados(*DOZE_MESES, pd.NaT) == []
+
+
+def test_churn_de_doze_meses_e_a_media_dos_churns_mensais() -> None:
+    """O defeito: 12 meses de cancelamento sobre a base de UM mês acumulavam (70% na rede
+    real, para ~5,9% ao mês). O Churn Médio é a média simples do churn de cada mês fechado
+    -- exatamente o churn do fechamento mensal, o mesmo número de cada ponto da série."""
+    df = rm.preparar_base(base(_serie_de_um_ano()))
+    linha = _uma(rm.fechamento_periodo(df, *DOZE_MESES))
+
+    meses = [str(m) for m in rm.meses_fechados(*DOZE_MESES, df["_data"].max())]
+    mensais = _churn_mensal(df, "X", meses)
+    assert len(mensais) == 12
+    assert float(linha["churn_pct"]) == pytest.approx(sum(mensais) / 12)
+    assert int(linha["churn_meses"]) == 12
+
+    # `cancelados` continua sendo o TOTAL do período (vai entre parênteses na tela)...
+    total = sum(40.0 + 7.0 * (ordem % 4) for ordem in range(1, 13))
+    assert float(linha["cancelados"]) == pytest.approx(total)
+    # ...e a conta antiga, que acumulava, daria um número de outra ordem de grandeza.
+    acumulado = 100.0 * float(linha["cancelados"]) / float(linha["pagantes_inicio"])
+    assert acumulado > 5 * float(linha["churn_pct"])
+
+
+def test_janela_sem_mes_fechado_segue_a_conta_de_hoje() -> None:
+    """17/10 a 16/11 atravessa a virada sem conter um mês inteiro: nada muda para ela."""
+    df = rm.preparar_base(base(_serie_de_um_ano()))
+    linha = _uma(rm.fechamento_periodo(df, pd.Timestamp("2026-10-17"), pd.Timestamp("2026-11-16")))
+    assert float(linha["churn_pct"]) == pytest.approx(
+        100.0 * float(linha["cancelados"]) / float(linha["pagantes_inicio"])
+    )
+    assert pd.isna(linha["churn_meses"]), "sem mês fechado, não há média de meses"
+
+    # O mês em curso, do dia 1 ao último dado, idem.
+    em_curso = _uma(rm.fechamento_periodo(df, pd.Timestamp("2026-11-01"), pd.Timestamp("2026-11-17")))
+    assert float(em_curso["churn_pct"]) == pytest.approx(
+        100.0 * float(em_curso["cancelados"]) / float(em_curso["pagantes_inicio"])
+    )
+    assert pd.isna(em_curso["churn_meses"])
+
+
+def test_mes_civil_fechado_sai_identico_a_conta_de_hoje() -> None:
+    """Um mês só: a média de um mês É o churn do mês, que é `cancelados / pagantes_inicio`."""
+    df = rm.preparar_base(base(_serie_de_um_ano()))
+    outubro = (pd.Timestamp("2026-10-01"), pd.Timestamp("2026-10-31"))
+    linha = _uma(rm.fechamento_periodo(df, *outubro))
+    assert int(linha["churn_meses"]) == 1
+    assert float(linha["churn_pct"]) == pytest.approx(
+        100.0 * float(linha["cancelados"]) / float(linha["pagantes_inicio"])
+    )
+    assert float(linha["churn_pct"]) == pytest.approx(_churn_mensal(df, "X", ["2026-10"])[0])
+
+
+def test_unidade_inaugurada_na_janela_divide_so_pelos_meses_com_base() -> None:
+    """Divisor = meses em que a unidade TEVE churn, nunca 12 fixo -- e ela fica fora do
+    ranking e da média (abriu dentro da janela)."""
+    df = rm.preparar_base(
+        base(
+            _serie_de_um_ano("VELHA"),
+            # Abre em 01/04/2026: abril não tem base (março não existe), maio a outubro têm.
+            _serie_de_um_ano("NOVA", desde=(2026, 4), inauguracao="01/04/2026"),
+        )
+    )
+    fech = rm.fechamento_periodo(df, *DOZE_MESES).set_index("unidade_cru")
+    mensais = _churn_mensal(df, "NOVA", [f"2026-{m:02d}" for m in range(4, 11)])
+    assert len(mensais) == 6, "abril, sem mês anterior, não tem churn"
+    assert int(fech.loc["NOVA", "churn_meses"]) == 6
+    assert float(fech.loc["NOVA", "churn_pct"]) == pytest.approx(sum(mensais) / 6)
+    assert int(fech.loc["VELHA", "churn_meses"]) == 12
+
+    assert bool(fech.loc["NOVA", "operacao_periodo_cheio"]) is False
+    ctx = rm.contexto_comparativo(fech.reset_index()).set_index("unidade_cru")
+    assert pd.isna(ctx.loc["NOVA", "rank_churn_pct"]), "inaugurou na janela: sem ranking"
+    assert pd.isna(ctx.loc["NOVA", "vs_media_churn_pct"])
+    assert int(ctx.loc["VELHA", "rank_total_churn_pct"]) == 1
+    medias = rm.medias_da_rede(fech.reset_index(), ["churn_pct"])
+    assert medias["churn_pct"] == pytest.approx(float(fech.loc["VELHA", "churn_pct"]))
+
+
+def test_unidade_sem_nenhum_mes_com_base_tem_churn_desconhecido() -> None:
+    """Abriu no último mês da janela: nenhum mês com base, churn NaN (nunca zero)."""
+    df = rm.preparar_base(
+        base(
+            _serie_de_um_ano("VELHA"),
+            _serie_de_um_ano("ESTREANTE", desde=(2026, 10), inauguracao="01/10/2026"),
+        )
+    )
+    fech = rm.fechamento_periodo(df, *DOZE_MESES).set_index("unidade_cru")
+    assert pd.isna(fech.loc["ESTREANTE", "churn_pct"])
+    assert int(fech.loc["ESTREANTE", "churn_meses"]) == 0
+
+
+def test_churn_medio_le_o_fechamento_mensal_pronto_igual_ao_refeito() -> None:
+    """`mensal` (o fechamento da tela) e a fatia refeita aqui dão o MESMO número."""
+    df = rm.preparar_base(base(_serie_de_um_ano("A"), _serie_de_um_ano("B", desde=(2026, 2))))
+    refeito = rm.fechamento_periodo(df, *DOZE_MESES).set_index("unidade_id")
+    pronto = rm.fechamento_periodo(df, *DOZE_MESES, mensal=rm.fechamento_mensal(df)).set_index(
+        "unidade_id"
+    )
+    pd.testing.assert_series_equal(refeito["churn_pct"], pronto["churn_pct"])
+    pd.testing.assert_series_equal(refeito["churn_meses"], pronto["churn_meses"])
+
+
+def test_mascara_de_comparaveis_le_o_gate_do_periodo() -> None:
+    """O quadro de período não tem `operacao_mes_cheio`: lendo só ela, a máscara punha TODO
+    mundo no ranking -- inclusive quem abriu no meio da janela."""
+    df = rm.preparar_base(
+        base(
+            unidade_saudavel("NOVA", 2026, 5, inauguracao="10/05/2026"),
+            unidade_saudavel("VELHA", 2026, 5, inauguracao="01/01/2020"),
+        )
+    )
+    fech = rm.fechamento_periodo(df, *MAIO)
+    assert "operacao_mes_cheio" not in fech.columns
+    mascara = rm.mascara_comparaveis(fech)
+    assert dict(zip(fech["unidade_cru"], mascara, strict=True)) == {"NOVA": False, "VELHA": True}
+    ctx = rm.contexto_comparativo(fech).set_index("unidade_cru")
+    assert pd.isna(ctx.loc["NOVA", "rank_faturamento"])
+    assert int(ctx.loc["VELHA", "rank_total_faturamento"]) == 1

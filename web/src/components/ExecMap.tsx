@@ -5,7 +5,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Map } from 'react-map-gl/maplibre'
 import 'maplibre-gl/dist/maplibre-gl.css'
 
-import { COR_SEVERIDADE, TOKEN_SEVERIDADE, deveReenquadrar, enquadrar } from '../lib/exec'
+import { COR_SEVERIDADE, TOKEN_SEVERIDADE, deveReenquadrar, enquadrar, rotuloDoChurn } from '../lib/exec'
 import { brl, num, pct } from '../lib/format'
 import type { Tema } from '../lib/tema'
 import { TEMA_PADRAO } from '../lib/tema'
@@ -109,6 +109,8 @@ export interface ExecMapProps {
   iconeUltra?: string | null
   /** Tema da aba. Governa o basemap e as cores que o WebGL não consegue ler do CSS. */
   tema?: Tema
+  /** Período com mês fechado (DEC-088): o tooltip rotula "Churn Médio" em vez de "Churn". */
+  churnMedio?: boolean
   onUnidade?: (id: string) => void
 }
 
@@ -118,6 +120,7 @@ export default function ExecMap({
   bbox,
   iconeUltra,
   tema = TEMA_PADRAO,
+  churnMedio = false,
   onUnidade,
 }: ExecMapProps) {
   const raiz = useRef<HTMLDivElement>(null)
@@ -372,7 +375,7 @@ export default function ExecMap({
             forte
           />
           <LinhaT rotulo="Alunos ativos" valor={num(hover.u.metricas.ativos?.atual ?? null)} />
-          <LinhaT rotulo="Churn" valor={pct(hover.u.metricas.churn_pct?.atual ?? null, 1)} />
+          <LinhaT rotulo={rotuloDoChurn(churnMedio)} valor={pct(hover.u.metricas.churn_pct?.atual ?? null, 1)} />
           <LinhaT rotulo="NPS" valor={num(hover.u.metricas.nps?.atual ?? null)} />
           <LinhaT rotulo="Maturidade" valor={hover.u.coorte_rotulo} />
           {hover.u.alertas.length > 0 && (

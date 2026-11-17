@@ -151,10 +151,35 @@ def _celula(valor: object) -> str:
     return texto
 
 
+def _churn_medio(payload: Mapping[str, Any]) -> bool:
+    """O periodo da carteira tem mes FECHADO, e o churn e' o Churn Medio (DEC-088)?
+
+    E' o servidor que diz (`periodo.churn_medio`): o export nao refaz a conta de quais meses
+    fecharam. Payload sem o campo (servidor anterior, ou a ficha) le como `False`.
+    """
+    return bool((payload.get("periodo") or {}).get("churn_medio"))
+
+
+def rotulo_do_churn(payload: Mapping[str, Any]) -> str:
+    """"Churn Médio" quando o periodo tem mes fechado; "Churn" no mes em curso (DEC-088).
+
+    Nunca "mensal": a decisao do Felipe (17/11/2026) foi esta dupla de rotulos, e e' a
+    mesma da tela (`rotuloDoChurn`, `web/src/lib/exec.ts`).
+    """
+    return "Churn Médio" if _churn_medio(payload) else "Churn"
+
+
+def _rotulo_da_metrica(chave: str, rotulo: str, payload: Mapping[str, Any]) -> str:
+    if chave == "churn_pct":
+        return f"{rotulo_do_churn(payload)} %"
+    return rotulo
+
+
 def _linhas_carteira(payload: Mapping[str, Any]) -> tuple[list[str], list[list[str]]]:
     """Cabecalho + linhas do export tabular, a partir do payload da carteira."""
     cabecalho = [rotulo for _, rotulo in COLUNAS_CARTEIRA]
-    for _, rotulo in METRICAS_CARTEIRA:
+    for chave, rotulo_base in METRICAS_CARTEIRA:
+        rotulo = _rotulo_da_metrica(chave, rotulo_base, payload)
         cabecalho += [rotulo, f"{rotulo} (M-1)", f"{rotulo} (ranking)", f"{rotulo} (% vs média)"]
 
     linhas: list[list[str]] = []
@@ -293,9 +318,11 @@ def carteira_pdf(payload: Mapping[str, Any]) -> bytes:
         (86.0, "Maturidade", "L"),
         (92.0, "Faturamento", "R"),
         (62.0, "Ativos", "R"),
-        (56.0, "Churn", "R"),
+        # 64, e nao 56: "Churn Médio" em negrito 8,5 mede ~52 pt e nao cabia nos 50 uteis.
+        # Os 8 saem do diagnostico, que ja' corta o resumo por caractere.
+        (64.0, rotulo_do_churn(payload), "R"),
         (48.0, "NPS", "R"),
-        (206.0, "Diagnóstico", "L"),
+        (198.0, "Diagnóstico", "L"),
     ]
     for inicio in range(0, max(len(unidades), 1), _LINHAS_POR_PAGINA):
         bloco = unidades[inicio : inicio + _LINHAS_POR_PAGINA]
@@ -320,9 +347,9 @@ def carteira_pdf(payload: Mapping[str, Any]) -> bytes:
                     (86.0, str(unidade.get("coorte_rotulo", ""))[:14], "L"),
                     (92.0, _br(_valor(metricas, "faturamento")), "R"),
                     (62.0, _br(_valor(metricas, "ativos")), "R"),
-                    (56.0, _br(_valor(metricas, "churn_pct"), 1), "R"),
+                    (64.0, _br(_valor(metricas, "churn_pct"), 1), "R"),
                     (48.0, _br(_valor(metricas, "nps"), 0), "R"),
-                    (206.0, resumo[:74], "L"),
+                    (198.0, resumo[:74], "L"),
                 ],
                 cor=COR_SEVERIDADE.get(severidade, CINZA_TEXTO),
             )
@@ -341,7 +368,13 @@ def _cartoes_da_rede(pdf: UltraPDF, payload: Mapping[str, Any]) -> None:
     cartoes = [
         ("Faturamento no período", "R$ " + _br(_valor(kpis, "faturamento")), "acumulado até o dia"),
         ("Alunos ativos", _br(_valor(kpis, "ativos")), ""),
-        ("Churn", _br(_valor(kpis, "churn_pct"), 1) + "%", "média ponderada"),
+        # O apoio diz COMO o numero foi feito, e muda com ele: no Churn Medio e' a media dos
+        # pontos mensais (DEC-088); no mes em curso, a media ponderada por recorrentes.
+        (
+            rotulo_do_churn(payload),
+            _br(_valor(kpis, "churn_pct"), 1) + "%",
+            "média dos meses fechados" if _churn_medio(payload) else "média ponderada",
+        ),
         ("Receita por recorrente", "R$ " + _br(_valor(kpis, "receita_por_recorrente"), 2), ""),
         ("NPS", _br(_valor(kpis, "nps"), 1), f"meta {int(payload.get('meta_nps', 60))}"),
     ]
