@@ -11514,7 +11514,7 @@ def _rede_kpis(unidades: pd.DataFrame, m1: pd.DataFrame) -> dict[str, Any]:
 _REDE_LINHA_REDE = ("faturamento", "ativos", "churn_pct", "cancelados", "nps")
 
 
-def _rede_linha_rede(contexto: dict[str, Any]) -> dict[str, Any]:
+def _rede_linha_rede(contexto: dict[str, Any], *, com_total: bool = True) -> dict[str, Any]:
     """A linha da REDE INTEIRA no topo da Carteira, em duas leituras (pedido do Vinicius,
     2026-10-20): "como a Ultra está indo como um todo".
 
@@ -11529,11 +11529,19 @@ def _rede_linha_rede(contexto: dict[str, Any]) -> dict[str, Any]:
     linha da rede é a referência fixa contra a qual o recorte se compara (é por isso que o
     `vs_media` também ignora o filtro). O delta sai da MESMA cesta nos dois meses, pelo
     mesmo motivo dos KPIs: inauguração muda a cesta, não o desempenho.
+
+    `com_total=False` (recorte do master, Felipe 17/11/2026): a chave `total` NÃO vai no
+    payload. O total da rede inteira (faturamento, alunos, cancelados, churn e NPS
+    ponderados) é dado da rede que o franqueado não vê; a média por unidade é a régua de
+    comparação dele e fica. Sem a chave, e não com um dicionário vazio: a ausência é o
+    contrato, e é ela que diz à tela que só existe a leitura "média".
     """
     atual: pd.DataFrame = contexto["atual"]
     m1: pd.DataFrame = contexto["m1"]
-    kpis = _rede_kpis(atual, m1)
-    total = {c: kpis[c] for c in _REDE_LINHA_REDE if c in kpis}
+    total: dict[str, Any] | None = None
+    if com_total:
+        kpis = _rede_kpis(atual, m1)
+        total = {c: kpis[c] for c in _REDE_LINHA_REDE if c in kpis}
 
     mascara = rede_metricas.mascara_comparaveis(atual)
     comparaveis = atual.loc[mascara].set_index("unidade_id")
@@ -11553,12 +11561,12 @@ def _rede_linha_rede(contexto: dict[str, Any]) -> dict[str, Any]:
             else None
         )
         media[chave] = {"atual": _num(valor, casas), "m1": _num(anterior, casas), "delta_pct": _num(delta, 1)}
-    return {
-        "media": media,
-        "total": total,
-        "n_unidades": int(len(atual)),
-        "n_comparaveis": int(mascara.sum()),
-    }
+    linha: dict[str, Any] = {"media": media}
+    if total is not None:
+        linha["total"] = total
+    linha["n_unidades"] = int(len(atual))
+    linha["n_comparaveis"] = int(mascara.sum())
+    return linha
 
 
 #: O que dizer do faturamento do PERÍODO, conforme a janela alcance ou não a planilha.
@@ -11678,9 +11686,11 @@ def _rede_notas(
 # (`master_franquia`) atribui ao(s) master(s) vinculado(s) ao usuário (`usuario_masters`,
 # migration 025). O gate (`acesso.rota_da_rede_propria`) só o deixa chegar às rotas de LEITURA
 # da aba; o recorte em si é feito AQUI, no servidor, antes de qualquer agregação -- a tela nunca
-# recebe a unidade de outro master para depois escondê-la. Os agregados da REDE (média e total
-# da rede inteira, ranking, quartis de coorte, curva de rampa, concorrência nacional) ficam: é
-# contra eles que o master se compara, e nenhum deles identifica unidade.
+# recebe a unidade de outro master para depois escondê-la. Os agregados da REDE (média da rede
+# inteira, ranking, quartis de coorte, curva de rampa, concorrência nacional) ficam: é contra
+# eles que o master se compara, e nenhum deles identifica unidade. O TOTAL da rede inteira
+# (faturamento, alunos, cancelados) NÃO vai (Felipe, 17/11/2026): `_rede_linha_rede` sai sem
+# a chave `total` para ele.
 #
 # Fail-closed em todo caminho: master sem vínculo, ou vinculado a um nome que o cadastro não
 # tem, vê a carteira VAZIA; banco que não responde vira 503. Nenhum erro devolve a rede inteira.
@@ -12130,7 +12140,8 @@ def _rede_carteira_payload(
             "com_coordenada": len(com_coordenada),
         },
         "kpis": kpis,
-        "rede_inteira": _rede_linha_rede(contexto),
+        # Master (`permitidos`): só a MÉDIA da rede; o total da rede inteira não vai.
+        "rede_inteira": _rede_linha_rede(contexto, com_total=permitidos is None),
         "split": {
             "recorrentes": _num(total_pagantes),
             "agregadores": _num(total_agregadores),
@@ -12272,8 +12283,9 @@ def rede_carteira(
 ) -> dict[str, Any]:
     """Nível 1: a carteira da rede, priorizada, com o quarteto de contexto por métrica.
 
-    Para o master, só as unidades dele (recorte ANTES de qualquer soma); a linha da rede
-    inteira, o ranking e o "% vs média da rede" ficam, porque são a régua de comparação.
+    Para o master, só as unidades dele (recorte ANTES de qualquer soma); a MÉDIA da rede
+    inteira, o ranking e o "% vs média da rede" ficam, porque são a régua de comparação. O
+    total da rede inteira não vai (`rede_inteira` sem a chave `total`).
     """
     permitidos = _recorte_da_rede(remote_user)
     return _rede_carteira_payload(

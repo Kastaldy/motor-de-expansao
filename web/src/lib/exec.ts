@@ -13,6 +13,7 @@ import type {
   RedeFonteFaturamento,
   RedeLinhaRede,
   RedeMetrica,
+  RedeQuery,
   RedeSeveridade,
   RedeUnidade,
 } from './types'
@@ -657,12 +658,21 @@ export interface LinhaDaRede {
   metricas: Record<string, RedeMetrica>
 }
 
+/** O payload traz o TOTAL da rede? Para o master (DEC-087) o servidor omite a chave, e a
+ *  opção "Total" nem aparece: a linha fica só com a média. */
+export function temTotalDaRede(rede: RedeLinhaRede | undefined | null): boolean {
+  return Boolean(rede?.total)
+}
+
 export function linhaDaRede(
   rede: RedeLinhaRede | undefined,
   leitura: LeituraDaRede,
 ): LinhaDaRede | null {
   if (!rede) return null
-  const fonte = leitura === 'media' ? rede.media : rede.total
+  // Sem o total no payload, "total" cai na média: nunca uma linha de traços com o rótulo
+  // "Total da rede" por cima.
+  if (leitura === 'total' && !rede.total) leitura = 'media'
+  const fonte = leitura === 'media' ? rede.media : (rede.total ?? {})
   const metricas: Record<string, RedeMetrica> = {}
   for (const [chave, v] of Object.entries(fonte)) {
     // O resto do quarteto (ranking, % vs média) não existe para a rede: ela É a média.
@@ -679,4 +689,22 @@ export function linhaDaRede(
         detalhe: `${num(rede.n_unidades)} unidades · churn e NPS ponderados`,
         metricas,
       }
+}
+
+/* ---------------------------------------------------------------------------
+   Pedido da carteira: a mesma pergunta tem de virar a mesma chave.
+
+   A tela adia (debounce) a troca de filtro e aborta o pedido anterior; para isso ela
+   compara o recorte ESCOLHIDO com o recorte JÁ NA TELA. Comparar o objeto não serve
+   (o `useMemo` devolve um novo a cada troca), e o campo vazio tem de valer o mesmo que o
+   ausente — é assim que o `queryRede` monta a URL.
+   --------------------------------------------------------------------------- */
+
+/** Chave estável de um recorte da rede: campos vazios fora, ordem das chaves fixa. */
+export function chaveDaQuery(q: RedeQuery): string {
+  const pares = Object.entries(q)
+    .filter(([, v]) => v !== undefined && v !== null && v !== '')
+    .map(([k, v]) => [k, String(v)] as const)
+    .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
+  return JSON.stringify(pares)
 }

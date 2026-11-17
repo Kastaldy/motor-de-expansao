@@ -32,6 +32,7 @@ import {
   COR_SEVERIDADE,
   METRICAS_EM_PONTOS,
   ORDEM_SEVERIDADE,
+  chaveDaQuery,
   corComAlfa,
   creditoDaFonte,
   destaquesDoRecorte,
@@ -42,6 +43,7 @@ import {
   narrativaDoRecorte,
   ordenarUnidades,
   rotuloMesCompetencia,
+  temTotalDaRede,
   tituloDaCelula,
 } from '../lib/exec'
 import { brlCurto, num, pct } from '../lib/format'
@@ -130,6 +132,9 @@ const TRILHO_PAINEL = { flex: '13 1 330px', minWidth: 0 } as const
 
 const TODOS = '__todos__'
 
+/** Quanto a tela espera, sem outra mudança de filtro ou de período, antes de pedir. */
+const ATRASO_DOS_FILTROS_MS = 600
+
 export default function ExecutiveScreen({
   onInicio,
   tema,
@@ -214,62 +219,112 @@ export default function ExecutiveScreen({
     [periodo, uf, master, consultor, coorte, severidades],
   )
 
+  /* O recorte que os PEDIDOS usam, separado do que os seletores mostram (17/11/2026).
+     Cada troca de período é um cálculo pesado no servidor, e quem avança o calendário mês
+     a mês disparava um por clique — a tela parecia travada por mais de um minuto. Agora a
+     troca espera `ATRASO_DOS_FILTROS_MS` sem outra mudança antes de virar pedido, e o
+     pedido anterior é abortado (AbortController) quando sai um novo. */
+  const [queryEfetiva, setQueryEfetiva] = useState(query)
+  const pendente = chaveDaQuery(query) !== chaveDaQuery(queryEfetiva)
   useEffect(() => {
-    let vivo = true
+    if (!pendente) return
+    const t = setTimeout(() => setQueryEfetiva(query), ATRASO_DOS_FILTROS_MS)
+    return () => clearTimeout(t)
+  }, [query, pendente])
+
+  // O vocabulário dos filtros (UFs, consultores, coortes) é da COMPETÊNCIA do fim do
+  // período: as contagens de coorte mudam de mês para mês, e pedir por intervalo faria a
+  // lista de opções piscar a cada arrasto no calendário.
+  const mesDosFiltros = queryEfetiva.fim?.slice(0, 7)
+  useEffect(() => {
+    const ctrl = new AbortController()
     api
-      // O vocabulário dos filtros (UFs, consultores, coortes) é da COMPETÊNCIA do fim do
-      // período: as contagens de coorte mudam de mês para mês, e pedir por intervalo
-      // faria a lista de opções piscar a cada arrasto no calendário.
-      .redeFiltros(periodo?.fim?.slice(0, 7))
-      .then((f) => vivo && setFiltros(f))
-      .catch((e: ApiError) => vivo && setErro(e.message))
-    return () => {
-      vivo = false
-    }
-  }, [periodo?.fim])
+      .redeFiltros(mesDosFiltros, ctrl.signal)
+      .then((f) => {
+        if (!ctrl.signal.aborted) setFiltros(f)
+      })
+      .catch((e: ApiError) => {
+        if (!ctrl.signal.aborted) setErro(e.message)
+      })
+    return () => ctrl.abort()
+  }, [mesDosFiltros])
+
+  // Chave do recorte cuja carteira está NA TELA, já com o período que o servidor escolheu.
+  // Voltar ao recorte que já está carregado não refaz o pedido — nem o da primeira carga,
+  // quando o calendário é semeado com o período da resposta.
+  const chaveNaTela = useRef<string | null>(null)
 
   useEffect(() => {
-    let vivo = true
+    if (chaveDaQuery(queryEfetiva) === chaveNaTela.current) {
+      setCarregando(false)
+      return
+    }
+    const ctrl = new AbortController()
     setCarregando(true)
     setErro(null)
     api
-      .redeCarteira(query)
+      .redeCarteira(queryEfetiva, ctrl.signal)
       .then((c) => {
-        if (!vivo) return
+        if (ctrl.signal.aborted) return
+        const servida = { ...queryEfetiva, inicio: c.periodo.inicio, fim: c.periodo.fim }
+        chaveNaTela.current = chaveDaQuery(servida)
         setCarteira(c)
         // Semeia o calendário com o que o servidor escolheu. Só na primeira vez: depois
-        // disso quem manda é a pessoa, e sobrescrever aqui desfaria o arrasto dela.
-        setPeriodo((atual) => atual ?? c.periodo)
-      })
-      .catch((e: ApiError) => {
-        if (vivo) {
-          setErro(e.message)
-          setCarteira(null)
+        // disso quem manda é a pessoa, e sobrescrever aqui desfaria o arrasto dela. O
+        // recorte efetivo vai junto, para a semeadura não virar um segundo pedido igual.
+        if (!queryEfetiva.inicio) {
+          setPeriodo((atual) => atual ?? c.periodo)
+          setQueryEfetiva(servida)
         }
       })
-      .finally(() => vivo && setCarregando(false))
-    return () => {
-      vivo = false
-    }
-  }, [query])
+      .catch((e: ApiError) => {
+        if (ctrl.signal.aborted) return
+        chaveNaTela.current = null
+        setErro(e.message)
+        setCarteira(null)
+      })
+      .finally(() => {
+        if (!ctrl.signal.aborted) setCarregando(false)
+      })
+    return () => ctrl.abort()
+  }, [queryEfetiva])
 
-  // Por trás dos números: o que mudou, praça, rampa, retenção e sinais. Busca PRÓPRIA e
-  // em paralelo à carteira — a tabela não espera por ela.
+  // Por trás dos números: o que mudou, praça, rampa, retenção e sinais. Busca PRÓPRIA — a
+  // tabela não espera por ela. Espera só o PERÍODO, que a primeira carteira semeia: sem
+  // ele, o primeiro pedido saía sem datas e era descartado logo em seguida.
   const [inteligencia, setInteligencia] = useState<RedeInteligencia | null>(null)
+  const [carregandoInteligencia, setCarregandoInteligencia] = useState(false)
+  const [erroInteligencia, setErroInteligencia] = useState<string | null>(null)
+  const [tentativaInteligencia, setTentativaInteligencia] = useState(0)
   const [somenteMaduras, setSomenteMaduras] = useState(true)
 
   useEffect(() => {
-    let vivo = true
-    // Sem zerar o estado: os cards seguem com o recorte anterior até a resposta nova
+    if (!queryEfetiva.inicio) return
+    const ctrl = new AbortController()
+    // Sem zerar os dados: os cards seguem com o recorte anterior até a resposta nova
     // chegar. Zerar colapsava os cinco num card de "carregando" e a página pulava.
+    setCarregandoInteligencia(true)
+    setErroInteligencia(null)
     api
-      .redeInteligencia({ ...query, maduras: somenteMaduras ? undefined : 'false' })
-      .then((d) => vivo && setInteligencia(d))
-      .catch(() => vivo && setInteligencia(null))
-    return () => {
-      vivo = false
-    }
-  }, [query, somenteMaduras])
+      .redeInteligencia({ ...queryEfetiva, maduras: somenteMaduras ? undefined : 'false' }, ctrl.signal)
+      .then((d) => {
+        if (!ctrl.signal.aborted) setInteligencia(d)
+      })
+      .catch((e: unknown) => {
+        // Falha vira ERRO com "Tentar de novo", e não `null`: `null` era o estado de
+        // "carregando", e o card ficava girando para sempre.
+        if (!ctrl.signal.aborted) setErroInteligencia(e instanceof ApiError ? e.message : 'Falha ao carregar.')
+      })
+      .finally(() => {
+        if (!ctrl.signal.aborted) setCarregandoInteligencia(false)
+      })
+    return () => ctrl.abort()
+  }, [queryEfetiva, somenteMaduras, tentativaInteligencia])
+
+  /* Há pedido em voo (ou uma troca de filtro esperando o debounce): a tela mostra o selo
+     "Atualizando…" e a faixa no pé do cabeçalho, sem esconder o que já está nela. */
+  const recarregandoCarteira = Boolean(carteira) && (pendente || carregando)
+  const atualizando = recarregandoCarteira || carregandoInteligencia
 
   // Voltar do browser e Esc fecham a ficha — é o gesto natural de quem abriu uma.
   useEffect(() => {
@@ -471,7 +526,10 @@ export default function ExecutiveScreen({
     [carteiraFolgada],
   )
 
-  const linhaRede = linhaDaRede(carteira?.rede_inteira, leituraRede)
+  // Sem o total no payload (perfil master, DEC-087), a linha é só a média: a troca
+  // Média | Total nem aparece.
+  const comTotalDaRede = temTotalDaRede(carteira?.rede_inteira)
+  const linhaRede = linhaDaRede(carteira?.rede_inteira, comTotalDaRede ? leituraRede : 'media')
   const celulaDaLinhaRede = (c: Coluna<RedeUnidade>) => {
     if (!linhaRede) return null
     if (c.chave === 'nome') {
@@ -494,7 +552,7 @@ export default function ExecutiveScreen({
               {linhaRede.detalhe}
             </span>
           </span>
-          <AlternarLeituraRede valor={leituraRede} onTrocar={setLeituraRede} />
+          {comTotalDaRede && <AlternarLeituraRede valor={leituraRede} onTrocar={setLeituraRede} />}
         </span>
       )
     }
@@ -707,6 +765,24 @@ export default function ExecutiveScreen({
                 , o último mês fechado
               </span>
             )}
+            {atualizando && (
+              <span
+                role="status"
+                aria-live="polite"
+                style={{
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  gap: 6,
+                  padding: '3px 8px',
+                  borderRadius: 999,
+                  background: 'var(--ac-a16)',
+                  color: 'var(--ac-text)',
+                  font: '600 10.5px/1 var(--f-ui)',
+                }}
+              >
+                <Spinner tamanho={11} /> Atualizando…
+              </span>
+            )}
             <div style={{ flex: 1 }} />
             {/* O crédito da fonte segue o que a aba REALMENTE está mostrando. Enquanto
                 dizia só "Growth API", já era faturamento da planilha do Financeiro no
@@ -733,6 +809,7 @@ export default function ExecutiveScreen({
             </div>
           </div>
         )}
+        {carteira && atualizando && <FaixaDeProgresso />}
       </header>
 
       <div
@@ -754,7 +831,19 @@ export default function ExecutiveScreen({
         ) : !carteira ? null : aberta ? (
           <FichaUnidade unidadeId={aberta} mes={carteira.mes} onVoltar={fecharFicha} tema={tema} />
         ) : (
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+          // Com a carteira recarregando, os números do recorte anterior ficam na tela, mas
+          // esmaecidos: o selo do cabeçalho diz que vem coisa nova, e o esmaecido diz QUAIS
+          // números ainda são os velhos.
+          <div
+            aria-busy={recarregandoCarteira}
+            style={{
+              display: 'flex',
+              flexDirection: 'column',
+              gap: 14,
+              opacity: recarregandoCarteira ? 0.55 : 1,
+              transition: 'opacity .2s ease',
+            }}
+          >
             <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
               {/* CARD CHEIO DE COR, TEXTO BRANCO (2026-09-25, pedido do Felipe:
                   "inverter a ordem — fundo do card com cor e o texto branco, para dar
@@ -1123,6 +1212,9 @@ export default function ExecutiveScreen({
                 cabeçalho; clicar numa unidade abre a ficha. */}
             <PorTrasDosNumeros
               dados={inteligencia}
+              carregando={carregandoInteligencia}
+              erro={erroInteligencia}
+              onTentarDeNovo={() => setTentativaInteligencia((n) => n + 1)}
               maduras={somenteMaduras}
               onMaduras={setSomenteMaduras}
               onUnidade={abrirFichaPorId}
@@ -1258,6 +1350,35 @@ function TagsQueCabem({ alertas }: { alertas: RedeAlerta[] }) {
         </span>
       )}
     </span>
+  )
+}
+
+/**
+ * Faixa fina e indeterminada no pé do cabeçalho, enquanto há pedido em voo. Fora do
+ * fluxo (absoluta), para não empurrar nada; anima por SMIL, como o `Spinner`, porque não
+ * há folha de estilo global para um `@keyframes`.
+ */
+function FaixaDeProgresso() {
+  return (
+    <svg
+      aria-hidden
+      height={3}
+      // Recuada do canto: o cabeçalho tem borda arredondada, e uma faixa de ponta a ponta
+      // sairia pelos cantos.
+      style={{
+        position: 'absolute',
+        left: 14,
+        bottom: 0,
+        width: 'calc(100% - 28px)',
+        display: 'block',
+        pointerEvents: 'none',
+      }}
+    >
+      <rect x="0" y="0" width="100%" height="3" fill="var(--ac-a16)" />
+      <rect x="-35%" y="0" width="35%" height="3" rx="1.5" fill="var(--ac)">
+        <animate attributeName="x" from="-35%" to="100%" dur="1.1s" repeatCount="indefinite" />
+      </rect>
+    </svg>
   )
 }
 

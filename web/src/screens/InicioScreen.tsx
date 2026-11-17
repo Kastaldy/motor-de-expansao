@@ -21,7 +21,6 @@ import {
   type TrilhaInicio,
 } from '../lib/inicio'
 import { useUfsDaBase } from '../lib/base-contexto'
-import { rodapeDaBase } from '../lib/rodape-base'
 
 /**
  * Tela de INICIO do piloto — a porta de entrada do produto.
@@ -231,14 +230,6 @@ export default function InicioScreen({
           >
             Quer avaliar um ponto novo para abrir uma unidade?{' '}
             <strong style={{ color: 'var(--tx-strong)' }}>Fale com o time de Expansão.</strong>
-          </p>
-        )}
-
-        {/* Sem base carregada nao ha' procedencia a declarar — o <p> inteiro sai, em vez
-            de anunciar "0 estados". */}
-        {rodapeDaBase(ufs) && (
-          <p style={{ font: '400 12px/1.5 var(--f-ui)', color: 'var(--tx-sub)', margin: 0 }}>
-            {rodapeDaBase(ufs)}
           </p>
         )}
       </footer>

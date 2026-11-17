@@ -13,6 +13,7 @@ import type {
 import { fatiasDeRosca, percentualDaFatia } from '../../lib/sparkline'
 import { Glass, Semaforo } from '../primitives'
 import { BarrasPeriodo, LinhaPeriodo } from './ExecCharts'
+import { useLargura } from './Inteligencia'
 
 /* ---------------------------------------------------------------------------
    Panorama do RECORTE — o que a carteira, unidade a unidade, não responde.
@@ -32,8 +33,9 @@ import { BarrasPeriodo, LinhaPeriodo } from './ExecCharts'
    - Destaques: quem puxa e quem segura. É o painel que vira ação — cada linha
      abre a ficha da unidade.
 
-   Todos são função pura de props: nenhum estado, nenhum fetch. Quem é dono do
-   recorte é a tela. E cada painel já vem no seu próprio `Glass`: a grade se monta
+   Todos são função pura de props: nenhum estado de dado, nenhum fetch (a única
+   medida local é a largura da série do SSS, para dimensionar o rótulo das barras).
+   Quem é dono do recorte é a tela. E cada painel já vem no seu próprio `Glass`: a grade se monta
    em volta deles, não um segundo card por cima.
    --------------------------------------------------------------------------- */
 
@@ -162,11 +164,19 @@ const LINHAS_SSS: { chave: string; rotulo: string; formato: 'brl' | 'int' }[] = 
   { chave: 'pagantes', rotulo: 'Recorrentes', formato: 'int' },
 ]
 
-/** Metade da caixa da série divergente, em px. O eixo zero corta no meio. */
-const METADE_SSS = 30
+/** Metade da caixa da série divergente, em px. O eixo zero corta no meio.
+ *
+ *  Era 30 e o gráfico ficava espremido (Felipe, 17/11/2026): subiu com o espaço que a nota
+ *  de rodapé sobre a base comparável liberou. Cada metade reserva, além da barra, a faixa
+ *  do rótulo do percentual (`faixaRotulo`), para ele caber sempre fora da ponta. */
+const METADE_SSS = 56
+/** Vão entre as colunas da série, em px — entra na conta da largura de cada coluna. */
+const VAO_SSS = 3
 
 export function CrescimentoComparavel({ sss }: { sss: RedeSss }) {
   const base = rotuloMesCompetencia(sss.competencia_base)
+  // Largura medida da fileira de barras: o tamanho do rótulo de cada barra sai dela.
+  const [medirSerie, larguraSerie] = useLargura()
 
   if (!sss.disponivel) {
     return (
@@ -190,6 +200,30 @@ export function CrescimentoComparavel({ sss }: { sss: RedeSss }) {
   const pico = Math.max(
     ...serie.var_pct.filter((v): v is number => v !== null && Number.isFinite(v)).map(Math.abs),
     1,
+  )
+  // O percentual de cada mês vai ESCRITO além da ponta da barra: acima da positiva, abaixo
+  // da negativa (Felipe, 17/11/2026: "mostrar o valor em percentual ao invés de só a
+  // barra"). Fora, e não dentro: nenhuma cor de texto passa contraste dentro do verde E do
+  // vermelho nos dois temas. A fonte acompanha a largura da coluna ("+12,3%" ocupa ~3,4
+  // vezes o corpo da letra), entre 7 e 9,5 px; a barra cresce até o que sobra da metade.
+  const nMeses = serie.meses.length
+  const larguraColuna = larguraSerie > 0 && nMeses > 0 ? (larguraSerie - VAO_SSS * (nMeses - 1)) / nMeses : 0
+  const fonteRotulo = larguraColuna > 0 ? Math.min(9.5, Math.max(7, larguraColuna / 3.4)) : 8.5
+  const faixaRotulo = Math.ceil(fonteRotulo) + 4
+  const alturaBarra = METADE_SSS - faixaRotulo
+  const rotuloDaBarra = (v: number, cor: string, encostaEm: 'baixo' | 'cima') => (
+    <span
+      className="num"
+      style={{
+        font: `700 ${fonteRotulo}px/1 var(--f-num)`,
+        color: cor,
+        whiteSpace: 'nowrap',
+        // 3 px entre o número e a ponta da barra (ou o eixo, quando a variação é zero).
+        margin: encostaEm === 'baixo' ? '0 0 3px' : '3px 0 0',
+      }}
+    >
+      {sinalPct(v)}
+    </span>
   )
 
   return (
@@ -255,11 +289,12 @@ export function CrescimentoComparavel({ sss }: { sss: RedeSss }) {
           <div style={{ font: '500 11px/1.2 var(--f-ui)', color: 'var(--tx-label)', marginBottom: 8 }}>
             Mês a mês, cada um contra o seu próprio ano anterior
           </div>
-          <div style={{ display: 'flex', gap: 3, alignItems: 'flex-start' }}>
+          <div ref={medirSerie} style={{ display: 'flex', gap: VAO_SSS, alignItems: 'flex-start' }}>
             {serie.meses.map((m, i) => {
               const v = serie.var_pct[i] ?? null
               const n = serie.unidades[i] ?? 0
-              const fracao = v === null ? 0 : Math.min(Math.abs(v) / pico, 1)
+              const temValor = v !== null && Number.isFinite(v)
+              const fracao = !temValor ? 0 : Math.min(Math.abs(v) / pico, 1)
               return (
                 <div
                   key={m}
@@ -268,32 +303,51 @@ export function CrescimentoComparavel({ sss }: { sss: RedeSss }) {
                   } · ${num(n)} unidades na base daquele mês`}
                   style={{ flex: 1, minWidth: 0 }}
                 >
-                  <div style={{ height: METADE_SSS, display: 'flex', alignItems: 'flex-end' }}>
-                    {v !== null && v > 0 && (
+                  <div
+                    style={{
+                      height: METADE_SSS,
+                      display: 'flex',
+                      flexDirection: 'column',
+                      justifyContent: 'flex-end',
+                      alignItems: 'center',
+                    }}
+                  >
+                    {/* Zero exato não tem barra, mas tem número: sobre o eixo, em cinza. */}
+                    {temValor && v >= 0 && rotuloDaBarra(v, v > 0 ? 'var(--pos-text)' : 'var(--tx-muted)', 'baixo')}
+                    {temValor && v > 0 && (
                       <div
                         style={{
                           width: '100%',
-                          height: `${fracao * 100}%`,
-                          minHeight: 2,
+                          height: Math.max(fracao * alturaBarra, 2),
                           background: 'var(--pos)',
                           borderRadius: '2px 2px 0 0',
+                          flexShrink: 0,
                         }}
                       />
                     )}
                   </div>
                   <div style={{ height: 1, background: 'var(--line-mid)' }} />
-                  <div style={{ height: METADE_SSS }}>
-                    {v !== null && v < 0 && (
+                  <div
+                    style={{
+                      height: METADE_SSS,
+                      display: 'flex',
+                      flexDirection: 'column',
+                      justifyContent: 'flex-start',
+                      alignItems: 'center',
+                    }}
+                  >
+                    {temValor && v < 0 && (
                       <div
                         style={{
                           width: '100%',
-                          height: `${fracao * 100}%`,
-                          minHeight: 2,
+                          height: Math.max(fracao * alturaBarra, 2),
                           background: 'var(--neg)',
                           borderRadius: '0 0 2px 2px',
+                          flexShrink: 0,
                         }}
                       />
                     )}
+                    {temValor && v < 0 && rotuloDaBarra(v, 'var(--neg)', 'cima')}
                   </div>
                   <span
                     className="num"
@@ -313,12 +367,6 @@ export function CrescimentoComparavel({ sss }: { sss: RedeSss }) {
           </div>
         </div>
       )}
-
-      <div style={{ marginTop: 10, font: '400 10.5px/1.5 var(--f-ui)', color: 'var(--tx-muted)' }}>
-        A base comparável MUDA de mês para mês — cada ponto recalcula quais unidades do
-        recorte operaram o mês inteiro nos dois períodos. Passe o mouse para ver o tamanho
-        da base de cada mês.
-      </div>
     </Glass>
   )
 }

@@ -416,7 +416,11 @@ export default function FichaUnidade({ unidadeId, mes, onVoltar, tema }: FichaUn
 
       <FichaInteligencia dados={inteligencia} erro={erroInteligencia} />
 
-      <CadastroDaUnidade ficha={ficha} onAtualizar={setFicha} />
+      {/* Sem campo editável (perfil master, DEC-087), o bloco Responsáveis não aparece:
+          ele existe para atribuir consultor e master, e o master não atribui nada. */}
+      {ficha.cadastro.campos_editaveis.length > 0 && (
+        <CadastroDaUnidade ficha={ficha} onAtualizar={setFicha} />
+      )}
 
       <Glass style={{ padding: '14px 18px' }}>
         <Titulo>Notas de método</Titulo>

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 
-import { linhaDaRede } from './exec'
+import { chaveDaQuery, linhaDaRede, temTotalDaRede } from './exec'
 import type { RedeLinhaRede } from './types'
 
 const REDE: RedeLinhaRede = {
@@ -39,5 +39,36 @@ describe('linhaDaRede — média e total da rede na Carteira', () => {
 
   it('servidor sem o campo: sem linha (não inventa a média no cliente)', () => {
     expect(linhaDaRede(undefined, 'media')).toBeNull()
+  })
+})
+
+describe('linhaDaRede — perfil master (DEC-087): o payload vem sem o total', () => {
+  const SEM_TOTAL: RedeLinhaRede = { media: REDE.media, n_unidades: 92, n_comparaveis: 90 }
+
+  it('sem a chave `total`, a opção Total não existe', () => {
+    expect(temTotalDaRede(SEM_TOTAL)).toBe(false)
+    expect(temTotalDaRede({ ...SEM_TOTAL, total: null })).toBe(false)
+    expect(temTotalDaRede(REDE)).toBe(true)
+    expect(temTotalDaRede(undefined)).toBe(false)
+  })
+
+  it('pedir "total" sem o total no payload cai na média, nunca numa linha "Total da rede"', () => {
+    const l = linhaDaRede(SEM_TOTAL, 'total')
+    expect(l?.rotulo).toBe('Média da rede')
+    expect(l?.metricas.faturamento.atual).toBe(180_000)
+  })
+})
+
+describe('chaveDaQuery — o mesmo recorte vira a mesma chave', () => {
+  it('ignora campo vazio e a ordem das chaves', () => {
+    expect(chaveDaQuery({ uf: 'SP', inicio: '2026-10-01', master: undefined, coorte: '' })).toBe(
+      chaveDaQuery({ inicio: '2026-10-01', uf: 'SP' }),
+    )
+  })
+
+  it('período ou filtro diferente vira chave diferente', () => {
+    const base = { inicio: '2026-10-01', fim: '2026-10-31' }
+    expect(chaveDaQuery(base)).not.toBe(chaveDaQuery({ ...base, fim: '2026-10-30' }))
+    expect(chaveDaQuery(base)).not.toBe(chaveDaQuery({ ...base, uf: 'RJ' }))
   })
 })
