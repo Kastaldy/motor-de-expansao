@@ -723,9 +723,7 @@ def linhas_do_sss(sss: Mapping[str, Any]) -> list[str]:
     unidades = int(sss.get("unidades", 0) or 0)
     meses = sss.get("maturacao_min_meses")
     maturidade = f", com {meses} meses ou mais de operação no ano-base" if meses else ""
-    # Texto a aprovar (Felipe): com menos de `base_pequena_min` unidades o número continua
-    # impresso, e o aviso cola nele -- "base pequena: 3 de 40 unidades".
-    rotulo = "Mesma base ano a ano (SSS)" + (" - base pequena" if sss.get("base_pequena") else "")
+    rotulo = "Mesma base ano a ano (SSS)"
     linhas = [
         f"{rotulo}: {unidades} de "
         f"{sss.get('unidades_recorte', unidades)} unidades do recorte estavam abertas nos "

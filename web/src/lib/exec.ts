@@ -524,13 +524,6 @@ export function foraDaBaseSss(sss: RedeSss): string | null {
   return frases.length > 0 ? frases.join(' ') : null
 }
 
-/** O aviso de base pequena do SSS (texto a aprovar). `null` quando a base não é pequena:
- *  o número continua na tela de qualquer jeito — o aviso diz quanto ele pesa. */
-export function avisoBasePequenaSss(sss: RedeSss): string | null {
-  if (!sss.disponivel || !sss.base_pequena) return null
-  return `base pequena: ${num(sss.unidades)} ${plural(sss.unidades, 'unidade', 'unidades')}`
-}
-
 /**
  * Por que uma unidade está em "Sem base comparável" no "quem puxa e quem segura".
  *
@@ -625,13 +618,12 @@ export function narrativaDoRecorte(carteira: RedeCarteira, rotuloRecorte: string
     )
   } else {
     // A base comparável é o que separa "crescemos" de "abrimos loja" — por isso ela
-    // aparece ANTES do número, e não como ressalva no fim da frase. A base pequena vai
-    // junto, no mesmo parêntese: o número aparece, mas quem lê sabe quanto ele pesa.
-    const pequena = sss.base_pequena ? '; base pequena' : ''
+    // aparece ANTES do número, e não como ressalva no fim da frase. Sem aviso de base
+    // pequena (Felipe, 17/11/2026): mesmo uma loja diz se o SSS subiu ou caiu.
     const base =
       sss.unidades_recorte === 1
-        ? `na mesma base (a única unidade do recorte${pequena})`
-        : `na mesma base (${sss.unidades} das ${sss.unidades_recorte} unidades${pequena})`
+        ? 'na mesma base (a única unidade do recorte)'
+        : `na mesma base (${sss.unidades} das ${sss.unidades_recorte} unidades)`
     const contra = contraMesBase(sss.competencia_base)
     const variacao = sss.metricas?.faturamento?.var_pct ?? null
     let miolo: string

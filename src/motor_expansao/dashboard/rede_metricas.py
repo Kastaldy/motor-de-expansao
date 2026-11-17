@@ -1420,10 +1420,6 @@ def serie_diaria(df: pd.DataFrame, unidade_id: str, coluna: str) -> pd.DataFrame
 #: saia -0,7% com 69 unidades; com 3 meses, -3,0% com 60.
 SSS_MATURACAO_MIN_MESES = 3
 
-#: Abaixo deste numero de unidades na base, o SSS do recorte sai com o aviso "base
-#: pequena" -- mostrado, nunca escondido. Com 2 ou 3 unidades, uma so' decide o sinal.
-SSS_BASE_PEQUENA_MIN = 5
-
 
 def madura_no_inicio(
     inauguracao: pd.Series,

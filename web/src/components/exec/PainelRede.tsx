@@ -2,7 +2,6 @@ import type { ReactNode } from 'react'
 
 import type { BaseDoDestaque, DestaqueDoRecorte, DestaquesDoRecorte } from '../../lib/exec'
 import {
-  avisoBasePequenaSss,
   foraDaBaseSss,
   motivoSemBase,
   origemDaSerie,
@@ -215,11 +214,7 @@ export function CrescimentoComparavel({ sss }: { sss: RedeSss }) {
   const faturamento = sss.metricas?.faturamento
   const variacao = faturamento?.var_pct ?? null
   const serie = sss.serie
-  const avisoPequena = avisoBasePequenaSss(sss)
   const foraDaBase = foraDaBaseSss(sss)
-  // Régua da base pequena também no tooltip de cada mês da série: a cesta muda de ponto
-  // para ponto, e um mês com 3 unidades pesa diferente de um com 60.
-  const basePequenaMin = sss.base_pequena_min ?? 0
   // Pico em MÓDULO, com piso de 1 ponto: sem o piso, um ano inteiro variando 0,2% viraria
   // uma serra de barras cheias, e a leitura "o recorte está parado" se perderia.
   const pico = Math.max(
@@ -262,22 +257,6 @@ export function CrescimentoComparavel({ sss }: { sss: RedeSss }) {
         <span style={{ font: '400 11.5px/1.4 var(--f-ui)', color: 'var(--tx-label)' }}>
           de faturamento contra {base}
         </span>
-        {/* Base pequena (menos de 5 unidades): o número fica, e o aviso cola nele. Texto a
-            aprovar pelo Felipe. */}
-        {avisoPequena && (
-          <span
-            style={{
-              font: '600 10.5px/1 var(--f-ui)',
-              color: 'var(--warn-text)',
-              border: '1px solid var(--warn)',
-              borderRadius: 'var(--r-sm)',
-              padding: '3px 6px',
-              whiteSpace: 'nowrap',
-            }}
-          >
-            {avisoPequena}
-          </span>
-        )}
       </div>
 
       <div style={{ marginTop: 9, font: '400 11.5px/1.65 var(--f-ui)', color: 'var(--tx-narrative)' }}>
@@ -334,9 +313,7 @@ export function CrescimentoComparavel({ sss }: { sss: RedeSss }) {
                   key={m}
                   title={`${rotuloMesCompetencia(m)}: ${
                     v === null ? 'sem base comparável' : sinalPct(v)
-                  } · ${num(n)} unidades na base daquele mês${
-                    v !== null && n > 0 && n < basePequenaMin ? ' (base pequena)' : ''
-                  }`}
+                  } · ${num(n)} unidades na base daquele mês`}
                   style={{ flex: 1, minWidth: 0 }}
                 >
                   <div

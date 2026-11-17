@@ -201,15 +201,16 @@ def test_contas_fecham_com_o_recorte_em_qualquer_filtro(rede_maturacao: Path) ->
         assert sss["unidades_recorte"] == sum(esperado)
 
 
-def test_aviso_de_base_pequena_nao_esconde_o_numero(rede_maturacao: Path) -> None:
+def test_base_pequena_mostra_o_numero_sem_aviso(rede_maturacao: Path) -> None:
+    """Felipe, 17/11/2026: sem aviso de base pequena -- mesmo uma loja diz se o SSS subiu."""
     sss = pilot._rede_carteira_payload(mes="2026-07")["sss"]
-    assert sss["base_pequena"] is True
-    assert sss["base_pequena_min"] == rede_metricas.SSS_BASE_PEQUENA_MIN == 5
     assert sss["metricas"]["faturamento"]["var_pct"] is not None
+    assert "base_pequena" not in sss
+    assert "base_pequena_min" not in sss
 
 
-def test_base_de_cinco_ou_mais_nao_e_pequena() -> None:
-    """A régua no limite, direto no `_rede_sss`: 5 unidades maduras não levam aviso."""
+def test_sss_de_uma_loja_so_e_medido() -> None:
+    """Direto no `_rede_sss`: com UMA unidade madura na base, o SSS sai normalmente."""
     nomes = [f"LOJA {letra}" for letra in "ABCDE"]
     linhas: list[dict[str, object]] = []
     for nome in nomes:
@@ -224,12 +225,11 @@ def test_base_de_cinco_ou_mais_nao_e_pequena() -> None:
     ano_anterior = rede_metricas.fechamento_periodo(
         base, pd.Timestamp("2025-07-01"), pd.Timestamp("2025-07-31")
     )
-    cinco = pilot._rede_sss(atual, ano_anterior, list(atual["unidade_id"]))
-    assert cinco["unidades"] == 5
-    assert cinco["base_pequena"] is False
-    quatro = pilot._rede_sss(atual, ano_anterior, list(atual["unidade_id"])[:4])
-    assert quatro["unidades"] == 4
-    assert quatro["base_pequena"] is True
+    uma = pilot._rede_sss(atual, ano_anterior, list(atual["unidade_id"])[:1])
+    assert uma["disponivel"] is True
+    assert uma["unidades"] == 1
+    assert uma["metricas"]["faturamento"]["var_pct"] == pytest.approx(10.0)
+    assert "base_pequena" not in uma
 
 
 def test_pre_venda_antes_da_inauguracao_nao_vira_unidade_madura() -> None:
@@ -353,7 +353,7 @@ def test_janela_livre_mede_a_maturacao_no_inicio_do_periodo_base(rede_maturacao:
 
 def test_pdf_separa_a_rampa_de_quem_nao_existia(rede_maturacao: Path) -> None:
     linhas = rede_export.linhas_do_sss(pilot._rede_carteira_payload(mes="2026-07")["sss"])
-    assert linhas[0].startswith("Mesma base ano a ano (SSS) - base pequena: 3 de 6 unidades")
+    assert linhas[0].startswith("Mesma base ano a ano (SSS): 3 de 6 unidades")
     assert "com 3 meses ou mais de operação no ano-base" in linhas[0]
     assert linhas[1] == (
         "Fora da conta: 1 não existia há um ano (ou não operou o período inteiro), "
@@ -389,7 +389,6 @@ def test_linhas_do_sss_cabem_no_pdf_no_pior_caso() -> None:
         "unidades_rampa": 8,
         "unidades_base_zero": 2,
         "maturacao_min_meses": 3,
-        "base_pequena": True,
         "metricas": {"faturamento": {"var_pct": -12.3}},
     }
     pdf = UltraPDF()

@@ -1487,9 +1487,6 @@ export interface RedeSss {
   unidades_base_zero?: number
   /** meses de operação exigidos no dia 1º do período-base (3, DEC-088) */
   maturacao_min_meses?: number
-  /** menos de `base_pequena_min` unidades na base: o número aparece, com aviso */
-  base_pequena?: boolean
-  base_pequena_min?: number
   metricas?: Record<string, { atual: number | null; ano_anterior: number | null; var_pct: number | null }>
   /** SSS mês a mês, alinhado a `serie_meses`. `unidades[i]` é a base comparável DAQUELE
    *  mês: ela muda de ponto para ponto, e sem ela uma alta de base pequena parece alta

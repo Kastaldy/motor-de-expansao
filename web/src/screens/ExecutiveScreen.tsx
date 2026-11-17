@@ -1091,8 +1091,6 @@ export default function ExecutiveScreen({
                   <Glass style={{ flexShrink: 0, padding: '14px 16px' }}>
                     <Rotulo>Mesma base, ano a ano (SSS)</Rotulo>
                     <div style={{ font: '400 10.5px/1.5 var(--f-ui)', color: 'var(--tx-muted)', marginBottom: 10 }}>
-                      {/* Base pequena (texto a aprovar): o aviso cola no número, que fica. */}
-                      {carteira.sss.base_pequena ? 'Base pequena: ' : ''}
                       {carteira.sss.unidades}{' '}
                       {carteira.sss.unidades === 1 ? 'unidade presente' : 'unidades presentes'} nos dois períodos
                       {carteira.sss.maturacao_min_meses

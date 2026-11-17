@@ -9,7 +9,6 @@
 import { describe, expect, it } from 'vitest'
 
 import {
-  avisoBasePequenaSss,
   destaquesDoRecorte,
   foraDaBaseSss,
   motivoSemBase,
@@ -27,8 +26,6 @@ function sss(p: Partial<RedeSss> = {}): RedeSss {
     unidades_rampa: 9,
     unidades_base_zero: 0,
     maturacao_min_meses: 3,
-    base_pequena: false,
-    base_pequena_min: 5,
     metricas: { faturamento: { atual: 16_195_471, ano_anterior: 16_696_362, var_pct: -3 } },
     serie: { meses: [], var_pct: [], unidades: [] },
     ...p,
@@ -174,18 +171,6 @@ describe('foraDaBaseSss (card "Crescemos ou só abrimos loja?")', () => {
   })
 })
 
-describe('avisoBasePequenaSss', () => {
-  it('mostra o número com o aviso — nunca esconde', () => {
-    expect(avisoBasePequenaSss(sss({ unidades: 3, base_pequena: true }))).toBe('base pequena: 3 unidades')
-    expect(avisoBasePequenaSss(sss({ unidades: 1, base_pequena: true }))).toBe('base pequena: 1 unidade')
-  })
-
-  it('base de tamanho normal ou SSS indisponível não leva aviso', () => {
-    expect(avisoBasePequenaSss(sss())).toBeNull()
-    expect(avisoBasePequenaSss(sss({ disponivel: false, unidades: 0, base_pequena: false }))).toBeNull()
-  })
-})
-
 describe('narrativaDoRecorte com a maturação do SSS', () => {
   it('diz quantas não existiam e quantas estavam em rampa, cada uma com o seu número', () => {
     expect(narrativaDoRecorte(carteira(sss()), 'a rede')[1]).toBe(
@@ -195,12 +180,13 @@ describe('narrativaDoRecorte com a maturação do SSS', () => {
     )
   })
 
-  it('base pequena entra no parêntese da base', () => {
+  it('base pequena sai sem aviso: o número fala por si (Felipe, 17/11/2026)', () => {
     const frase = narrativaDoRecorte(
-      carteira(sss({ unidades: 3, unidades_recorte: 10, unidades_fora: 5, unidades_rampa: 2, base_pequena: true })),
+      carteira(sss({ unidades: 3, unidades_recorte: 10, unidades_fora: 5, unidades_rampa: 2 })),
       'DALMO',
     )[1]
-    expect(frase).toContain('Na mesma base (3 das 10 unidades; base pequena)')
+    expect(frase).toContain('Na mesma base (3 das 10 unidades)')
+    expect(frase).not.toContain('base pequena')
     expect(frase).toContain('5 não existiam há um ano e 2 estavam na rampa de abertura')
   })
 

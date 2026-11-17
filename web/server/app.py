@@ -11293,9 +11293,6 @@ def _rede_sss(
         "unidades_rampa": rampa,
         "unidades_base_zero": int((cesta["motivo"] == _SSS_BASE_ZERO).sum()),
         "maturacao_min_meses": rede_metricas.SSS_MATURACAO_MIN_MESES,
-        # Mostrado, nunca escondido: com 2 ou 3 unidades na base, uma só decide o sinal.
-        "base_pequena": 0 < len(comuns) < rede_metricas.SSS_BASE_PEQUENA_MIN,
-        "base_pequena_min": rede_metricas.SSS_BASE_PEQUENA_MIN,
     }
     if not comuns:
         return {
