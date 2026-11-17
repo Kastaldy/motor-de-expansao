@@ -520,16 +520,26 @@ def _masters_do_alvo(con: Any, id_alvo: int) -> list[str]:
 
 
 def _aplicar_masters(
-    con: Any, id_alvo: int, masters_antes: list[str], masters_desejados: list[str], *, autor: int
+    con: Any,
+    id_alvo: int,
+    masters_antes: list[str],
+    masters_desejados: list[str],
+    virando_master: bool = False,
+    *,
+    autor: int,
 ) -> dict[str, Any]:
     """O passo de ajustar o vinculo com masters franquia (replace-all), DENTRO de uma transacao.
 
     Mesma forma do `_aplicar_paises`: diff contra o conjunto atual, um INSERT por nome novo e um
-    DELETE por nome que saiu, e "sem mudanca, sem evento". Duas diferencas, as duas de proposito:
+    DELETE por nome que saiu, e "sem mudanca, sem evento". Tres diferencas, todas de proposito:
       * conjunto VAZIO e' aceito aqui -- e' assim que quem deixa de ser master perde o vinculo. A
         regra "perfil master exige ao menos um" e' do chamador, que conhece o perfil resultante;
       * UM evento por gesto (`usuario.masters_alterados`), so' com as contagens: o nome do master
-        e' nome de pessoa, e nao vai para `metadados`.
+        e' nome de pessoa, e nao vai para `metadados`;
+      * `virando_master`: quem VIRA master tem o recorte DADO naquele gesto, mesmo que o conjunto
+        escolhido coincida com linhas que sobraram de antes (o vinculo de quem nao era master nao
+        recortava nada). Sem diff, nada e' escrito, mas o evento sai e `mudou` e' verdadeiro --
+        senao a trilha mostraria so' a troca de perfil e ninguem saberia quem deu aquele recorte.
     A comparacao e' EXATA (com caixa): trocar "dalmo ribeiro" por "Dalmo Ribeiro" e' mudanca de
     grafia gravada, e a grafia do cadastro e' a que deve ficar.
     """
@@ -537,7 +547,7 @@ def _aplicar_masters(
     adicionar = [m for m in masters_desejados if m not in antes]
     remover = sorted(antes - set(masters_desejados))
     de, para = sorted(antes), sorted(set(masters_desejados))
-    if not adicionar and not remover:
+    if not adicionar and not remover and not virando_master:
         return {"id_usuario": id_alvo, "de": de, "para": para, "mudou": False}
     for nome in remover:
         con.execute(SQL_REMOVER_MASTER, (id_alvo, nome))
@@ -560,30 +570,38 @@ def _masters_resultantes(
     perfil_antes: str,
     perfil_final: str,
     masters_norm: list[str] | None,
-) -> tuple[list[str], list[str]] | None:
+) -> tuple[list[str], list[str], bool] | None:
     """Decide o vinculo final ANTES de qualquer escrita. `None` = nao mexer no vinculo.
 
-    Devolve `(antes, desejados)`. As regras, todas pelo perfil RESULTANTE da mesma chamada:
-      * perfil final `master`, com vinculo pedido ou virando master agora: o conjunto final (o
-        pedido, ou o atual se nada foi pedido) nao pode ser vazio -- master sem vinculo entraria e
-        veria a carteira vazia sem nada acusar. Quem JA' era master e nao teve o vinculo pedido
-        nao e' conferido: desativar um master sem vinculo nao pode ser barrado por isso;
+    Devolve `(antes, desejados, virando_master)`, na ordem dos parametros do `_aplicar_masters`.
+    As regras, todas pelo perfil RESULTANTE da mesma chamada:
+      * perfil final `master` com vinculo pedido: o pedido nao pode ser vazio -- master sem
+        vinculo entraria e veria a carteira vazia sem nada acusar;
+      * quem VIRA master agora tem de mandar o vinculo, SEMPRE. O que esta' gravado nao conta:
+        linha de quem nao e' master e' sobra (antes da emenda 1 da DEC-087 a troca de perfil nao
+        apagava o vinculo, e a 025 ja' estava no ar), e voltar a ser master exige escolher de
+        novo, nao herdar um nome velho sem conferencia no cadastro e sem evento. Por isso
+        `alterar_perfil(.., 'master')` e' sempre recusado: o caminho e' o `alterar_acesso` com
+        `masters`;
+      * quem JA' era master e nao teve o vinculo pedido nao e' conferido: desativar um master sem
+        vinculo nao pode ser barrado por isso;
       * perfil final de outro tipo: pedir nome e' erro; quem SAI de master perde o vinculo
         inteiro, na mesma transacao da troca de perfil (o vinculo de quem nao e' master nao
-        recorta nada, e voltar a ser master deve exigir escolher de novo, nao herdar um nome velho).
+        recorta nada).
     """
     if perfil_final == PERFIL_MASTER:
-        if masters_norm is not None:
-            if not masters_norm:
+        virando_master = perfil_antes != PERFIL_MASTER
+        if masters_norm is None:
+            if virando_master:
                 raise ValueError(MSG_MASTER_OBRIGATORIO)
-            return _masters_do_alvo(con, id_alvo), masters_norm
-        if perfil_antes != PERFIL_MASTER and not _masters_do_alvo(con, id_alvo):
+            return None
+        if not masters_norm:
             raise ValueError(MSG_MASTER_OBRIGATORIO)
-        return None
+        return _masters_do_alvo(con, id_alvo), masters_norm, virando_master
     if masters_norm:
         raise ValueError(MSG_MASTER_SO_DO_PERFIL_MASTER)
     if masters_norm is not None or perfil_antes == PERFIL_MASTER:
-        return _masters_do_alvo(con, id_alvo), []
+        return _masters_do_alvo(con, id_alvo), [], False
     return None
 
 
@@ -594,7 +612,8 @@ def alterar_perfil(id_alvo: int, novo_perfil: str, *, autor: int) -> dict[str, A
     with transacao(id_usuario=autor) as con:
         perfil_antes, _ = _estado_atual(con, id_alvo)
         # A regra do vinculo com master vale aqui tambem (uma redacao so', `_masters_resultantes`):
-        # virar master sem vinculo e' recusado, e sair de master leva o vinculo junto.
+        # virar master por aqui e' sempre recusado (esta funcao nao recebe o vinculo, e o gravado
+        # nao conta), e sair de master leva o vinculo junto.
         plano = _masters_resultantes(
             con, id_alvo, perfil_antes=perfil_antes, perfil_final=novo_perfil, masters_norm=None
         )

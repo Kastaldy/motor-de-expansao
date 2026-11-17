@@ -221,6 +221,14 @@ describe('o campo Master franquia (emenda 1 da DEC-087)', () => {
     expect(selecaoInicialDeMasters([], cadastro)).toEqual({ selecionados: [], foraDoCadastro: [] })
   })
 
+  it('sem cadastro no servidor, nenhum nome é dado como fora dele (mesma regra do chip)', () => {
+    // O cadastro indisponível não é o nome que saiu: a edição não pode dizer "sai ao salvar".
+    expect(selecaoInicialDeMasters(['Dalmo Ribeiro'], [])).toEqual({
+      selecionados: [],
+      foraDoCadastro: [],
+    })
+  })
+
   it('marcar e desmarcar mantém a ordem do cadastro', () => {
     expect(alternarMaster([], 'Zé Master', cadastro)).toEqual(['Zé Master'])
     expect(alternarMaster(['Zé Master'], 'Dalmo Ribeiro', cadastro)).toEqual([

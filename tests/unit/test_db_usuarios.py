@@ -1635,6 +1635,64 @@ def test_virar_master_com_master_grava_perfil_e_vinculo(monkeypatch: pytest.Monk
     assert r["perfil"]["para"] == "master" and r["masters"]["para"] == ["Master A"]
 
 
+def test_virar_master_com_vinculo_orfao_sem_escolher_e_recusado(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Linha de `usuario_masters` de quem NAO e' master e' sobra (antes da emenda 1 a troca de
+    perfil nao a apagava, e a 025 ja' estava no ar). Ela nao pode virar o recorte sozinha: quem
+    vira master escolhe de novo, ou o nome velho passaria sem conferencia no cadastro e sem
+    evento do vinculo."""
+    con = _con_masters(monkeypatch, perfil="consultoria", atuais=["Master Velho"])
+    with pytest.raises(ValueError, match=mod.MSG_MASTER_OBRIGATORIO):
+        mod.alterar_acesso(9, perfil="master", autor=7)
+    assert _escritas(con) == []
+    assert con.eventos == []
+
+
+def test_alterar_perfil_para_master_e_sempre_recusado(monkeypatch: pytest.MonkeyPatch) -> None:
+    """`alterar_perfil` nao recebe o vinculo, e o gravado nao conta: virar master por ela e'
+    recusado mesmo com linha orfa. O caminho e' o `alterar_acesso` com `masters`."""
+    con = _con_masters(monkeypatch, perfil="consultoria", atuais=["Master Velho"])
+    with pytest.raises(ValueError, match=mod.MSG_MASTER_OBRIGATORIO):
+        mod.alterar_perfil(9, "master", autor=7)
+    assert _escritas(con) == []
+
+
+def test_virar_master_escolhendo_o_nome_orfao_registra_o_vinculo(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Escolher de novo o MESMO nome que sobrou nao muda o conjunto, mas o recorte foi DADO neste
+    gesto: o evento do vinculo sai (a trilha diz quem deu), e a resposta diz que mudou."""
+    con = _con_masters(monkeypatch, perfil="consultoria", atuais=["Master Velho"])
+    r = mod.alterar_acesso(9, perfil="master", masters=["Master Velho"], autor=7)
+    assert con.sql_que_contem("INSERT INTO usuario_masters") == []
+    assert con.sql_que_contem("DELETE FROM usuario_masters") == []
+    assert [e[1] for e in con.eventos] == [
+        mod.EVENTO_PERFIL_ALTERADO,
+        mod.EVENTO_MASTERS_ALTERADOS,
+    ]
+    assert con.eventos[1][4].obj == {"antes": 1, "depois": 1}
+    assert r["masters"] == {
+        "id_usuario": 9,
+        "de": ["Master Velho"],
+        "para": ["Master Velho"],
+        "mudou": True,
+    }
+
+
+def test_virar_master_com_outro_nome_troca_o_vinculo_orfao(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    con = _con_masters(monkeypatch, perfil="consultoria", atuais=["Master Velho"])
+    mod.alterar_acesso(9, perfil="master", masters=["Master Novo"], autor=7)
+    assert [p for _s, p in con.sql_que_contem("DELETE FROM usuario_masters")] == [
+        (9, "Master Velho")
+    ]
+    assert [p for _s, p in con.sql_que_contem("INSERT INTO usuario_masters")] == [
+        (9, "Master Novo")
+    ]
+
+
 def test_desativar_master_sem_vinculo_nao_e_barrado(monkeypatch: pytest.MonkeyPatch) -> None:
     """A exigencia de vinculo vale para quem VIRA master ou tem o vinculo pedido; desativar um
     master que ficou sem vinculo (cadastro antigo) nao pode depender disso."""

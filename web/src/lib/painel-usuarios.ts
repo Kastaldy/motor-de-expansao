@@ -207,11 +207,16 @@ export function chaveMaster(nome: string): string {
  * A seleção com que a edição abre: os masters de hoje trocados pela grafia do cadastro, e à
  * parte os que o cadastro não tem mais. Esses não viram opção — salvar com eles seria recusado
  * —, e a tela avisa que saem ao salvar.
+ *
+ * Sem cadastro no servidor (`disponiveis` vazio: AR, ou o volume fora do ar) não dá para dizer
+ * que um nome SAIU dele — a mesma regra do chip da linha, que fica cinza nesse caso. Nada vai
+ * para `foraDoCadastro`, e a tela não promete "sai ao salvar" (o Salvar fica travado sem opção).
  */
 export function selecaoInicialDeMasters(
   atuais: string[],
   disponiveis: string[],
 ): { selecionados: string[]; foraDoCadastro: string[] } {
+  if (disponiveis.length === 0) return { selecionados: [], foraDoCadastro: [] }
   const porChave = new Map(disponiveis.map((d) => [chaveMaster(d), d]))
   const selecionados: string[] = []
   const foraDoCadastro: string[] = []

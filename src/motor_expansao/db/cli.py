@@ -944,13 +944,21 @@ def _checagens_positivas() -> list[tuple[str, str, str]]:
             "'unidades_ultra_site_id_unidade_site_seq', 'USAGE')",
             "mesma armadilha da sequence de eventos: `GRANT INSERT` na tabela NAO a cobre",
         ),
-        # 025 (DEC-087): a mesma armadilha, numa tabela que o piloto so' precisa LER para servir
-        # o recorte do master. Sem `SELECT`, a consulta do recorte morre por permissao negada e o
-        # master nao abre a Visao Executiva -- so' em runtime. Sem sequence: a PK e' composta.
+        # 025 (DEC-087): a mesma armadilha. O piloto LE a tabela para servir o recorte do master
+        # e, desde a emenda 1 da DEC-087, a aba Acessos GRAVA nela: INSERT por nome novo e DELETE
+        # por nome que sai (trocar o master, ou tirar a pessoa do perfil master). O DELETE e' o
+        # que mais facilmente falta: o default privilege do dono da' SELECT/INSERT/UPDATE, e o
+        # DELETE vem de um GRANT explicito (`025-perfil-master.md`). Sem ele, este comando
+        # passava verde e a tela caia em `permission denied` -- so' em runtime. Sem sequence: a
+        # PK e' composta.
         (
-            "ler os vinculos de master franquia",
-            "SELECT has_table_privilege(current_user, 'usuario_masters', 'SELECT')",
-            "sem isto o perfil master nao alcanca as proprias unidades na Visao Executiva",
+            "ler e gravar os vinculos de master franquia",
+            "SELECT has_table_privilege(current_user, 'usuario_masters', 'SELECT') "
+            "AND has_table_privilege(current_user, 'usuario_masters', 'INSERT') "
+            "AND has_table_privilege(current_user, 'usuario_masters', 'DELETE')",
+            "sem SELECT o perfil master nao alcanca as proprias unidades na Visao Executiva; "
+            "sem INSERT/DELETE a aba Acessos nao cria master, nao troca o master nem tira "
+            "alguem do perfil master",
         ),
     ]
 

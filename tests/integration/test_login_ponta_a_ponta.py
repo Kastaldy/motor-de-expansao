@@ -1311,6 +1311,23 @@ def test_025_sair_de_master_limpa_o_vinculo(con: Any, admin: int) -> None:
     assert perfil == "consultoria"
 
 
+def test_025_vinculo_orfao_nao_e_herdado_ao_virar_master(con: Any, admin: int) -> None:
+    """A sobra de antes da emenda 1 (perfil trocado sem apagar o vínculo) não vira o recorte
+    sozinha: sem `masters` o pedido é recusado, e escolhendo o mesmo nome o evento sai."""
+    pessoa = _pessoa_com_perfil(con, "consultoria")
+    _vincular(con, pessoa, _MASTER_DE_ENSAIO)
+    with pytest.raises(ValueError, match="ao menos um master"):
+        db_usuarios.alterar_acesso(pessoa, perfil="master", autor=admin)
+    saida = db_usuarios.alterar_acesso(
+        pessoa, perfil="master", masters=[_MASTER_DE_ENSAIO], autor=admin
+    )
+    assert saida["masters"]["mudou"] is True
+    assert db_rbac.masters_do_usuario(pessoa) == frozenset({_MASTER_DE_ENSAIO})
+    autor, metadados = _evento_dos_masters(con, pessoa)
+    assert autor == admin
+    assert metadados == {"antes": 1, "depois": 1}
+
+
 def test_025_virar_master_sem_vinculo_e_recusado_e_nada_muda(con: Any, admin: int) -> None:
     pessoa = _pessoa_com_perfil(con, "consultoria")
     with pytest.raises(ValueError, match="ao menos um master"):
