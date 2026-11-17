@@ -147,6 +147,20 @@ describe('foraDaBaseSss (card "Crescemos ou só abrimos loja?")', () => {
     )
   })
 
+  it('"as outras N" só com UM motivo: com dois, cada motivo leva o seu número', () => {
+    // fora=31, rampa=1 (que é a base zero), zero=1: "As outras 31" diria que as de fora são
+    // 31, e são 32.
+    expect(foraDaBaseSss(sss({ unidades_fora: 31, unidades_rampa: 1, unidades_base_zero: 1 }))).toBe(
+      '31 não existiam há um ano, ou não operaram o mês inteiro nos dois períodos, e por isso ' +
+        'ficam fora da conta. Outra não faturou no ano-base e também fica fora.',
+    )
+    // fora=0, rampa=10 (9 em rampa + 1 base zero): "As outras 9" diria 9 de 10.
+    expect(foraDaBaseSss(sss({ unidades_fora: 0, unidades_rampa: 10, unidades_base_zero: 1 }))).toBe(
+      '9 ainda estavam nos 3 primeiros meses de operação no ano-base, a rampa de abertura, e ' +
+        'ficam fora da conta. Outra não faturou no ano-base e também fica fora.',
+    )
+  })
+
   it('sem ninguém na base (SSS indisponível), não fala em "as outras"', () => {
     const vazio = sss({ disponivel: false, unidades: 0, unidades_recorte: 2, unidades_fora: 0, unidades_rampa: 2 })
     expect(foraDaBaseSss(vazio)).toBe(

@@ -140,6 +140,34 @@ describe('lerDelta', () => {
     // Sem a marca, a leitura em pontos segue como sempre.
     expect(lerDelta(metrica({ atual: 9, m1: 6 }), false, true)).not.toBeNull()
   })
+
+  it('valor agregado: a seta em pontos é a da MESMA cesta (`delta_pontos`), não atual − M-1', () => {
+    // KPI de NPS num mês de inauguração: `atual` tem a unidade nova (NPS baixo) e `m1` não.
+    // `atual - m1` dava -9 pontos (queda que não houve); na mesma cesta, subiu 1.
+    const kpi = metrica({ atual: 56, m1: 65, delta_pct: 1.5, delta_pontos: 1 })
+    const d = lerDelta(kpi, true, true)
+    expect(d).toMatchObject({ modo: 'pontos', subiu: true, bom: true })
+    expect(d?.valor).toBeCloseTo(1)
+    // Churn: mesma regra, com a direção invertida.
+    expect(lerDelta(metrica({ atual: 5.1, m1: 4.8, delta_pontos: -0.2 }), false, true)).toMatchObject({
+      subiu: false,
+      bom: true,
+    })
+  })
+
+  it('`delta_pontos` nulo do servidor: sem seta (não cai de volta em atual − M-1)', () => {
+    expect(lerDelta(metrica({ atual: 5.1, m1: 4.8, delta_pontos: null }), false, true)).toBeNull()
+  })
+
+  it('sem `delta_pontos` (quarteto da unidade, servidor anterior), a conta segue atual − M-1', () => {
+    const d = lerDelta(metrica({ atual: 9, m1: 6 }), false, true)
+    expect(d?.valor).toBeCloseTo(3)
+    // Fora das métricas em pontos, o `delta_pontos` não muda nada: a seta é o `delta_pct`.
+    expect(lerDelta(metrica({ delta_pct: -12, delta_pontos: 40_000 }), true)).toMatchObject({
+      modo: 'pct',
+      subiu: false,
+    })
+  })
 })
 
 describe('rótulo do churn (DEC-088)', () => {

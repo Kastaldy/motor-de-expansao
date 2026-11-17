@@ -235,9 +235,11 @@ def test_base_de_cinco_ou_mais_nao_e_pequena() -> None:
 def test_pre_venda_antes_da_inauguracao_nao_vira_unidade_madura() -> None:
     """Dado no ano-base ANTES de a unidade abrir não faz dela uma loja madura.
 
-    O quadro do ano-base apaga a inauguração que cai depois do último dia dele, e data
+    O quadro do ano-base apagava a inauguração que cai depois do último dia dele, e data
     vazia conta como madura: a unidade com pré-venda (Noroeste, dado em 31/12/2024 e
-    inauguração em 06/01/2025) entraria com a base de um dia. A data vem do período atual.
+    inauguração em 06/01/2025) entraria com a base de um dia. A cesta lê a data do período
+    atual, e desde o achado E da revisão da DEC-088 o próprio quadro do ano-base guarda a
+    data (o limite é o último dia da BASE, não o da janela): as duas defesas valem.
     """
     linhas: list[dict[str, object]] = []
     for ano, valor in ((2025, 100_000.0), (2026, 110_000.0)):
@@ -251,8 +253,11 @@ def test_pre_venda_antes_da_inauguracao_nao_vira_unidade_madura() -> None:
     ano_anterior = rede_metricas.fechamento_periodo(
         base, pd.Timestamp("2025-07-01"), pd.Timestamp("2025-07-31")
     )
-    # Premissa: no quadro do ano-base a data sumiu (e por isso a regra não pode lê-la de lá).
-    assert ano_anterior.set_index("unidade_id")["inauguracao"].isna().any()
+    # O quadro do ano-base guarda a data posterior a ele (o limite é o fim da BASE) e já não
+    # chama de "operou o período inteiro" quem abriu depois dele.
+    base_por_id = ano_anterior.set_index("unidade_id")
+    assert base_por_id.loc["pre-venda-sp", "inauguracao"] == pd.Timestamp("2025-08-15")
+    assert bool(base_por_id.loc["pre-venda-sp", "operacao_periodo_cheio"]) is False
 
     sss = pilot._rede_sss(atual, ano_anterior, list(atual["unidade_id"]))
     assert sss["unidades"] == 1

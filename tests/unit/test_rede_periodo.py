@@ -467,6 +467,76 @@ def test_meses_fechados_sem_base_nao_inventa_mes() -> None:
     assert rm.meses_fechados(*DOZE_MESES, pd.NaT) == []
 
 
+def test_meses_fechados_usam_a_mesma_folga_de_fim_de_mes_da_serie() -> None:
+    """Achado D da revisão da DEC-088: a série (`mes_completo`) aceita a coleta que parou um
+    dia antes da virada (`TOLERANCIA_FIM_DE_MES_DIAS`), e `meses_fechados` não. Com o último
+    dado em 30/10/2026, o gráfico desenhava outubro e o Churn Médio do topo o deixava de fora:
+    onze meses no número, doze pontos logo abaixo."""
+    ultimo = pd.Timestamp("2026-10-30")
+    doze = ["2025-11", "2025-12"] + [f"2026-{m:02d}" for m in range(1, 11)]
+    assert [str(m) for m in rm.meses_fechados(*DOZE_MESES, ultimo)] == doze
+    # O calendário grampeia o fim pedido no último dia com dado (30/10): a janela vai até o
+    # fim da base, e outubro entra pela mesma folga.
+    grampeada = (DOZE_MESES[0], ultimo)
+    assert [str(m) for m in rm.meses_fechados(*grampeada, ultimo)] == doze
+
+    # Os meses da SÉRIE, na mesma base: o fechamento mensal dá outubro por completo.
+    df = rm.preparar_base(base(_serie_de_um_ano()))
+    df = df[df["_data"] <= ultimo]
+    mensal = rm.fechamento_mensal(df)
+    da_serie = sorted(
+        str(c) for c in mensal.loc[mensal["mes_completo"].astype(bool), "competencia"].unique()
+    )
+    assert [m for m in da_serie if m in set(doze)] == doze
+    linha = _uma(rm.fechamento_periodo(df, *grampeada))
+    assert int(linha["churn_meses"]) == 12
+
+    # Mas uma janela que PARA antes do fim do mês, com a base seguindo adiante, não fecha
+    # o mês: "01/10 a 30/10" com dado até 17/11 deixou 31/10 de fora.
+    assert rm.meses_fechados(
+        pd.Timestamp("2026-10-01"), pd.Timestamp("2026-10-30"), pd.Timestamp("2026-11-17")
+    ) == []
+    # E o mês que a coleta deixou dois dias antes da virada segue aberto.
+    assert rm.meses_fechados(*DOZE_MESES, pd.Timestamp("2026-10-29"))[-1] == pd.Period("2026-09")
+
+
+def test_pre_venda_com_inauguracao_depois_da_janela_nao_e_madura() -> None:
+    """Achado E: o quadro de período apagava a inauguração posterior ao último dia DA
+    JANELA, e data vazia conta como "operou o período inteiro". A unidade com dado de
+    pré-venda (20/05 a 31/05) e inauguração em 15/06 entrava madura no ranking e na média
+    de maio. O limite é o último dia da BASE."""
+    pre_venda = [
+        linha
+        for linha in unidade_saudavel("PRE", 2026, 5, inauguracao="15/06/2026")
+        if int(str(linha["data"])[:2]) >= 20
+    ]
+    df = rm.preparar_base(
+        base(
+            pre_venda,
+            unidade_saudavel("PRE", 2026, 6, inauguracao="15/06/2026"),
+            unidade_saudavel("PRE", 2026, 7, inauguracao="15/06/2026"),
+            *(unidade_saudavel("VELHA", 2026, m, inauguracao="01/01/2020") for m in (5, 6, 7)),
+        )
+    )
+    fech = rm.fechamento_periodo(df, *MAIO).set_index("unidade_cru")
+    assert fech.loc["PRE", "inauguracao"] == pd.Timestamp("2026-06-15")
+    # Fora do ranking e da média, e contada entre as "inauguradas" (a nota da carteira lê
+    # `operacao_periodo_cheio` falso).
+    assert bool(fech.loc["PRE", "operacao_periodo_cheio"]) is False
+    assert bool(fech.loc["VELHA", "operacao_periodo_cheio"]) is True
+    mascara = rm.mascara_comparaveis(fech.reset_index())
+    assert dict(zip(fech.index, mascara, strict=True)) == {"PRE": False, "VELHA": True}
+    ctx = rm.contexto_comparativo(fech.reset_index()).set_index("unidade_cru")
+    assert pd.isna(ctx.loc["PRE", "rank_faturamento"])
+    assert int(ctx.loc["VELHA", "rank_total_faturamento"]) == 1
+    medias = rm.medias_da_rede(fech.reset_index(), ["faturamento"])
+    assert medias["faturamento"] == pytest.approx(float(fech.loc["VELHA", "faturamento"]))
+
+    # Inauguração depois do fim da BASE segue sendo data inválida (vazia), como sempre.
+    futura = rm.preparar_base(base(unidade_saudavel("FUTURA", 2026, 5, inauguracao="15/09/2026")))
+    assert pd.isna(_uma(rm.fechamento_periodo(futura, *MAIO))["inauguracao"])
+
+
 def test_churn_de_doze_meses_e_a_media_dos_churns_mensais() -> None:
     """O defeito: 12 meses de cancelamento sobre a base de UM mês acumulavam (70% na rede
     real, para ~5,9% ao mês). O Churn Médio é a média simples do churn de cada mês fechado

@@ -183,8 +183,17 @@ export function lerDelta(
   // não passa pelo `delta_pct`, também obedece.
   if (metrica.m1_parcial) return null
   if (emPontos) {
-    if (metrica.atual === null || metrica.m1 === null) return null
-    const d = metrica.atual - metrica.m1
+    // Valor agregado (KPI, linha da rede): o servidor manda a variação já na MESMA cesta
+    // dos dois lados — `atual` tem as unidades inauguradas na janela e `m1` não, e
+    // `atual - m1` mediria a inauguração. No quarteto da unidade, a conta é a de sempre.
+    let d: number
+    if (metrica.delta_pontos !== undefined) {
+      if (metrica.delta_pontos === null) return null
+      d = metrica.delta_pontos
+    } else {
+      if (metrica.atual === null || metrica.m1 === null) return null
+      d = metrica.atual - metrica.m1
+    }
     return {
       valor: Math.abs(d),
       modo: 'pontos',
@@ -465,9 +474,11 @@ function clausulasForaDoSss(sss: RedeSss): { n: number; um: string; varios: stri
  */
 export function foraDaBaseSss(sss: RedeSss): string | null {
   const { fora, rampa, baseZero, meses } = contasForaDoSss(sss)
-  // "A outra"/"As outras N" só faz sentido quando alguém FICOU na base. Sem ninguém (o SSS
-  // indisponível), a frase fala só em números.
-  const outras = (sss.unidades ?? 0) > 0
+  // "A outra"/"As outras N" só faz sentido quando alguém FICOU na base E quando um motivo
+  // só explica todas as de fora. Com dois motivos, "as outras 9" diria que 9 são TODAS as
+  // de fora, e são 10: a frase fala em números e cada motivo leva o seu.
+  const motivos = [fora, rampa, baseZero].filter((n) => n > 0).length
+  const outras = (sss.unidades ?? 0) > 0 && motivos === 1
   const sujeito = (n: number) => (!outras ? num(n) : n === 1 ? 'A outra' : `As outras ${num(n)}`)
   const frases: string[] = []
 

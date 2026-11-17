@@ -1374,11 +1374,17 @@ export interface RedeMetrica {
    *  sem seta — churn e NPS variam em pontos (`atual - m1`), e só o `delta_pct` nulo não
    *  bastaria para apagá-la. Ausente nos demais casos. */
   m1_parcial?: boolean
+  /** Variação ABSOLUTA na mesma cesta dos dois lados (`atual_na_cesta - m1`), só nos
+   *  valores AGREGADOS (KPIs do topo e linha da rede). Ali `atual` é o recorte inteiro e
+   *  `m1` só a cesta que operou o anterior inteiro: `atual - m1` misturaria as duas, e a
+   *  seta em pontos (churn, NPS) mediria inauguração. Ausente no quarteto da unidade, em
+   *  que os dois lados já são a mesma unidade. */
+  delta_pontos?: number | null
 }
 
 export type RedeSeveridade = 'alta' | 'media' | 'ok' | 'sem_base'
 
-export type RedeValorDaLinha = Pick<RedeMetrica, 'atual' | 'm1' | 'delta_pct'>
+export type RedeValorDaLinha = Pick<RedeMetrica, 'atual' | 'm1' | 'delta_pct' | 'delta_pontos'>
 
 export interface RedeLinhaRede {
   media: Record<string, RedeValorDaLinha>

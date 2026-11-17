@@ -10882,14 +10882,28 @@ def _rede_periodo(inicio: str, fim: str) -> dict[str, Any]:
     if not len(atual_cru):
         raise HTTPException(404, f"Sem dados da rede entre {inicio} e {fim}.")
 
+    meses_churn = [str(m) for m in rede_metricas.meses_fechados(ini, term, ultimo_dado)]
+
+    # A janela anterior segue o MODO de churn da atual: comparar o Churn Médio de um lado
+    # com a conta acumulada da janela do outro dá uma seta que mede a troca de conta, não o
+    # churn. Sem mês fechado na atual, a anterior é forçada à conta da janela (mesmo que
+    # tenha um: "05/10 a 17/11" contra "22/08 a 04/10", que contém setembro inteiro).
     ini_ant, fim_ant = _rede_periodo_anterior(ini, term)
     anterior_cru = rede_metricas.fechamento_periodo(
-        base, ini_ant, fim_ant, financeiro=financeiro, mensal=cheio
+        base, ini_ant, fim_ant, financeiro=financeiro, mensal=cheio,
+        churn_medio=None if meses_churn else False,
     )
-    meses_churn = [str(m) for m in rede_metricas.meses_fechados(ini, term, ultimo_dado)]
-    meses_churn_anterior = [
-        str(m) for m in rede_metricas.meses_fechados(ini_ant, fim_ant, ultimo_dado)
-    ]
+    meses_churn_anterior = (
+        [str(m) for m in rede_metricas.meses_fechados(ini_ant, fim_ant, ultimo_dado)]
+        if meses_churn
+        else []
+    )
+    if meses_churn and not meses_churn_anterior and len(anterior_cru):
+        # O inverso não tem conserto: a atual tem mês fechado e a anterior não ("30/09 a
+        # 31/10" contra "29/08 a 29/09"). Não há Churn Médio do lado de lá, e a conta da
+        # janela é outra régua -- o M-1 do churn fica vazio, e com ele a seta, no KPI, na
+        # linha da rede e no quarteto de cada unidade (CSV e XLSX herdam do quarteto).
+        anterior_cru = anterior_cru.assign(churn_pct=float("nan"))
 
     ini_sss, fim_sss = _rede_periodo_ano_anterior(ini, term)
     ano_anterior = rede_metricas.fechamento_periodo(base, ini_sss, fim_sss, financeiro=financeiro)
@@ -11401,9 +11415,11 @@ def _rede_sss_cesta(
        com R$ 0 em set/2025 e somava o faturamento de hoje inteiro ao "crescimento").
 
     A data de inauguração vem do período ATUAL, com o ano-base de reserva. O quadro do
-    ano-base apaga a data que cai depois do último dia dele (`_derivar_comuns`), então a
+    ano-base apagava a data que cai depois do último dia dele (`_derivar_comuns`), então a
     unidade com dado de pré-venda antes de abrir (Noroeste, 31/12/2024 com inauguração em
-    06/01/2025) chegava lá com a data VAZIA — e data vazia conta como madura.
+    06/01/2025) chegava lá com a data VAZIA — e data vazia conta como madura. Hoje o quadro
+    de período mede contra o último dia da BASE e guarda a data; ler do atual primeiro
+    segue como segunda defesa.
     """
     colunas = {
         "faturamento": pd.Series(dtype="float64"),
@@ -11548,8 +11564,9 @@ def _rede_operou_o_anterior(linha: pd.Series, m1: pd.Series | None) -> bool:
     Sem isso, a unidade inaugurada no meio do período anterior aparecia com "churn subiu
     3 pts" contra uma janela em que ela mal existia -- seta de rampa, não de desempenho. Lê
     o gate do próprio quadro anterior (`operacao_periodo_cheio`, ou o mensal) e confere a
-    inauguração do quadro ATUAL contra o início dele: no quadro anterior, uma inauguração
-    posterior ao último dia com dado é descartada como inválida e o gate sairia verdadeiro.
+    inauguração do quadro ATUAL contra o início dele: uma inauguração posterior ao último
+    dia com dado é descartada como inválida, e o gate do quadro anterior sairia verdadeiro
+    se ela sumisse dele. `_rede_cesta_do_anterior` é a mesma regra para o agregado.
     """
     if m1 is None:
         return False
@@ -11564,6 +11581,34 @@ def _rede_operou_o_anterior(linha: pd.Series, m1: pd.Series | None) -> bool:
         if pd.notna(inauguracao) and pd.notna(inicio_anterior):
             return bool(pd.Timestamp(inauguracao) <= pd.Timestamp(inicio_anterior))
     return True
+
+
+def _rede_cesta_do_anterior(indexado: pd.DataFrame, m1: pd.DataFrame) -> pd.Index:
+    """As unidades de `indexado` que operaram o período ANTERIOR inteiro: a cesta da seta.
+
+    Gêmeo VETORIZADO de `_rede_operou_o_anterior`, para o agregado (KPIs do topo e linha
+    da rede) seguir a MESMA regra da seta de cada unidade (DEC-088). Sem isso, a cesta era
+    só "presente nos dois períodos", e a unidade inaugurada no meio do anterior entrava na
+    comparação com uma janela em que mal existia -- a seta da rede media a rampa dela.
+
+    Mesmas duas condições: o gate de operação cheia do quadro anterior
+    (`coluna_de_operacao_cheia`) e a inauguração do quadro ATUAL até o 1º dia do anterior
+    (`periodo_inicio`), porque no quadro anterior uma inauguração futura pode ter sido
+    apagada como inválida.
+    """
+    comuns = indexado.index.intersection(m1.index)
+    if not len(comuns):
+        return comuns
+    anterior = m1.loc[comuns]
+    entra = pd.Series(True, index=comuns)
+    coluna = rede_metricas.coluna_de_operacao_cheia(anterior)
+    if coluna is not None:
+        entra &= anterior[coluna].fillna(False).astype(bool)
+    if "inauguracao" in indexado.columns and "periodo_inicio" in anterior.columns:
+        inauguracao = pd.to_datetime(indexado.loc[comuns, "inauguracao"], errors="coerce")
+        inicio = pd.to_datetime(anterior["periodo_inicio"], errors="coerce")
+        entra &= ~(inauguracao.notna() & inicio.notna() & (inauguracao > inicio))
+    return comuns[entra.to_numpy(dtype=bool)]
 
 
 def _rede_quarteto(
@@ -11683,36 +11728,57 @@ def _rede_unidade_dict(
     }
 
 
+def _rede_valor_agregado(
+    atual: float | None, anterior: float | None, atual_cesta: float | None, casas: int
+) -> dict[str, Any]:
+    """Um valor agregado (KPI do topo ou linha da rede) e a comparação com o anterior.
+
+    `atual` é o recorte INTEIRO; `anterior` e `atual_cesta` são a MESMA cesta dos dois
+    lados (`_rede_cesta_do_anterior`). As duas variações saem dessa cesta:
+
+    * `delta_pct` -- relativa, a seta das métricas de volume e de reais;
+    * `delta_pontos` -- absoluta, a seta das taxas que a tela lê em PONTOS (churn, NPS).
+      Vai pronta porque a tela não pode contá-la de `atual - m1`: `atual` tem as unidades
+      inauguradas na janela e `m1` não, e a subtração misturava as duas cestas -- o
+      defeito que o `delta_pct` daqui já evitava (o NPS da rede "despencando" num mês de
+      inauguração sem que nada tivesse caído).
+    """
+    tem_os_dois = atual_cesta is not None and anterior is not None
+    delta = 100.0 * (atual_cesta - anterior) / anterior if (tem_os_dois and anterior) else None
+    return {
+        "atual": _num(atual, casas),
+        "m1": _num(anterior, casas),
+        "delta_pct": _num(delta, 1),
+        "delta_pontos": _num(atual_cesta - anterior, casas) if tem_os_dois else None,
+    }
+
+
 def _rede_kpis(
     unidades: pd.DataFrame, m1: pd.DataFrame, contexto: dict[str, Any] | None = None
 ) -> dict[str, Any]:
-    """KPIs do recorte. `atual` = todos; `m1`/delta na cesta com M-1 (comparável).
+    """KPIs do recorte. `atual` = todos; `m1` e as variações na cesta do anterior.
+
+    A cesta é a de `_rede_cesta_do_anterior`: presente nos dois períodos E com o anterior
+    operado inteiro -- a mesma regra da seta de cada unidade (DEC-088).
 
     `contexto` (o de `_rede_periodo`) liga o Churn Médio (DEC-088): com mês fechado na
     janela, o churn do recorte é a média dos pontos mensais do gráfico nesses meses, e não a
     média ponderada do quadro do período (ver `_rede_kpi_churn_medio`).
     """
     if not len(unidades):
-        return {c: {"atual": None, "m1": None, "delta_pct": None} for c in _REDE_KPIS_SOMA}
+        return {
+            c: {"atual": None, "m1": None, "delta_pct": None, "delta_pontos": None}
+            for c in _REDE_KPIS_SOMA
+        }
     indexado = unidades.set_index("unidade_id")
-    comuns = indexado.index.intersection(m1.index)
+    cesta = _rede_cesta_do_anterior(indexado, m1)
     saida: dict[str, Any] = {}
 
     for chave in _REDE_KPIS_SOMA:
         atual = _numf(pd.to_numeric(indexado[chave], errors="coerce").sum())
-        anterior = _numf(pd.to_numeric(m1.loc[comuns, chave], errors="coerce").sum()) if len(comuns) else None
-        atual_cesta = _numf(pd.to_numeric(indexado.loc[comuns, chave], errors="coerce").sum()) if len(comuns) else None
-        delta = (
-            100.0 * (atual_cesta - anterior) / anterior
-            if (anterior and atual_cesta is not None)
-            else None
-        )
-        casas = _rede_casas(chave)
-        saida[chave] = {
-            "atual": _num(atual, casas),
-            "m1": _num(anterior, casas),
-            "delta_pct": _num(delta, 1),
-        }
+        anterior = _numf(pd.to_numeric(m1.loc[cesta, chave], errors="coerce").sum()) if len(cesta) else None
+        atual_cesta = _numf(pd.to_numeric(indexado.loc[cesta, chave], errors="coerce").sum()) if len(cesta) else None
+        saida[chave] = _rede_valor_agregado(atual, anterior, atual_cesta, _rede_casas(chave))
 
     for chave, peso in _REDE_KPIS_MEDIA.items():
         atual = _wavg(indexado[chave], indexado[peso])
@@ -11720,49 +11786,35 @@ def _rede_kpis(
         # unidades novas dentro) contra a de M-1 (sem elas) mostrava o NPS da rede
         # despencando num mês de inauguração sem que nada tivesse caído: mudou a cesta,
         # não o desempenho. `atual` segue sendo o número do recorte inteiro.
-        anterior = _wavg(m1.loc[comuns, chave], m1.loc[comuns, peso]) if len(comuns) else None
-        atual_cesta = _wavg(indexado.loc[comuns, chave], indexado.loc[comuns, peso]) if len(comuns) else None
-        delta = (
-            100.0 * (atual_cesta - anterior) / anterior
-            if (atual_cesta is not None and anterior)
-            else None
-        )
-        saida[chave] = {"atual": _num(atual, 2), "m1": _num(anterior, 2), "delta_pct": _num(delta, 1)}
+        anterior = _wavg(m1.loc[cesta, chave], m1.loc[cesta, peso]) if len(cesta) else None
+        atual_cesta = _wavg(indexado.loc[cesta, chave], indexado.loc[cesta, peso]) if len(cesta) else None
+        saida[chave] = _rede_valor_agregado(atual, anterior, atual_cesta, 2)
     if contexto is not None and contexto.get("churn_medio"):
-        saida["churn_pct"] = _rede_kpi_churn_medio(indexado, m1, comuns, contexto)
+        saida["churn_pct"] = _rede_kpi_churn_medio(indexado, cesta, contexto)
     return saida
 
 
 def _rede_kpi_churn_medio(
-    indexado: pd.DataFrame, m1: pd.DataFrame, comuns: pd.Index, contexto: dict[str, Any]
+    indexado: pd.DataFrame, cesta: pd.Index, contexto: dict[str, Any]
 ) -> dict[str, Any]:
     """O KPI de churn no modo Churn Médio (DEC-088): a média dos pontos do gráfico.
 
     Cada ponto é o do gráfico de evolução (`_rede_churn_medio`) para as MESMAS unidades:
     doze meses fechados no topo leem exatamente a média dos doze pontos desenhados abaixo.
-    O delta segue a regra dos demais KPIs -- a MESMA cesta dos dois lados (`comuns`) -- com
-    a mesma conta na janela anterior. Se a janela anterior não tiver mês fechado, o lado
-    de lá é a conta dela, a média ponderada do quadro anterior, que é o que cada unidade
-    também leva no M-1.
+    O delta segue a regra dos demais KPIs -- a MESMA cesta dos dois lados (`cesta`, a de
+    `_rede_cesta_do_anterior`) -- com a mesma conta na janela anterior. Se a janela
+    anterior não tiver mês fechado, não existe a mesma conta do lado de lá: M-1 e delta
+    ficam vazios (`_rede_periodo` já apaga o churn do quadro anterior nesse caso).
     """
     cheio: pd.DataFrame = contexto["cheio"]
     meses: list[str] = contexto["meses_churn"]
     meses_antes: list[str] = contexto.get("meses_churn_anterior") or []
     atual = _rede_churn_medio(cheio, indexado.index, meses)
     anterior = atual_cesta = None
-    if len(comuns):
-        atual_cesta = _rede_churn_medio(cheio, comuns, meses)
-        anterior = (
-            _rede_churn_medio(cheio, comuns, meses_antes)
-            if meses_antes
-            else _wavg(m1.loc[comuns, "churn_pct"], m1.loc[comuns, "pagantes"])
-        )
-    delta = (
-        100.0 * (atual_cesta - anterior) / anterior
-        if (atual_cesta is not None and anterior)
-        else None
-    )
-    return {"atual": _num(atual, 2), "m1": _num(anterior, 2), "delta_pct": _num(delta, 1)}
+    if len(cesta) and meses_antes:
+        atual_cesta = _rede_churn_medio(cheio, cesta, meses)
+        anterior = _rede_churn_medio(cheio, cesta, meses_antes)
+    return _rede_valor_agregado(atual, anterior, atual_cesta, 2)
 
 
 #: Colunas da linha "rede inteira" da Carteira: as métricas da tabela mais a contagem
@@ -11803,21 +11855,15 @@ def _rede_linha_rede(contexto: dict[str, Any], *, com_total: bool = True) -> dic
     mascara = rede_metricas.mascara_comparaveis(atual)
     comparaveis = atual.loc[mascara].set_index("unidade_id")
     medias = rede_metricas.medias_da_rede(atual, _REDE_LINHA_REDE)
-    cesta = comparaveis.index.intersection(m1.index)
+    # A cesta da seta é a mesma dos KPIs e da seta de cada unidade: operou o anterior inteiro.
+    cesta = _rede_cesta_do_anterior(comparaveis, m1)
     media: dict[str, Any] = {}
     for chave in _REDE_LINHA_REDE:
-        casas = _rede_casas(chave)
-        valor = medias.get(chave)
         anterior = atual_cesta = None
         if len(cesta) and chave in m1.columns and chave in comparaveis.columns:
             anterior = _numf(pd.to_numeric(m1.loc[cesta, chave], errors="coerce").mean())
             atual_cesta = _numf(pd.to_numeric(comparaveis.loc[cesta, chave], errors="coerce").mean())
-        delta = (
-            100.0 * (atual_cesta - anterior) / anterior
-            if (atual_cesta is not None and anterior)
-            else None
-        )
-        media[chave] = {"atual": _num(valor, casas), "m1": _num(anterior, casas), "delta_pct": _num(delta, 1)}
+        media[chave] = _rede_valor_agregado(medias.get(chave), anterior, atual_cesta, _rede_casas(chave))
     linha: dict[str, Any] = {"media": media}
     if total is not None:
         linha["total"] = total
@@ -14854,7 +14900,12 @@ def executiva(
     if not payload["unidades"]:
         raise HTTPException(404, f"Sem unidades Ultra com dados de rede na UF {uf_sel}.")
 
-    kpis = payload["kpis"]
+    # O contrato v1 é congelado: cada total leva só `atual`, `m1` e `delta_pct`. O
+    # `delta_pontos` da DEC-088 é da tela nova e não entra aqui.
+    kpis = {
+        chave: {k: valor.get(k) for k in ("atual", "m1", "delta_pct")}
+        for chave, valor in payload["kpis"].items()
+    }
     unidades = [
         {
             "nome": u["nome"],

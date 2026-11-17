@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 
-import { chaveDaQuery, linhaDaRede, temTotalDaRede } from './exec'
+import { chaveDaQuery, lerDelta, linhaDaRede, temTotalDaRede } from './exec'
 import type { RedeLinhaRede } from './types'
 
 const REDE: RedeLinhaRede = {
@@ -49,6 +49,18 @@ describe('linhaDaRede — média e total da rede na Carteira', () => {
 
   it('servidor sem o campo: sem linha (não inventa a média no cliente)', () => {
     expect(linhaDaRede(undefined, 'media')).toBeNull()
+  })
+
+  it('a seta em pontos da linha lê o `delta_pontos` da mesma cesta, não atual − M-1', () => {
+    // Média de 5,2 contra M-1 de 5,0 com a unidade nova só de um lado: na mesma cesta o
+    // churn CAIU 0,1 ponto, embora `atual - m1` dê +0,2.
+    const rede: RedeLinhaRede = {
+      ...REDE,
+      media: { ...REDE.media, churn_pct: { atual: 5.2, m1: 5.0, delta_pct: -2, delta_pontos: -0.1 } },
+    }
+    const m = linhaDaRede(rede, 'media')?.metricas.churn_pct
+    expect(m?.delta_pontos).toBe(-0.1)
+    expect(lerDelta(m, false, true)).toMatchObject({ modo: 'pontos', subiu: false, bom: true })
   })
 })
 

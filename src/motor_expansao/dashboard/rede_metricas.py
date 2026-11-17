@@ -648,7 +648,7 @@ def _fechamento_vazio() -> pd.DataFrame:
     return pd.DataFrame({c: pd.Series(dtype="float64") for c in colunas})
 
 
-def _derivar_comuns(fech: pd.DataFrame) -> pd.DataFrame:
+def _derivar_comuns(fech: pd.DataFrame, limite: pd.Timestamp | None = None) -> pd.DataFrame:
     """Métricas que NÃO dependem do formato da janela (mês fechado ou intervalo livre).
 
     Vive separada de `_derivar_metricas` porque `fechamento_periodo` precisa exatamente
@@ -658,10 +658,18 @@ def _derivar_comuns(fech: pd.DataFrame) -> pd.DataFrame:
 
     O que fica de fora é só o que a janela define: completude, gate de operação, churn
     (o denominador muda de base) e maturidade.
+
+    `limite` é o último dia com dado da BASE: inauguração depois dele é data inválida e
+    vira vazia. Sem ele, vale o último dia do próprio quadro -- certo no fechamento
+    mensal, que cobre a base inteira, e ERRADO numa janela: a unidade com dado de
+    pré-venda antes de abrir (dados de 20/05, inauguração em 15/06) perdia a data no
+    quadro de maio, e data vazia conta como "operou o período inteiro" -- ela entrava no
+    ranking e na média de maio como madura.
     """
     f = fech.copy()
     f["inauguracao"] = pd.to_datetime(f["inauguracao_cru"], format="%d/%m/%Y", errors="coerce")
-    limite = f["dia_ref"].max()
+    if limite is None or pd.isna(limite):
+        limite = f["dia_ref"].max()
     f.loc[f["inauguracao"].dt.year < _ANO_INAUGURACAO_MIN, "inauguracao"] = pd.NaT
     f.loc[f["inauguracao"] > limite, "inauguracao"] = pd.NaT
 
@@ -781,9 +789,17 @@ def meses_fechados(
     """Os meses FECHADOS da janela `[inicio, fim]`: a base do Churn Médio (DEC-088).
 
     Mês fechado = mês civil INTEIRO dentro da janela (do dia 1 ao último dia) e já
-    encerrado na base -- o último dia dele é `<= ultimo_dado`, o último dia com dado. O
-    mês em curso nunca entra, nem quando a janela o cobre de ponta a ponta no calendário:
-    no dia 17, novembro ainda não acabou.
+    encerrado na base. "Encerrado" é a MESMA régua do `mes_completo` da série
+    (`_janela_completa`): a coleta chegou ao fim do mês com a folga de
+    `TOLERANCIA_FIM_DE_MES_DIAS`, porque a ingestão perde a virada com frequência. Sem a
+    folga, uma base que termina em 30/10 desenhava outubro no gráfico (fechado para a
+    série) e o tirava do Churn Médio do topo: onze meses no número, doze pontos no gráfico.
+    O mês em curso nunca entra, nem quando a janela o cobre de ponta a ponta no
+    calendário: no dia 17, novembro ainda não acabou.
+
+    A janela que termina no último dia COM DADO (o calendário grampeia o fim pedido nele,
+    `_rede_periodo_valido`) cobre o mês até onde a base vai: o mês entra pela mesma folga,
+    senão "nov/25 a out/26" grampeado em 30/10 perderia outubro pelo dia que não existe.
 
     Lista vazia quando nenhum mês cabe (o próprio mês em curso, ou "17/10 a 16/11", que
     atravessa a virada sem conter um mês inteiro): é o sinal para o churn seguir a conta
@@ -795,12 +811,20 @@ def meses_fechados(
     fim = pd.Timestamp(fim).normalize()
     if pd.isna(inicio) or pd.isna(fim) or inicio > fim:
         return []
-    limite = min(fim, pd.Timestamp(ultimo_dado).normalize())
+    ultimo = pd.Timestamp(ultimo_dado).normalize()
+    folga = pd.Timedelta(days=TOLERANCIA_FIM_DE_MES_DIAS)
+    # A janela vai até o fim da base: ela cobre tudo o que a base sabe do mês.
+    ate_o_fim_da_base = fim >= ultimo
     mes = inicio.to_period("M")
     if inicio != mes.to_timestamp(how="start"):
         mes += 1
     meses: list[pd.Period] = []
-    while mes.to_timestamp(how="end").normalize() <= limite:
+    while True:
+        fim_do_mes = mes.to_timestamp(how="end").normalize()
+        na_janela = fim_do_mes <= fim or ate_o_fim_da_base
+        encerrado = fim_do_mes - folga <= ultimo
+        if not (na_janela and encerrado):
+            break
         meses.append(mes)
         mes += 1
     return meses
@@ -848,6 +872,7 @@ def fechamento_periodo(
     fim: pd.Timestamp,
     financeiro: pd.DataFrame | None = None,
     mensal: pd.DataFrame | None = None,
+    churn_medio: bool | None = None,
 ) -> pd.DataFrame:
     """Uma linha por unidade com o agregado de `[inicio, fim]` - as DUAS pontas dentro.
 
@@ -883,6 +908,11 @@ def fechamento_periodo(
     segue valendo como sempre (e `churn_meses` sai NaN); para um mês civil fechado as duas
     leituras coincidem. `cancelados` continua sendo o TOTAL do período. `mensal` é o
     fechamento mensal já calculado (opcional; ver `churn_dos_meses_fechados`).
+
+    `churn_medio` escolhe a conta: `None` (padrão) decide pela janela, como descrito
+    acima; `False` força a conta da janela mesmo com mês fechado. Existe para a JANELA
+    ANTERIOR seguir o modo da atual: comparar o Churn Médio de um lado com a conta
+    acumulada do outro dá uma seta que mede a troca de conta, não o churn.
 
     `financeiro` sobrepoe o faturamento pela planilha do Financeiro, mas SO' nas
     competencias que a janela cobre inteiras -- e' o unico recorte para o qual a planilha,
@@ -956,9 +986,10 @@ def fechamento_periodo(
     )
     fech["periodo_inicio"] = inicio
     fech["periodo_fim"] = fim
-    derivado = _derivar_periodo(fech, inicio, fim)
+    ultimo_dado = df["_data"].max()
+    derivado = _derivar_periodo(fech, inicio, fim, limite=ultimo_dado)
 
-    meses = meses_fechados(inicio, fim, df["_data"].max())
+    meses = [] if churn_medio is False else meses_fechados(inicio, fim, ultimo_dado)
     if not meses:
         derivado["churn_meses"] = float("nan")
         return derivado
@@ -1101,10 +1132,16 @@ def _ultimo_valor_antes(
 
 
 def _derivar_periodo(
-    fech: pd.DataFrame, inicio: pd.Timestamp, fim: pd.Timestamp
+    fech: pd.DataFrame,
+    inicio: pd.Timestamp,
+    fim: pd.Timestamp,
+    limite: pd.Timestamp | None = None,
 ) -> pd.DataFrame:
-    """Deriva as métricas sobre o fechamento de intervalo. Puro, sem IO."""
-    f = _derivar_comuns(fech)
+    """Deriva as métricas sobre o fechamento de intervalo. Puro, sem IO.
+
+    `limite` é o último dia com dado da base inteira (ver `_derivar_comuns`).
+    """
+    f = _derivar_comuns(fech, limite)
 
     # "Completo" continua querendo dizer MÊS CIVIL fechado: as réguas do time (faixa de
     # faturamento, diagnóstico) são limiares de mês inteiro. Um intervalo de 10 dias pode
