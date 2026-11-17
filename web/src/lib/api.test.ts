@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { api, baixar, VIDA_DA_BLOB_URL_MS } from './api'
+import { api, ApiError, baixar, VIDA_DA_BLOB_URL_MS } from './api'
 import type { ViabilidadeIn } from './types'
 
 /**
@@ -446,5 +446,54 @@ describe('relatorioPontual — o recorte do Estudo vai no CORPO', () => {
     await api.relatorioPontual({ lat: -23.48, lng: -46.61, geometria: { type: 'Polygon', coordinates: [anel] } })
     expect(cap.corpo().has('geometria')).toBe(false)
     expect(cap.corpo().has('alcance')).toBe(false)
+  })
+})
+
+/**
+ * Cancelamento pedido pela TELA (Executiva, 17/11/2026): a troca de período aborta o pedido
+ * anterior. O cancelamento tem de sair como AbortError, e não como o "demorou demais" do
+ * timeout — senão cada clique no calendário viraria uma mensagem de erro falsa.
+ */
+describe('pedir — cancelamento de quem pediu', () => {
+  /** `fetch` que só termina quando o sinal aborta, como o do navegador. */
+  function fetchQueEspera(): ReturnType<typeof vi.fn> {
+    const f = vi.fn(
+      (_url: string, init?: RequestInit) =>
+        new Promise<Response>((_resolve, reject) => {
+          const sinal = init?.signal
+          const abortar = () => reject(new DOMException('aborted', 'AbortError'))
+          if (sinal?.aborted) abortar()
+          else sinal?.addEventListener('abort', abortar)
+        }),
+    )
+    vi.stubGlobal('fetch', f)
+    return f
+  }
+
+  it('abortar o sinal rejeita com AbortError, não com o ApiError do timeout', async () => {
+    fetchQueEspera()
+    const ctrl = new AbortController()
+    const pedido = api.redeCarteira({ inicio: '2026-10-01', fim: '2026-10-31' }, ctrl.signal)
+    ctrl.abort()
+    const erro = await pedido.catch((e: unknown) => e)
+    expect(erro).not.toBeInstanceOf(ApiError)
+    expect((erro as DOMException).name).toBe('AbortError')
+  })
+
+  it('o sinal chega ao fetch também na inteligência e nos filtros', async () => {
+    const f = fetchQueEspera()
+    const ctrl = new AbortController()
+    ctrl.abort()
+    await expect(api.redeInteligencia({}, ctrl.signal)).rejects.toMatchObject({ name: 'AbortError' })
+    await expect(api.redeFiltros('2026-10', ctrl.signal)).rejects.toMatchObject({ name: 'AbortError' })
+    expect(f).toHaveBeenCalledTimes(2)
+  })
+
+  it('sem sinal, quem pede continua recebendo o JSON', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => ({ ok: true, json: async () => ({ ufs: ['SP'] }) }) as unknown as Response),
+    )
+    await expect(api.redeFiltros()).resolves.toEqual({ ufs: ['SP'] })
   })
 })

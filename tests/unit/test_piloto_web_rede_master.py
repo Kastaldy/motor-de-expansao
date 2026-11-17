@@ -5,8 +5,9 @@ O master entra na aba `executiva` e enxerga SO as unidades dele -- as que o cada
 estes testes travam, todos do lado do SERVIDOR (a tela nunca recebe o dado alheio para depois
 esconde-lo):
 
-* carteira, filtros e inteligencia saem do recorte; os AGREGADOS da rede (linha da rede
-  inteira, `totais.rede`, ranking, curva de rampa) ficam, porque sao a regua de comparacao;
+* carteira, filtros e inteligencia saem do recorte; os AGREGADOS da rede (MEDIA da linha da
+  rede inteira, `totais.rede`, ranking, curva de rampa) ficam, porque sao a regua de
+  comparacao -- o TOTAL da rede inteira nao (sem a chave `total` na linha da rede);
 * unidade de outro master e' 404 na ficha, nos setores e na inteligencia -- 404, e nao 403,
   para nao confirmar que ela existe;
 * pares de praca e nomes de Ultra vizinhas nao vazam unidade de fora;
@@ -123,6 +124,44 @@ def test_carteira_do_master_so_traz_as_unidades_dele(banco: _Banco) -> None:
     texto = json.dumps(payload, ensure_ascii=False)
     for outro in ("BOTAFOGO", "BANGU", "AUGUSTA", "BERRINI", "Fernando Nero", "MARISE"):
         assert outro not in texto, outro
+
+
+def _numeros(valor: Any) -> list[float]:
+    """Todo número do payload, em qualquer profundidade (bool fica de fora)."""
+    if isinstance(valor, bool):
+        return []
+    if isinstance(valor, (int, float)):
+        return [float(valor)]
+    if isinstance(valor, dict):
+        return [n for v in valor.values() for n in _numeros(v)]
+    if isinstance(valor, (list, tuple)):
+        return [n for v in valor for n in _numeros(v)]
+    return []
+
+
+def test_linha_da_rede_do_master_so_com_a_media(banco: _Banco) -> None:
+    """Felipe, 17/11/2026: o TOTAL da rede inteira vazava ao master pela linha da rede.
+
+    Ele leva SÓ a média por unidade (a régua do "% vs média"), sem a chave `total`; quem tem
+    `rede.ver` segue com as duas leituras, idênticas às de antes.
+    """
+    ana = pilot.rede_carteira(mes=MES, remote_user=REDE_INTEIRA)["rede_inteira"]
+    assert set(ana) == {"media", "total", "n_unidades", "n_comparaveis"}
+    assert set(ana["total"]) == {"faturamento", "ativos", "churn_pct", "cancelados", "nps"}
+
+    payload = pilot.rede_carteira(mes=MES, remote_user=MASTER)
+    linha = payload["rede_inteira"]
+    assert "total" not in linha
+    assert set(linha) == {"media", "n_unidades", "n_comparaveis"}
+    # A média é a MESMA da rede (régua fixa, não a do recorte), e as contagens ficam.
+    assert linha["media"] == ana["media"]
+    assert linha["n_unidades"] == ana["n_unidades"] and linha["n_comparaveis"] == ana["n_comparaveis"]
+
+    # E o faturamento total da rede não reaparece em nenhum outro canto do payload.
+    total_fat = ana["total"]["faturamento"]
+    alvos = {float(v) for v in (total_fat["atual"], total_fat["m1"]) if v is not None}
+    assert alvos, "sem total na rede o teste não provaria nada"
+    assert not alvos & set(_numeros(payload))
 
 
 def test_master_de_outro_na_query_da_carteira_vazia(banco: _Banco) -> None:

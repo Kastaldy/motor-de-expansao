@@ -26,7 +26,7 @@ import type {
   RedeRampaUnidade,
   RedeSinal,
 } from '../../lib/types'
-import { Glass, Spinner } from '../primitives'
+import { Botao, Glass, Spinner } from '../primitives'
 
 /* ---------------------------------------------------------------------------
    Por trás dos números — o que o motor sabe sobre o CHÃO de cada unidade.
@@ -142,15 +142,42 @@ const CARD = { padding: '15px 18px', minWidth: 0 } as const
 
 export function PorTrasDosNumeros({
   dados,
+  carregando = false,
+  erro = null,
+  onTentarDeNovo,
   maduras,
   onMaduras,
   onUnidade,
 }: {
   dados: RedeInteligencia | null
+  /** Há pedido em voo. Com `dados` na tela, eles ficam (esmaecidos) até o novo chegar. */
+  carregando?: boolean
+  /** O último pedido FALHOU. Vale mais que `dados`: os de antes são de outro recorte. */
+  erro?: string | null
+  onTentarDeNovo?: () => void
   maduras: boolean
   onMaduras: (v: boolean) => void
   onUnidade: (id: string) => void
 }) {
+  // Erro e carregando são estados DIFERENTES. Até 17/11/2026 a falha do pedido virava
+  // `dados = null`, que é o estado de "carregando", e o card girava para sempre.
+  if (erro) {
+    return (
+      <Glass style={CARD}>
+        <Titulo>Praça, rampa, sinais e retenção</Titulo>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
+          <span title={erro} style={{ color: 'var(--tx-sub)', font: '400 12px/1.4 var(--f-ui)' }}>
+            Não foi possível carregar este painel.
+          </span>
+          {onTentarDeNovo && (
+            <Botao variante="ghost" onClick={onTentarDeNovo} style={{ padding: '6px 11px', font: '600 11px/1 var(--f-ui)' }}>
+              Tentar de novo
+            </Botao>
+          )}
+        </div>
+      </Glass>
+    )
+  }
   if (!dados) {
     return (
       <Glass style={CARD}>
@@ -162,12 +189,21 @@ export function PorTrasDosNumeros({
     )
   }
   return (
-    <>
+    <div
+      aria-busy={carregando}
+      style={{
+        display: 'flex',
+        flexDirection: 'column',
+        gap: 14,
+        opacity: carregando ? 0.55 : 1,
+        transition: 'opacity .2s ease',
+      }}
+    >
       <PracaExecucao dados={dados} maduras={maduras} onMaduras={onMaduras} onUnidade={onUnidade} />
       <Rampa dados={dados} onUnidade={onUnidade} />
       <RiscoRetencao dados={dados} onUnidade={onUnidade} />
       <MovimentacaoConcorrencia dados={dados} />
-    </>
+    </div>
   )
 }
 

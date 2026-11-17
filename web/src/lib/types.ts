@@ -1372,7 +1372,9 @@ export type RedeValorDaLinha = Pick<RedeMetrica, 'atual' | 'm1' | 'delta_pct'>
 
 export interface RedeLinhaRede {
   media: Record<string, RedeValorDaLinha>
-  total: Record<string, RedeValorDaLinha>
+  /** Ausente para o perfil master (DEC-087): o total da rede inteira não é dado dele, e a
+   *  ausência da chave é o que diz à tela que só existe a leitura "média". */
+  total?: Record<string, RedeValorDaLinha> | null
   n_unidades: number
   n_comparaveis: number
 }

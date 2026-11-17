@@ -168,6 +168,16 @@ async function pedir<T>(
 ): Promise<T> {
   const ctrl = new AbortController()
   const t = setTimeout(() => ctrl.abort(), timeout)
+  // `init.signal` = cancelamento de QUEM PEDIU (a Executiva aborta o pedido anterior
+  // quando o filtro muda). Ele é repassado ao controlador do timeout, e o cancelamento
+  // sai como o próprio AbortError — não como "demorou demais", que seria mentira, e sem
+  // acionar a sonda de rede.
+  const externo = init.signal ?? null
+  const repassar = () => ctrl.abort()
+  if (externo) {
+    if (externo.aborted) ctrl.abort()
+    else externo.addEventListener('abort', repassar, { once: true })
+  }
   try {
     const r = await fetch(url, { ...init, signal: ctrl.signal })
     if (!r.ok) {
@@ -192,6 +202,7 @@ async function pedir<T>(
     }
     return (await r.json()) as T
   } catch (e) {
+    if (externo?.aborted) throw e
     if (e instanceof ApiError) throw e
     if (e instanceof DOMException && e.name === 'AbortError') {
       throw new ApiError('A leitura demorou demais e foi cancelada.', 408)
@@ -209,6 +220,7 @@ async function pedir<T>(
     )
   } finally {
     clearTimeout(t)
+    externo?.removeEventListener('abort', repassar)
   }
 }
 
@@ -828,11 +840,12 @@ export const api = {
 
   /** Vocabulário dos filtros, RÉGUAS vigentes e contadores de qualidade.
    *  As réguas vêm do servidor de propósito: a tela nunca as repete. */
-  redeFiltros: (mes?: string) =>
-    pedir<RedeFiltros>(`/api/rede/filtros${mes ? `?mes=${encodeURIComponent(mes)}` : ''}`),
+  redeFiltros: (mes?: string, signal?: AbortSignal) =>
+    pedir<RedeFiltros>(`/api/rede/filtros${mes ? `?mes=${encodeURIComponent(mes)}` : ''}`, { signal }),
 
   /** Nível 1 — a carteira da rede inteira, priorizada. Sem filtro = Brasil todo. */
-  redeCarteira: (q: RedeQuery = {}) => pedir<RedeCarteira>(`/api/rede/carteira${queryRede(q)}`),
+  redeCarteira: (q: RedeQuery = {}, signal?: AbortSignal) =>
+    pedir<RedeCarteira>(`/api/rede/carteira${queryRede(q)}`, { signal }),
 
   /** Nível 2 — a ficha de uma unidade (série de 12 meses, funil, coorte, recomendações). */
   redeUnidade: (id: string, mes?: string) =>
@@ -946,8 +959,8 @@ export const api = {
 
   /** Inteligência do RECORTE: praça × execução, rampa, sinais, retenção e o que mudou.
    *  Mesmos filtros e mesmo período da carteira. */
-  redeInteligencia: (q: RedeQuery = {}) =>
-    pedir<RedeInteligencia>(`/api/rede/inteligencia${queryRede(q)}`),
+  redeInteligencia: (q: RedeQuery = {}, signal?: AbortSignal) =>
+    pedir<RedeInteligencia>(`/api/rede/inteligencia${queryRede(q)}`, { signal }),
 
   /* UNIDADES NO MAPA (11/11/2026): o seletor do cabeçalho, a ficha em janela e o PDF de
      concorrência pela porta do MAPA, para quem não tem a Executiva. Só território: nome,
