@@ -10,10 +10,10 @@
 
 ## 1. O que é e para que serve
 
-O `graphify` transforma o repositório em um **grafo de conhecimento** persistente: ~900 arquivos
+O `graphify` transforma o repositório em um **grafo de conhecimento** persistente: ~1.250 arquivos
 (código extraído por AST + documentos, contratos e DECs extraídos por LLM) viram
-**17.982 nós e 34.777 arestas** (reindexado em 2026-09-22, commit `2ccc3aee`: 922 arquivos-fonte e
-1.205 comunidades; era 660 arquivos / 13.156 nós / 26.052 arestas em 2026-08-19 e 421 / 7.633 / 15.362
+**26.117 nós e 56.681 arestas** (reindexado em 2026-11-17, commit `c6b54cbb`: 1.252 arquivos-fonte e
+925 comunidades; era 922 arquivos / 17.982 nós / 34.777 arestas em 2026-09-22, 660 arquivos / 13.156 nós / 26.052 arestas em 2026-08-19 e 421 / 7.633 / 15.362
 em 2026-07-28, antes de o repositório crescer o `web/`, as DECs 027-036 e a camada de M&A).
 
 Serve para responder, em **uma consulta**, perguntas que hoje custam uma varredura inteira:
@@ -197,7 +197,7 @@ PROTOCOL   : 2025-06-18
 SERVERINFO : {'name': 'graphify', 'version': '1.29.0'}
 TOOLS (10) : ['get_community', 'get_neighbors', 'get_node', 'get_pr_impact', 'god_nodes',
               'graph_stats', 'list_prs', 'query_graph', 'shortest_path', 'triage_prs']
-graph_stats: Nodes: 17982 | Edges: 34777 | Communities: 1205 | ...
+graph_stats: Nodes: 26117 | Edges: 56681 | Communities: 925 | ...
 EXIT       : 0     STDERR: (vazio)     VERDICT: PASS
 ```
 
@@ -274,8 +274,8 @@ de exclusão**. Ele portanto ignora o recorte curado do corpus.
 >
 > **A tabela é um experimento PAREADO de 2026-07-28 e fica congelada nessa data** — as duas
 > colunas só comparam porque foram medidas no mesmo corpus, no mesmo momento; atualizar uma delas
-> isolada destruiria a comparação. Para o tamanho ATUAL do grafo curado (2026-09-22: 922 arquivos-fonte,
-> 17.982 nós, 34.777 arestas, 23.370.507 bytes) ver a §1 e a §7.1.
+> isolada destruiria a comparação. Para o tamanho ATUAL do grafo curado (2026-11-17: 1.252 arquivos-fonte,
+> 26.117 nós, 56.681 arestas, 36.366.078 bytes) ver a §1 e a §7.1.
 
 Ou seja: um `git checkout` de branch bastaria para inflar o grafo em ~78% de nós e jogar 566 logs de
 handoff dentro do corpus — exatamente o que o recorte da §7 do `CLAUDE.md` decidiu manter fora.
@@ -334,7 +334,7 @@ no diff e não deve acontecer.
    referencia). Fica registrado aqui, e **não se mexe** — mas ele volta a valer no primeiro
    `hook install` novo. É a outra ponta da armadilha 2.
 4. **Não remova o `-diff linguist-generated=true`** da linha do `graphify-out/graph.json` no
-   `.gitattributes`. Sem ela, o JSON (hoje ~23 MB) domina o diff no git e na UI do GitHub. **Ela NÃO protege o revisor
+   `.gitattributes`. Sem ela, o JSON (hoje ~36 MB) domina o diff no git e na UI do GitHub. **Ela NÃO protege o revisor
    automático:** `gh pr diff` devolve o arquivo inteiro como texto e afogou o `claude-review` no #150 e
    no #390 (medido em 2026-09-22, ver a nota do `.gitattributes`) — por isso o grafo vai em PR próprio
    (`chore(graph)`), nunca junto de código a revisar.
@@ -349,7 +349,7 @@ no diff e não deve acontecer.
 - **O `constraints.txt` não pina o grafo**, por decisão medida (seção 2). Registrado para não ser
   lido como esquecimento em auditoria futura.
 - **`graphify-out/graph.json` deve continuar versionado ou virar artefato de CI?** Pergunta em
-  aberto. Versionar dá consulta offline e reprodutibilidade; custa ~23 MB por linhagem e exige a
+  aberto. Versionar dá consulta offline e reprodutibilidade; custa ~36 MB por linhagem e exige a
   disciplina da seção 8. Não foi resolvido no BLK-GRAPH-02.
 - **Portabilidade do `command`.** O `command: "python"` funciona nesta máquina porque o `python` do
   PATH é o interpretador que tem o pacote. Um `${GRAPHIFY_PYTHON:-python}` foi considerado e
