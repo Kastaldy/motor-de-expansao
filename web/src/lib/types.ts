@@ -2898,6 +2898,9 @@ export interface AdminUsuario {
   /** Países (siglas) que a pessoa pode acessar (DEC-081). A tabela mostra como chips e o
    *  editor por linha manda o conjunto desejado no PATCH. Vem agregado do backend. */
   paises: string[]
+  /** Masters franquia vinculados (emenda 1 da DEC-087), na grafia gravada. Só o perfil
+   *  Master os tem. Opcional por defesa: deploy antigo sem o campo conta como nenhum. */
+  masters?: string[]
 }
 
 /** Opção do seletor de perfil. A ordem vem do backend e é a hierarquia da D22
@@ -2931,6 +2934,9 @@ export interface AdminUsuariosPayload {
    *  (o país DESTE processo). Opcional por defesa: deploy antigo sem o campo cai no padrão só. */
   paises_disponiveis?: AdminPais[]
   pais_padrao?: string
+  /** Os `master_franquia` do cadastro das unidades, ordenados: as opções do campo "Master
+   *  franquia" do perfil Master (emenda 1 da DEC-087). Vazio sem cadastro no servidor. */
+  masters_disponiveis?: string[]
 }
 
 /** Resposta do PATCH. Cada bloco só vem se o campo correspondente foi enviado, e
@@ -2940,6 +2946,9 @@ export interface AdminAlteracao {
   perfil?: { id_usuario: number; de: string; para: string; mudou: boolean }
   status?: { id_usuario: number; ativo: boolean; mudou: boolean }
   paises?: { id_usuario: number; de: string[]; para: string[]; mudou: boolean }
+  /** Vem quando `masters` foi enviado OU quando a pessoa saiu do perfil Master (o servidor
+   *  apaga o vínculo na mesma gravação). */
+  masters?: { id_usuario: number; de: string[]; para: string[]; mudou: boolean }
 }
 
 /** Corpo do POST de criação (D26). Sem campo de senha DE PROPÓSITO: quem nasce pela
@@ -2955,6 +2964,9 @@ export interface AdminUsuarioNovo {
   /** Países que a pessoa poderá acessar (DEC-081). Pelo menos um; o seletor marca o país do
    *  processo por padrão. Vazio é recusado no backend (é o próprio bug do P4). */
   paises: string[]
+  /** Masters franquia (emenda 1 da DEC-087): obrigatório (ao menos um) para o perfil Master e
+   *  recusado para os outros. A tela só manda com o perfil Master. */
+  masters?: string[]
 }
 
 /** Resposta do POST. `login_proprio` diz qual recado vale (`recadoDaCriacao`, em

@@ -417,6 +417,7 @@ def test_o_corpo_da_criacao_nao_aceita_senha() -> None:
         "email",
         "perfil",
         "paises",
+        "masters",
     }
 
 
@@ -1174,3 +1175,316 @@ def test_alterar_recusa_pais_fora_do_catalogo_sem_tocar_o_banco(
             9, pilot_app.UsuarioAdminIn(paises=["ZZ"]), remote_user=ADMIN
         )
     assert caiu.value.status_code == 422
+
+
+# --------------------------------------------------------------------------------------
+# Emenda 1 da DEC-087: o vinculo com master franquia pela aba Acessos
+#
+# Duas camadas, testadas aqui juntas: a ROTA confere cada nome contra o `master_franquia` do
+# cadastro e grava a grafia de la' (422 para o que nao existe); `usuarios` aplica as regras de
+# perfil (master exige, os outros recusam, quem sai de master perde o vinculo). Os casos de regra
+# rodam o modulo de dados DE VERDADE sobre uma conexao dublê, para a rota e o dominio nao
+# poderem divergir sem um teste ficar vermelho.
+# --------------------------------------------------------------------------------------
+
+from contextlib import contextmanager  # noqa: E402
+
+from motor_expansao import db as _db  # noqa: E402
+from motor_expansao.dashboard import rede_cadastro as _rede_cadastro_mod  # noqa: E402
+from motor_expansao.db import postgres as _postgres  # noqa: E402
+
+
+def _cadastro(*masters: str) -> Any:
+    return _rede_cadastro_mod.Cadastro(
+        versao=1,
+        atualizado_em=None,
+        unidades={f"u{i}": {"master_franquia": m} for i, m in enumerate(masters)},
+        disponivel=True,
+    )
+
+
+@pytest.fixture
+def cadastro_com_masters(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Duas unidades do Dalmo, uma da Luana e uma sem master: o cadastro de mentira."""
+    monkeypatch.setattr(
+        pilot_app,
+        "_rede_cadastro",
+        lambda: _cadastro("Dalmo Ribeiro", "Dalmo Ribeiro", "Luana Ribeiro", ""),
+    )
+
+
+class _Conexao:
+    """Dublê que responde por PEDAÇO de SQL (o molde de `test_db_usuarios.py`)."""
+
+    def __init__(self, respostas: dict[str, list[tuple[Any, ...]]]) -> None:
+        self.respostas = respostas
+        self.executados: list[tuple[str, Any]] = []
+        self.autocommit = False
+        self._ultimo: list[tuple[Any, ...]] = []
+
+    def execute(self, sql: str, params: Any = None) -> _Conexao:
+        self.executados.append((sql, params))
+        self._ultimo = next((v for k, v in self.respostas.items() if k in sql), [])
+        return self
+
+    def fetchall(self) -> list[tuple[Any, ...]]:
+        return self._ultimo
+
+    def fetchone(self) -> tuple[Any, ...] | None:
+        return self._ultimo[0] if self._ultimo else None
+
+    def com(self, trecho: str) -> list[Any]:
+        return [p for s, p in self.executados if trecho in s]
+
+
+class _Pool:
+    def __init__(self, con: _Conexao) -> None:
+        self._con = con
+
+    @contextmanager
+    def connection(self):  # type: ignore[no-untyped-def]
+        yield self._con
+
+    def open(self, wait: bool = False) -> None: ...
+    def close(self) -> None: ...
+
+
+@pytest.fixture
+def banco_duble(monkeypatch: pytest.MonkeyPatch) -> Any:
+    """Instala a conexao dublê no pool do modulo de dados; devolve uma fabrica de cenarios."""
+
+    def _instalar(respostas: dict[str, list[tuple[Any, ...]]]) -> _Conexao:
+        con = _Conexao(respostas)
+        monkeypatch.setattr(_postgres, "_driver", lambda: lambda **_k: _Pool(con))
+        monkeypatch.setenv(_postgres.ENV_URL, "postgresql://fake/motor")
+        return con
+
+    _db.fechar_pool()
+    yield _instalar
+    _db.fechar_pool()
+
+
+def _alvo(perfil: str, atuais: list[str]) -> dict[str, list[tuple[Any, ...]]]:
+    return {
+        "FOR UPDATE OF u": [(9, "alvo", perfil, True)],
+        "FROM perfis WHERE nome_perfil": [(3,)],
+        "SELECT master_franquia FROM usuario_masters": [(m,) for m in atuais],
+    }
+
+
+@pytest.mark.usefixtures("cadastro_com_masters")
+def test_a_listagem_traz_os_masters_do_cadastro_e_os_de_cada_um(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """As opcoes do campo vem do cadastro (sem repetido, sem vazio, ordenadas); o vinculo de
+    cada pessoa vem na linha dela."""
+    _identidade(monkeypatch, _Eu())
+    monkeypatch.setattr(
+        db_usuarios,
+        "listar",
+        lambda: [
+            db_usuarios.UsuarioAdmin(
+                12, "dalmo_ribeiro", "Dalmo", "d@u.com", "master", True, masters=("Dalmo Ribeiro",)
+            ),
+            db_usuarios.UsuarioAdmin(7, "vinicius", "Vinícius", "v@u.com", "growth", True),
+        ],
+    )
+    monkeypatch.setattr(db_usuarios, "perfis", lambda: [])
+    saida = pilot_app.acessos_usuarios_listar(remote_user=ADMIN)
+    assert saida["masters_disponiveis"] == ["Dalmo Ribeiro", "Luana Ribeiro"]
+    assert [u["masters"] for u in saida["usuarios"]] == [["Dalmo Ribeiro"], []]
+
+
+def test_sem_cadastro_montado_a_lista_de_masters_vem_vazia(monkeypatch: pytest.MonkeyPatch) -> None:
+    _identidade(monkeypatch, _Eu())
+    monkeypatch.setattr(
+        pilot_app,
+        "_rede_cadastro",
+        lambda: _rede_cadastro_mod.Cadastro(versao=0, atualizado_em=None, disponivel=False),
+    )
+    monkeypatch.setattr(db_usuarios, "listar", lambda: [])
+    monkeypatch.setattr(db_usuarios, "perfis", lambda: [])
+    assert pilot_app.acessos_usuarios_listar(remote_user=ADMIN)["masters_disponiveis"] == []
+
+
+@pytest.mark.usefixtures("cadastro_com_masters")
+def test_patch_grava_os_masters_na_grafia_do_cadastro(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Casa sem caixa e sem espaco; o que chega a `alterar_acesso` e' a grafia do cadastro."""
+    _identidade(monkeypatch, _Eu())
+    visto: dict[str, Any] = {}
+
+    def _alterar(i: int, **kwargs: Any) -> dict[str, Any]:
+        visto.update(kwargs)
+        return {"id_usuario": i}
+
+    monkeypatch.setattr(db_usuarios, "alterar_acesso", _alterar)
+    pilot_app.acessos_usuarios_alterar(
+        9,
+        pilot_app.UsuarioAdminIn(masters=["  dalmo   RIBEIRO ", "Luana Ribeiro"]),
+        remote_user=ADMIN,
+    )
+    assert visto["masters"] == ["Dalmo Ribeiro", "Luana Ribeiro"]
+    assert visto["autor"] == 7
+
+
+@pytest.mark.usefixtures("cadastro_com_masters")
+def test_patch_sem_masters_nao_mexe_no_vinculo(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Campo ausente = nao mexer: a rota nem passa `masters` adiante (nao vira lista vazia)."""
+    _identidade(monkeypatch, _Eu())
+    visto: dict[str, Any] = {}
+
+    def _alterar(i: int, **kwargs: Any) -> dict[str, Any]:
+        visto.update(kwargs)
+        return {"id_usuario": i}
+
+    monkeypatch.setattr(db_usuarios, "alterar_acesso", _alterar)
+    pilot_app.acessos_usuarios_alterar(9, pilot_app.UsuarioAdminIn(ativo=False), remote_user=ADMIN)
+    assert "masters" not in visto
+
+
+@pytest.mark.usefixtures("cadastro_com_masters")
+@pytest.mark.parametrize("gesto", ["criar", "alterar"])
+def test_master_fora_do_cadastro_e_422_sem_tocar_o_banco(
+    monkeypatch: pytest.MonkeyPatch, gesto: str
+) -> None:
+    """Um nome que o cadastro nao tem faria o master entrar vendo a carteira vazia."""
+    _identidade(monkeypatch, _Eu())
+
+    def _explode(*_a: Any, **_k: Any) -> None:
+        raise AssertionError("tocou o banco com master fora do cadastro")
+
+    monkeypatch.setattr(db_usuarios, "criar", _explode)
+    monkeypatch.setattr(db_usuarios, "alterar_acesso", _explode)
+    with pytest.raises(HTTPException) as caiu:
+        if gesto == "criar":
+            pilot_app.acessos_usuarios_criar(
+                _corpo_novo(perfil="master", masters=["Fulano de Tal"]), remote_user=ADMIN
+            )
+        else:
+            pilot_app.acessos_usuarios_alterar(
+                9, pilot_app.UsuarioAdminIn(masters=["Fulano de Tal"]), remote_user=ADMIN
+            )
+    assert caiu.value.status_code == 422
+    assert caiu.value.detail == "Master não encontrado no cadastro: Fulano de Tal."
+
+
+def test_sem_cadastro_montado_todo_master_e_recusado(monkeypatch: pytest.MonkeyPatch) -> None:
+    """O lado fechado: sem cadastro nao ha' como conferir o nome, entao nenhum passa."""
+    _identidade(monkeypatch, _Eu())
+    monkeypatch.setattr(
+        pilot_app,
+        "_rede_cadastro",
+        lambda: _rede_cadastro_mod.Cadastro(versao=0, atualizado_em=None, disponivel=False),
+    )
+    with pytest.raises(HTTPException) as caiu:
+        pilot_app.acessos_usuarios_alterar(
+            9, pilot_app.UsuarioAdminIn(masters=["Dalmo Ribeiro"]), remote_user=ADMIN
+        )
+    assert caiu.value.status_code == 422
+
+
+@pytest.mark.usefixtures("cadastro_com_masters")
+@pytest.mark.parametrize(
+    ("perfil", "masters", "mensagem"),
+    [
+        ("master", [], db_usuarios.MSG_MASTER_OBRIGATORIO),
+        ("master", ["   "], db_usuarios.MSG_MASTER_OBRIGATORIO),
+        ("consultoria", ["Dalmo Ribeiro"], db_usuarios.MSG_MASTER_SO_DO_PERFIL_MASTER),
+    ],
+)
+def test_criar_aplica_a_regra_do_perfil_com_422(
+    monkeypatch: pytest.MonkeyPatch,
+    banco_duble: Any,
+    perfil: str,
+    masters: list[str],
+    mensagem: str,
+) -> None:
+    """Master sem master e vinculo para nao-master: 422 com a frase do dominio, antes do banco."""
+    _identidade(monkeypatch, _Eu())
+    con = banco_duble({})
+    with pytest.raises(HTTPException) as caiu:
+        pilot_app.acessos_usuarios_criar(
+            _corpo_novo(perfil=perfil, masters=masters), remote_user=ADMIN
+        )
+    assert caiu.value.status_code == 422
+    assert caiu.value.detail == mensagem
+    assert con.executados == []
+
+
+@pytest.mark.usefixtures("cadastro_com_masters")
+def test_criar_master_grava_o_vinculo_na_grafia_do_cadastro(
+    monkeypatch: pytest.MonkeyPatch, banco_duble: Any
+) -> None:
+    from motor_expansao.db import senhas
+
+    _identidade(monkeypatch, _Eu())
+    monkeypatch.setattr(senhas, "hash_da_senha_inicial", lambda: "$argon2id$v=19$m=1,t=1,p=1$c$h")
+    con = banco_duble({"FROM perfis WHERE nome_perfil": [(3,)], "INSERT INTO usuarios": [(42,)]})
+    saida = pilot_app.acessos_usuarios_criar(
+        _corpo_novo(login="dalmo_ribeiro", perfil="master", masters=["dalmo ribeiro"]),
+        remote_user=ADMIN,
+    )
+    assert con.com("INSERT INTO usuario_masters") == [(42, "Dalmo Ribeiro")]
+    assert saida["masters"] == ["Dalmo Ribeiro"]
+
+
+@pytest.mark.usefixtures("cadastro_com_masters")
+@pytest.mark.parametrize(
+    ("perfil_antes", "corpo", "mensagem"),
+    [
+        ("master", {"masters": []}, db_usuarios.MSG_MASTER_OBRIGATORIO),
+        ("consultoria", {"perfil": "master"}, db_usuarios.MSG_MASTER_OBRIGATORIO),
+        ("consultoria", {"masters": ["Dalmo Ribeiro"]}, db_usuarios.MSG_MASTER_SO_DO_PERFIL_MASTER),
+    ],
+)
+def test_alterar_aplica_a_regra_do_perfil_com_422(
+    monkeypatch: pytest.MonkeyPatch,
+    banco_duble: Any,
+    perfil_antes: str,
+    corpo: dict[str, Any],
+    mensagem: str,
+) -> None:
+    _identidade(monkeypatch, _Eu())
+    con = banco_duble(_alvo(perfil_antes, []))
+    with pytest.raises(HTTPException) as caiu:
+        pilot_app.acessos_usuarios_alterar(9, pilot_app.UsuarioAdminIn(**corpo), remote_user=ADMIN)
+    assert caiu.value.status_code == 422
+    assert caiu.value.detail == mensagem
+    assert con.com("INSERT INTO") == [] and con.com("DELETE FROM") == []
+    assert con.com("UPDATE usuarios") == []
+
+
+@pytest.mark.usefixtures("cadastro_com_masters")
+def test_sair_de_master_pela_rota_limpa_o_vinculo(
+    monkeypatch: pytest.MonkeyPatch, banco_duble: Any
+) -> None:
+    """Trocar o perfil do master por outro leva o vinculo junto, sem a tela mandar `masters`."""
+    _identidade(monkeypatch, _Eu())
+    con = banco_duble(_alvo("master", ["Dalmo Ribeiro"]))
+    saida = pilot_app.acessos_usuarios_alterar(
+        9, pilot_app.UsuarioAdminIn(perfil="consultoria"), remote_user=ADMIN
+    )
+    assert con.com("DELETE FROM usuario_masters") == [(9, "Dalmo Ribeiro")]
+    assert saida["perfil"]["para"] == "consultoria"
+    assert saida["masters"] == {
+        "id_usuario": 9,
+        "de": ["Dalmo Ribeiro"],
+        "para": [],
+        "mudou": True,
+    }
+
+
+@pytest.mark.usefixtures("cadastro_com_masters")
+def test_virar_master_pela_rota_grava_perfil_e_vinculo(
+    monkeypatch: pytest.MonkeyPatch, banco_duble: Any
+) -> None:
+    _identidade(monkeypatch, _Eu())
+    con = banco_duble(_alvo("consultoria", []))
+    saida = pilot_app.acessos_usuarios_alterar(
+        9,
+        pilot_app.UsuarioAdminIn(perfil="master", masters=["LUANA RIBEIRO"]),
+        remote_user=ADMIN,
+    )
+    assert con.com("INSERT INTO usuario_masters") == [(9, "Luana Ribeiro")]
+    assert saida["perfil"]["para"] == "master"
+    assert saida["masters"]["para"] == ["Luana Ribeiro"]

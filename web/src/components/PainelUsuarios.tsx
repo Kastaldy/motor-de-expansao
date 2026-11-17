@@ -2,14 +2,24 @@ import { type CSSProperties, Fragment, useCallback, useEffect, useState } from '
 
 import { api, ApiError } from '../lib/api'
 import type { AcaoAdmin } from '../lib/confirmacao-admin'
-import { montarConfirmacao, rotuloPerfil } from '../lib/confirmacao-admin'
+import { montarConfirmacao, PERFIL_MASTER, rotuloPerfil } from '../lib/confirmacao-admin'
 import {
+  alternarMaster,
+  chaveMaster,
   COLUNA_SENHA,
+  DICA_CAMPO_MASTER,
   dicaDoFormulario,
+  faltaMaster,
   loginProprioDoPayload,
+  mastersDaCriacao,
   mensagemDeErroDoPainel,
+  recadoDaAlteracao,
   recadoDaCriacao,
   rodapeDoPainel,
+  ROTULO_CAMPO_MASTER,
+  SEM_MASTERS_NO_CADASTRO,
+  selecaoInicialDeMasters,
+  TITULO_MASTER_FORA_DO_CADASTRO,
   tituloDoBotaoCriar,
   tituloDoSeloDaSenha,
 } from '../lib/painel-usuarios'
@@ -58,7 +68,8 @@ import { Aviso, Botao, Chip, Spinner } from './primitives'
    CADA MUDANÇA É UM EVENTO. O backend grava `usuario.criado`,
    `usuario.perfil_alterado`, `usuario.desativado`, `usuario.reativado`,
    `usuario.senha_definida` e, desde 15/09, `usuario.senha_redefinida` e
-   `usuario.troca_exigida` na MESMA transação da mudança, com `id_usuario` = quem fez
+   `usuario.troca_exigida` (e, desde a emenda 1 da DEC-087, `usuario.masters_alterados`,
+   do campo "Master franquia") na MESMA transação da mudança, com `id_usuario` = quem fez
    e `entidade_id` = quem sofreu (D24). A tela não precisa fazer nada para isso
    acontecer — mas precisa não mentir sobre o que aconteceu, e é por isso que ela
    recarrega do servidor depois de cada ação em vez de adivinhar o novo estado.
@@ -70,6 +81,7 @@ import { Aviso, Botao, Chip, Spinner } from './primitives'
 
 /** Tom do chip por perfil. Segue a hierarquia da D22: quanto mais alcance, mais quente. */
 const TOM_DO_PERFIL: Record<string, 'blue' | 'green' | 'amber' | 'gray'> = {
+  master: 'gray',
   consultoria: 'gray',
   expansao: 'blue',
   lideres: 'green',
@@ -91,7 +103,14 @@ function mensagemDeErro(e: unknown, escrita = false): string {
 
 /** Campos vazios do formulário de criação. Fica fora do componente para o
  *  `Cancelar` e o `criar` bem-sucedido zerarem pelo MESMO objeto. */
-const NOVO_VAZIO: AdminUsuarioNovo = { login: '', nome: '', email: '', perfil: '', paises: [] }
+const NOVO_VAZIO: AdminUsuarioNovo = {
+  login: '',
+  nome: '',
+  email: '',
+  perfil: '',
+  paises: [],
+  masters: [],
+}
 
 const ESTILO_CAMPO: CSSProperties = {
   padding: '6px 9px',
@@ -113,14 +132,77 @@ const ESTILO_ROTULO: CSSProperties = {
   display: 'block',
 }
 
-/** A escrita à espera de confirmação. Só o essencial — ver o comentário do estado. */
+/** A escrita à espera de confirmação. Só o essencial — ver o comentário do estado.
+ *  `masters` na troca de perfil só vem para quem VIRA Master (o campo é obrigatório). */
 type Pendente =
-  | { tipo: 'trocar-perfil'; id_usuario: number; para: string }
+  | { tipo: 'trocar-perfil'; id_usuario: number; para: string; masters?: string[] }
   | { tipo: 'definir-ativo'; id_usuario: number; ativo: boolean }
   | { tipo: 'editar-paises'; id_usuario: number; paises: string[] }
+  | { tipo: 'editar-masters'; id_usuario: number; masters: string[] }
   | { tipo: 'redefinir-senha'; id_usuario: number }
   | { tipo: 'exigir-troca'; id_usuario: number }
   | { tipo: 'criar' }
+
+/**
+ * O campo "Master franquia" (emenda 1 da DEC-087): uma caixa de seleção por master do
+ * cadastro, numa lista que rola. Serve ao formulário de criação e à edição da linha.
+ * Sem cadastro no servidor não há opção — e o servidor recusaria qualquer nome.
+ */
+function CampoMasters({
+  disponiveis,
+  selecionados,
+  onAlternar,
+}: {
+  disponiveis: string[]
+  selecionados: string[]
+  onAlternar: (nome: string) => void
+}) {
+  if (disponiveis.length === 0) {
+    return (
+      <div style={{ font: '400 11px/1.4 var(--f-ui)', color: 'var(--tx-muted)' }}>
+        {SEM_MASTERS_NO_CADASTRO}
+      </div>
+    )
+  }
+  return (
+    <div
+      role="group"
+      aria-label={ROTULO_CAMPO_MASTER}
+      style={{
+        maxHeight: 150,
+        overflowY: 'auto',
+        border: '1px solid var(--line-strong)',
+        borderRadius: 'var(--r-sm)',
+        background: 'var(--surf-chrome)',
+        padding: '6px 8px',
+        display: 'flex',
+        flexDirection: 'column',
+        gap: 4,
+      }}
+    >
+      {disponiveis.map((nome) => (
+        <label
+          key={nome}
+          style={{
+            display: 'flex',
+            gap: 6,
+            alignItems: 'center',
+            cursor: 'pointer',
+            font: '400 11.5px/1.3 var(--f-ui)',
+            color: 'var(--tx-max)',
+          }}
+        >
+          <input
+            type="checkbox"
+            checked={selecionados.includes(nome)}
+            onChange={() => onAlternar(nome)}
+          />
+          {nome}
+        </label>
+      ))}
+    </div>
+  )
+}
 
 export default function PainelUsuarios() {
   const [dados, setDados] = useState<AdminUsuariosPayload | null>(null)
@@ -163,6 +245,15 @@ export default function PainelUsuarios() {
     id_usuario: number
     paises: string[]
   } | null>(null)
+  /** Linha em edição de master franquia (emenda 1 da DEC-087). `virarMaster` = a pessoa
+   *  escolheu o perfil Master no seletor e precisa escolher o master antes de confirmar;
+   *  `foraDoCadastro` = nomes do vínculo de hoje que o cadastro não tem mais (saem ao salvar). */
+  const [editandoMasters, setEditandoMasters] = useState<{
+    id_usuario: number
+    masters: string[]
+    virarMaster: boolean
+    foraDoCadastro: string[]
+  } | null>(null)
 
   const carregar = useCallback(() => {
     setCarregando(true)
@@ -191,7 +282,10 @@ export default function PainelUsuarios() {
    * meio segundo — alguém sairia daqui achando que desativou quem continua entrando.
    */
   const aplicar = useCallback(
-    async (alvo: AdminUsuario, mudanca: { perfil?: string; ativo?: boolean; paises?: string[] }) => {
+    async (
+      alvo: AdminUsuario,
+      mudanca: { perfil?: string; ativo?: boolean; paises?: string[]; masters?: string[] },
+    ) => {
       setSalvando(alvo.id_usuario)
       setRecado(null)
       // `criar` ja' limpava; aqui nao limpava, e um erro velho ficava na tela POR CIMA
@@ -200,22 +294,9 @@ export default function PainelUsuarios() {
       try {
         const r = await api.adminAlterarUsuario(alvo.id_usuario, mudanca)
         await carregar()
-        const trocou = r.perfil?.mudou
-        const mudouStatus = r.status?.mudou
-        const mudouPaises = r.paises?.mudou
-        if (trocou) {
-          setRecado(
-            `${alvo.login}: ${rotuloPerfil(r.perfil!.de)} → ${rotuloPerfil(r.perfil!.para)}.`,
-          )
-        } else if (mudouStatus) {
-          setRecado(`${alvo.login} foi ${r.status!.ativo ? 'reativado' : 'desativado'}.`)
-        } else if (mudouPaises) {
-          setRecado(`${alvo.login}: países agora ${r.paises!.para.join(', ')}.`)
-        } else {
-          // `mudou: false` = já estava assim. Sucesso sem evento gravado, e a tela
-          // não pode chamar isso de alteração.
-          setRecado(`${alvo.login} já estava assim — nada foi alterado.`)
-        }
+        // O recado sai da RESPOSTA (`recadoDaAlteracao`, com teste): `mudou: false` = já
+        // estava assim, sucesso sem evento gravado, e a tela não pode chamar isso de alteração.
+        setRecado(recadoDaAlteracao(alvo.login, r, (p) => rotuloPerfil(p)))
       } catch (e) {
         setErro(mensagemDeErro(e, true))
       } finally {
@@ -283,12 +364,14 @@ export default function PainelUsuarios() {
     setCriado(null)
     setErro(null)
     try {
+      const masters = mastersDaCriacao(novo.perfil, novo.masters ?? [])
       const r = await api.adminCriarUsuario({
         login: novo.login.trim(),
         nome: novo.nome.trim(),
         email: novo.email.trim(),
         perfil: novo.perfil,
         paises: novo.paises,
+        ...(masters ? { masters } : {}),
       })
       await carregar()
       setNovo(null)
@@ -319,11 +402,16 @@ export default function PainelUsuarios() {
     setPendente(null)
     if (!linha) return // sumiu da lista enquanto o pop-up estava aberto
     if (pendente.tipo === 'trocar-perfil') {
-      await aplicar(linha, { perfil: pendente.para })
+      await aplicar(linha, {
+        perfil: pendente.para,
+        ...(pendente.masters ? { masters: pendente.masters } : {}),
+      })
     } else if (pendente.tipo === 'definir-ativo') {
       await aplicar(linha, { ativo: pendente.ativo })
     } else if (pendente.tipo === 'editar-paises') {
       await aplicar(linha, { paises: pendente.paises })
+    } else if (pendente.tipo === 'editar-masters') {
+      await aplicar(linha, { masters: pendente.masters })
     } else {
       await aplicarSenha(linha, pendente.tipo)
     }
@@ -371,6 +459,10 @@ export default function PainelUsuarios() {
      processo). Ausentes num deploy antigo: o seletor some e a criação herda o padrão do backend. */
   const paisesDisponiveis = dados.paises_disponiveis ?? []
   const paisPadrao = dados.pais_padrao ?? ''
+  /* As opções do campo "Master franquia" (emenda 1 da DEC-087): os masters do cadastro das
+     unidades. Ausente num deploy antigo, o campo diz que não há o que escolher. */
+  const mastersDisponiveis = dados.masters_disponiveis ?? []
+  const chavesDoCadastro = new Set(mastersDisponiveis.map(chaveMaster))
   const recadoCriado = criado ? recadoDaCriacao(criado.login, criado.loginProprio) : null
 
   /* A ação em texto, montada AGORA a partir de `dados` — nunca congelada quando o
@@ -393,6 +485,7 @@ export default function PainelUsuarios() {
       paises: novo.paises.map(
         (s) => paisesDisponiveis.find((p) => p.sigla === s)?.nome ?? s,
       ),
+      masters: mastersDaCriacao(novo.perfil, novo.masters ?? []),
     }
   } else if (pendente && pendente.tipo !== 'criar') {
     const alvo = usuarios.find((u) => u.id_usuario === pendente.id_usuario)
@@ -405,6 +498,16 @@ export default function PainelUsuarios() {
         para: pendente.para,
         capacidadesDe: capacidadesDe(alvo.perfil),
         capacidadesPara: capacidadesDe(pendente.para),
+        mastersDe: alvo.masters ?? [],
+        mastersPara: pendente.masters,
+      }
+    } else if (alvo && pendente.tipo === 'editar-masters') {
+      acao = {
+        tipo: 'editar-masters',
+        nome: alvo.nome,
+        login: alvo.login,
+        de: alvo.masters ?? [],
+        para: pendente.masters,
       }
     } else if (alvo && pendente.tipo === 'definir-ativo') {
       acao = {
@@ -720,6 +823,33 @@ export default function PainelUsuarios() {
             </div>
           )}
 
+          {/* Só para o perfil Master (emenda 1 da DEC-087): sem master escolhido o botão de
+              criar fica travado — o servidor recusaria, e o master entraria vendo nada. */}
+          {novo.perfil === PERFIL_MASTER && (
+            <div style={{ maxWidth: 360 }}>
+              <span style={ESTILO_ROTULO}>{ROTULO_CAMPO_MASTER}</span>
+              <CampoMasters
+                disponiveis={mastersDisponiveis}
+                selecionados={novo.masters ?? []}
+                onAlternar={(nome) =>
+                  setNovo({
+                    ...novo,
+                    masters: alternarMaster(novo.masters ?? [], nome, mastersDisponiveis),
+                  })
+                }
+              />
+              <div
+                style={{
+                  font: '400 10.5px/1.4 var(--f-ui)',
+                  color: 'var(--tx-muted)',
+                  marginTop: 4,
+                }}
+              >
+                {DICA_CAMPO_MASTER}
+              </div>
+            </div>
+          )}
+
           <div
             style={{
               display: 'flex',
@@ -736,7 +866,8 @@ export default function PainelUsuarios() {
                 !novo.login.trim() ||
                 !novo.email.trim() ||
                 !novo.perfil ||
-                novo.paises.length === 0
+                novo.paises.length === 0 ||
+                faltaMaster(novo.perfil, novo.masters ?? [])
               }
               title={tituloDoBotaoCriar(loginProprio)}
             >
@@ -834,21 +965,36 @@ export default function PainelUsuarios() {
                       value={
                         pendente?.tipo === 'trocar-perfil' && pendente.id_usuario === u.id_usuario
                           ? pendente.para
-                          : u.perfil
+                          : editandoMasters?.virarMaster &&
+                              editandoMasters.id_usuario === u.id_usuario
+                            ? PERFIL_MASTER
+                            : u.perfil
                       }
                       disabled={travado}
                       aria-label={`Perfil de ${u.nome}`}
                       /* Escolher a opcao deixou de ser a escrita: agora ela so' ABRE a
                          confirmacao. Antes, um clique errado -- ou uma seta do teclado num
                          select fechado, que dispara `change` por opcao percorrida -- mudava
-                         o acesso da pessoa na hora, sem volta e sem aviso. */
-                      onChange={(ev) =>
-                        setPendente({
-                          tipo: 'trocar-perfil',
-                          id_usuario: u.id_usuario,
-                          para: ev.target.value,
-                        })
-                      }
+                         o acesso da pessoa na hora, sem volta e sem aviso.
+
+                         Virar MASTER passa antes pelo campo "Master franquia" (emenda 1 da
+                         DEC-087): o perfil sem master escolhido seria recusado, entao a
+                         confirmacao so' abre depois da escolha, ja' com os nomes. */
+                      onChange={(ev) => {
+                        const para = ev.target.value
+                        if (para === PERFIL_MASTER && u.perfil !== PERFIL_MASTER) {
+                          setEditandoMasters({
+                            id_usuario: u.id_usuario,
+                            masters: [],
+                            virarMaster: true,
+                            foraDoCadastro: [],
+                          })
+                          return
+                        }
+                        if (editandoMasters?.id_usuario === u.id_usuario) setEditandoMasters(null)
+                        if (para === u.perfil) return
+                        setPendente({ tipo: 'trocar-perfil', id_usuario: u.id_usuario, para })
+                      }}
                       style={{
                         padding: '5px 8px',
                         borderRadius: 'var(--r-sm)',
@@ -865,6 +1011,104 @@ export default function PainelUsuarios() {
                         </option>
                       ))}
                     </select>
+                    {/* O vínculo com master franquia (emenda 1 da DEC-087): o editor quando a
+                        linha está em edição (ou virando Master), senão os nomes de hoje. */}
+                    {editandoMasters?.id_usuario === u.id_usuario ? (
+                      <div
+                        style={{
+                          display: 'flex',
+                          flexDirection: 'column',
+                          gap: 6,
+                          marginTop: 6,
+                          maxWidth: 260,
+                        }}
+                      >
+                        <span style={{ ...ESTILO_ROTULO, marginBottom: 0 }}>
+                          {ROTULO_CAMPO_MASTER}
+                        </span>
+                        <CampoMasters
+                          disponiveis={mastersDisponiveis}
+                          selecionados={editandoMasters.masters}
+                          onAlternar={(nome) =>
+                            setEditandoMasters({
+                              ...editandoMasters,
+                              masters: alternarMaster(
+                                editandoMasters.masters,
+                                nome,
+                                mastersDisponiveis,
+                              ),
+                            })
+                          }
+                        />
+                        {editandoMasters.foraDoCadastro.length > 0 && (
+                          <div
+                            style={{
+                              font: '400 10.5px/1.4 var(--f-ui)',
+                              color: 'var(--tx-muted)',
+                              whiteSpace: 'normal',
+                            }}
+                          >
+                            Fora do cadastro, sai ao salvar:{' '}
+                            {editandoMasters.foraDoCadastro.join(', ')}.
+                          </div>
+                        )}
+                        <div style={{ display: 'flex', gap: 6 }}>
+                          <Botao
+                            disabled={editandoMasters.masters.length === 0}
+                            title={
+                              editandoMasters.masters.length === 0
+                                ? 'Escolha ao menos um master.'
+                                : undefined
+                            }
+                            onClick={() => {
+                              setPendente(
+                                editandoMasters.virarMaster
+                                  ? {
+                                      tipo: 'trocar-perfil',
+                                      id_usuario: u.id_usuario,
+                                      para: PERFIL_MASTER,
+                                      masters: editandoMasters.masters,
+                                    }
+                                  : {
+                                      tipo: 'editar-masters',
+                                      id_usuario: u.id_usuario,
+                                      masters: editandoMasters.masters,
+                                    },
+                              )
+                              setEditandoMasters(null)
+                            }}
+                          >
+                            Salvar
+                          </Botao>
+                          <Botao variante="ghost" onClick={() => setEditandoMasters(null)}>
+                            Cancelar
+                          </Botao>
+                        </div>
+                      </div>
+                    ) : (
+                      u.perfil === PERFIL_MASTER && (
+                        <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap', marginTop: 6 }}>
+                          {(u.masters ?? []).length === 0 ? (
+                            <span
+                              style={{ font: '400 10.5px/1.3 var(--f-ui)', color: 'var(--tx-muted)' }}
+                            >
+                              sem master vinculado
+                            </span>
+                          ) : (
+                            (u.masters ?? []).map((m) => {
+                              // Sem cadastro no servidor não dá para dizer que o nome saiu dele.
+                              const fora =
+                                chavesDoCadastro.size > 0 && !chavesDoCadastro.has(chaveMaster(m))
+                              return (
+                                <span key={m} title={fora ? TITULO_MASTER_FORA_DO_CADASTRO : undefined}>
+                                  <Chip tom={fora ? 'amber' : 'gray'}>{m}</Chip>
+                                </span>
+                              )
+                            })
+                          )}
+                        </div>
+                      )
+                    )}
                   </td>
                   <td style={{ padding: '9px 10px', whiteSpace: 'nowrap' }}>
                     <Chip tom={u.ativo ? TOM_DO_PERFIL[u.perfil] ?? 'gray' : 'gray'}>
@@ -1002,6 +1246,31 @@ export default function PainelUsuarios() {
                             Redefinir senha
                           </Botao>
                         </>
+                      )}
+                      {u.perfil === PERFIL_MASTER && (
+                        <Botao
+                          variante="ghost"
+                          disabled={travado}
+                          title={
+                            souEu
+                              ? 'Você não pode alterar o seu próprio acesso por aqui.'
+                              : 'Troca o master franquia cujas unidades a pessoa vê na Visão Executiva.'
+                          }
+                          onClick={() => {
+                            const inicial = selecaoInicialDeMasters(
+                              u.masters ?? [],
+                              mastersDisponiveis,
+                            )
+                            setEditandoMasters({
+                              id_usuario: u.id_usuario,
+                              virarMaster: false,
+                              masters: inicial.selecionados,
+                              foraDoCadastro: inicial.foraDoCadastro,
+                            })
+                          }}
+                        >
+                          Editar master
+                        </Botao>
                       )}
                       {paisesDisponiveis.length > 0 && (
                         <Botao

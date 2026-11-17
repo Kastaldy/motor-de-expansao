@@ -685,7 +685,7 @@ export const api = {
    */
   adminAlterarUsuario: (
     idUsuario: number,
-    mudanca: { perfil?: string; ativo?: boolean; paises?: string[] },
+    mudanca: { perfil?: string; ativo?: boolean; paises?: string[]; masters?: string[] },
   ) =>
     pedir<AdminAlteracao>(
       `/api/acessos/usuarios/${idUsuario}`,

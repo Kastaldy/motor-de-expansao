@@ -1231,3 +1231,93 @@ def test_025_desativar_esvazia_o_recorte_e_apagar_leva_o_vinculo(con: Any) -> No
         "SELECT count(*) FROM usuario_masters WHERE id_usuario = %s", (pessoa,)
     ).fetchone()[0]
     assert restantes == 0
+
+
+# --- Emenda 1 da DEC-087: o vínculo pela aba Acessos (`usuarios.criar` / `alterar_acesso`) ---
+#
+# O dublê de `test_db_usuarios.py` prova a ORDEM das escritas; só o banco prova que o INSERT, o
+# DELETE e o evento passam pela PK, pelo CHECK da 025 e pelos privilégios, e que o recorte que o
+# rbac lê depois é o que a tela gravou.
+
+
+def _criar_master_pelo_painel(admin: int, masters: list[str]) -> int:
+    sufixo = f"master-{uuid.uuid4().hex[:8]}"
+    criado = db_usuarios.criar(
+        login=sufixo,
+        nome=f"Ensaio {sufixo}",
+        email=f"{sufixo}@ensaio.local",
+        perfil="master",
+        paises=["BR"],
+        masters=masters,
+        autor=admin,
+    )
+    return int(criado["id_usuario"])
+
+
+def _evento_dos_masters(con: Any, id_alvo: int) -> Any:
+    return con.execute(
+        "SELECT id_usuario, metadados FROM eventos WHERE tipo = %s AND entidade_id = %s "
+        "ORDER BY id_evento DESC LIMIT 1",
+        (db_usuarios.EVENTO_MASTERS_ALTERADOS, id_alvo),
+    ).fetchone()
+
+
+def test_025_criar_master_pelo_painel_grava_o_vinculo(con: Any, admin: int) -> None:
+    pessoa = _criar_master_pelo_painel(admin, [_MASTER_DE_ENSAIO])
+    assert db_rbac.masters_do_usuario(pessoa) == frozenset({_MASTER_DE_ENSAIO})
+    autor, metadados = _evento_dos_masters(con, pessoa)
+    assert autor == admin
+    assert metadados == {"antes": 0, "depois": 1}
+
+
+def test_025_criar_master_sem_master_nao_cria_ninguem(con: Any, admin: int) -> None:
+    sufixo = f"master-{uuid.uuid4().hex[:8]}"
+    with pytest.raises(ValueError, match="ao menos um master"):
+        db_usuarios.criar(
+            login=sufixo,
+            nome=f"Ensaio {sufixo}",
+            email=f"{sufixo}@ensaio.local",
+            perfil="master",
+            paises=["BR"],
+            masters=[],
+            autor=admin,
+        )
+    linhas = con.execute("SELECT count(*) FROM usuarios WHERE login_usuario = %s", (sufixo,))
+    assert linhas.fetchone()[0] == 0
+
+
+def test_025_alterar_substitui_o_vinculo(con: Any, admin: int) -> None:
+    pessoa = _criar_master_pelo_painel(admin, [_MASTER_DE_ENSAIO])
+    saida = db_usuarios.alterar_acesso(pessoa, masters=["Outro Master Ensaio"], autor=admin)
+    assert saida["masters"]["mudou"] is True
+    assert db_rbac.masters_do_usuario(pessoa) == frozenset({"Outro Master Ensaio"})
+    _autor, metadados = _evento_dos_masters(con, pessoa)
+    assert metadados == {"antes": 1, "depois": 1}
+    assert "Ensaio" not in str(metadados)
+
+
+def test_025_sair_de_master_limpa_o_vinculo(con: Any, admin: int) -> None:
+    pessoa = _criar_master_pelo_painel(admin, [_MASTER_DE_ENSAIO, "Outro Master Ensaio"])
+    db_usuarios.alterar_acesso(pessoa, perfil="consultoria", autor=admin)
+    restantes = con.execute(
+        "SELECT count(*) FROM usuario_masters WHERE id_usuario = %s", (pessoa,)
+    ).fetchone()[0]
+    assert restantes == 0
+    perfil = con.execute(
+        "SELECT p.nome_perfil FROM usuarios u JOIN perfis p ON p.id_perfil = u.id_perfil "
+        "WHERE u.id_usuario = %s",
+        (pessoa,),
+    ).fetchone()[0]
+    assert perfil == "consultoria"
+
+
+def test_025_virar_master_sem_vinculo_e_recusado_e_nada_muda(con: Any, admin: int) -> None:
+    pessoa = _pessoa_com_perfil(con, "consultoria")
+    with pytest.raises(ValueError, match="ao menos um master"):
+        db_usuarios.alterar_acesso(pessoa, perfil="master", autor=admin)
+    perfil = con.execute(
+        "SELECT p.nome_perfil FROM usuarios u JOIN perfis p ON p.id_perfil = u.id_perfil "
+        "WHERE u.id_usuario = %s",
+        (pessoa,),
+    ).fetchone()[0]
+    assert perfil == "consultoria"

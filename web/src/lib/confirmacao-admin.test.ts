@@ -4,6 +4,7 @@ import {
   loginConfere,
   montarConfirmacao,
   PERFIL_ADMINISTRADOR,
+  PERFIL_MASTER,
   relacaoEntrePerfis,
   rotuloPerfil,
 } from './confirmacao-admin'
@@ -376,5 +377,117 @@ describe('editar paises (DEC-081, Fase 2)', () => {
     expect(c.apoio.join(' ')).toContain('De Brasil para Brasil, Argentina.')
     expect(c.loginParaDigitar).toBeNull()
     expect(c.gravidade).toBe('media')
+  })
+})
+
+describe('o perfil Master (DEC-087) e o vínculo com master franquia (emenda 1)', () => {
+  it('Master é o menor: cabe em Consultoria, Líderes e Growth, e não em Expansão', () => {
+    expect(relacaoEntrePerfis('master', 'consultoria')).toBe('sobe')
+    expect(relacaoEntrePerfis('master', 'lideres')).toBe('sobe')
+    expect(relacaoEntrePerfis('master', 'growth')).toBe('sobe')
+    expect(relacaoEntrePerfis('growth', 'master')).toBe('desce')
+    expect(relacaoEntrePerfis('consultoria', 'master')).toBe('desce')
+    expect(relacaoEntrePerfis('expansao', 'master')).toBe('muda-de-area')
+    expect(relacaoEntrePerfis('master', 'expansao')).toBe('muda-de-area')
+  })
+
+  it('o rótulo é "Master"', () => {
+    expect(rotuloPerfil('master')).toBe('Master')
+    expect(PERFIL_MASTER).toBe('master')
+  })
+
+  it('CRIAR um Master diz qual master e o que a pessoa vê', () => {
+    const c = montarConfirmacao({
+      tipo: 'criar',
+      nome: 'Dalmo',
+      login: 'dalmo_ribeiro',
+      email: 'd@u.com',
+      perfil: 'master',
+      masters: ['Dalmo Ribeiro'],
+    })
+    expect(c.apoio).toContain(
+      'Master franquia: Dalmo Ribeiro. Na Visão Executiva, a pessoa vê só as unidades desse master.',
+    )
+    expect(c.loginParaDigitar).toBeNull()
+  })
+
+  it('com dois masters, a frase vai para o plural', () => {
+    const c = montarConfirmacao({
+      tipo: 'criar',
+      nome: 'Dalmo',
+      login: 'dalmo_ribeiro',
+      email: 'd@u.com',
+      perfil: 'master',
+      masters: ['Dalmo Ribeiro', 'Luana Ribeiro'],
+    })
+    expect(c.apoio.join(' ')).toContain('Dalmo Ribeiro, Luana Ribeiro')
+    expect(c.apoio.join(' ')).toContain('desses masters.')
+  })
+
+  it('criar outro perfil não fala de master', () => {
+    const c = montarConfirmacao({
+      tipo: 'criar',
+      nome: 'Ana',
+      login: 'ana',
+      email: 'a@u.com',
+      perfil: 'consultoria',
+      masters: ['Dalmo Ribeiro'],
+    })
+    expect(c.apoio.join(' ')).not.toContain('Master franquia')
+  })
+
+  it('VIRAR Master leva os nomes escolhidos na confirmação', () => {
+    const c = montarConfirmacao({
+      tipo: 'trocar-perfil',
+      nome: 'Luana',
+      login: 'luana_ribeiro',
+      de: 'consultoria',
+      para: 'master',
+      mastersPara: ['Dalmo Ribeiro'],
+    })
+    expect(c.titulo).toBe('Luana vai passar de Consultoria para Master')
+    expect(c.apoio.join(' ')).toContain('Master franquia: Dalmo Ribeiro.')
+    expect(c.gravidade).toBe('alta') // é rebaixamento: perde a rede inteira
+  })
+
+  it('SAIR de Master avisa que o vínculo será removido', () => {
+    const c = montarConfirmacao({
+      tipo: 'trocar-perfil',
+      nome: 'Luana',
+      login: 'luana_ribeiro',
+      de: 'master',
+      para: 'consultoria',
+      mastersDe: ['Dalmo Ribeiro'],
+    })
+    expect(c.apoio).toContain('O vínculo com master franquia (Dalmo Ribeiro) será removido.')
+  })
+
+  it('trocar entre perfis que não são Master não fala de vínculo', () => {
+    const c = montarConfirmacao({
+      tipo: 'trocar-perfil',
+      nome: 'Ana',
+      login: 'ana',
+      de: 'expansao',
+      para: 'lideres',
+      mastersDe: [],
+    })
+    expect(c.apoio.join(' ')).not.toContain('master franquia')
+  })
+
+  it('editar o master mostra o de-para e o que a pessoa passa a ver', () => {
+    const c = montarConfirmacao({
+      tipo: 'editar-masters',
+      nome: 'Dalmo',
+      login: 'dalmo_ribeiro',
+      de: ['Dalmo Ribeiro'],
+      para: ['Dalmo Ribeiro', 'Luana Ribeiro'],
+    })
+    expect(c.eyebrow).toBe('Mudar o master franquia')
+    expect(c.titulo).toBe('Master franquia de Dalmo')
+    expect(c.apoio).toContain('De Dalmo Ribeiro para Dalmo Ribeiro, Luana Ribeiro.')
+    expect(c.apoio.join(' ')).toContain('desses masters')
+    expect(c.rotuloConfirmar).toBe('Salvar master de Dalmo')
+    expect(c.gravidade).toBe('media')
+    expect(c.loginParaDigitar).toBeNull()
   })
 })

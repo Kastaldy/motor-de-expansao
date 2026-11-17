@@ -5646,6 +5646,10 @@ class UsuarioAdminIn(BaseModel):
     #: Conjunto DESEJADO de paises (replace-all). None = nao mexe nos paises; lista vazia e'
     #: recusada (vazio = o bug do P4). A rota valida contra o catalogo antes de aplicar.
     paises: list[str] | None = None
+    #: Conjunto DESEJADO de masters franquia (replace-all, emenda 1 da DEC-087). None = nao mexe.
+    #: Cada nome e' conferido contra o `master_franquia` do cadastro e gravado na grafia de la'.
+    #: Perfil final `master` exige ao menos um; os outros perfis recusam qualquer um.
+    masters: list[str] | None = None
 
 
 class UsuarioNovoIn(BaseModel):
@@ -5665,6 +5669,38 @@ class UsuarioNovoIn(BaseModel):
     #: Paises que a pessoa podera' acessar (DEC-081). Vazio/ausente -> a rota assume o pais do
     #: processo (PERFIL.pais). A rota valida contra o catalogo da plataforma antes de criar.
     paises: list[str] = []
+    #: Masters franquia do perfil `master` (emenda 1 da DEC-087): obrigatorio para ele (ao menos
+    #: um), recusado para os outros. Conferido contra o cadastro, como no PATCH.
+    masters: list[str] = []
+
+
+def _masters_do_cadastro() -> list[str]:
+    """Os `master_franquia` do cadastro da rede, ordenados: as opcoes do campo de master.
+
+    `ler_cadastro` nunca levanta (sem o volume montado devolve cadastro vazio), entao sem
+    cadastro a lista vem vazia e todo nome pedido e' recusado -- o lado fechado.
+    """
+    return rede_cadastro.valores_distintos(_rede_cadastro(), "master_franquia")
+
+
+def _masters_na_grafia_do_cadastro(pedidos: list[str]) -> list[str]:
+    """Cada nome pedido trocado pela GRAFIA DO CADASTRO; 422 para o que o cadastro nao tem.
+
+    Casa sem caixa e sem espaco (`_chave_master`, a MESMA chave do recorte da Visao Executiva):
+    gravar a grafia de la' faz o vinculo casar com as unidades, e recusar o nome inexistente
+    impede o master de nascer vendo a carteira vazia por um erro de digitacao. Nome em branco
+    e' ignorado; o conjunto que sobrar passa pelas regras de perfil em `usuarios`.
+    """
+    por_chave = {_chave_master(nome): nome for nome in _masters_do_cadastro()}
+    resolvidos: list[str] = []
+    for nome in pedidos:
+        chave = _chave_master(nome)
+        if not chave:
+            continue
+        if chave not in por_chave:
+            raise HTTPException(422, f"Master não encontrado no cadastro: {nome.strip()}.")
+        resolvidos.append(por_chave[chave])
+    return resolvidos
 
 
 class MinhaSenhaIn(BaseModel):
@@ -5894,6 +5930,10 @@ def acessos_usuarios_listar(
         # (o pais DESTE processo). Data-driven: o front nao hardcoda sigla (DEC-047).
         "paises_disponiveis": _paises_disponiveis(),
         "pais_padrao": PERFIL.pais,
+        # Opcoes do campo "Master franquia" do perfil `master` (emenda 1 da DEC-087): os nomes do
+        # cadastro da rede, na grafia de la'. Vazia sem cadastro montado -- e ai' o servidor
+        # recusa qualquer nome, entao a tela nao oferece nada que seria negado.
+        "masters_disponiveis": _masters_do_cadastro(),
     }
 
 
@@ -5915,10 +5955,22 @@ def acessos_usuarios_alterar(
     _exigir_admin_acessos(remote_user)
     from motor_expansao.db import usuarios as db_usuarios
 
-    if body.perfil is None and body.ativo is None and body.paises is None:
-        raise HTTPException(422, "Informe `perfil`, `ativo`, `paises`, ou uma combinação.")
+    if (
+        body.perfil is None
+        and body.ativo is None
+        and body.paises is None
+        and body.masters is None
+    ):
+        raise HTTPException(
+            422, "Informe `perfil`, `ativo`, `paises`, `masters`, ou uma combinação."
+        )
     if body.paises is not None:
         _recusar_pais_fora_do_catalogo(body.paises)
+    # `masters` so' segue quando veio: ausente = nao mexer no vinculo (mas quem SAI de master o
+    # perde do mesmo jeito, em `alterar_acesso`). Os nomes vao na grafia do cadastro.
+    extra: dict[str, Any] = {}
+    if body.masters is not None:
+        extra["masters"] = _masters_na_grafia_do_cadastro(body.masters)
 
     eu = _identidade_do_admin(remote_user)
     try:
@@ -5928,6 +5980,7 @@ def acessos_usuarios_alterar(
             ativo=body.ativo,
             paises=body.paises,
             autor=eu.id_usuario,
+            **extra,
         )
     except Exception as erro:  # noqa: BLE001 - traduzido logo abaixo
         raise _erro_de_usuarios(erro) from erro
@@ -5958,6 +6011,11 @@ def acessos_usuarios_criar(
     # catalogo da plataforma, com mensagem amigavel em vez do 500 cru do CHECK do banco.
     paises = body.paises or [PERFIL.pais]
     _recusar_pais_fora_do_catalogo(paises)
+    # O vinculo com master(s) (emenda 1 da DEC-087) na grafia do cadastro; as regras de perfil
+    # (master exige, os outros recusam) sao de `usuarios.criar`.
+    extra: dict[str, Any] = {}
+    if body.masters:
+        extra["masters"] = _masters_na_grafia_do_cadastro(body.masters)
     try:
         criado = db_usuarios.criar(
             login=body.login,
@@ -5966,6 +6024,7 @@ def acessos_usuarios_criar(
             perfil=body.perfil,
             paises=paises,
             autor=eu.id_usuario,
+            **extra,
         )
     except Exception as erro:  # noqa: BLE001 - traduzido logo abaixo
         raise _erro_de_usuarios(erro) from erro
@@ -12024,13 +12083,15 @@ _ROTULO_OUTRA_ULTRA = "Outra unidade Ultra"
 
 
 def _chave_master(valor: object) -> str:
-    """Nome de master para COMPARAR: sem espaço nas pontas e sem caixa.
+    """Nome de master para COMPARAR: sem espaço nas pontas, espaços internos colapsados, sem caixa.
 
-    O vínculo é digitado por quem cria o usuário e o cadastro é editado na tela: "Dalmo
-    Ribeiro" e "dalmo ribeiro " são a mesma pessoa, e um recorte vazio por causa de caixa
-    pareceria ao master que ele não tem unidade nenhuma.
+    O vínculo é escolhido na aba Acessos e o cadastro é editado na tela: "Dalmo
+    Ribeiro" e "dalmo  ribeiro " são a mesma pessoa, e um recorte vazio por causa de caixa
+    pareceria ao master que ele não tem unidade nenhuma. Colapsar os espaços internos (emenda 1
+    da DEC-087) acompanha o `usuarios._normalizar_masters`, que grava o nome assim: sem isto, um
+    espaço duplo no cadastro faria o vínculo gravado nunca casar com a unidade.
     """
-    return str(valor or "").strip().casefold()
+    return " ".join(str(valor or "").split()).casefold()
 
 
 def _identidade_da_rede(remote_user: str | None) -> Any:
