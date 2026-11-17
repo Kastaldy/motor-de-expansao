@@ -42,6 +42,7 @@ import {
   linhaDaRede,
   narrativaDoRecorte,
   ordenarUnidades,
+  rotuloDaMetrica,
   rotuloMesCompetencia,
   temTotalDaRede,
   tituloDaCelula,
@@ -205,6 +206,9 @@ export default function ExecutiveScreen({
   }, [])
   useEffect(() => () => observador.current?.disconnect(), [])
   const carteiraFolgada = larguraCarteira === 0 || larguraCarteira >= LARGURA_CARTEIRA_FOLGADA
+  // Período com mês FECHADO: o churn é o Churn Médio (DEC-088) e os rótulos trocam juntos —
+  // KPI, coluna da carteira, linha da rede e tooltip do mapa.
+  const churnMedio = Boolean(carteira?.periodo.churn_medio)
 
   const query = useMemo(
     () => ({
@@ -417,6 +421,12 @@ export default function ExecutiveScreen({
     () => destaquesDoRecorte(carteira?.unidades ?? [], baseDestaque),
     [carteira, baseDestaque],
   )
+  // Unidades fora do SSS SÓ pela rampa de abertura no ano-base (DEC-088). A base zero vem
+  // somada em `unidades_rampa` e sai aqui: loja madura sem faturamento não está em rampa.
+  const emRampaSss = Math.max(
+    (carteira?.sss.unidades_rampa ?? 0) - (carteira?.sss.unidades_base_zero ?? 0),
+    0,
+  )
 
   function limparRecorte() {
     setUf('')
@@ -478,36 +488,40 @@ export default function ExecutiveScreen({
         ajuda: 'Faturamento dos 13 meses fechados (inclui o mesmo mês do ano anterior)',
         render: (u) => <SparklineSvg valores={u.sparkline} largura={carteiraFolgada ? 62 : 40} />,
       },
-      ...COLUNAS_METRICA.map<Coluna<RedeUnidade>>((c) => ({
-        chave: c.chave,
-        rotulo: c.rotulo,
-        largura: carteiraFolgada ? c.folgada : c.apertada,
-        alinhamento: 'right',
-        ajuda: `${c.rotulo} — clique para ordenar. Passe o mouse na célula para ver ranking e % vs média da rede.`,
-        render: (u) => {
-          const m = u.metricas[c.chave]
-          const leitura = lerDelta(m, c.bomSubindo, METRICAS_EM_PONTOS.has(c.chave))
-          // A contagem entra ao lado do percentual, em peso menor: o percentual continua
-          // sendo o que ordena a leitura, e o absoluto diz o TAMANHO do problema.
-          const contagem = c.contagem ? u.metricas[c.contagem]?.atual : null
-          return (
-            <span
-              title={tituloDaCelula(c.rotulo, m, c.formato)}
-              style={{ display: 'inline-flex', flexDirection: 'column', alignItems: 'flex-end', gap: 2 }}
-            >
-              <span className="num" style={{ font: '600 12px/1 var(--f-num)', color: 'var(--tx-strong)', whiteSpace: 'nowrap' }}>
-                {formatarMetrica(m?.atual, c.formato)}
-                {contagem !== null && contagem !== undefined && (
-                  <span style={{ font: '500 10.5px/1 var(--f-num)', color: 'var(--tx-muted)' }}>
-                    {' '}({num(contagem)})
-                  </span>
-                )}
+      ...COLUNAS_METRICA.map<Coluna<RedeUnidade>>((c) => {
+        // "Churn Médio" com mês fechado no período, "Churn" no mês em curso (DEC-088).
+        const rotulo = rotuloDaMetrica(c.chave, c.rotulo, churnMedio)
+        return {
+          chave: c.chave,
+          rotulo,
+          largura: carteiraFolgada ? c.folgada : c.apertada,
+          alinhamento: 'right',
+          ajuda: `${rotulo} — clique para ordenar. Passe o mouse na célula para ver ranking e % vs média da rede.`,
+          render: (u) => {
+            const m = u.metricas[c.chave]
+            const leitura = lerDelta(m, c.bomSubindo, METRICAS_EM_PONTOS.has(c.chave))
+            // A contagem entra ao lado do percentual, em peso menor: o percentual continua
+            // sendo o que ordena a leitura, e o absoluto diz o TAMANHO do problema.
+            const contagem = c.contagem ? u.metricas[c.contagem]?.atual : null
+            return (
+              <span
+                title={tituloDaCelula(rotulo, m, c.formato)}
+                style={{ display: 'inline-flex', flexDirection: 'column', alignItems: 'flex-end', gap: 2 }}
+              >
+                <span className="num" style={{ font: '600 12px/1 var(--f-num)', color: 'var(--tx-strong)', whiteSpace: 'nowrap' }}>
+                  {formatarMetrica(m?.atual, c.formato)}
+                  {contagem !== null && contagem !== undefined && (
+                    <span style={{ font: '500 10.5px/1 var(--f-num)', color: 'var(--tx-muted)' }}>
+                      {' '}({num(contagem)})
+                    </span>
+                  )}
+                </span>
+                <Delta leitura={leitura} tamanho={9.5} />
               </span>
-              <Delta leitura={leitura} tamanho={9.5} />
-            </span>
-          )
-        },
-      })),
+            )
+          },
+        }
+      }),
       {
         chave: 'resumo',
         rotulo: 'Diagnóstico',
@@ -523,13 +537,13 @@ export default function ExecutiveScreen({
           ),
       },
     ],
-    [carteiraFolgada],
+    [carteiraFolgada, churnMedio],
   )
 
   // Sem o total no payload (perfil master, DEC-087), a linha é só a média: a troca
   // Média | Total nem aparece.
   const comTotalDaRede = temTotalDaRede(carteira?.rede_inteira)
-  const linhaRede = linhaDaRede(carteira?.rede_inteira, comTotalDaRede ? leituraRede : 'media')
+  const linhaRede = linhaDaRede(carteira?.rede_inteira, comTotalDaRede ? leituraRede : 'media', churnMedio)
   const celulaDaLinhaRede = (c: Coluna<RedeUnidade>) => {
     if (!linhaRede) return null
     if (c.chave === 'nome') {
@@ -888,7 +902,7 @@ export default function ExecutiveScreen({
                     }}
                   >
                     <div style={{ font: '600 10.5px/1.2 var(--f-ui)', color: 'var(--kpi-rotulo)' }}>
-                      {k.rotulo}
+                      {rotuloDaMetrica(k.chave, k.rotulo, churnMedio)}
                     </div>
                     <div
                       className="num"
@@ -1041,6 +1055,7 @@ export default function ExecutiveScreen({
                       centro={carteira.centro}
                       bbox={carteira.bbox}
                       iconeUltra={carteira.ultra_icon}
+                      churnMedio={churnMedio}
                       tema={tema}
                       onUnidade={(id) => {
                         const u = unidades.find((x) => x.id === id)
@@ -1076,8 +1091,15 @@ export default function ExecutiveScreen({
                   <Glass style={{ flexShrink: 0, padding: '14px 16px' }}>
                     <Rotulo>Mesma base, ano a ano (SSS)</Rotulo>
                     <div style={{ font: '400 10.5px/1.5 var(--f-ui)', color: 'var(--tx-muted)', marginBottom: 10 }}>
-                      {carteira.sss.unidades} unidades presentes nos dois períodos. Comparar total
-                      contra total infla o crescimento numa rede que abre lojas.
+                      {carteira.sss.unidades}{' '}
+                      {carteira.sss.unidades === 1 ? 'unidade presente' : 'unidades presentes'} nos dois períodos
+                      {carteira.sss.maturacao_min_meses
+                        ? `, com ${carteira.sss.maturacao_min_meses} meses ou mais de operação no ano-base`
+                        : ''}
+                      {emRampaSss > 0
+                        ? ` (${emRampaSss} em rampa no ano-base ${emRampaSss === 1 ? 'fica' : 'ficam'} fora)`
+                        : ''}
+                      . Comparar total contra total infla o crescimento numa rede que abre lojas.
                     </div>
                     {(['faturamento', 'ativos'] as const).map((chave) => {
                       const m = carteira.sss.metricas?.[chave]
@@ -1200,6 +1222,7 @@ export default function ExecutiveScreen({
                   expandido={destaquesAbertos}
                   onExpandir={setDestaquesAbertos}
                   onUnidade={abrirFicha}
+                  maturacaoMeses={carteira.sss.maturacao_min_meses}
                 />
               </div>
               <div style={{ ...TRILHO_PAINEL, display: 'grid' }}>

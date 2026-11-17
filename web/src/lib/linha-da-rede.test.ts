@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 
-import { chaveDaQuery, linhaDaRede, temTotalDaRede } from './exec'
+import { chaveDaQuery, lerDelta, linhaDaRede, temTotalDaRede } from './exec'
 import type { RedeLinhaRede } from './types'
 
 const REDE: RedeLinhaRede = {
@@ -32,6 +32,16 @@ describe('linhaDaRede — média e total da rede na Carteira', () => {
     expect(l?.metricas.churn_pct.delta_pct).toBe(-2)
   })
 
+  it('com mês fechado no período, o total diz que o churn é o Churn Médio (DEC-088)', () => {
+    // O churn do total passa a ser a média dos pontos mensais da rede: dizer "churn
+    // ponderado" seria mentir. O NPS continua ponderado.
+    const l = linhaDaRede(REDE, 'total', true)
+    expect(l?.detalhe).toBe('92 unidades · Churn Médio dos meses fechados, NPS ponderado')
+    expect(linhaDaRede(REDE, 'total', false)?.detalhe).toBe('92 unidades · churn e NPS ponderados')
+    // A média por unidade não muda de detalhe.
+    expect(linhaDaRede(REDE, 'media', true)?.detalhe).toBe('por unidade · 90 comparáveis')
+  })
+
   it('ranking e % vs média não existem para a própria rede', () => {
     const m = linhaDaRede(REDE, 'media')?.metricas.churn_pct
     expect(m).toMatchObject({ rank: null, rank_total: null, vs_media_pct: null })
@@ -39,6 +49,18 @@ describe('linhaDaRede — média e total da rede na Carteira', () => {
 
   it('servidor sem o campo: sem linha (não inventa a média no cliente)', () => {
     expect(linhaDaRede(undefined, 'media')).toBeNull()
+  })
+
+  it('a seta em pontos da linha lê o `delta_pontos` da mesma cesta, não atual − M-1', () => {
+    // Média de 5,2 contra M-1 de 5,0 com a unidade nova só de um lado: na mesma cesta o
+    // churn CAIU 0,1 ponto, embora `atual - m1` dê +0,2.
+    const rede: RedeLinhaRede = {
+      ...REDE,
+      media: { ...REDE.media, churn_pct: { atual: 5.2, m1: 5.0, delta_pct: -2, delta_pontos: -0.1 } },
+    }
+    const m = linhaDaRede(rede, 'media')?.metricas.churn_pct
+    expect(m?.delta_pontos).toBe(-0.1)
+    expect(lerDelta(m, false, true)).toMatchObject({ modo: 'pontos', subiu: false, bom: true })
   })
 })
 

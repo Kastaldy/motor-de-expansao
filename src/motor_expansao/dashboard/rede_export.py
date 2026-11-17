@@ -151,10 +151,35 @@ def _celula(valor: object) -> str:
     return texto
 
 
+def _churn_medio(payload: Mapping[str, Any]) -> bool:
+    """O periodo da carteira tem mes FECHADO, e o churn e' o Churn Medio (DEC-088)?
+
+    E' o servidor que diz (`periodo.churn_medio`): o export nao refaz a conta de quais meses
+    fecharam. Payload sem o campo (servidor anterior, ou a ficha) le como `False`.
+    """
+    return bool((payload.get("periodo") or {}).get("churn_medio"))
+
+
+def rotulo_do_churn(payload: Mapping[str, Any]) -> str:
+    """"Churn Médio" quando o periodo tem mes fechado; "Churn" no mes em curso (DEC-088).
+
+    Nunca "mensal": a decisao do Felipe (17/11/2026) foi esta dupla de rotulos, e e' a
+    mesma da tela (`rotuloDoChurn`, `web/src/lib/exec.ts`).
+    """
+    return "Churn Médio" if _churn_medio(payload) else "Churn"
+
+
+def _rotulo_da_metrica(chave: str, rotulo: str, payload: Mapping[str, Any]) -> str:
+    if chave == "churn_pct":
+        return f"{rotulo_do_churn(payload)} %"
+    return rotulo
+
+
 def _linhas_carteira(payload: Mapping[str, Any]) -> tuple[list[str], list[list[str]]]:
     """Cabecalho + linhas do export tabular, a partir do payload da carteira."""
     cabecalho = [rotulo for _, rotulo in COLUNAS_CARTEIRA]
-    for _, rotulo in METRICAS_CARTEIRA:
+    for chave, rotulo_base in METRICAS_CARTEIRA:
+        rotulo = _rotulo_da_metrica(chave, rotulo_base, payload)
         cabecalho += [rotulo, f"{rotulo} (M-1)", f"{rotulo} (ranking)", f"{rotulo} (% vs média)"]
 
     linhas: list[list[str]] = []
@@ -293,9 +318,11 @@ def carteira_pdf(payload: Mapping[str, Any]) -> bytes:
         (86.0, "Maturidade", "L"),
         (92.0, "Faturamento", "R"),
         (62.0, "Ativos", "R"),
-        (56.0, "Churn", "R"),
+        # 64, e nao 56: "Churn Médio" em negrito 8,5 mede ~52 pt e nao cabia nos 50 uteis.
+        # Os 8 saem do diagnostico, que ja' corta o resumo por caractere.
+        (64.0, rotulo_do_churn(payload), "R"),
         (48.0, "NPS", "R"),
-        (206.0, "Diagnóstico", "L"),
+        (198.0, "Diagnóstico", "L"),
     ]
     for inicio in range(0, max(len(unidades), 1), _LINHAS_POR_PAGINA):
         bloco = unidades[inicio : inicio + _LINHAS_POR_PAGINA]
@@ -320,9 +347,9 @@ def carteira_pdf(payload: Mapping[str, Any]) -> bytes:
                     (86.0, str(unidade.get("coorte_rotulo", ""))[:14], "L"),
                     (92.0, _br(_valor(metricas, "faturamento")), "R"),
                     (62.0, _br(_valor(metricas, "ativos")), "R"),
-                    (56.0, _br(_valor(metricas, "churn_pct"), 1), "R"),
+                    (64.0, _br(_valor(metricas, "churn_pct"), 1), "R"),
                     (48.0, _br(_valor(metricas, "nps"), 0), "R"),
-                    (206.0, resumo[:74], "L"),
+                    (198.0, resumo[:74], "L"),
                 ],
                 cor=COR_SEVERIDADE.get(severidade, CINZA_TEXTO),
             )
@@ -341,7 +368,13 @@ def _cartoes_da_rede(pdf: UltraPDF, payload: Mapping[str, Any]) -> None:
     cartoes = [
         ("Faturamento no período", "R$ " + _br(_valor(kpis, "faturamento")), "acumulado até o dia"),
         ("Alunos ativos", _br(_valor(kpis, "ativos")), ""),
-        ("Churn", _br(_valor(kpis, "churn_pct"), 1) + "%", "média ponderada"),
+        # O apoio diz COMO o numero foi feito, e muda com ele: no Churn Medio e' a media dos
+        # pontos mensais (DEC-088); no mes em curso, a media ponderada por recorrentes.
+        (
+            rotulo_do_churn(payload),
+            _br(_valor(kpis, "churn_pct"), 1) + "%",
+            "média dos meses fechados" if _churn_medio(payload) else "média ponderada",
+        ),
         ("Receita por recorrente", "R$ " + _br(_valor(kpis, "receita_por_recorrente"), 2), ""),
         ("NPS", _br(_valor(kpis, "nps"), 1), f"meta {int(payload.get('meta_nps', 60))}"),
     ]
@@ -663,29 +696,66 @@ def _pagina_de_graficos_da_rede(
 
     sss = payload.get("sss") or {}
     if sss.get("disponivel") and sss.get("metricas"):
-        faturamento = sss["metricas"].get("faturamento") or {}
-        variacao = faturamento.get("var_pct")
         pdf.set_text_color(*CINZA_TEXTO)
         pdf.set_font("Helvetica", "", 9)
-        pdf.set_xy(36, 424)
-        pdf.cell(
-            PAGINA_LARGURA - 72,
-            12,
-            # O denominador entra junto de propósito. "18 unidades, +9%" sozinho é lido
-            # como o crescimento da carteira inteira; o que o SSS mede é a parte dela que
-            # já existia um ano atrás, e o resto ficou de fora porque abrir loja não é
-            # crescer. Desde 2026-08 o SSS acompanha os filtros da tela, então este texto
-            # fala do RECORTE impresso, não da rede.
-            ascii_seguro(
-                f"Mesma base ano a ano (SSS): {sss.get('unidades', 0)} de "
-                f"{sss.get('unidades_recorte', sss.get('unidades', 0))} unidades do recorte "
-                f"estavam abertas nos dois períodos; faturamento "
-                f"{'+' if (variacao or 0) >= 0 else ''}{_br(variacao, 1)}% contra "
-                f"{sss.get('competencia_base', '')}."
-            ),
-        )
+        for indice, texto in enumerate(linhas_do_sss(sss)):
+            pdf.set_xy(36, 424 + 13 * indice)
+            pdf.cell(PAGINA_LARGURA - 72, 12, ascii_seguro(texto))
 
     rodape(pdf, _texto_do_rodape(payload))
+
+
+def linhas_do_sss(sss: Mapping[str, Any]) -> list[str]:
+    """As linhas do SSS no PDF da carteira: o número com a base dele e, se houver, quem
+    ficou de fora e por quê. Lê SÓ o payload — a regra é do servidor (`_rede_sss`).
+
+    O denominador entra junto de propósito. "18 unidades, +9%" sozinho é lido como o
+    crescimento da carteira inteira; o que o SSS mede é a parte dela que já existia um ano
+    atrás, e o resto ficou de fora porque abrir loja não é crescer. Desde 2026-08 o SSS
+    acompanha os filtros da tela, então este texto fala do RECORTE impresso, não da rede.
+
+    Desde a DEC-088 quem estava na rampa de abertura no ano-base também fica fora, e a
+    segunda linha separa as duas razões: "não existia" e "estava em rampa" são leituras
+    diferentes para o time. Payload antigo, sem os campos novos, sai como antes.
+    """
+    faturamento = (sss.get("metricas") or {}).get("faturamento") or {}
+    variacao = faturamento.get("var_pct")
+    unidades = int(sss.get("unidades", 0) or 0)
+    meses = sss.get("maturacao_min_meses")
+    maturidade = f", com {meses} meses ou mais de operação no ano-base" if meses else ""
+    rotulo = "Mesma base ano a ano (SSS)"
+    linhas = [
+        f"{rotulo}: {unidades} de "
+        f"{sss.get('unidades_recorte', unidades)} unidades do recorte estavam abertas nos "
+        f"dois períodos{maturidade}; faturamento "
+        f"{'+' if (variacao or 0) >= 0 else ''}{_br(variacao, 1)}% contra "
+        f"{sss.get('competencia_base', '')}."
+    ]
+
+    fora = int(sss.get("unidades_fora", 0) or 0)
+    base_zero = int(sss.get("unidades_base_zero", 0) or 0)
+    rampa = max(int(sss.get("unidades_rampa", 0) or 0) - base_zero, 0)
+    partes: list[str] = []
+    if fora and meses:
+        partes.append(
+            f"{fora} não existia há um ano (ou não operou o período inteiro)"
+            if fora == 1
+            else f"{fora} não existiam há um ano (ou não operaram o período inteiro)"
+        )
+    if rampa and meses:
+        partes.append(
+            f"{rampa} {'estava' if rampa == 1 else 'estavam'} nos {meses} primeiros meses de "
+            "operação no ano-base (rampa de abertura)"
+        )
+    if base_zero:
+        partes.append(f"{base_zero} sem faturamento no ano-base")
+    if partes:
+        linhas.append(
+            "Fora da conta: "
+            + (partes[0] if len(partes) == 1 else ", ".join(partes[:-1]) + " e " + partes[-1])
+            + "."
+        )
+    return linhas
 
 
 def _pagina_de_graficos_da_ficha(pdf: UltraPDF, payload: Mapping[str, Any]) -> None:

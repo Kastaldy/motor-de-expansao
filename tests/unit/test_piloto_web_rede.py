@@ -16,6 +16,8 @@ Chama as funcoes de rota DIRETO (sem TestClient), como o resto da suite do pilot
 from __future__ import annotations
 
 import ast
+import csv
+import io
 import json
 import sys
 from pathlib import Path
@@ -996,6 +998,8 @@ def test_periodo_anterior_preserva_a_ancora(rede_anual: Path) -> None:
         "fim": "2026-07-31",
         "dias": 31,
         "mes_inteiro": True,
+        # julho já fechou na base (que vai até 03/08): o churn é o Churn Médio (DEC-088).
+        "churn_medio": True,
     }
     assert inteiro["periodo_anterior"] == {"inicio": "2026-06-01", "fim": "2026-06-30"}
 
@@ -1213,3 +1217,383 @@ def test_linha_da_rede_inteira_media_e_total(rede: Path) -> None:
     # Total = KPI do topo sem filtro (soma para volume, taxa ponderada para churn e NPS).
     for chave in linha["total"]:
         assert linha["total"][chave] == completa["kpis"][chave]
+
+
+# ---------------------------------------------------------------------------
+# Churn Médio (DEC-088): período com mês FECHADO não acumula o churn
+# ---------------------------------------------------------------------------
+
+#: out/2025 (a base de novembro) a out/2026 inteiros + 17 dias de novembro/2026 (em curso).
+_MESES_UM_ANO: tuple[tuple[int, int], ...] = (
+    (2025, 10),
+    (2025, 11),
+    (2025, 12),
+    *((2026, m) for m in range(1, 12)),
+)
+_DOZE_MESES = ["2025-11", "2025-12"] + [f"2026-{m:02d}" for m in range(1, 11)]
+
+
+def _base_um_ano() -> pd.DataFrame:
+    """Três unidades, com recorrentes e cancelados que mudam mês a mês.
+
+    * ANTIGA X e ANTIGA Y operam a série inteira (inauguradas em 2020 e 2021).
+    * NOVA Z inaugura em 15/03/2026 e só tem dado a partir daí: março é o mês de abertura
+      (sem base de churn) e, olhado de abril, o período anterior NÃO foi inteiro.
+    """
+    perfis = [
+        ("ANTIGA X", "01/01/2020", None, 1_000.0, 25.0, 40.0, 7.0, 4),
+        ("ANTIGA Y", "01/01/2021", None, 500.0, 10.0, 30.0, 5.0, 3),
+        ("NOVA Z", "15/03/2026", (2026, 3), 300.0, 20.0, 10.0, 2.0, 5),
+    ]
+    linhas: list[dict[str, object]] = []
+    for nome, inauguracao, desde, pag0, pag_passo, canc0, canc_passo, ciclo in perfis:
+        for ordem, (ano, numero_mes) in enumerate(_MESES_UM_ANO):
+            if desde is not None and (ano, numero_mes) < desde:
+                continue
+            dias = mes_sintetico(
+                nome,
+                ano,
+                numero_mes,
+                uf="SP",
+                master="ULTRA",
+                inauguracao=inauguracao,
+                dias=17 if (ano, numero_mes) == (2026, 11) else None,
+                cumulativas={
+                    "faturamento": 200_000.0 + 1_000.0 * ordem,
+                    "faturamento_sem_agregador": 180_000.0,
+                    "cancelados": canc0 + canc_passo * (ordem % ciclo),
+                    "visitas": 200.0,
+                    "convertidos": 100.0,
+                    "novos_alunos": 60.0,
+                    "vendas": 70.0,
+                },
+                snapshots={
+                    "pagantes": pag0 + pag_passo * ordem,
+                    "ativos_total": pag0 + pag_passo * ordem + 200.0,
+                    "alunos_gympass": 100.0,
+                    "alunos_totalpass": 100.0,
+                    "NPS": 60.0 + ordem,
+                    "em_cobranca": 50.0,
+                    "inadimplente": 40.0,
+                    "treino_ativo": 50.0,
+                },
+            )
+            if (ano, numero_mes) == (2026, 3) and desde == (2026, 3):
+                # Abriu no dia 15: nada antes disso.
+                dias = [d for d in dias if int(str(d["data"])[:2]) >= 15]
+            linhas += dias
+    return pd.DataFrame(linhas)
+
+
+@pytest.fixture
+def rede_um_ano(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    """App apontado para a base de um ano (até 17/11/2026), sem planilha do Financeiro."""
+    staging = tmp_path / "staging"
+    staging.mkdir(parents=True)
+    _base_um_ano().to_parquet(staging / "growth_api_historico.parquet")
+    cadastro_dir = tmp_path / "cadastro"
+    cadastro_dir.mkdir()
+    rede_cadastro.gravar_cadastro(
+        rede_cadastro.Cadastro(versao=1, atualizado_em="2026-11-17T00:00:00+00:00", unidades={}),
+        cadastro_dir,
+    )
+    monkeypatch.setattr(pilot, "STAGING_DIR", staging)
+    monkeypatch.setattr(pilot, "GROWTH_PARQUET", staging / "growth_api_historico.parquet")
+    monkeypatch.setattr(pilot, "ULTRA_PERF_PARQUET", staging / "nao_existe.parquet")
+    monkeypatch.setattr(pilot, "ULTRA_MAPEADAS_PARQUET", staging / "tambem_nao.parquet")
+    monkeypatch.setattr(pilot, "FATURAMENTO_FINANCEIRO_PARQUET", staging / "sem_planilha.parquet")
+    monkeypatch.setattr(pilot, "CADASTRO_DIR", cadastro_dir)
+    _limpar_caches()
+    yield tmp_path
+    _limpar_caches()
+
+
+def _churn_mensal_da_unidade(unidade_id: str, meses: list[str]) -> list[float]:
+    """O churn de cada mês pelo fechamento MENSAL da tela (o dos pontos da série)."""
+    cheio = pilot._rede_fechamento()
+    linhas = cheio[(cheio["unidade_id"] == unidade_id) & cheio["competencia"].isin(meses)]
+    return [float(v) for v in pd.to_numeric(linhas["churn_pct"], errors="coerce").dropna()]
+
+
+def test_churn_medio_de_doze_meses_e_a_media_dos_pontos_do_grafico(rede_um_ano: Path) -> None:
+    """O defeito: 12 meses davam ~70% de churn na rede real (cancelados de um ano sobre a
+    base de um mês). O KPI passa a ser a MÉDIA dos 12 pontos do gráfico logo abaixo, e a
+    célula de cada unidade, a média do churn de cada mês fechado dela."""
+    payload = pilot._rede_carteira_payload(inicio="2025-11-01", fim="2026-10-31")
+    assert payload["periodo"]["churn_medio"] is True
+
+    indices = [payload["serie_meses"].index(m) for m in _DOZE_MESES]
+    pontos = [payload["series"]["churn_pct"][i] for i in indices]
+    assert None not in pontos, "a série tem de ter os 12 pontos, senão o teste não prova nada"
+    kpi = payload["kpis"]["churn_pct"]["atual"]
+    assert kpi == pytest.approx(sum(pontos) / 12, abs=0.006)
+    assert kpi < 10.0, "a conta antiga, acumulada, dava várias vezes isto"
+    # A linha da rede (total) é o mesmo KPI, sem filtro.
+    assert payload["rede_inteira"]["total"]["churn_pct"] == payload["kpis"]["churn_pct"]
+
+    cheio = pilot._rede_fechamento()
+    for unidade in payload["unidades"]:
+        mensais = _churn_mensal_da_unidade(unidade["id"], _DOZE_MESES)
+        assert unidade["metricas"]["churn_pct"]["atual"] == pytest.approx(
+            sum(mensais) / len(mensais), abs=0.051
+        ), unidade["nome"]
+        # `cancelados` segue sendo o TOTAL do período (o número entre parênteses).
+        do_ano = cheio[(cheio["unidade_id"] == unidade["id"]) & cheio["competencia"].isin(_DOZE_MESES)]
+        assert unidade["metricas"]["cancelados"]["atual"] == pytest.approx(
+            float(pd.to_numeric(do_ano["cancelados"]).sum()), abs=0.5
+        )
+
+
+def test_churn_medio_compara_com_a_mesma_conta_na_janela_anterior(rede_um_ano: Path) -> None:
+    """jul-out/2026 contra a janela anterior de mesmo tamanho (28/02 a 30/06): dos dois
+    lados, a média dos pontos mensais dos meses fechados (mar-jun contra jul-out).
+
+    O `atual` é a rede inteira (os pontos do gráfico). A comparação é na cesta que operou o
+    anterior INTEIRO: NOVA Z abriu em 15/03, depois do início dele, e fica fora dos dois
+    lados dela -- a mesma regra da seta de cada unidade.
+    """
+    payload = pilot._rede_carteira_payload(inicio="2026-07-01", fim="2026-10-31")
+    assert payload["periodo_anterior"] == {"inicio": "2026-02-28", "fim": "2026-06-30"}
+
+    serie = dict(zip(payload["serie_meses"], payload["series"]["churn_pct"], strict=True))
+    agora = [serie[f"2026-{m:02d}"] for m in (7, 8, 9, 10)]
+    kpi = payload["kpis"]["churn_pct"]
+    assert kpi["atual"] == pytest.approx(sum(agora) / 4, abs=0.006)
+
+    cheio = pilot._rede_fechamento()
+    antigas = ["antiga-x-sp", "antiga-y-sp"]
+    cesta_agora = pilot._rede_churn_medio(cheio, antigas, [f"2026-{m:02d}" for m in (7, 8, 9, 10)])
+    cesta_antes = pilot._rede_churn_medio(cheio, antigas, [f"2026-{m:02d}" for m in (3, 4, 5, 6)])
+    assert kpi["m1"] == pytest.approx(cesta_antes, abs=0.006)
+    assert kpi["delta_pct"] == pytest.approx(
+        100.0 * (cesta_agora - cesta_antes) / cesta_antes, abs=0.15
+    )
+    assert kpi["delta_pontos"] == pytest.approx(cesta_agora - cesta_antes, abs=0.011)
+
+
+def test_janela_que_atravessa_a_virada_sem_mes_fechado_segue_a_conta_de_hoje(
+    rede_um_ano: Path,
+) -> None:
+    """17/10 a 16/11 não contém mês inteiro: churn = cancelados / base do início, como antes,
+    e a tela rotula só "Churn" (sem a nota do Churn Médio)."""
+    payload = pilot._rede_carteira_payload(inicio="2026-10-17", fim="2026-11-16")
+    assert payload["periodo"]["churn_medio"] is False
+    assert pilot._NOTA_CHURN_MEDIO not in payload["notas"]
+
+    bruto = pilot._rede_periodo("2026-10-17", "2026-11-16")["atual"].set_index("unidade_id")
+    for unidade in payload["unidades"]:
+        linha = bruto.loc[unidade["id"]]
+        esperado = 100.0 * float(linha["cancelados"]) / float(linha["pagantes_inicio"])
+        assert unidade["metricas"]["churn_pct"]["atual"] == pytest.approx(esperado, abs=0.051)
+    assert payload["kpis"]["churn_pct"]["atual"] == pilot._num(
+        pilot._wavg(bruto["churn_pct"], bruto["pagantes"]), 2
+    )
+
+
+def test_mes_civil_fechado_sai_identico_a_conta_de_hoje(rede_um_ano: Path) -> None:
+    """Outubro inteiro: média de UM mês = o churn do mês, na unidade e no KPI."""
+    payload = pilot._rede_carteira_payload(mes="2026-10")
+    assert payload["periodo"]["churn_medio"] is True
+    bruto = pilot._rede_mes("2026-10")["atual"].set_index("unidade_id")
+    for unidade in payload["unidades"]:
+        linha = bruto.loc[unidade["id"]]
+        conta_de_hoje = 100.0 * float(linha["cancelados"]) / float(linha["pagantes_inicio"])
+        assert unidade["metricas"]["churn_pct"]["atual"] == pytest.approx(conta_de_hoje, abs=0.051)
+        assert float(linha["churn_meses"]) == 1.0
+    # O KPI antigo: média ponderada por recorrentes do quadro do mês.
+    antigo = 100.0 * (bruto["churn_pct"] / 100.0 * bruto["pagantes"]).sum() / bruto["pagantes"].sum()
+    assert payload["kpis"]["churn_pct"]["atual"] == pytest.approx(antigo, abs=0.006)
+
+
+def test_unidade_inaugurada_na_janela_fica_fora_do_ranking_e_da_media(rede_um_ano: Path) -> None:
+    """NOVA Z abriu em 15/03/2026, dentro dos doze meses: o churn dela é a média só dos
+    meses COM base (abril a outubro, 7), e ela não entra no ranking nem na média da rede."""
+    payload = pilot._rede_carteira_payload(inicio="2025-11-01", fim="2026-10-31")
+    por_id = {u["id"]: u for u in payload["unidades"]}
+    nova = por_id["nova-z-sp"]
+    assert nova["comparavel"] is False
+    churn = nova["metricas"]["churn_pct"]
+    assert churn["rank"] is None and churn["vs_media_pct"] is None
+
+    bruto = pilot._rede_periodo("2025-11-01", "2026-10-31")["atual"].set_index("unidade_id")
+    assert float(bruto.loc["nova-z-sp", "churn_meses"]) == 7.0
+    mensais = _churn_mensal_da_unidade("nova-z-sp", _DOZE_MESES)
+    assert len(mensais) == 7
+    assert churn["atual"] == pytest.approx(sum(mensais) / 7, abs=0.051)
+
+    for antiga in ("antiga-x-sp", "antiga-y-sp"):
+        assert por_id[antiga]["metricas"]["churn_pct"]["rank_total"] == 2
+    linha = payload["rede_inteira"]
+    assert linha["n_comparaveis"] == 2
+    media_antigas = (
+        float(bruto.loc["antiga-x-sp", "churn_pct"]) + float(bruto.loc["antiga-y-sp", "churn_pct"])
+    ) / 2
+    assert linha["media"]["churn_pct"]["atual"] == pytest.approx(media_antigas, abs=0.051)
+
+
+def test_seta_some_quando_a_unidade_nao_operou_o_periodo_anterior_inteiro(
+    rede_um_ano: Path,
+) -> None:
+    """Abril contra março: NOVA Z abriu em 15/03 e a seta mediria a rampa de abertura. O M-1
+    fica (é real), o delta some e `m1_parcial` avisa a tela, que lê churn e NPS em pontos."""
+    abril = {u["id"]: u for u in pilot._rede_carteira_payload(mes="2026-04")["unidades"]}
+    nova = abril["nova-z-sp"]["metricas"]
+    assert nova["faturamento"]["m1"] is not None, "o M-1 continua no quarteto"
+    for chave, quarteto in nova.items():
+        assert quarteto["delta_pct"] is None, chave
+        assert quarteto.get("m1_parcial") is True, chave
+    antiga = abril["antiga-x-sp"]["metricas"]
+    assert all("m1_parcial" not in q for q in antiga.values())
+    assert antiga["churn_pct"]["delta_pct"] is not None
+
+    # Maio contra abril: abril ela operou inteiro, a seta volta.
+    maio = {u["id"]: u for u in pilot._rede_carteira_payload(mes="2026-05")["unidades"]}
+    assert "m1_parcial" not in maio["nova-z-sp"]["metricas"]["churn_pct"]
+    assert maio["nova-z-sp"]["metricas"]["faturamento"]["delta_pct"] is not None
+
+
+_ANTIGAS = ["antiga-x-sp", "antiga-y-sp"]
+
+
+def _nova_z_com_nps_baixo(raiz: Path) -> None:
+    """A base de um ano com NOVA Z em NPS 20 (as antigas seguem em 60 + mês): sem a
+    diferença, a cesta não muda o NPS e o teste não provaria nada."""
+    base = _base_um_ano()
+    base.loc[base["unidade"] == "NOVA Z", "NPS"] = 20.0
+    base.to_parquet(raiz / "staging" / "growth_api_historico.parquet")
+    _limpar_caches()
+
+
+def test_kpi_em_pontos_compara_na_mesma_cesta_com_inauguracao_na_janela(
+    rede_um_ano: Path,
+) -> None:
+    """Achado A da revisão da DEC-088: churn e NPS variam em PONTOS na tela, e a tela
+    contava `atual - m1` -- `atual` com a unidade inaugurada em março, `m1` sem ela. O NPS da
+    rede "caía" 9 pontos num mês em que as mesmas lojas SUBIRAM 1. O servidor manda a
+    variação pronta, na mesma cesta (`delta_pontos`)."""
+    _nova_z_com_nps_baixo(rede_um_ano)
+    marco = pilot._rede_carteira_payload(mes="2026-03")
+    nps = marco["kpis"]["nps"]
+    # Antigas: 64 em fevereiro, 65 em março.
+    assert nps["m1"] == pytest.approx(64.0)
+    assert nps["delta_pontos"] == pytest.approx(1.0, abs=0.011)
+    assert nps["atual"] - nps["m1"] < -1.0, "sem a unidade nova no atual o teste não prova nada"
+
+    churn = marco["kpis"]["churn_pct"]
+    cheio = pilot._rede_fechamento()
+    esperado = pilot._rede_churn_medio(cheio, _ANTIGAS, ["2026-03"]) - pilot._rede_churn_medio(
+        cheio, _ANTIGAS, ["2026-02"]
+    )
+    assert churn["delta_pontos"] == pytest.approx(esperado, abs=0.011)
+
+
+def test_cesta_do_agregado_exige_o_periodo_anterior_inteiro(rede_um_ano: Path) -> None:
+    """Achado B: a cesta dos KPIs e da linha da rede era só "presente nos dois períodos".
+    Em abril, NOVA Z está nos dois, mas abriu em 15/03 -- e a seta da rede media a rampa
+    dela contra uma janela em que mal existia. Agora vale o mesmo gate da seta por unidade."""
+    _nova_z_com_nps_baixo(rede_um_ano)
+    payload = pilot._rede_carteira_payload(mes="2026-04")
+    contexto = pilot._rede_mes("2026-04")
+    m1 = contexto["m1"]
+    assert "nova-z-sp" in m1.index, "premissa: ela tem dado no anterior"
+    indexado = contexto["atual"].set_index("unidade_id")
+    assert sorted(pilot._rede_cesta_do_anterior(indexado, m1)) == _ANTIGAS
+
+    kpis = payload["kpis"]
+    # NPS: só as antigas no M-1 (65), e a mesma cesta dos dois lados (66 - 65).
+    assert kpis["nps"]["m1"] == pytest.approx(65.0)
+    assert kpis["nps"]["delta_pontos"] == pytest.approx(1.0, abs=0.011)
+    # Churn Médio: abril contra março, só nas antigas.
+    cheio = pilot._rede_fechamento()
+    antes = pilot._rede_churn_medio(cheio, _ANTIGAS, ["2026-03"])
+    agora = pilot._rede_churn_medio(cheio, _ANTIGAS, ["2026-04"])
+    assert kpis["churn_pct"]["m1"] == pytest.approx(antes, abs=0.006)
+    assert kpis["churn_pct"]["delta_pontos"] == pytest.approx(agora - antes, abs=0.011)
+    # Volume: o M-1 é a soma da cesta, sem o meio mês de NOVA Z.
+    soma_antigas = float(pd.to_numeric(m1.loc[_ANTIGAS, "faturamento"]).sum())
+    assert kpis["faturamento"]["m1"] == pytest.approx(soma_antigas, abs=0.01)
+
+    # Linha da rede (média por unidade): NOVA Z é comparável em abril, mas fica fora da cesta.
+    media = payload["rede_inteira"]["media"]["nps"]
+    assert payload["rede_inteira"]["n_comparaveis"] == 3
+    assert media["m1"] == pytest.approx(65.0)
+    assert media["delta_pontos"] == pytest.approx(1.0, abs=0.011)
+    # O total da linha segue sendo o KPI.
+    assert payload["rede_inteira"]["total"]["nps"] == kpis["nps"]
+
+
+def test_janela_sem_mes_fechado_compara_com_a_conta_da_janela_anterior(rede_um_ano: Path) -> None:
+    """Achado C: "05/10 a 17/11" não tem mês fechado (conta da janela), mas a anterior,
+    "22/08 a 04/10", contém setembro inteiro -- e lia o Churn Médio de setembro. A seta
+    comparava duas contas. A anterior segue o modo da atual."""
+    payload = pilot._rede_carteira_payload(inicio="2026-10-05", fim="2026-11-17")
+    assert payload["periodo"]["churn_medio"] is False
+    assert payload["periodo_anterior"] == {"inicio": "2026-08-22", "fim": "2026-10-04"}
+
+    contexto = pilot._rede_periodo("2026-10-05", "2026-11-17")
+    assert contexto["meses_churn_anterior"] == []
+    m1 = contexto["m1"]
+    assert m1["churn_meses"].isna().all(), "a anterior não pode ter virado Churn Médio"
+    for unidade in payload["unidades"]:
+        linha = m1.loc[unidade["id"]]
+        conta_da_janela = 100.0 * float(linha["cancelados"]) / float(linha["pagantes_inicio"])
+        assert float(linha["churn_pct"]) == pytest.approx(conta_da_janela)
+        assert unidade["metricas"]["churn_pct"]["m1"] == pytest.approx(conta_da_janela, abs=0.051)
+        # E a conta da janela não é o churn de setembro (senão o teste não provaria nada).
+        setembro = _churn_mensal_da_unidade(unidade["id"], ["2026-09"])[0]
+        assert abs(conta_da_janela - setembro) > 0.5, unidade["nome"]
+
+
+def test_mes_fechado_contra_anterior_sem_mes_fechado_fica_sem_m1_de_churn(
+    rede_um_ano: Path,
+) -> None:
+    """O inverso de C: "30/09 a 31/10" tem outubro fechado, e a anterior, "29/08 a 29/09",
+    nenhum mês inteiro. Não existe Churn Médio do lado de lá: M-1 e seta do churn somem no
+    KPI, na linha da rede e em cada unidade (o CSV herda). As outras métricas comparam."""
+    payload = pilot._rede_carteira_payload(inicio="2026-09-30", fim="2026-10-31")
+    assert payload["periodo"]["churn_medio"] is True
+    assert payload["periodo_anterior"] == {"inicio": "2026-08-29", "fim": "2026-09-29"}
+
+    kpi = payload["kpis"]["churn_pct"]
+    assert kpi["atual"] is not None
+    assert kpi["m1"] is None and kpi["delta_pct"] is None and kpi["delta_pontos"] is None
+    media = payload["rede_inteira"]["media"]["churn_pct"]
+    assert media["m1"] is None and media["delta_pontos"] is None
+    assert payload["kpis"]["cancelados"]["m1"] is not None
+
+    for unidade in payload["unidades"]:
+        churn = unidade["metricas"]["churn_pct"]
+        assert churn["atual"] is not None
+        assert churn["m1"] is None and churn["delta_pct"] is None, unidade["nome"]
+        assert unidade["metricas"]["faturamento"]["m1"] is not None
+
+    texto = rede_export.carteira_csv(payload).decode("utf-8-sig")
+    cabecalho, *linhas = list(csv.reader(io.StringIO(texto), delimiter=";"))
+    coluna = cabecalho.index("Churn Médio % (M-1)")
+    assert linhas and all(linha[coluna] == "" for linha in linhas)
+
+
+def test_rotulos_e_nota_do_churn_medio_na_tela_e_nos_exports(rede_um_ano: Path) -> None:
+    """"Churn Médio" com mês fechado, "Churn" no mês em curso -- nunca "mensal"."""
+    ano = pilot._rede_carteira_payload(inicio="2025-11-01", fim="2026-10-31")
+    assert pilot._NOTA_CHURN_MEDIO in ano["notas"]
+    cabecalho = rede_export.carteira_csv(ano).decode("utf-8-sig").splitlines()[0]
+    assert "Churn Médio %" in cabecalho.split(";")
+    pdf = rede_export.carteira_pdf(ano)
+    assert b"Churn M\xe9dio" in pdf
+    assert b"m\xe9dia dos meses fechados" in pdf
+
+    em_curso = pilot._rede_carteira_payload(inicio="2026-11-01", fim="2026-11-17")
+    assert em_curso["periodo"]["churn_medio"] is False
+    assert pilot._NOTA_CHURN_MEDIO not in em_curso["notas"]
+    cabecalho = rede_export.carteira_csv(em_curso).decode("utf-8-sig").splitlines()[0]
+    assert "Churn %" in cabecalho.split(";")
+    assert "Churn Médio" not in cabecalho
+    pdf = rede_export.carteira_pdf(em_curso)
+    assert b"Churn M\xe9dio" not in pdf
+    assert b"m\xe9dia ponderada" in pdf
+
+    # A ficha é sempre um mês e não rotula Churn Médio: a nota não vai para ela.
+    ficha = pilot.rede_unidade("antiga-x-sp", mes="2026-10")
+    assert pilot._NOTA_CHURN_MEDIO not in ficha["notas"]
+    assert pilot._NOTA_CHURN_MEDIO.encode("latin-1", "replace").decode("latin-1") == pilot._NOTA_CHURN_MEDIO

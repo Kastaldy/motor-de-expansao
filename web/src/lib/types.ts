@@ -1370,11 +1370,21 @@ export interface RedeMetrica {
   rank_total: number | null
   /** distância da média da rede, em % */
   vs_media_pct: number | null
+  /** true quando a unidade NÃO operou o período anterior inteiro (DEC-088): o M-1 vem, mas
+   *  sem seta — churn e NPS variam em pontos (`atual - m1`), e só o `delta_pct` nulo não
+   *  bastaria para apagá-la. Ausente nos demais casos. */
+  m1_parcial?: boolean
+  /** Variação ABSOLUTA na mesma cesta dos dois lados (`atual_na_cesta - m1`), só nos
+   *  valores AGREGADOS (KPIs do topo e linha da rede). Ali `atual` é o recorte inteiro e
+   *  `m1` só a cesta que operou o anterior inteiro: `atual - m1` misturaria as duas, e a
+   *  seta em pontos (churn, NPS) mediria inauguração. Ausente no quarteto da unidade, em
+   *  que os dois lados já são a mesma unidade. */
+  delta_pontos?: number | null
 }
 
 export type RedeSeveridade = 'alta' | 'media' | 'ok' | 'sem_base'
 
-export type RedeValorDaLinha = Pick<RedeMetrica, 'atual' | 'm1' | 'delta_pct'>
+export type RedeValorDaLinha = Pick<RedeMetrica, 'atual' | 'm1' | 'delta_pct' | 'delta_pontos'>
 
 export interface RedeLinhaRede {
   media: Record<string, RedeValorDaLinha>
@@ -1429,16 +1439,24 @@ export interface RedeUnidade {
     faturamento: number | null
     variacao_pct: number | null
   }
-  /** SSS da unidade: o mesmo mês, um ano antes. `var_pct` nulo quando ela não operou o
-   *  mês inteiro nos dois períodos — a unidade continua na lista, dizendo por que não
-   *  entra na conta, em vez de sumir. Ausente na ficha, que é outro payload. */
+  /** SSS da unidade: o mesmo mês, um ano antes. `var_pct` nulo quando ela não entra na
+   *  base comparável — a unidade continua na lista, dizendo por que não entra na conta,
+   *  em vez de sumir. Ausente na ficha, que é outro payload. */
   sss?: {
     competencia_base: string
     faturamento: number | null
     ano_anterior: number | null
     var_pct: number | null
+    /** Por que ficou fora (DEC-088); `null` quando entra. Identificador, sem acento. */
+    motivo?: RedeSssMotivo | null
   }
 }
+
+/** Por que uma unidade que operou o período atual inteiro fica fora do SSS (DEC-088):
+ *  `sem_ano_anterior` não existia há um ano (ou não operou o período-base inteiro);
+ *  `em_rampa` existia, mas estava nos primeiros meses de operação no ano-base;
+ *  `base_zero` madura, mas sem faturamento no ano-base. */
+export type RedeSssMotivo = 'sem_ano_anterior' | 'em_rampa' | 'base_zero'
 
 export interface RedeRegua {
   rotulo: string
@@ -1454,12 +1472,21 @@ export interface RedeRegua {
 export interface RedeSss {
   disponivel: boolean
   competencia_base: string
-  /** unidades COMPARÁVEIS: as do recorte que operaram o mês inteiro nos dois períodos */
+  /** unidades COMPARÁVEIS: as do recorte que operaram o mês inteiro nos dois períodos e
+   *  já tinham `maturacao_min_meses` de operação no início do ano-base (DEC-088) */
   unidades: number
   /** quantas unidades o recorte tem no mês escolhido */
   unidades_recorte: number
-  /** `unidades_recorte - unidades` — as que não existiam há um ano e por isso não entram */
+  /** as que não existiam há um ano, ou não operaram o período inteiro em algum dos dois
+   *  lados. Fecha a conta: `unidades + unidades_fora + unidades_rampa = unidades_recorte` */
   unidades_fora: number
+  /** as que existiam e operaram o ano-base inteiro, mas ficaram fora SÓ pela maturação
+   *  ou por base zero (DEC-088). Ausente em payload anterior a ela = 0. */
+  unidades_rampa?: number
+  /** a parte de `unidades_rampa` que saiu por base zero (faturamento nulo no ano-base) */
+  unidades_base_zero?: number
+  /** meses de operação exigidos no dia 1º do período-base (3, DEC-088) */
+  maturacao_min_meses?: number
   metricas?: Record<string, { atual: number | null; ano_anterior: number | null; var_pct: number | null }>
   /** SSS mês a mês, alinhado a `serie_meses`. `unidades[i]` é a base comparável DAQUELE
    *  mês: ela muda de ponto para ponto, e sem ela uma alta de base pequena parece alta
@@ -1506,8 +1533,10 @@ export interface RedeCarteira {
    *  absolutas e o diagnóstico, que continuam mensais mesmo com período livre. */
   mes: string
   meses: string[]
-  /** o intervalo analisado, as duas pontas inclusive */
-  periodo: { inicio: string; fim: string; dias: number; mes_inteiro: boolean }
+  /** o intervalo analisado, as duas pontas inclusive. `churn_medio` (DEC-088): o período
+   *  tem ao menos um mês FECHADO e o churn é a média do churn desses meses — a tela rotula
+   *  "Churn Médio"; sem ele (mês em curso), "Churn". Opcional: servidor anterior não manda. */
+  periodo: { inicio: string; fim: string; dias: number; mes_inteiro: boolean; churn_medio?: boolean }
   /** contra o que as setas de variação comparam: mês inteiro -> mês anterior; qualquer
    *  outro recorte -> a janela imediatamente anterior de MESMO tamanho */
   periodo_anterior: { inicio: string; fim: string }

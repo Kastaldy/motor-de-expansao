@@ -16,6 +16,8 @@ import {
   ordenarUnidades,
   origemDaSerie,
   queryDaCarteira,
+  rotuloDaMetrica,
+  rotuloDoChurn,
   rotuloMesCompetencia,
   rotuloRanking,
   rotuloVsMedia,
@@ -127,6 +129,62 @@ describe('lerDelta', () => {
   it('sem M-1 não inventa variação', () => {
     expect(lerDelta(metrica({ atual: 10 }), true, true)).toBeNull()
     expect(lerDelta(undefined, true)).toBeNull()
+  })
+
+  it('período anterior que a unidade não operou inteiro: sem seta, nem em pontos (DEC-088)', () => {
+    // O M-1 vem (é real), mas a seta mediria a rampa de abertura. Churn e NPS leem em
+    // pontos (`atual - m1`), então só o `delta_pct` nulo não bastava para apagá-la.
+    const parcial = metrica({ atual: 9, m1: 6, delta_pct: null, m1_parcial: true })
+    expect(lerDelta(parcial, false, true)).toBeNull()
+    expect(lerDelta({ ...parcial, delta_pct: 50 }, true)).toBeNull()
+    // Sem a marca, a leitura em pontos segue como sempre.
+    expect(lerDelta(metrica({ atual: 9, m1: 6 }), false, true)).not.toBeNull()
+  })
+
+  it('valor agregado: a seta em pontos é a da MESMA cesta (`delta_pontos`), não atual − M-1', () => {
+    // KPI de NPS num mês de inauguração: `atual` tem a unidade nova (NPS baixo) e `m1` não.
+    // `atual - m1` dava -9 pontos (queda que não houve); na mesma cesta, subiu 1.
+    const kpi = metrica({ atual: 56, m1: 65, delta_pct: 1.5, delta_pontos: 1 })
+    const d = lerDelta(kpi, true, true)
+    expect(d).toMatchObject({ modo: 'pontos', subiu: true, bom: true })
+    expect(d?.valor).toBeCloseTo(1)
+    // Churn: mesma regra, com a direção invertida.
+    expect(lerDelta(metrica({ atual: 5.1, m1: 4.8, delta_pontos: -0.2 }), false, true)).toMatchObject({
+      subiu: false,
+      bom: true,
+    })
+  })
+
+  it('`delta_pontos` nulo do servidor: sem seta (não cai de volta em atual − M-1)', () => {
+    expect(lerDelta(metrica({ atual: 5.1, m1: 4.8, delta_pontos: null }), false, true)).toBeNull()
+  })
+
+  it('sem `delta_pontos` (quarteto da unidade, servidor anterior), a conta segue atual − M-1', () => {
+    const d = lerDelta(metrica({ atual: 9, m1: 6 }), false, true)
+    expect(d?.valor).toBeCloseTo(3)
+    // Fora das métricas em pontos, o `delta_pontos` não muda nada: a seta é o `delta_pct`.
+    expect(lerDelta(metrica({ delta_pct: -12, delta_pontos: 40_000 }), true)).toMatchObject({
+      modo: 'pct',
+      subiu: false,
+    })
+  })
+})
+
+describe('rótulo do churn (DEC-088)', () => {
+  it('"Churn Médio" com mês fechado no período, "Churn" no mês em curso', () => {
+    expect(rotuloDoChurn(true)).toBe('Churn Médio')
+    expect(rotuloDoChurn(false)).toBe('Churn')
+    // Servidor anterior ao campo: o rótulo de sempre.
+    expect(rotuloDoChurn(undefined)).toBe('Churn')
+  })
+
+  it('nunca "mensal", e só o churn muda de nome', () => {
+    for (const medio of [true, false]) {
+      expect(rotuloDaMetrica('churn_pct', 'Churn', medio).toLowerCase()).not.toContain('mensal')
+    }
+    expect(rotuloDaMetrica('churn_pct', 'Churn', true)).toBe('Churn Médio')
+    expect(rotuloDaMetrica('nps', 'NPS', true)).toBe('NPS')
+    expect(rotuloDaMetrica('faturamento', 'Faturamento', false)).toBe('Faturamento')
   })
 })
 
