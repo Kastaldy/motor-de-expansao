@@ -11186,23 +11186,53 @@ def _rede_sss(
 
     O que o filtro muda é só a CESTA somada. Ranking e "% vs média da rede" continuam
     saindo da rede inteira — mexer num filtro não pode mudar a posição de ninguém.
+
+    Desde a DEC-088 a "mesma loja" também precisa estar MADURA no ano-base: no mínimo
+    `SSS_MATURACAO_MIN_MESES` (3) de operação no dia 1º do período-base, e faturamento
+    maior que zero nele (`_rede_sss_cesta`). A unidade em rampa de abertura no ano-base
+    inflava o número: out/2026 da rede saía −0,7% com 69 unidades; com a regra, −3,0%
+    com 60.
+
+    As contas de quem ficou de fora são SEPARADAS e fecham com o recorte:
+    `unidades + unidades_fora + unidades_rampa == unidades_recorte`.
+
+    * `unidades_fora` — não existiam há um ano, ou não operaram o período inteiro em
+      algum dos dois lados (a semântica de sempre);
+    * `unidades_rampa` — existiam e operaram o ano-base inteiro, mas ficaram fora SÓ pela
+      maturação ou por base zero; `unidades_base_zero` é a parte delas que saiu pela base
+      zero (é rara, e a tela não pode chamá-la de rampa).
     """
     agora, antes = _rede_comparaveis(atual), _rede_comparaveis(ano_anterior)
     base_rotulo = _rede_rotulo_periodo(ano_anterior)
-    no_recorte = int(agora["unidade_id"].nunique()) if len(agora) else 0
+    cesta = _rede_sss_cesta(
+        atual, ano_anterior, _rede_inicio_do_quadro(ano_anterior), "operacao_periodo_cheio"
+    )
+    no_recorte = len(cesta)
     if ids is not None:
         alvo = set(ids)
         no_recorte = len(alvo)
-        agora = agora[agora["unidade_id"].isin(alvo)]
-        antes = antes[antes["unidade_id"].isin(alvo)]
-    comuns = sorted(set(agora["unidade_id"]) & set(antes["unidade_id"]))
+        cesta = cesta[cesta.index.isin(alvo)]
+    comuns = sorted(str(u) for u in cesta.index[cesta["motivo"].isna()])
+    rampa = int(cesta["motivo"].isin(_SSS_MOTIVOS_RAMPA).sum())
+    contagem = {
+        "competencia_base": base_rotulo,
+        "unidades": len(comuns),
+        # Quantas unidades o recorte tem e quantas ficaram DE FORA da base comparável.
+        # É o número que impede a leitura errada: "+6,2%" de 18 unidades não é o
+        # crescimento das 24 do consultor — as outras 6 nem existiam há um ano.
+        "unidades_recorte": no_recorte,
+        "unidades_fora": max(no_recorte - len(comuns) - rampa, 0),
+        "unidades_rampa": rampa,
+        "unidades_base_zero": int((cesta["motivo"] == _SSS_BASE_ZERO).sum()),
+        "maturacao_min_meses": rede_metricas.SSS_MATURACAO_MIN_MESES,
+        # Mostrado, nunca escondido: com 2 ou 3 unidades na base, uma só decide o sinal.
+        "base_pequena": 0 < len(comuns) < rede_metricas.SSS_BASE_PEQUENA_MIN,
+        "base_pequena_min": rede_metricas.SSS_BASE_PEQUENA_MIN,
+    }
     if not comuns:
         return {
             "disponivel": False,
-            "competencia_base": base_rotulo,
-            "unidades": 0,
-            "unidades_recorte": no_recorte,
-            "unidades_fora": no_recorte,
+            **contagem,
             "serie": {"meses": [], "var_pct": [], "unidades": []},
         }
 
@@ -11226,13 +11256,7 @@ def _rede_sss(
         }
     return {
         "disponivel": True,
-        "competencia_base": base_rotulo,
-        "unidades": len(comuns),
-        # Quantas unidades o recorte tem e quantas ficaram DE FORA da base comparável.
-        # É o número que impede a leitura errada: "+6,2%" de 18 unidades não é o
-        # crescimento das 24 do consultor — as outras 6 nem existiam há um ano.
-        "unidades_recorte": no_recorte,
-        "unidades_fora": max(no_recorte - len(comuns), 0),
+        **contagem,
         "metricas": metricas,
     }
 
@@ -11243,29 +11267,35 @@ def _rede_sss_por_unidade(
     """SSS de CADA unidade: o mesmo intervalo, um ano antes, unidade a unidade.
 
     O agregado responde "a carteira cresceu?"; esta lista responde "por causa de quem?".
-    A regra de entrada é a mesma do SSS do recorte — operou o período inteiro nos DOIS
-    intervalos —, então uma unidade sem base comparável aparece com `var_pct` nulo em vez
-    de sumir: quem lê a lista precisa saber que ela existe e por que não entra na conta.
+    A regra de entrada é a MESMA do SSS do recorte (`_rede_sss_cesta`), então uma unidade
+    sem base comparável aparece com `var_pct` nulo em vez de sumir: quem lê a lista
+    precisa saber que ela existe e por que não entra na conta. O porquê viaja em `motivo`
+    (identificador, sem acento; `None` quando ela entra):
+
+    * `sem_ano_anterior` — não existia há um ano, ou não operou o período-base inteiro;
+    * `em_rampa` — existia, mas estava nos primeiros meses de operação no ano-base;
+    * `base_zero` — madura, mas sem faturamento no ano-base.
     """
     base_rotulo = _rede_rotulo_periodo(ano_anterior)
-    agora = _rede_comparaveis(atual).set_index("unidade_id")
-    antes = _rede_comparaveis(ano_anterior).set_index("unidade_id")
-    fat_agora = pd.to_numeric(agora.get("faturamento"), errors="coerce")
-    fat_antes = pd.to_numeric(antes.get("faturamento"), errors="coerce")
+    cesta = _rede_sss_cesta(
+        atual, ano_anterior, _rede_inicio_do_quadro(ano_anterior), "operacao_periodo_cheio"
+    )
 
     saida: dict[str, dict[str, Any]] = {}
-    for unidade_id in agora.index:
-        valor = _numf(fat_agora.get(unidade_id))
-        passado = _numf(fat_antes.get(unidade_id))
+    for unidade_id, linha in cesta.iterrows():
+        valor = _numf(linha["faturamento"])
+        passado = _numf(linha["ano_anterior"])
+        motivo = linha["motivo"] if isinstance(linha["motivo"], str) else None
         saida[str(unidade_id)] = {
             "competencia_base": base_rotulo,
             "faturamento": _num(valor, 2),
             "ano_anterior": _num(passado, 2),
             "var_pct": (
                 _num(100.0 * (valor - passado) / passado, 1)
-                if (valor is not None and passado)
+                if (motivo is None and valor is not None and passado)
                 else None
             ),
+            "motivo": motivo,
         }
     return saida
 
@@ -11275,6 +11305,97 @@ def _rede_comparaveis(quadro: pd.DataFrame) -> pd.DataFrame:
     if not len(quadro):
         return quadro
     return quadro[quadro["operacao_periodo_cheio"].fillna(False).astype(bool)]
+
+
+#: Por que uma unidade que operou o período atual inteiro fica FORA do SSS. Identificadores
+#: (sem acento): a tela traduz cada um no próprio rótulo.
+_SSS_SEM_ANO_ANTERIOR = "sem_ano_anterior"
+_SSS_EM_RAMPA = "em_rampa"
+_SSS_BASE_ZERO = "base_zero"
+#: Os motivos que contam em `unidades_rampa`: a unidade existia e operou o ano-base
+#: inteiro, e mesmo assim não serve de base.
+_SSS_MOTIVOS_RAMPA: frozenset[str] = frozenset({_SSS_EM_RAMPA, _SSS_BASE_ZERO})
+
+
+def _rede_inicio_do_quadro(quadro: pd.DataFrame) -> pd.Timestamp:
+    """Dia 1º do período de um quadro de `fechamento_periodo` (NaT se ele vier vazio)."""
+    if not len(quadro) or "periodo_inicio" not in quadro.columns:
+        return pd.NaT
+    return pd.Timestamp(quadro["periodo_inicio"].iloc[0]).normalize()
+
+
+def _rede_sss_cesta(
+    agora: pd.DataFrame,
+    antes: pd.DataFrame,
+    inicio_base: pd.Timestamp,
+    coluna_cheio: str,
+) -> pd.DataFrame:
+    """A regra de entrada do SSS, UMA vez, para o agregado, a lista e a série (DEC-088).
+
+    `agora` e `antes` têm uma linha por unidade — o período atual e o MESMO período um ano
+    antes (o ano-base) —, e `coluna_cheio` é a flag de "operou a janela inteira" daquele
+    formato (`operacao_periodo_cheio` no intervalo livre, `operacao_mes_cheio` na série
+    mensal). Devolve, indexado por `unidade_id` e só com quem operou o período ATUAL
+    inteiro, `faturamento`, `ano_anterior` e `motivo` — `None` quando a unidade entra.
+
+    A unidade entra se, nesta ordem:
+
+    1. operou o ano-base inteiro (senão `sem_ano_anterior`, a regra de sempre);
+    2. já tinha `SSS_MATURACAO_MIN_MESES` de operação no dia 1º do ano-base, por DATA
+       (`rede_metricas.madura_no_inicio`; senão `em_rampa`);
+    3. faturou mais que zero no ano-base (senão `base_zero`: São Gonçalo Shopping entrava
+       com R$ 0 em set/2025 e somava o faturamento de hoje inteiro ao "crescimento").
+
+    A data de inauguração vem do período ATUAL, com o ano-base de reserva. O quadro do
+    ano-base apaga a data que cai depois do último dia dele (`_derivar_comuns`), então a
+    unidade com dado de pré-venda antes de abrir (Noroeste, 31/12/2024 com inauguração em
+    06/01/2025) chegava lá com a data VAZIA — e data vazia conta como madura.
+    """
+    colunas = {
+        "faturamento": pd.Series(dtype="float64"),
+        "ano_anterior": pd.Series(dtype="float64"),
+        "motivo": pd.Series(dtype="object"),
+    }
+    if not len(agora):
+        return pd.DataFrame(colunas)
+
+    def cheios(quadro: pd.DataFrame) -> pd.DataFrame:
+        if not len(quadro):
+            return pd.DataFrame(columns=["unidade_id", "inauguracao", "faturamento"]).set_index(
+                "unidade_id"
+            )
+        marca = quadro[coluna_cheio].fillna(False).astype(bool)
+        return quadro[marca].drop_duplicates("unidade_id").set_index("unidade_id")
+
+    atual, base = cheios(agora), cheios(antes)
+    if not len(atual):
+        return pd.DataFrame(colunas)
+
+    inauguracao = pd.to_datetime(atual["inauguracao"], errors="coerce")
+    inauguracao = inauguracao.fillna(
+        pd.to_datetime(base["inauguracao"], errors="coerce").reindex(atual.index)
+    )
+    operou_base = atual.index.isin(base.index) & (
+        inauguracao.isna() | (inauguracao <= inicio_base)
+    ).to_numpy()
+    madura = rede_metricas.madura_no_inicio(inauguracao, inicio_base).to_numpy()
+    fat_antes = pd.to_numeric(base["faturamento"], errors="coerce").reindex(atual.index)
+    com_base = (fat_antes > 0).to_numpy()
+
+    motivo = pd.Series(None, index=atual.index, dtype="object")
+    motivo[~operou_base] = _SSS_SEM_ANO_ANTERIOR
+    motivo[operou_base & ~madura] = _SSS_EM_RAMPA
+    motivo[operou_base & madura & ~com_base] = _SSS_BASE_ZERO
+    return pd.DataFrame(
+        {
+            "faturamento": pd.to_numeric(atual["faturamento"], errors="coerce"),
+            # Sem o ano-base inteiro, "ano anterior" não é a base de nada: fica vazio, como
+            # sempre ficou. Em rampa ou com base zero, o valor vai junto — é o que explica
+            # por que a unidade não entra.
+            "ano_anterior": fat_antes.where(operou_base),
+            "motivo": motivo,
+        }
+    )
 
 
 def _rede_rotulo_periodo(quadro: pd.DataFrame) -> str:
@@ -11304,39 +11425,39 @@ def _rede_sss_serie(
     comparável — as unidades do recorte que operaram o mês inteiro em `m` E em `m-12`.
     A cesta muda de um ponto para o outro, e é por isso que `unidades` viaja junto:
     sem ela, uma alta de base pequena parece uma alta da rede.
+
+    A regra de entrada é a do SSS do recorte (`_rede_sss_cesta`, DEC-088), com o ano-base
+    de CADA ponto: para o mês `m`, a maturação é medida no dia 1º de `m-12`.
     """
     if not meses or not len(ids):
         return {"meses": [], "var_pct": [], "unidades": []}
 
-    do_recorte = cheio[
-        cheio["unidade_id"].isin(set(ids)) & cheio["operacao_mes_cheio"].fillna(False).astype(bool)
-    ]
+    do_recorte = cheio[cheio["unidade_id"].isin(set(ids))]
     grupos = {str(mes): grupo for mes, grupo in do_recorte.groupby("competencia", observed=True)}
 
     variacoes: list[float | None] = []
     tamanhos: list[int] = []
     for mes in meses:
-        base = str(pd.Period(mes, freq="M") - 12)
-        agora, antes = grupos.get(mes), grupos.get(base)
+        base = pd.Period(mes, freq="M") - 12
+        agora, antes = grupos.get(mes), grupos.get(str(base))
         if agora is None or antes is None:
             variacoes.append(None)
             tamanhos.append(0)
             continue
-        comuns = set(agora["unidade_id"]) & set(antes["unidade_id"])
-        if not comuns:
+        cesta = _rede_sss_cesta(
+            agora, antes, base.to_timestamp(how="start"), "operacao_mes_cheio"
+        )
+        entram = cesta[cesta["motivo"].isna()]
+        if not len(entram):
             variacoes.append(None)
             tamanhos.append(0)
             continue
-        soma_agora = pd.to_numeric(
-            agora.loc[agora["unidade_id"].isin(comuns), "faturamento"], errors="coerce"
-        ).sum()
-        soma_antes = pd.to_numeric(
-            antes.loc[antes["unidade_id"].isin(comuns), "faturamento"], errors="coerce"
-        ).sum()
+        soma_agora = entram["faturamento"].sum()
+        soma_antes = entram["ano_anterior"].sum()
         variacoes.append(
             _num(100.0 * (soma_agora - soma_antes) / soma_antes, 1) if soma_antes else None
         )
-        tamanhos.append(len(comuns))
+        tamanhos.append(len(entram))
     return {"meses": meses, "var_pct": variacoes, "unidades": tamanhos}
 
 

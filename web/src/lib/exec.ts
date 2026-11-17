@@ -15,6 +15,7 @@ import type {
   RedeMetrica,
   RedeQuery,
   RedeSeveridade,
+  RedeSss,
   RedeUnidade,
 } from './types'
 import { brl, brlCurto, num, pct } from './format'
@@ -407,6 +408,115 @@ function contraMesBase(competenciaBase: string | undefined): string {
     : 'contra o mesmo mês do ano anterior'
 }
 
+/** Maturação mínima no ano-base quando o payload não a traz (servidor anterior à DEC-088).
+ *  O valor que vale é o do servidor, `sss.maturacao_min_meses`. */
+export const SSS_MATURACAO_PADRAO = 3
+
+/** Quantas unidades ficaram fora do SSS por CADA razão (DEC-088). `unidades_rampa` traz a
+ *  base zero dentro; aqui ela sai separada, porque unidade madura sem faturamento no
+ *  ano-base não está "em rampa" e a frase não pode chamá-la assim. */
+function contasForaDoSss(sss: RedeSss): { fora: number; rampa: number; baseZero: number; meses: number } {
+  const baseZero = sss.unidades_base_zero ?? 0
+  return {
+    fora: sss.unidades_fora ?? 0,
+    rampa: Math.max((sss.unidades_rampa ?? 0) - baseZero, 0),
+    baseZero,
+    meses: sss.maturacao_min_meses ?? SSS_MATURACAO_PADRAO,
+  }
+}
+
+/** As razões, na forma curta da narrativa, só as que têm unidade. */
+function clausulasForaDoSss(sss: RedeSss): { n: number; um: string; varios: string }[] {
+  const { fora, rampa, baseZero, meses } = contasForaDoSss(sss)
+  const naRampa = `na rampa de abertura (menos de ${meses} meses de operação no ano-base)`
+  return [
+    { n: fora, um: 'não existia há um ano', varios: 'não existiam há um ano' },
+    { n: rampa, um: `estava ${naRampa}`, varios: `estavam ${naRampa}` },
+    { n: baseZero, um: 'não faturou no ano-base', varios: 'não faturaram no ano-base' },
+  ].filter((c) => c.n > 0)
+}
+
+/**
+ * A frase do card "Crescemos ou só abrimos loja?" sobre quem ficou FORA da mesma base.
+ * `null` quando ninguém ficou.
+ *
+ * Sem unidade em rampa, é o texto de sempre ("As outras 9 não existiam há um ano…"). Com
+ * ela (DEC-088), a rampa aparece SEPARADA de "não existia": são leituras diferentes para o
+ * time — uma é loja nova, a outra é loja que existia, mas ainda não servia de base.
+ */
+export function foraDaBaseSss(sss: RedeSss): string | null {
+  const { fora, rampa, baseZero, meses } = contasForaDoSss(sss)
+  // "A outra"/"As outras N" só faz sentido quando alguém FICOU na base. Sem ninguém (o SSS
+  // indisponível), a frase fala só em números.
+  const outras = (sss.unidades ?? 0) > 0
+  const sujeito = (n: number) => (!outras ? num(n) : n === 1 ? 'A outra' : `As outras ${num(n)}`)
+  const frases: string[] = []
+
+  if (rampa > 0) {
+    const emRampa =
+      `${rampa === 1 ? 'ainda estava' : 'ainda estavam'} nos ${meses} primeiros meses de operação ` +
+      'no ano-base, a rampa de abertura,'
+    const fica = fora + rampa === 1 ? 'fica' : 'ficam'
+    if (fora > 0) {
+      const naoExistia =
+        fora === 1
+          ? '1 não existia há um ano (ou não operou o mês inteiro)'
+          : `${num(fora)} não existiam há um ano (ou não operaram o mês inteiro)`
+      frases.push(`${naoExistia} e ${num(rampa)} ${emRampa} e ${fica} fora da conta.`)
+    } else {
+      frases.push(`${sujeito(rampa)} ${emRampa} e ${fica} fora da conta.`)
+    }
+  } else if (fora > 0) {
+    frases.push(
+      fora === 1
+        ? `${sujeito(1)} não existia há um ano, ou não operou o mês inteiro nos dois períodos, e ` +
+            'por isso fica fora da conta.'
+        : `${sujeito(fora)} não existiam há um ano, ou não operaram o mês inteiro nos dois ` +
+            'períodos, e por isso ficam fora da conta.',
+    )
+  }
+
+  if (baseZero > 0) {
+    if (frases.length === 0) {
+      frases.push(
+        baseZero === 1
+          ? `${sujeito(1)} não faturou no ano-base e fica fora da conta.`
+          : `${sujeito(baseZero)} não faturaram no ano-base e ficam fora da conta.`,
+      )
+    } else {
+      frases.push(
+        baseZero === 1
+          ? 'Outra não faturou no ano-base e também fica fora.'
+          : `Outras ${num(baseZero)} não faturaram no ano-base e também ficam fora.`,
+      )
+    }
+  }
+  return frases.length > 0 ? frases.join(' ') : null
+}
+
+/** O aviso de base pequena do SSS (texto a aprovar). `null` quando a base não é pequena:
+ *  o número continua na tela de qualquer jeito — o aviso diz quanto ele pesa. */
+export function avisoBasePequenaSss(sss: RedeSss): string | null {
+  if (!sss.disponivel || !sss.base_pequena) return null
+  return `base pequena: ${num(sss.unidades)} ${plural(sss.unidades, 'unidade', 'unidades')}`
+}
+
+/**
+ * Por que uma unidade está em "Sem base comparável" no "quem puxa e quem segura".
+ *
+ * Na leitura ano a ano, a rampa (DEC-088) ganha o próprio rótulo — "não existia há um
+ * ano" seria falso para uma loja que existia, só ainda não servia de base. Os demais
+ * rótulos são os de sempre.
+ */
+export function motivoSemBase(u: RedeUnidade, base: BaseDoDestaque): string {
+  if (!u.comparavel) return 'unidade nova'
+  if (base === 'sss') {
+    if (u.sss?.motivo === 'em_rampa') return 'fora da base (em rampa)'
+    if (u.sss?.motivo === 'base_zero') return 'fora da base (sem faturamento no ano-base)'
+  }
+  return 'não operou o período inteiro há um ano'
+}
+
 /**
  * O período a que os números da primeira frase se referem.
  *
@@ -471,18 +581,27 @@ export function narrativaDoRecorte(carteira: RedeCarteira, rotuloRecorte: string
 
   const sss = carteira.sss
   if (!sss?.disponivel) {
+    // Com unidade em rampa no ano-base (DEC-088), "nenhuma operou o mês inteiro" seria
+    // falso: elas operaram, só não tinham idade para servir de base. A frase diz quem.
+    const clausulas = sss ? clausulasForaDoSss(sss) : []
     frases.push(
-      `Não há base comparável neste recorte ${contraMesBase(sss?.competencia_base)}: nenhuma ` +
-        'unidade operou o mês inteiro nos dois períodos, então o crescimento na mesma base ' +
-        'não é medido.',
+      sss && (sss.unidades_rampa ?? 0) > 0
+        ? `Não há base comparável neste recorte ${contraMesBase(sss.competencia_base)}: ` +
+            `${juntarComE(clausulas.map((c) => `${c.n} ${plural(c.n, c.um, c.varios)}`))}, ` +
+            'então o crescimento na mesma base não é medido.'
+        : `Não há base comparável neste recorte ${contraMesBase(sss?.competencia_base)}: nenhuma ` +
+            'unidade operou o mês inteiro nos dois períodos, então o crescimento na mesma base ' +
+            'não é medido.',
     )
   } else {
     // A base comparável é o que separa "crescemos" de "abrimos loja" — por isso ela
-    // aparece ANTES do número, e não como ressalva no fim da frase.
+    // aparece ANTES do número, e não como ressalva no fim da frase. A base pequena vai
+    // junto, no mesmo parêntese: o número aparece, mas quem lê sabe quanto ele pesa.
+    const pequena = sss.base_pequena ? '; base pequena' : ''
     const base =
       sss.unidades_recorte === 1
-        ? 'na mesma base (a única unidade do recorte)'
-        : `na mesma base (${sss.unidades} das ${sss.unidades_recorte} unidades)`
+        ? `na mesma base (a única unidade do recorte${pequena})`
+        : `na mesma base (${sss.unidades} das ${sss.unidades_recorte} unidades${pequena})`
     const contra = contraMesBase(sss.competencia_base)
     const variacao = sss.metricas?.faturamento?.var_pct ?? null
     let miolo: string
@@ -494,14 +613,16 @@ export function narrativaDoRecorte(carteira: RedeCarteira, rotuloRecorte: string
       const verbo = variacao > 0 ? 'cresce' : 'cai'
       miolo = `${maiusculaInicial(base)}, o faturamento ${verbo} ${pct(Math.abs(variacao), 1)} ${contra}`
     }
-    const fora =
-      sss.unidades_fora > 0
-        ? `; ${
-            sss.unidades_fora === 1
-              ? 'a outra não existia há um ano'
-              : `as outras ${sss.unidades_fora} não existiam há um ano`
-          }`
-        : ''
+    // Uma razão só: "a outra"/"as outras N", como sempre foi. Mais de uma (DEC-088): cada
+    // uma com o seu número — "31 não existiam há um ano e 9 estavam na rampa de abertura".
+    const clausulas = clausulasForaDoSss(sss)
+    let fora = ''
+    if (clausulas.length === 1) {
+      const [c] = clausulas
+      fora = `; ${c.n === 1 ? `a outra ${c.um}` : `as outras ${c.n} ${c.varios}`}`
+    } else if (clausulas.length > 1) {
+      fora = `; ${juntarComE(clausulas.map((c) => `${c.n} ${plural(c.n, c.um, c.varios)}`))}`
+    }
     frases.push(`${miolo}${fora}.`)
   }
 

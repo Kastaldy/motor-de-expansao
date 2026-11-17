@@ -1,7 +1,15 @@
 import type { ReactNode } from 'react'
 
 import type { BaseDoDestaque, DestaqueDoRecorte, DestaquesDoRecorte } from '../../lib/exec'
-import { origemDaSerie, rotuloMesCompetencia, rotuloMesCurto } from '../../lib/exec'
+import {
+  avisoBasePequenaSss,
+  foraDaBaseSss,
+  motivoSemBase,
+  origemDaSerie,
+  rotuloMesCompetencia,
+  rotuloMesCurto,
+  SSS_MATURACAO_PADRAO,
+} from '../../lib/exec'
 import { brl, brlCurto, num, pct, pctVar } from '../../lib/format'
 import type {
   RedeCoorteResumo,
@@ -179,14 +187,26 @@ export function CrescimentoComparavel({ sss }: { sss: RedeSss }) {
   const [medirSerie, larguraSerie] = useLargura()
 
   if (!sss.disponivel) {
+    // Com unidade em rampa no ano-base (DEC-088), "nenhuma operou o mês inteiro" seria
+    // falso: elas operaram, só não tinham idade para servir de base. Aí o card diz quem.
+    const emRampa = (sss.unidades_rampa ?? 0) > 0
     return (
       <Glass style={{ padding: '15px 17px', minWidth: 0 }}>
         <Rotulo>Crescemos ou só abrimos loja?</Rotulo>
         <div style={{ font: '400 11.5px/1.65 var(--f-ui)', color: 'var(--tx-narrative)' }}>
-          Nenhuma das {num(sss.unidades_recorte)} unidades deste recorte operou o mês inteiro
-          nos dois períodos (agora e em {base}). Sem base comparável não há crescimento a
-          medir: o total de hoje contra o total de um ano atrás mediria abertura de loja,
-          não desempenho.
+          {emRampa ? (
+            <>
+              Nenhuma das {num(sss.unidades_recorte)} unidades deste recorte entra na mesma base
+              contra {base}. {foraDaBaseSss(sss)}
+            </>
+          ) : (
+            <>
+              Nenhuma das {num(sss.unidades_recorte)} unidades deste recorte operou o mês inteiro
+              nos dois períodos (agora e em {base}).
+            </>
+          )}{' '}
+          Sem base comparável não há crescimento a medir: o total de hoje contra o total de um
+          ano atrás mediria abertura de loja, não desempenho.
         </div>
       </Glass>
     )
@@ -195,6 +215,11 @@ export function CrescimentoComparavel({ sss }: { sss: RedeSss }) {
   const faturamento = sss.metricas?.faturamento
   const variacao = faturamento?.var_pct ?? null
   const serie = sss.serie
+  const avisoPequena = avisoBasePequenaSss(sss)
+  const foraDaBase = foraDaBaseSss(sss)
+  // Régua da base pequena também no tooltip de cada mês da série: a cesta muda de ponto
+  // para ponto, e um mês com 3 unidades pesa diferente de um com 60.
+  const basePequenaMin = sss.base_pequena_min ?? 0
   // Pico em MÓDULO, com piso de 1 ponto: sem o piso, um ano inteiro variando 0,2% viraria
   // uma serra de barras cheias, e a leitura "o recorte está parado" se perderia.
   const pico = Math.max(
@@ -237,6 +262,22 @@ export function CrescimentoComparavel({ sss }: { sss: RedeSss }) {
         <span style={{ font: '400 11.5px/1.4 var(--f-ui)', color: 'var(--tx-label)' }}>
           de faturamento contra {base}
         </span>
+        {/* Base pequena (menos de 5 unidades): o número fica, e o aviso cola nele. Texto a
+            aprovar pelo Felipe. */}
+        {avisoPequena && (
+          <span
+            style={{
+              font: '600 10.5px/1 var(--f-ui)',
+              color: 'var(--warn-text)',
+              border: '1px solid var(--warn)',
+              borderRadius: 'var(--r-sm)',
+              padding: '3px 6px',
+              whiteSpace: 'nowrap',
+            }}
+          >
+            {avisoPequena}
+          </span>
+        )}
       </div>
 
       <div style={{ marginTop: 9, font: '400 11.5px/1.65 var(--f-ui)', color: 'var(--tx-narrative)' }}>
@@ -244,14 +285,7 @@ export function CrescimentoComparavel({ sss }: { sss: RedeSss }) {
           {num(sss.unidades)} de {num(sss.unidades_recorte)}
         </strong>{' '}
         unidades do recorte.
-        {sss.unidades_fora > 0 && (
-          <>
-            {' '}
-            {sss.unidades_fora === 1 ? 'A outra não existia' : `As outras ${num(sss.unidades_fora)} não existiam`}{' '}
-            há um ano, ou não operaram o mês inteiro nos dois períodos, e por isso{' '}
-            {sss.unidades_fora === 1 ? 'fica' : 'ficam'} fora da conta.
-          </>
-        )}
+        {foraDaBase && <> {foraDaBase}</>}
       </div>
 
       <div style={{ marginTop: 12, display: 'flex', flexDirection: 'column', gap: 7 }}>
@@ -300,7 +334,9 @@ export function CrescimentoComparavel({ sss }: { sss: RedeSss }) {
                   key={m}
                   title={`${rotuloMesCompetencia(m)}: ${
                     v === null ? 'sem base comparável' : sinalPct(v)
-                  } · ${num(n)} unidades na base daquele mês`}
+                  } · ${num(n)} unidades na base daquele mês${
+                    v !== null && n > 0 && n < basePequenaMin ? ' (base pequena)' : ''
+                  }`}
                   style={{ flex: 1, minWidth: 0 }}
                 >
                   <div
@@ -575,6 +611,7 @@ export function Destaques({
   expandido,
   onExpandir,
   onUnidade,
+  maturacaoMeses,
 }: {
   destaques: DestaquesDoRecorte
   base: BaseDoDestaque
@@ -582,6 +619,8 @@ export function Destaques({
   expandido: boolean
   onExpandir: (v: boolean) => void
   onUnidade: (u: RedeUnidade) => void
+  /** `sss.maturacao_min_meses` da carteira (DEC-088), para o rodapé dizer a regra inteira */
+  maturacaoMeses?: number
 }) {
   const { puxam, seguram, todas, semBase, competencia } = destaques
   const rotuloBase = competencia ? rotuloMesCompetencia(competencia) : null
@@ -627,7 +666,7 @@ export function Destaques({
       </div>
 
       {expandido ? (
-        <ListaCompleta itens={todas} semBase={semBase} onUnidade={onUnidade} />
+        <ListaCompleta itens={todas} semBase={semBase} base={base} onUnidade={onUnidade} />
       ) : (
         <div style={{ display: 'flex', gap: 18, flexWrap: 'wrap' }}>
           {/* Coluna vazia diz POR QUE está vazia, e a razão é diferente em cada caso: sem
@@ -679,7 +718,8 @@ export function Destaques({
           {base === 'sss' ? (
             <>
               Faturamento de cada unidade contra {rotuloBase ?? 'o mesmo mês do ano anterior'},
-              em base comparável: entra quem operou o mês inteiro nos dois períodos. É a
+              em base comparável: entra quem operou o mês inteiro nos dois períodos e já tinha{' '}
+              {maturacaoMeses ?? SSS_MATURACAO_PADRAO} meses de operação no início do ano-base. É a
               mesma regra do crescimento comparável do recorte, aberta unidade a unidade.
             </>
           ) : (
@@ -705,10 +745,12 @@ export function Destaques({
 function ListaCompleta({
   itens,
   semBase,
+  base,
   onUnidade,
 }: {
   itens: DestaqueDoRecorte[]
   semBase: RedeUnidade[]
+  base: BaseDoDestaque
   onUnidade: (u: RedeUnidade) => void
 }) {
   return (
@@ -769,7 +811,7 @@ function ListaCompleta({
                   {u.nome}
                 </span>
                 <span style={{ font: '400 10px/1 var(--f-ui)', color: 'var(--tx-muted)' }}>
-                  {u.comparavel ? 'não operou o período inteiro há um ano' : 'unidade nova'}
+                  {motivoSemBase(u, base)}
                 </span>
               </button>
             ))}
