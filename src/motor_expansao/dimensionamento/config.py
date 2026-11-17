@@ -139,6 +139,14 @@ V2_MINUTOS_ISOCRONA = 10
 # deixava as 3 unidades acima dele 25% abaixo do real. Igual ao topo do envelope `ln_m2`
 # dos coeficientes de hoje: na borda o ponto NAO e' extrapolacao (o envelope e' inclusivo).
 V2_TETO_M2 = 2800.0
+# PISO da area de 10 min de carro (DEC-086, emenda 1): abaixo disto a isocrona NAO mediu a
+# praca. O ponto ficou preso numa via interna (condominio logistico, parque industrial,
+# aeroporto) e a populacao que o modelo ve e' artefato: o modelo de praca nao estima a
+# demanda do ponto (a aba fica "sem projecao" e o simulador nao sugere). Medido na VPS em
+# 16/11/2026: as 13 coordenadas abaixo de 1 km2 (de 9.196) eram todas isocronas presas, com
+# 0,03 a 0,97 km2, contra a mediana de 15 km2 da lista; nenhuma passava de 2 km2 nem com as
+# penalidades de portao zeradas.
+V2_AREA_MIN_KM2 = 1.0
 # Predicado de "abre SEM agregador" (achado UNI-14, critica A3): a curva da rampa foi medida
 # em unidades que abriram COM agregador. Ate' a emenda de 21/10/2026 o modo v2 com share de
 # balcao >= este valor FORCAVA a reta; com o produto so' na curva isso deixou de valer (a

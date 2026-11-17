@@ -16,6 +16,8 @@ import {
   pctAluguelFat,
   projecaoPeloModelo,
   rsM2,
+  semProjecao,
+  textoSemProjecao,
 } from './imovel'
 import type { Oportunidade } from './types'
 import { AVISO_EXTRAPOLACAO_V2 } from './viabilidade-demanda-v2'
@@ -194,5 +196,37 @@ describe('projeção de faturamento: modelo de praça ou curva (DEC-086)', () =>
 
   it('a régua do aluguel segue o número servido, venha de onde vier', () => {
     expect(pctAluguelFat(praca({ aluguel: 30_000 }))).toBe(10)
+  })
+})
+
+describe('sem projeção: o modelo não estima o ponto (emenda 1 da DEC-086)', () => {
+  const sem = (extra: Partial<Oportunidade> = {}) =>
+    op({ fat_fonte: 'sem_projecao', fat_proj: null, alunos_p50: null, aluguel: 30_000, ...extra })
+
+  it('sem projeção não é o modelo nem a curva, e não tem faixa, aviso nem régua', () => {
+    expect(semProjecao(sem())).toBe(true)
+    expect(projecaoPeloModelo(sem())).toBe(false)
+    expect(faixaDoModelo(sem())).toBeNull()
+    expect(avisoDaProjecao(sem({ fat_extrapolacao: true }))).toBeNull()
+    expect(pctAluguelFat(sem())).toBeNull()
+    expect(semProjecao(op({ fat_fonte: 'praca', fat_proj: 1 }))).toBe(false)
+    expect(semProjecao(op({ fat_fonte: 'densidade', fat_proj: 1 }))).toBe(false)
+  })
+
+  it('a frase vem pronta do servidor (ela cita os limiares, que vivem lá)', () => {
+    const texto = 'Sem projeção: zona morta (população de captação abaixo de 5.000).'
+    expect(textoSemProjecao(sem({ fat_motivo: 'zona_morta', fat_motivo_texto: texto }))).toBe(texto)
+  })
+
+  it('sem a frase do servidor, a reserva por motivo; motivo desconhecido cai no genérico', () => {
+    expect(textoSemProjecao(sem({ fat_motivo: 'aguardando' }))).toMatch(/próxima madrugada/)
+    expect(textoSemProjecao(sem({ fat_motivo: 'area_pequena' }))).toMatch(/via interna/)
+    expect(textoSemProjecao(sem({ fat_motivo: 'novo' }))).toMatch(/não pôde ser calculado/)
+    expect(textoSemProjecao(sem())).toMatch(/não pôde ser calculado/)
+  })
+
+  it('com número, não há frase de sem projeção', () => {
+    expect(textoSemProjecao(op({ fat_fonte: 'praca', fat_proj: 1 }))).toBeNull()
+    expect(textoSemProjecao(op())).toBeNull()
   })
 })

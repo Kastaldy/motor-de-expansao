@@ -149,7 +149,7 @@ def test_entradas_saem_da_isocrona_de_10_min_pela_geometria(monkeypatch):
     assert entradas.pop_c10 == 1e5 and recorte["minutos"] == 10 and recorte["n_setores"] == 12
 
 
-def test_sugestao_devolve_faixa_alunos_flags_versao_e_token(coef, monkeypatch):
+def test_sugestao_devolve_faixa_alunos_flags_versao_e_token(coef, sem_catchment, monkeypatch):
     from motor_expansao.dimensionamento.entradas_c10 import EntradasC10
 
     monkeypatch.setenv("MOTOR_ROTAS_URL", "http://127.0.0.1:1")
@@ -164,6 +164,64 @@ def test_sugestao_devolve_faixa_alunos_flags_versao_e_token(coef, monkeypatch):
     assert r["coeficientes"]["sha256"] == coef.sha256 and r["token"].startswith("v2-")
     assert r["recorte"] == {"minutos": 10}
     assert r["entradas"]["renda_dom_c10"] == pytest.approx(5400.0)
+
+
+# --------------------------------------------------------------------------- dominio
+# Emenda 1 da DEC-086: fora do dominio do modelo (isocrona presa, zona morta) a sugestao e'
+# 400 com a frase, e a tela segue na faixa de comparaveis mostrando o porque.
+def test_isocrona_presa_e_400_sem_ler_setor_nenhum(monkeypatch):
+    from motor_expansao.api import service
+    from motor_expansao.dashboard import alcance_ponto
+
+    iso = SimpleNamespace(geometria=object(), area_km2=0.48, parametros={"minutos": 10})
+    monkeypatch.setattr(alcance_ponto, "isocrona_carro", lambda lat, lng, minutos: iso)
+    monkeypatch.setattr(service, "_resolver_e_carregar", lambda *a, **k: pytest.fail("leu setor"))
+    with pytest.raises(HTTPException) as exc:
+        pilot._entradas_c10_do_ponto(-20.17166, -40.23445)
+    assert exc.value.status_code == 400
+    assert exc.value.detail.startswith("O modelo de praça não estima a demanda deste ponto")
+    assert "via interna" in exc.value.detail
+
+
+def _sugestao_com_captacao(monkeypatch, pop, renda):
+    from motor_expansao.dimensionamento import catchment_batch
+    from motor_expansao.dimensionamento.entradas_c10 import EntradasC10
+
+    monkeypatch.setenv("MOTOR_ROTAS_URL", "http://127.0.0.1:1")
+    monkeypatch.setattr(
+        pilot, "_entradas_c10_do_ponto",
+        lambda lat, lng: (EntradasC10(3e5, 1e5, 1800.0, 40, "calibrada"), {"minutos": 10}),
+    )
+    monkeypatch.setattr(pilot, "_setores_para_catchment", lambda lat, lng: "SETORES")
+    monkeypatch.setattr(
+        catchment_batch, "calcular_catchment_unidade",
+        lambda lat, lng, setores, raio_km: {"pop_captacao": pop, "renda_per_capita_captacao": renda},
+    )
+    return pilot.demanda_v2(v2.DemandaV2In(**_CORPO))
+
+
+def test_zona_morta_e_400_com_a_mesma_regua_da_viabilidade(coef, monkeypatch):
+    with pytest.raises(HTTPException) as exc:
+        _sugestao_com_captacao(monkeypatch, 1_857.0, 1_600.0)
+    assert exc.value.status_code == 400
+    assert "zona morta (população de captação abaixo de 5.000)" in exc.value.detail
+    assert exc.value.detail.endswith("Informe a demanda.")
+
+
+def test_fora_da_zona_morta_a_sugestao_sai(coef, monkeypatch):
+    r = _sugestao_com_captacao(monkeypatch, 38_930.0, 1_600.0)
+    assert r["token"].startswith("v2-")
+
+
+def test_captacao_indisponivel_nao_veta_a_sugestao(coef, sem_catchment, monkeypatch):
+    from motor_expansao.dimensionamento.entradas_c10 import EntradasC10
+
+    monkeypatch.setenv("MOTOR_ROTAS_URL", "http://127.0.0.1:1")
+    monkeypatch.setattr(
+        pilot, "_entradas_c10_do_ponto",
+        lambda lat, lng: (EntradasC10(3e5, 1e5, 1800.0, 40, "calibrada"), {"minutos": 10}),
+    )
+    assert pilot.demanda_v2(v2.DemandaV2In(**_CORPO))["token"].startswith("v2-")
 
 
 # --------------------------------------------------------------------------- viabilidade

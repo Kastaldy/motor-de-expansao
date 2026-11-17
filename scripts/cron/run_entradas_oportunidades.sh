@@ -5,10 +5,13 @@
 #     pop_c10 / dom_c10 / renda_pc_c10 por coordenada -> entradas_c10.parquet
 #
 # O site aplica o modelo de praca (o mesmo do simulador) na leitura da lista; sem a
-# entrada do imovel, ele cai na curva de densidade. Este job so' calcula as entradas
-# que FALTAM (incremental pela coordenada em 5 casas): a 1a rodada leva ~1,2 h
-# (8.010 coordenadas x 0,54 s, medido em 13/11/2026), as seguintes so' os imoveis
-# novos de cada envio da lista. READ-ONLY sobre o M1 e sobre o `viaveis.parquet`:
+# entrada do imovel, ou fora do dominio do modelo (isocrona presa, zona morta), ele
+# fica SEM projecao (emenda 1 da DEC-086; a curva de densidade so' volta com a chave da
+# v2 desligada). Este job so' calcula as entradas que FALTAM (incremental pela
+# coordenada em 5 casas): a 1a rodada levou 1,0 h (9.196 coordenadas, 16/11/2026), as
+# seguintes so' os imoveis novos de cada envio da lista. Linha de versao antiga
+# (`VERSAO_CALCULO` subiu) e' refeita uma vez: o 1o lote depois de um deploy assim refaz
+# tudo (~1,3 h). READ-ONLY sobre o M1 e sobre o `viaveis.parquet`:
 # escreve SO' `data/oportunidades/entradas_c10.parquet`, por temporario + rename.
 #
 # SEM RESTART: o site compara mtime e tamanho da lista e das entradas a cada leitura
@@ -148,7 +151,7 @@ case "$JOB_RC" in
   3)
     _avisar <<EOF
 ⚠️ [Motor] Entradas do modelo de praça: o lote PAROU por falhas seguidas do serviço de rotas (Valhalla) ou de um insumo do cálculo (malha municipal, partição de setores). O motivo da última falha está no log (ultima_falha_do_servico).
-O que já foi calculado ficou salvo; os imóveis que faltam seguem na curva de densidade e entram na próxima noite.
+O que já foi calculado ficou salvo; os imóveis que faltam ficam sem projeção na aba e entram na próxima noite.
 Log: ${LOG}
 EOF
     exit 3
@@ -156,7 +159,7 @@ EOF
   *)
     _avisar <<EOF
 🔴 [Motor] Entradas do modelo de praça FALHARAM (rc=${JOB_RC}).
-Nada novo foi publicado; a aba de imóveis segue com as entradas anteriores (e a curva de densidade onde faltam).
+Nada novo foi publicado; a aba de imóveis segue com as entradas anteriores (e sem projeção onde faltam).
 Log: ${LOG}
 EOF
     exit "$JOB_RC"

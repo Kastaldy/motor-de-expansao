@@ -9,6 +9,7 @@ import {
   sementeDaDemandaV2,
   sugestaoValePara,
   v2Disponivel,
+  recusaDoModelo,
 } from './viabilidade-demanda-v2'
 
 // O caso da revisão de 2026-10-20: sugestão tirada em Londrina, ponto trocado para Manaus.
@@ -171,5 +172,21 @@ describe('a chave da sugestão v2 inclui o ponto exato', () => {
     const fonte = readFileSync(fileURLToPath(new URL('../screens/ViabilityScreen.tsx', import.meta.url)), 'utf-8')
     const i = fonte.indexOf('const chaveSugestaoV2 = [')
     expect(fonte.slice(i, i + 120)).toMatch(/alvoLat,\s+alvoLng,/)
+  })
+})
+
+describe('recusa do modelo de praça (emenda 1 da DEC-086)', () => {
+  it('só o 400 com frase é recusa: a tela mostra a frase do servidor', () => {
+    const frase = 'O modelo de praça não estima a demanda deste ponto: zona morta. Informe a demanda.'
+    expect(recusaDoModelo({ status: 400, message: frase })).toBe(frase)
+  })
+
+  it('serviço fora, outro erro, frase vazia ou nada: segue discreto (null)', () => {
+    expect(recusaDoModelo({ status: 503, message: 'rotas fora' })).toBeNull()
+    expect(recusaDoModelo({ status: 422, message: 'x' })).toBeNull()
+    expect(recusaDoModelo({ status: 400, message: '   ' })).toBeNull()
+    expect(recusaDoModelo(new Error('rede'))).toBeNull()
+    expect(recusaDoModelo(null)).toBeNull()
+    expect(recusaDoModelo('400')).toBeNull()
   })
 })

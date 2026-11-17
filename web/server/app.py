@@ -43,7 +43,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 from types import EllipsisType
-from typing import Annotated, Any, Literal
+from typing import Annotated, Any, Literal, NamedTuple
 
 import anyio
 import pandas as pd
@@ -10011,6 +10011,9 @@ def _entradas_c10_do_ponto(lat: float, lng: float) -> tuple[Any, dict[str, Any]]
 
     O polígono é SEMPRE calculado aqui (nunca aceito do cliente) e a malha é a união das
     partições que ele alcança (`_resolver_e_carregar(geometria=...)`, DEC-065/071).
+
+    Isócrona PRESA (abaixo de `V2_AREA_MIN_KM2`: o ponto ficou numa via interna) é 400
+    antes de ler setor nenhum: fora do domínio do modelo (emenda 1 da DEC-086).
     """
     from motor_expansao.api.coord import CoordenadaInvalidaError, validar_brasil
     from motor_expansao.api.errors import APIError
@@ -10020,6 +10023,7 @@ def _entradas_c10_do_ponto(lat: float, lng: float) -> tuple[Any, dict[str, Any]]
         RotasIndisponiveis,
         isocrona_carro,
     )
+    from motor_expansao.dimensionamento import dominio_praca
     from motor_expansao.dimensionamento.config import V2_MINUTOS_ISOCRONA
     from motor_expansao.dimensionamento.entradas_c10 import (
         EntradasC10Indisponiveis,
@@ -10041,6 +10045,10 @@ def _entradas_c10_do_ponto(lat: float, lng: float) -> tuple[Any, dict[str, Any]]
             "O modelo de praça não pôde montar a área de 10 min de carro deste ponto. "
             "Informe a demanda.",
         ) from exc
+    if dominio_praca.area_pequena(iso.area_km2):
+        raise HTTPException(
+            400, dominio_praca.mensagem_sugestao_recusada(dominio_praca.MOTIVO_AREA_PEQUENA)
+        )
     cfg = Settings(
         censo_geo_dir=CENSO_GEO_DIR,
         ibge_dir=IBGE_DIR,
@@ -10077,9 +10085,14 @@ def demanda_v2(body: DemandaV2In) -> dict[str, Any]:
     conversão das premissas da própria requisição, as entradas da isócrona, as flags, a
     versão/sha dos coeficientes e o TOKEN de procedência que a Viabilidade, o PDF e a
     planilha recebem de volta. 503 com o motivo quando a v2 está indisponível (chave
-    desligada, sem coeficientes, sem rotas, sem malha). Síncrona de propósito: roda no
-    threadpool e passa pelo semáforo das análises de área. READ-ONLY sobre o M1.
+    desligada, sem coeficientes, sem rotas, sem malha). 400 com a frase quando o ponto
+    está FORA DO DOMÍNIO do modelo (emenda 1 da DEC-086: isócrona presa ou zona morta, a
+    régua da DEC-042): a tela segue na faixa de comparáveis e mostra o porquê. Síncrona de
+    propósito: roda no threadpool e passa pelo semáforo das análises de área. READ-ONLY
+    sobre o M1.
     """
+    from motor_expansao.dimensionamento import dominio_praca
+
     try:
         coef = _viab_v2.carregar_coeficientes()
     except _viab_v2.V2Indisponivel as exc:
@@ -10089,8 +10102,19 @@ def demanda_v2(body: DemandaV2In) -> dict[str, Any]:
 
     if not rotas_configuradas():
         raise HTTPException(503, _viab_v2.MOTIVO_SEM_ROTAS)
+    lat, lng = float(body.lat), float(body.lng)
     with _vaga_de_analise_de_area():
-        entradas, recorte = _entradas_c10_do_ponto(float(body.lat), float(body.lng))
+        entradas, recorte = _entradas_c10_do_ponto(lat, lng)
+        # A captação de 1,5 km com a malha carregada como a Viabilidade a carrega: a MESMA
+        # zona morta do card "Guardrail" e do PDF. Indisponível -> indecidível, nunca veta.
+        pop_cap, renda_cap = dominio_praca.captacao(lat, lng, _setores_para_catchment(lat, lng))
+    if dominio_praca.zona_morta(pop_cap, renda_cap) is not None:
+        raise HTTPException(
+            400,
+            dominio_praca.mensagem_sugestao_recusada(
+                dominio_praca.MOTIVO_ZONA_MORTA, pop_captacao=pop_cap, renda_pc_captacao=renda_cap
+            ),
+        )
     try:
         return _viab_v2.montar_sugestao_v2(
             body,
@@ -15747,40 +15771,95 @@ def _caminho_entradas_oportunidades() -> Path:
 
 def _coeficientes_praca() -> Any | None:
     """Os coeficientes do modelo de praca, ou `None` (chave desligada, arquivo ausente ou
-    invalido): sem eles a lista inteira fica na curva de densidade, como o simulador."""
+    invalido): sem eles a lista volta a curva de densidade, como o simulador -- menos o
+    imovel fora do dominio do modelo, que fica sem projecao (emenda 1 da DEC-086)."""
     try:
         return _viab_v2.carregar_coeficientes()
     except _viab_v2.V2Indisponivel:
         return None
 
 
-def _entradas_praca_por_coordenada(
-    caminho: Path,
-) -> dict[tuple[float, float], tuple[float, float, float]]:
-    """{(lat5, lng5): (pop_c10, dom_c10, renda_pc_c10)} das linhas `ok` do lote noturno.
+class _LinhaPraca(NamedTuple):
+    """O que o lote noturno diz de UMA coordenada (DEC-086 e a emenda 1)."""
 
-    Arquivo ausente ou ilegivel -> {} e a lista cai inteira na curva de densidade; nunca 500.
+    #: As 3 entradas do modelo -- so' dentro do dominio e com a conta feita.
+    entradas: tuple[float, float, float] | None
+    #: Fora do dominio ou sem calculo: o token (`dominio_praca.MOTIVO_*`), senao `None`.
+    motivo: str | None
+    #: A frase da aba para o motivo (texto de usuario).
+    texto: str | None
+
+
+# Colunas lidas do lote. As da captacao e a area sao OPCIONAIS: o arquivo de antes da
+# emenda 1 nao tem a captacao, e pedir coluna ausente ao parquet levanta (a lista inteira
+# cairia em silencio no "sem projecao").
+_COLS_ENTRADAS_PRACA = (
+    "lat5", "lng5", "status", "pop_c10", "dom_c10", "renda_pc_c10",
+    "area_km2", "pop_captacao", "renda_pc_captacao",
+)
+
+
+def _entradas_praca_por_coordenada(caminho: Path) -> dict[tuple[float, float], _LinhaPraca]:
+    """{(lat5, lng5): `_LinhaPraca`} de TODAS as linhas do lote noturno.
+
+    Dentro do dominio, as entradas do modelo. Fora dele (`dominio_praca`: isocrona presa ou
+    zona morta) ou sem calculo (falha permanente do ponto, entrada invalida), o motivo de o
+    imovel ficar SEM projecao. Arquivo ausente ou ilegivel -> {} (todo imovel fica
+    "aguardando"); nunca 500.
     """
+    from motor_expansao.dimensionamento import dominio_praca as dom
+
     if not caminho.exists():
         return {}
     try:
-        df = pd.read_parquet(
-            caminho, columns=["lat5", "lng5", "status", "pop_c10", "dom_c10", "renda_pc_c10"]
-        )
-    except Exception as erro:  # noqa: BLE001 -- sem as entradas, a lista segue na densidade
+        import pyarrow.parquet as pq
+
+        nomes = set(pq.read_schema(caminho).names)
+        if not {"lat5", "lng5", "status"} <= nomes:
+            raise ValueError("sem as colunas da chave (lat5, lng5, status)")
+        df = pd.read_parquet(caminho, columns=[c for c in _COLS_ENTRADAS_PRACA if c in nomes])
+    except Exception as erro:  # noqa: BLE001 -- sem as entradas, ninguem tem projecao
         print(f"[oportunidades] entradas do modelo de praca ilegiveis ({erro})", file=sys.stderr)
         return {}
-    df = df[df["status"].astype(str) == "ok"]
-    saida: dict[tuple[float, float], tuple[float, float, float]] = {}
-    for lat, lng, pop, dom, renda in zip(
-        df["lat5"], df["lng5"], df["pop_c10"], df["dom_c10"], df["renda_pc_c10"], strict=True
-    ):
+    for c in _COLS_ENTRADAS_PRACA:
+        if c not in df.columns:
+            df[c] = None
+    sem_calculo = _LinhaPraca(None, dom.MOTIVO_SEM_CALCULO, dom.texto_sem_projecao(dom.MOTIVO_SEM_CALCULO))
+    area_pequena = _LinhaPraca(
+        None, dom.MOTIVO_AREA_PEQUENA, dom.texto_sem_projecao(dom.MOTIVO_AREA_PEQUENA)
+    )
+    saida: dict[tuple[float, float], _LinhaPraca] = {}
+    for r in df.itertuples(index=False):
         try:
-            v = (float(pop), float(dom), float(renda))
+            k = (float(r.lat5), float(r.lng5))
         except (TypeError, ValueError):
             continue
-        if all(math.isfinite(x) and x > 0 for x in v):
-            saida[(float(lat), float(lng))] = v
+        if not all(math.isfinite(x) for x in k):
+            continue
+        # A isocrona presa vem ANTES do status: o lote grava a area tambem quando a conta
+        # falha depois dela (sem setor, sem renda), e o simulador recusa pela area antes de
+        # ler setor. Sem isto o mesmo imovel teria um motivo em cada tela.
+        if dom.area_pequena(r.area_km2):
+            saida[k] = area_pequena
+            continue
+        if str(r.status) != "ok":
+            saida[k] = sem_calculo
+            continue
+        motivo = dom.motivo_fora_do_dominio(
+            area_km2=r.area_km2, pop_captacao=r.pop_captacao, renda_pc_captacao=r.renda_pc_captacao
+        )
+        if motivo is not None:
+            texto = dom.texto_sem_projecao(
+                motivo, pop_captacao=r.pop_captacao, renda_pc_captacao=r.renda_pc_captacao
+            )
+            saida[k] = _LinhaPraca(None, motivo, texto)
+            continue
+        try:
+            v = (float(r.pop_c10), float(r.dom_c10), float(r.renda_pc_c10))
+        except (TypeError, ValueError):
+            saida[k] = sem_calculo
+            continue
+        saida[k] = _LinhaPraca(v, None, None) if all(math.isfinite(x) and x > 0 for x in v) else sem_calculo
     return saida
 
 
@@ -15802,8 +15881,9 @@ def _conversao_alunos_padrao() -> tuple[float, float] | None:
 def _projecao_praca(
     area: float | None, entradas: tuple[float, float, float] | None, coef: Any | None
 ) -> dict[str, Any] | None:
-    """Faturamento do imovel pelo modelo de praca (o mesmo do simulador), ou `None` para
-    a curva de densidade assumir. Sem estudio; a metragem vai ate' o teto do modelo."""
+    """Faturamento do imovel pelo modelo de praca (o mesmo do simulador), ou `None` quando
+    a conta nao fecha (o imovel fica sem projecao). Sem estudio; a metragem vai ate' o teto
+    do modelo."""
     if coef is None or entradas is None or not area:
         return None
     from motor_expansao.dimensionamento.demanda_v2 import (
@@ -15982,10 +16062,13 @@ def _op_renda_pc_por_hex(df: pd.DataFrame) -> dict[int, float | None]:
 def _carregar_oportunidades() -> list[dict[str, Any]]:
     """Monta os dicts sem PII, ordenados por residual, e guarda ate' um dos insumos mudar.
 
-    Faturamento projetado (DEC-086): o MODELO DE PRACA do simulador (p50, com a faixa
-    p10-p90) para o imovel que tem as entradas da isocrona no lote noturno; sem elas
-    (imovel novo, sem via perto, Valhalla fora, chave da v2 desligada), a curva de densidade
-    de sempre. `fat_fonte` diz qual das duas valeu.
+    Faturamento projetado (DEC-086 e emenda 1): o MODELO DE PRACA do simulador (p50, com a
+    faixa p10-p90) para o imovel que tem as entradas da isocrona no lote noturno e esta
+    dentro do dominio do modelo. Fora dele (isocrona presa, zona morta), sem calculo ou
+    ainda nao calculado, o imovel fica SEM projecao: "nao podemos projetar faturamento em
+    um ponto que nao conseguimos estimar". A curva de densidade so' volta com a chave da v2
+    desligada (ou sem coeficientes), e mesmo ai' nunca fora do dominio. `fat_fonte` diz o
+    que valeu e `fat_motivo` o porque de nao haver numero.
 
     A chave do cache so' vale JUNTO com a lista montada. O envio da lista e' um `scp` por
     cima do arquivo (nao atomico): uma leitura no meio dele falha, e ai' a lista ANTERIOR
@@ -16039,11 +16122,15 @@ def _montar_oportunidades(caminho_entradas: Path, coef: Any | None) -> list[dict
         df = df.sort_values(
             ordenar_por, ascending=False, na_position="last", kind="stable"
         )
+    from motor_expansao.dimensionamento import dominio_praca as dom
     from motor_expansao.dimensionamento.entradas_oportunidades import chave_coordenada
 
     ticket = _ticket_proj_mensal()
     renda_pc = _op_renda_pc_por_hex(df)
-    entradas_praca = _entradas_praca_por_coordenada(caminho_entradas) if coef is not None else {}
+    # Lido MESMO com a chave da v2 desligada: o que esta fora do dominio do modelo fica sem
+    # projecao tambem na curva de densidade (emenda 1 da DEC-086).
+    entradas_praca = _entradas_praca_por_coordenada(caminho_entradas)
+    fora_do_dominio = (dom.MOTIVO_AREA_PEQUENA, dom.MOTIVO_ZONA_MORTA)
     itens: list[dict[str, Any]] = []
     for idx, r in zip(df.index, df.itertuples(index=False), strict=True):
         d = r._asdict()
@@ -16051,18 +16138,42 @@ def _montar_oportunidades(caminho_entradas: Path, coef: Any | None) -> list[dict
         aluguel = _op_num(d.get("preco_aluguel")) or _op_num(d.get("preco"))
         rs_m2 = round(aluguel / area, 1) if aluguel and area else None
         primeiro = _op_txt(d.get("first_seen"))
-        # Faturamento projetado (DEC-086). 1o o MODELO DE PRACA, o mesmo do simulador: as
+        # Faturamento projetado (DEC-086). O MODELO DE PRACA, o mesmo do simulador: as
         # entradas da isocrona vem do lote noturno, pela coordenada em 5 casas, e a metragem
-        # vai ate' o teto do modelo (`V2_TETO_M2`).
+        # vai ate' o teto do modelo (`V2_TETO_M2`). Sem o numero dele, NENHUM (emenda 1).
         k = chave_coordenada(d.get("latitude"), d.get("longitude"))
-        praca = _projecao_praca(area, entradas_praca.get(k) if k else None, coef)
+        linha = entradas_praca.get(k) if k else None
+        praca: dict[str, Any] | None = None
+        fat_motivo: str | None = None
+        fat_motivo_texto: str | None = None
+        if coef is not None:
+            if not area:
+                fat_motivo = dom.MOTIVO_SEM_AREA
+            elif k is None:
+                # Sem coordenada valida o lote nunca o calcula: "aguardando" prometeria uma
+                # madrugada que nao vem.
+                fat_motivo = dom.MOTIVO_SEM_CALCULO
+            elif linha is None:
+                fat_motivo = dom.MOTIVO_AGUARDANDO  # imovel novo: o lote o calcula de noite
+            elif linha.entradas is None:
+                fat_motivo, fat_motivo_texto = linha.motivo, linha.texto
+            else:
+                praca = _projecao_praca(area, linha.entradas, coef)
+                if praca is None:
+                    fat_motivo = dom.MOTIVO_SEM_CALCULO
+        elif linha is not None and linha.motivo in fora_do_dominio:
+            fat_motivo, fat_motivo_texto = linha.motivo, linha.texto
         if praca is not None:
             alunos_p50, fat_proj = praca["alunos_p50"], praca["fat_p50"]
-            fat_fonte = "praca"
+            fat_fonte: str | None = "praca"
+        elif fat_motivo is not None:
+            alunos_p50 = fat_proj = None
+            fat_fonte = "sem_projecao"
+            fat_motivo_texto = fat_motivo_texto or dom.texto_sem_projecao(fat_motivo)
         else:
-            # Sem as entradas do imovel: a curva tamanho->densidade de antes (p50 de alunos x
-            # ticket), m2 arredondado p/ cachear e capado no ideal (lote/galpao grande nao vira
-            # academia inteira — ver helper). E' o fallback do simulador sem o modelo.
+            # Chave da v2 desligada ou sem coeficientes: a curva tamanho->densidade de antes
+            # (p50 de alunos x ticket), m2 arredondado p/ cachear e capado no ideal (lote/galpao
+            # grande nao vira academia inteira — ver helper). E' o modo do simulador sem o modelo.
             area_cap = min(float(area), _area_curva_max()) if area else 0.0
             area_p50 = int(round(area_cap / 10.0) * 10) if area_cap else 0
             alunos_p50 = _alunos_p50_por_m2(area_p50)
@@ -16099,12 +16210,15 @@ def _montar_oportunidades(caminho_entradas: Path, coef: Any | None) -> list[dict
                 "alunos_p50": _op_num(alunos_p50, 1),
                 "fat_proj": _op_num(fat_proj, 2),
                 "ticket_proj": _op_num(ticket),
-                # DEC-086: de onde veio o faturamento ("praca" | "densidade" | null) e, no
-                # modelo de praca, a faixa p10-p90, a extrapolacao, a metragem que ele usou
-                # e se o teto a cortou. `m2_modelo` SEM arredondar (abaixo do teto e' a
-                # propria `area`) e o corte vem do modelo, nunca de comparar os dois numeros
-                # na tela: arredondado, 1.250,25 m2 virava 1.250,2 e parecia corte.
+                # DEC-086: de onde veio o faturamento ("praca" | "sem_projecao" | "densidade"
+                # | null) e, no modelo de praca, a faixa p10-p90, a extrapolacao, a metragem
+                # que ele usou e se o teto a cortou. `m2_modelo` SEM arredondar (abaixo do
+                # teto e' a propria `area`) e o corte vem do modelo, nunca de comparar os dois
+                # numeros na tela: arredondado, 1.250,25 m2 virava 1.250,2 e parecia corte.
+                # Emenda 1: sem projecao, `fat_motivo` (token) e `fat_motivo_texto` (frase).
                 "fat_fonte": fat_fonte,
+                "fat_motivo": fat_motivo if fat_fonte == "sem_projecao" else None,
+                "fat_motivo_texto": fat_motivo_texto if fat_fonte == "sem_projecao" else None,
                 "fat_p10": _op_num(praca["fat_p10"], 2) if praca else None,
                 "fat_p90": _op_num(praca["fat_p90"], 2) if praca else None,
                 "fat_extrapolacao": praca["extrapolacao"] if praca else None,

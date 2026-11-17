@@ -1122,7 +1122,9 @@ praça do simulador. O modelo precisa de três entradas do ponto (`pop_c10`, `do
 `renda_pc_c10`), tiradas da isócrona de 10 min (Valhalla) e da malha de setores. Elas são
 calculadas à noite, por coordenada, e gravadas em
 `/opt/motor-expansao/data/oportunidades/entradas_c10.parquet`, ao lado do `viaveis.parquet`.
-Sem a entrada do imóvel, a aba usa a curva de densidade de antes.
+Sem a entrada do imóvel (ainda não calculado ou sem cálculo possível) ou fora do domínio do
+modelo (isócrona abaixo de 1 km² ou zona morta da DEC-042), o imóvel fica **sem projeção**
+(emenda 1 da DEC-086): a curva de densidade só volta com a chave da v2 desligada.
 
 **Script versionado:** `scripts/cron/run_entradas_oportunidades.sh`. Roda
 `python -m motor_expansao.dimensionamento.entradas_oportunidades` num
@@ -1137,10 +1139,20 @@ gravável, em `/oportunidades-rw`.
   - Falha permanente do ponto (sem via a 300 m, área grande demais, sem setor) fica gravada com o motivo.
   - Falha do Valhalla ou de insumo (malha municipal ausente, partição de setores ausente ou ilegível) não grava e volta na noite seguinte. Com 20 falhas seguidas o lote para com `rc=3`, guarda o que já fez e avisa o chat de ops; o motivo vai em `ultima_falha_do_servico`, no resumo do log.
 - **Gravação:** por temporário + rename, a cada 500 pontos.
+- **Captação (emenda 1):** cada linha `ok` leva também a população e a renda per capita da
+  captação de 1,5 km (`pop_captacao`, `renda_pc_captacao`), a medida da zona morta da
+  Viabilidade; o site aplica o limiar na leitura.
+- **Versão da linha:** `versao_calculo` diz com que regra a linha foi feita. Linha de versão
+  antiga volta a ser pendente uma vez: o **primeiro lote depois do deploy da emenda 1 refaz
+  as ~9.200 coordenadas sozinho** (~1,3 h, de madrugada), sem `--recalcular-tudo` manual.
+  Até ele terminar, a área presa já vale (a `area_km2` está no arquivo); a zona morta entra
+  à medida que as linhas são refeitas.
 
 **Sem restart:** a aba relê lista e entradas quando o mtime ou o tamanho mudam.
-**Desfazer:** apagar `entradas_c10.parquet` devolve a aba inteira à curva de densidade
-na leitura seguinte. A chave `MOTOR_VIABILIDADE_V2=0` também, junto com o simulador.
+**Desfazer:** a chave `MOTOR_VIABILIDADE_V2=0` devolve a aba à curva de densidade (menos os
+imóveis fora do domínio, que seguem sem projeção), junto com o simulador. Apagar
+`entradas_c10.parquet` deixa a aba inteira **sem projeção** ("aguardando") até o lote
+seguinte: desde a emenda 1 a falta da entrada não cai mais na curva.
 
 **Instalação (uma vez, manual, comando a comando — §6), DEPOIS da imagem web nova:**
 

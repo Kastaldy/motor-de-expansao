@@ -66,6 +66,8 @@ import {
   avisosV2,
   camposDeV2,
   corpoSugestaoV2,
+  mesmoPonto,
+  recusaDoModelo,
   sementeDaDemandaV2,
   sugestaoValePara,
   v2Disponivel,
@@ -429,6 +431,14 @@ export default function ViabilityScreen({
   // O motivo de a v2 nao responder deixou de aparecer no quadro da demanda (texto enxugado,
   // 05/11/2026); o estado segue gravado para quem precisar dele.
   const [, setErroV2] = useState<string | null>(null)
+  // Emenda 1 da DEC-086: quando o modelo de praça RECUSA o ponto (400: fora do domínio,
+  // sem via de carro a 300 m, área grande demais ou coordenada inválida), a frase do servidor
+  // aparece no quadro da demanda — o operador precisa saber por que a sugestão não veio.
+  // Guarda o PONTO junto: a tela não é remontada ao trocar de ponto, e a recusa de um não
+  // pode aparecer no outro.
+  const [recusaV2, setRecusaV2] = useState<{ texto: string; lat: number; lng: number } | null>(
+    null,
+  )
   // Rampa de maturação (DEC-078, emendas de 21 e 22/10/2026): só a curva observada, com o PICO
   // DE MATURAÇÃO escolhido pelo operador; `null` = sem escolha, e então o pedido vai sem
   // `mes_pico_rampa` e vale o pico observado (padrão do SERVIDOR). A forma não é mais
@@ -514,10 +524,13 @@ export default function ViabilityScreen({
       )
       setSugestaoV2(s)
       setErroV2(null)
+      setRecusaV2(null)
       return s
     } catch (e) {
       setSugestaoV2(null)
       setErroV2(e instanceof ApiError ? e.message : 'O modelo de praça não respondeu.')
+      const texto = recusaDoModelo(e)
+      setRecusaV2(texto ? { texto, lat: alvoLat, lng: alvoLng } : null)
       return null
     }
   }
@@ -777,9 +790,17 @@ export default function ViabilityScreen({
     const t = setTimeout(async () => {
       const s = await pedirSugestaoV2()
       if (!vivo) return
-      // Sugestão falhou (ex.: serviço de rotas fora): volta à semente da densidade, como
-      // a tela faria sem a v2 — nunca fica com a semente de uma metragem antiga.
-      const semente = sementeDaDemandaV2(s) ?? (faixa?.p50 != null ? Math.round(faixa.p50) : null)
+      let semente = sementeDaDemandaV2(s)
+      if (s == null) {
+        // Sugestão falhou (serviço de rotas fora) ou foi RECUSADA (ponto fora do domínio,
+        // emenda 1 da DEC-086): volta à semente da faixa de comparáveis, como a tela faria
+        // sem o modelo. A faixa é pedida AQUI, para a metragem deste pedido: a `faixa` do
+        // fechamento ainda é a da metragem anterior (o efeito da metragem busca a nova em
+        // paralelo), e a demanda nunca pode ficar com a semente de uma metragem antiga.
+        const f = await api.faixaAlunos(m2).catch(() => null)
+        if (!vivo) return
+        semente = f?.p50 != null ? Math.round(f.p50) : null
+      }
       if (!demandaTocada && semente != null) setDemanda(semente)
     }, 350)
     return () => {
@@ -808,6 +829,11 @@ export default function ViabilityScreen({
   const v2Vigente = sugestaoValePara(sugestaoV2, { lat: alvoLat, lng: alvoLng, m2, nStudios })
     ? sugestaoV2
     : null
+  /** A recusa do modelo de praça (emenda 1 da DEC-086) só vale para o ponto em que veio. */
+  const recusaVigente =
+    recusaV2 && mesmoPonto(recusaV2.lat, alvoLat) && mesmoPonto(recusaV2.lng, alvoLng)
+      ? recusaV2.texto
+      : null
 
   async function gerarPdf() {
     if (!ponto) return
@@ -1525,6 +1551,11 @@ export default function ViabilityScreen({
               ) : faixa && faixa.p50 != null ? (
                 <>
                   Faixa de comparáveis: {alunos(faixa.p10)}–{alunos(faixa.p90)} alunos.
+                  {recusaVigente && (
+                    <span style={{ display: 'block', color: 'var(--warn-text)' }}>
+                      {recusaVigente}
+                    </span>
+                  )}
                   {demandaTocada && (
                     <>
                       {' '}
@@ -1547,7 +1578,16 @@ export default function ViabilityScreen({
                   )}
                 </>
               ) : demanda == null ? (
-                'Sem comparáveis nesta base: informe os alunos totais.'
+                <>
+                  Sem comparáveis nesta base: informe os alunos totais.
+                  {recusaVigente && (
+                    <span style={{ display: 'block', color: 'var(--warn-text)' }}>
+                      {recusaVigente}
+                    </span>
+                  )}
+                </>
+              ) : recusaVigente ? (
+                <span style={{ display: 'block', color: 'var(--warn-text)' }}>{recusaVigente}</span>
               ) : null}
             </div>
           </div>

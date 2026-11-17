@@ -80,17 +80,43 @@ export const ALUGUEL_PCT_IDEAL = 15
 export const ALUGUEL_PCT_TETO = 20
 export const ALUGUEL_PCT_EXCECAO = 30
 
-/* --- Projecao de faturamento: o MODELO DE PRACA do simulador ou a curva ------
+/* --- Projecao de faturamento: o MODELO DE PRACA do simulador, ou nenhuma -----
    DEC-086. O backend serve o p50 pronto em `fat_proj` e diz a fonte em
    `fat_fonte`: "praca" quando o lote noturno tem as entradas da isocrona do
-   imovel (o mesmo modelo da Viabilidade, com a faixa p10-p90), "densidade" no
-   fallback (a curva de alunos por m2 de antes, com os textos de antes). O
-   padrao de exibicao e' o do simulador: o p50 e' o numero, a faixa vai na nota
-   com o MESMO rotulo ("Faixa do modelo"), e o aviso de extrapolacao e' o MESMO
-   texto. Nada aqui recalcula: so' escolhe o texto pela fonte. */
+   imovel (o mesmo modelo da Viabilidade, com a faixa p10-p90); "sem_projecao"
+   quando o modelo nao estima o ponto (emenda 1, abaixo); "densidade" so' com o
+   modelo desligado no servidor (a curva de alunos por m2 de antes, com os textos
+   de antes). O padrao de exibicao e' o do simulador: o p50 e' o numero, a faixa
+   vai na nota com o MESMO rotulo ("Faixa do modelo"), e o aviso de extrapolacao
+   e' o MESMO texto. Nada aqui recalcula: so' escolhe o texto pela fonte. */
 
 /** O faturamento projetado deste imóvel veio do modelo de praça? */
 export const projecaoPeloModelo = (o: Oportunidade): boolean => o.fat_fonte === 'praca'
+
+/* --- Sem projeção (emenda 1 da DEC-086) --------------------------------------
+   "Não podemos projetar faturamento em um ponto que não conseguimos estimar"
+   (Felipe, 17/11/2026). Fora do domínio do modelo (isócrona presa numa via interna,
+   zona morta), sem cálculo ou ainda não calculado, o imóvel fica SEM número: nem o
+   do modelo, nem o da curva de densidade. A frase vem pronta do servidor (ela cita
+   os limiares, que vivem lá); a tabela abaixo é só a reserva, por motivo. */
+
+/** O modelo não estima este imóvel: sem faturamento e sem alunos. */
+export const semProjecao = (o: Oportunidade): boolean => o.fat_fonte === 'sem_projecao'
+
+const TEXTO_SEM_PROJECAO: Record<string, string> = {
+  area_pequena:
+    'Sem projeção: a área de 10 min de carro não pôde ser medida a partir do imóvel (ele fica numa via interna, como de condomínio ou área industrial).',
+  zona_morta: 'Sem projeção: zona morta (poucos moradores em volta).',
+  sem_area: 'Sem projeção: o anúncio não traz a área.',
+  aguardando: 'Sem projeção ainda: o cálculo deste imóvel roda na próxima madrugada.',
+  sem_calculo: 'Sem projeção: o modelo de praça não pôde ser calculado para este ponto.',
+}
+
+/** A frase do motivo de o imóvel estar sem projeção, ou null quando ele tem número. */
+export function textoSemProjecao(o: Oportunidade): string | null {
+  if (!semProjecao(o)) return null
+  return o.fat_motivo_texto ?? TEXTO_SEM_PROJECAO[o.fat_motivo ?? ''] ?? TEXTO_SEM_PROJECAO.sem_calculo
+}
 
 /** "Faixa do modelo: R$ 180 mil–R$ 430 mil" (como o simulador), ou null fora do modelo. */
 export function faixaDoModelo(o: Oportunidade): string | null {

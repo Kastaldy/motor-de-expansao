@@ -110,6 +110,18 @@ export function camposDeV2(
   }
 }
 
+/**
+ * O modelo de praça RECUSOU o ponto (emenda 1 da DEC-086)? O servidor responde 400 quando o
+ * ponto está fora do domínio do modelo (área de 10 min presa numa via interna, zona morta)
+ * ou sem área de 10 min. A tela segue na faixa de comparáveis e mostra esta frase, que vem
+ * pronta do servidor. Serviço fora (503) e qualquer outro erro seguem discretos: `null`.
+ */
+export function recusaDoModelo(erro: unknown): string | null {
+  if (typeof erro !== 'object' || erro === null) return null
+  const { status, message } = erro as { status?: unknown; message?: unknown }
+  return status === 400 && typeof message === 'string' && message.trim() !== '' ? message : null
+}
+
 /** O aviso de extrapolação do modelo de praça — o MESMO texto no simulador e na aba de
  *  oportunidades imobiliárias (DEC-086). */
 export const AVISO_EXTRAPOLACAO_V2 =

@@ -29,6 +29,8 @@ import {
   labelFaixa,
   labelTipo,
   rsM2,
+  semProjecao,
+  textoSemProjecao,
 } from '../lib/imovel'
 import { alternarVisita, lerVisitas } from '../lib/visitas'
 import type { Oportunidade } from '../lib/types'
@@ -107,8 +109,8 @@ export interface PontoNoMapa {
 }
 
 /** Faturamento projetado/mes (p50), servido pronto pelo backend em `fat_proj`: o modelo de
- *  praca do simulador ou, sem as entradas do imovel, a curva de densidade (DEC-086). NAO
- *  usa residual. */
+ *  praca do simulador (DEC-086), ou `null` quando ele nao estima o ponto (emenda 1: o
+ *  imovel vai para o fim da ordem por faturamento). NAO usa residual. */
 const projFatDe = (o: Oportunidade): number | null => o.fat_proj ?? null
 
 type Ordem = 'residual' | 'faturamento' | 'rs_m2' | 'area' | 'aluguel'
@@ -633,7 +635,7 @@ function Ficha({
             <HeroStat label="Aluguel" valor={op.aluguel == null ? '—' : num(op.aluguel)} unidade="R$/mês" />
             <HeroStat label="R$/m²" valor={r == null ? '—' : num(r, 0)} unidade="/mês" />
             <HeroStat label="Projeção fat." valor={projFat == null ? '—' : brlCurto(projFat)} unidade="/mês" cor="var(--pos-text)"
-              nota={faixaDoModeloCurta(op) ?? (alunosProj != null ? `${num(alunosProj)} alunos p50/m²` : '')} />
+              nota={semProjecao(op) ? 'sem projeção' : (faixaDoModeloCurta(op) ?? (alunosProj != null ? `${num(alunosProj)} alunos p50/m²` : ''))} />
           </div>
           {avisoDaProjecao(op) && <AvisoProjecao texto={avisoDaProjecao(op) ?? ''} />}
         </Glass>
@@ -695,7 +697,7 @@ function Ficha({
                 <HeroStat label="Aluguel" valor={op.aluguel == null ? '—' : num(op.aluguel)} unidade="R$/mês" nota={r != null ? `R$ ${num(r, 0)}/m²` : ''} />
                 <HeroStat label="Custo de ocupação" valor={ocupacao > 0 ? num(ocupacao) : '—'} unidade="R$/mês" nota="com IPTU e condomínio" />
                 <HeroStat label="Projeção de faturamento" valor={projFat == null ? '—' : brl(projFat, true)} unidade="/mês" cor="var(--pos-text)"
-                  nota={faixaDoModelo(op) ?? (alunosProj != null ? `${num(alunosProj)} alunos (p50/m²) × R$ ${num(op.ticket_proj ?? 0)}` : 'sem base de m² p/ estimar')} />
+                  nota={textoSemProjecao(op) ?? faixaDoModelo(op) ?? (alunosProj != null ? `${num(alunosProj)} alunos (p50/m²) × R$ ${num(op.ticket_proj ?? 0)}` : 'sem base de m² p/ estimar')} />
                 {avisoDaProjecao(op) && <AvisoProjecao texto={avisoDaProjecao(op) ?? ''} />}
               </div>
               {/* O link fica COLADO na Projeção de faturamento (pedido do Felipe,
