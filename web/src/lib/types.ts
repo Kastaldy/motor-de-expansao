@@ -846,8 +846,14 @@ export interface Oportunidade {
   /** Ticket (mensalidade balcão) da curva de densidade — do dimensionamento/config. */
   ticket_proj?: number | null
   /** De onde veio o `fat_proj` (DEC-086): o modelo de praça do simulador, quando o lote
-   *  noturno tem as entradas do imóvel, ou a curva de densidade (o fallback). */
-  fat_fonte?: 'praca' | 'densidade' | null
+   *  noturno tem as entradas do imóvel; `sem_projecao` quando o modelo não estima o ponto
+   *  (emenda 1: fora do domínio, sem cálculo ou ainda não calculado); a curva de densidade
+   *  só com o modelo desligado no servidor. */
+  fat_fonte?: 'praca' | 'sem_projecao' | 'densidade' | null
+  /** Sem projeção (emenda 1 da DEC-086): o motivo cru (`area_pequena`, `zona_morta`,
+   *  `sem_calculo`, `sem_area`, `aguardando`) e a frase pronta do servidor. */
+  fat_motivo?: string | null
+  fat_motivo_texto?: string | null
   /** Faixa do modelo de praça (p10–p90 do faturamento/mês); `null` na densidade. */
   fat_p10?: number | null
   fat_p90?: number | null

@@ -17,6 +17,8 @@ import {
   pctAluguelFat,
   projecaoPeloModelo,
   rsM2,
+  semProjecao,
+  textoSemProjecao,
 } from '../lib/imovel'
 import { alternarVisita, lerVisitas } from '../lib/visitas'
 import type { Oportunidade } from '../lib/types'
@@ -272,7 +274,9 @@ export default function FichaImovel({
             Sem base para comparar custo e retorno —{' '}
             {op.aluguel == null
               ? 'o anúncio não traz o aluguel.'
-              : 'sem projeção de faturamento para esta área.'}
+              : semProjecao(op)
+                ? 'sem projeção de faturamento para este imóvel.'
+                : 'sem projeção de faturamento para esta área.'}
           </div>
         </CardPainel>
       )}
@@ -306,10 +310,12 @@ export default function FichaImovel({
           unidade="/mês"
           cor="var(--pos-text)"
           nota={
-            faixaDoModelo(op) ??
-            (op.alunos_p50 != null
-              ? `${num(op.alunos_p50)} alunos × R$ ${num(op.ticket_proj ?? 0)}`
-              : 'sem base de m² p/ estimar')
+            semProjecao(op)
+              ? 'sem projeção'
+              : (faixaDoModelo(op) ??
+                (op.alunos_p50 != null
+                  ? `${num(op.alunos_p50)} alunos × R$ ${num(op.ticket_proj ?? 0)}`
+                  : 'sem base de m² p/ estimar'))
           }
         />
         <CardFigura
@@ -327,6 +333,13 @@ export default function FichaImovel({
           }
         />
       </div>
+      {/* Emenda 1 da DEC-086: o motivo de não haver número, por inteiro, junto da PROJEÇÃO
+          (a nota do card é curta e o veredito do aluguel some sem aluguel no anúncio). */}
+      {textoSemProjecao(op) && (
+        <div style={{ marginTop: -2, font: '400 11px/1.4 var(--f-ui)', color: 'var(--tx-sub)' }}>
+          {textoSemProjecao(op)}
+        </div>
+      )}
       {/* O aviso fica junto da PROJEÇÃO, e não dentro do veredito do aluguel: aquele card
           some quando o anúncio não traz aluguel, e a faixa do modelo seguiria sem o aviso. */}
       {avisoDaProjecao(op) && (
@@ -457,7 +470,11 @@ export default function FichaImovel({
           />
           <EncaixeNum
             valor={op.alunos_p50 == null ? '—' : num(op.alunos_p50)}
-            rotulo={projecaoPeloModelo(op) ? 'Alunos pelo modelo (p50)' : 'Capacidade do imóvel (p50)'}
+            rotulo={
+              projecaoPeloModelo(op) || semProjecao(op)
+                ? 'Alunos pelo modelo (p50)'
+                : 'Capacidade do imóvel (p50)'
+            }
             tom="var(--pos-text)"
           />
           <EncaixeNum
@@ -523,6 +540,11 @@ export default function FichaImovel({
           <>
             Faturamento projetado pelo modelo de praça da Viabilidade: área de 10 min de carro e
             metragem do anúncio, limitada à da maior unidade usada no ajuste; sem estúdio.
+          </>
+        ) : semProjecao(op) ? (
+          <>
+            A projeção de faturamento vem só do modelo de praça da Viabilidade: área de 10 min
+            de carro e metragem do anúncio.
           </>
         ) : (
           <>

@@ -1,9 +1,10 @@
 """Faturamento projetado da aba de oportunidades pelo MODELO DE PRACA (DEC-086).
 
 O imovel com as entradas da isocrona no lote noturno (`entradas_c10.parquet`, ao lado do
-`viaveis.parquet`) recebe o p50 do modelo do simulador, com a faixa p10-p90; sem elas, a
-curva de densidade de antes. A lista e' relida quando a lista, as entradas ou os
-coeficientes mudam -- sem `restart`.
+`viaveis.parquet`) recebe o p50 do modelo do simulador, com a faixa p10-p90. Sem elas, fora
+do dominio do modelo (isocrona presa, zona morta) ou sem area, fica SEM projecao (emenda 1);
+a curva de densidade so' volta com a chave da v2 desligada. A lista e' relida quando a
+lista, as entradas ou os coeficientes mudam -- sem `restart`.
 """
 
 from __future__ import annotations
@@ -103,7 +104,19 @@ def test_alunos_do_modelo_sao_a_conversao_da_sugestao_do_simulador(cenario):
     assert item["alunos_p50"] == pytest.approx(sug["alunos"]["p50"], abs=0.1)
 
 
-def test_sem_entrada_ou_com_falha_permanente_cai_na_curva_de_densidade(cenario):
+def _sem_projecao(item: dict, motivo: str) -> None:
+    """Emenda 1: nenhum numero (nem o da curva de densidade) e o motivo dito."""
+    assert item["fat_fonte"] == "sem_projecao" and item["fat_motivo"] == motivo
+    assert item["fat_proj"] is None and item["alunos_p50"] is None
+    assert item["fat_p10"] is None and item["fat_p90"] is None
+    assert item["fat_extrapolacao"] is None and item["m2_modelo"] is None
+    assert item["teto_m2_aplicado"] is None
+    assert item["fat_motivo_texto"].startswith("Sem projeção")
+
+
+def test_sem_entrada_ou_com_falha_permanente_fica_sem_projecao(cenario):
+    """"Nao podemos projetar faturamento em um ponto que nao conseguimos estimar" (Felipe,
+    17/11/2026): a curva de densidade deixou de ser o fallback com o modelo ligado."""
     falha = {"lat5": -22.9, "lng5": -43.2, "status": "sem_isocrona", "motivo": "Sem via."}
     cenario(
         [_imovel("com", -23.5, -46.6), _imovel("sem", -19.9, -43.9), _imovel("falha", -22.9, -43.2)],
@@ -111,12 +124,9 @@ def test_sem_entrada_ou_com_falha_permanente_cai_na_curva_de_densidade(cenario):
     )
     itens = _itens()
     assert itens["com"]["fat_fonte"] == "praca"
-    for iid in ("sem", "falha"):
-        assert itens[iid]["fat_fonte"] == "densidade"
-        assert itens[iid]["fat_proj"] == pytest.approx(ALUNOS_DENSIDADE * pilot_app._ticket_proj_mensal())
-        assert itens[iid]["fat_p10"] is None and itens[iid]["fat_p90"] is None
-        assert itens[iid]["fat_extrapolacao"] is None and itens[iid]["m2_modelo"] is None
-        assert itens[iid]["teto_m2_aplicado"] is None
+    assert itens["com"]["fat_motivo"] is None and itens["com"]["fat_motivo_texto"] is None
+    _sem_projecao(itens["sem"], "aguardando")
+    _sem_projecao(itens["falha"], "sem_calculo")
 
 
 def test_chave_da_v2_desligada_poe_a_lista_inteira_na_densidade(cenario, monkeypatch):
@@ -140,7 +150,7 @@ def test_area_acima_do_teto_conta_so_ate_o_teto_no_modelo(cenario):
 
 def test_entradas_que_chegam_depois_entram_sem_restart(cenario):
     lista = cenario([_imovel("a", -23.5, -46.6)])
-    assert _itens()["a"]["fat_fonte"] == "densidade"
+    assert _itens()["a"]["fat_motivo"] == "aguardando"
     _entradas(lista.with_name(ARQUIVO_SAIDA), [_ok(-23.5, -46.6)])
     assert _itens()["a"]["fat_fonte"] == "praca", "o lote noturno vale sem reiniciar o site"
 
@@ -163,7 +173,7 @@ def test_sem_mudanca_devolve_o_mesmo_cache(cenario):
 def test_entradas_ilegiveis_nao_derrubam_a_lista(cenario):
     lista = cenario([_imovel("a", -23.5, -46.6)])
     lista.with_name(ARQUIVO_SAIDA).write_bytes(b"nao e parquet")
-    assert _itens()["a"]["fat_fonte"] == "densidade"
+    _sem_projecao(_itens()["a"], "aguardando")
 
 
 def test_lista_pela_metade_no_meio_do_envio_segue_a_anterior(cenario):
@@ -196,3 +206,93 @@ def test_area_fracionaria_abaixo_do_teto_nao_vira_corte(cenario):
     item = _itens()["a"]
     assert item["m2_modelo"] == item["area"] == 1_250.25
     assert item["teto_m2_aplicado"] is False
+
+
+# --------------------------------------------------------------------------- emenda 1
+def test_isocrona_presa_fica_sem_projecao(cenario):
+    cenario(
+        [_imovel("presa", -20.17, -40.23), _imovel("borda", -23.5, -46.6)],
+        [{**_ok(-20.17, -40.23), "area_km2": 0.48}, {**_ok(-23.5, -46.6), "area_km2": 1.0}],
+    )
+    itens = _itens()
+    _sem_projecao(itens["presa"], "area_pequena")
+    assert "via interna" in itens["presa"]["fat_motivo_texto"]
+    assert itens["borda"]["fat_fonte"] == "praca", "na borda (1 km2) o ponto segue no dominio"
+
+
+def test_zona_morta_fica_sem_projecao_e_captacao_nula_nao_veta(cenario):
+    cenario(
+        [
+            _imovel("morta", -16.03, -47.97),
+            _imovel("viva", -23.5, -46.6),
+            _imovel("antiga", -19.9, -43.9),
+        ],
+        [
+            {**_ok(-16.03, -47.97), "pop_captacao": 385.0, "renda_pc_captacao": 2_000.0},
+            {**_ok(-23.5, -46.6), "pop_captacao": 40_000.0, "renda_pc_captacao": 2_000.0},
+            _ok(-19.9, -43.9),  # sem captacao (linha de antes da emenda): indecidivel
+        ],
+    )
+    itens = _itens()
+    _sem_projecao(itens["morta"], "zona_morta")
+    assert itens["morta"]["fat_motivo_texto"] == (
+        "Sem projeção: zona morta (população de captação abaixo de 5.000)."
+    )
+    assert itens["viva"]["fat_fonte"] == "praca"
+    assert itens["antiga"]["fat_fonte"] == "praca"
+
+
+def test_arquivo_de_antes_da_emenda_segue_valendo(cenario):
+    """O lote de antes da emenda nao tem as colunas da captacao nem a versao: o site nao pode
+    pedir coluna ausente ao parquet (a lista inteira cairia em silencio no sem projecao)."""
+    lista = cenario([_imovel("a", -23.5, -46.6)])
+    pd.DataFrame([{**_ok(-23.5, -46.6), "area_km2": 18.0}]).to_parquet(lista.with_name(ARQUIVO_SAIDA))
+    assert _itens()["a"]["fat_fonte"] == "praca"
+
+
+def test_imovel_sem_area_fica_sem_projecao(cenario):
+    cenario([{**_imovel("a", -23.5, -46.6), "area_relevante_m2": None}], [_ok(-23.5, -46.6)])
+    _sem_projecao(_itens()["a"], "sem_area")
+
+
+def test_chave_desligada_volta_a_densidade_mas_nunca_fora_do_dominio(cenario, monkeypatch):
+    cenario(
+        [
+            _imovel("presa", -20.17, -40.23),
+            _imovel("morta", -16.03, -47.97),
+            _imovel("ok", -23.5, -46.6),
+            _imovel("falha", -22.9, -43.2),
+            _imovel("nova", -19.9, -43.9),
+        ],
+        [
+            {**_ok(-20.17, -40.23), "area_km2": 0.48},
+            {**_ok(-16.03, -47.97), "pop_captacao": 385.0, "renda_pc_captacao": 2_000.0},
+            _ok(-23.5, -46.6),
+            {"lat5": -22.9, "lng5": -43.2, "status": "sem_isocrona", "motivo": "Sem via."},
+        ],
+    )
+    monkeypatch.setenv("MOTOR_VIABILIDADE_V2", "0")
+    itens = _itens()
+    _sem_projecao(itens["presa"], "area_pequena")
+    _sem_projecao(itens["morta"], "zona_morta")
+    densidade = ALUNOS_DENSIDADE * pilot_app._ticket_proj_mensal()
+    for iid in ("ok", "falha", "nova"):
+        assert itens[iid]["fat_fonte"] == "densidade"
+        assert itens[iid]["fat_proj"] == pytest.approx(densidade)
+        assert itens[iid]["fat_motivo"] is None
+
+
+def test_imovel_sem_coordenada_fica_sem_calculo_e_nao_aguardando(cenario):
+    """Achado da revisao: o lote nunca calcula coordenada invalida; "aguardando" prometeria
+    uma madrugada que nao vem."""
+    cenario([_imovel("a", float("nan"), float("nan"))])
+    _sem_projecao(_itens()["a"], "sem_calculo")
+
+
+def test_isocrona_presa_vence_o_status_de_falha(cenario):
+    """Achado da revisao: a isocrona presa cuja conta falhou depois (sem renda) dava "sem
+    calculo" na aba e "area" no simulador. A area vem antes do status, como la'."""
+    falha = {"lat5": -20.17, "lng5": -40.23, "status": "sem_entradas", "motivo": "Sem renda.",
+             "area_km2": 0.5}
+    cenario([_imovel("a", -20.17, -40.23)], [falha])
+    _sem_projecao(_itens()["a"], "area_pequena")

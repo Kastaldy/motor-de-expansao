@@ -323,9 +323,12 @@ reescaneia o diretório a cada chamada.
 quando o imóvel tem as entradas da isócrona em `entradas_c10.parquet` (mesma pasta). Quem
 grava esse arquivo é o cron noturno `run_entradas_oportunidades.sh` (04:15 UTC; ver
 `docs/infra_producao.md`, "Entradas do modelo de praça da aba de imóveis"). Até ele
-rodar, o imóvel novo aparece com a curva de densidade de antes. Para não esperar a noite,
-rodar o wrapper à mão depois do envio (é o mesmo comando do cron; incremental, só calcula
-o que falta):
+rodar, o imóvel novo fica **sem projeção** ("Sem projeção ainda", emenda 1 da DEC-086; a
+curva de densidade não é mais o fallback). Para não esperar a noite, rodar o wrapper à mão
+depois do envio (é o mesmo comando do cron; incremental, só calcula o que falta). **Exceção:**
+logo depois do deploy de uma versão que sobe `VERSAO_CALCULO` (a emenda 1 subiu para 2), o
+lote refaz TODAS as linhas (~1,3 h, Valhalla de 1 CPU): deixe essa rodada para o cron da
+madrugada, não para o horário de uso.
 
 ```bash
 /opt/motor-expansao-infra/run_entradas_oportunidades.sh

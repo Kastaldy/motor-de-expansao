@@ -6,8 +6,8 @@ Na abertura da lista isso custaria ~0,5 s por imovel (medido em 13/11/2026 na VP
 imoveis vivos, 8.010 coordenadas unicas, 0,54 s em media, ~1,2 h num processo, pico de
 651 MB). Por isso o calculo roda a NOITE, num processo a parte (`scripts/cron/
 run_entradas_oportunidades.sh`), e grava UM arquivo ao lado do `viaveis.parquet`. O site so'
-aplica a formula na leitura (~8 us por imovel) e, sem a entrada do imovel, cai na curva de
-densidade de sempre.
+aplica a formula na leitura (~8 us por imovel) e, sem a entrada do imovel, o deixa sem
+projecao (emenda 1; ate' ela, caia na curva de densidade).
 
 Mesmo caminho da sugestao da Viabilidade (`_entradas_c10_do_ponto` em `web/server/app.py`):
 `isocrona_carro` -> `_resolver_e_carregar(geometria=isocrona)` -> `agregar_entradas_c10`.
@@ -16,6 +16,17 @@ INCREMENTAL. A chave e' a coordenada em 5 casas (~1 m), a mesma do cache da isoc
 token da v2; so' a coordenada que ainda nao esta no arquivo e' calculada. Linha antiga nunca
 sai (anuncio que some e volta reaproveita a conta; o arquivo cresce devagar): para refazer
 tudo, por exemplo depois de tiles novos do Valhalla, `--recalcular-tudo`.
+
+CAPTACAO (emenda 1, 17/11/2026). Cada linha `ok` leva tambem a populacao e a renda per capita
+da captacao de 1,5 km (`pop_captacao`, `renda_pc_captacao`), o MESMO calculo da zona morta da
+Viabilidade (DEC-042). Com elas e com a `area_km2` o site decide o dominio do modelo
+(`dominio_praca`): zona morta ou isocrona presa ficam SEM projecao. Grava-se a MEDIDA, nunca a
+flag: mexer no limiar vale na leitura seguinte, sem recalcular. Captacao indisponivel fica
+nula e e' indecidivel (nunca veta), como na Viabilidade.
+
+VERSAO DA LINHA. `versao_calculo` diz com que regra a linha foi feita; linha de versao antiga
+(as de antes da captacao nao tem a coluna) volta a ser PENDENTE uma vez, e o lote seguinte a
+refaz sozinho -- sem `--recalcular-tudo` manual depois do deploy.
 
 Falha PERMANENTE do ponto (sem via a 300 m, area grande demais, coordenada fora da malha,
 sem setor, populacao ou renda) fica gravada com o motivo e nao se repete. Falha do SERVICO
@@ -76,7 +87,14 @@ COLUNAS = (
     "area_km2",
     "versao_rotas",
     "calculado_em",
+    "pop_captacao",
+    "renda_pc_captacao",
+    "versao_calculo",
 )
+
+# Regra com que a linha foi calculada. 1 = DEC-086 (sem coluna: nulo no arquivo);
+# 2 = emenda 1 (com a captacao). Subir aqui refaz, na noite seguinte, toda linha anterior.
+VERSAO_CALCULO = 2
 
 GRAVAR_A_CADA = 500
 MAX_FALHAS_SEGUIDAS = 20
@@ -86,12 +104,17 @@ CODIGO_SERVICO_FORA = 3
 
 
 class FalhaPermanente(Exception):
-    """O ponto nao tem entradas, e tentar de novo nao muda isso. `status` vai ao arquivo."""
+    """O ponto nao tem entradas, e tentar de novo nao muda isso. `status` vai ao arquivo.
 
-    def __init__(self, status: str, motivo: str) -> None:
+    `extras` vai junto a linha: a falha que acontece DEPOIS da isocrona leva a `area_km2`,
+    e o site decide pela area antes do status (emenda 1 da DEC-086), como o simulador.
+    """
+
+    def __init__(self, status: str, motivo: str, **extras: Any) -> None:
         super().__init__(motivo)
         self.status = status
         self.motivo = motivo
+        self.extras = extras
 
 
 class FalhaDoServico(Exception):
@@ -148,9 +171,13 @@ def ler_anterior(caminho: Path) -> pd.DataFrame:
 def _tipar(df: pd.DataFrame) -> pd.DataFrame:
     """As colunas do contrato, nos tipos do contrato (o arquivo e a concatenacao)."""
     out = df.reindex(columns=list(COLUNAS)).copy()
-    for c in ("lat5", "lng5", "pop_c10", "dom_c10", "renda_pc_c10", "area_km2"):
+    for c in (
+        "lat5", "lng5", "pop_c10", "dom_c10", "renda_pc_c10", "area_km2",
+        "pop_captacao", "renda_pc_captacao",
+    ):
         out[c] = pd.to_numeric(out[c], errors="coerce").astype("float64")
-    out["n_setores"] = pd.to_numeric(out["n_setores"], errors="coerce").astype("Int64")
+    for c in ("n_setores", "versao_calculo"):
+        out[c] = pd.to_numeric(out[c], errors="coerce").astype("Int64")
     for c in ("status", "motivo", "renda_fonte", "versao_rotas", "calculado_em"):
         out[c] = out[c].astype("string")
     return out
@@ -181,6 +208,7 @@ def calculadora_de_producao(raiz: Path, perfil: Any) -> Callable[[float, float],
         isocrona_carro,
     )
     from motor_expansao.dimensionamento.config import V2_MINUTOS_ISOCRONA
+    from motor_expansao.dimensionamento.dominio_praca import captacao
     from motor_expansao.dimensionamento.entradas_c10 import (
         EntradasC10Indisponiveis,
         agregar_entradas_c10,
@@ -193,6 +221,16 @@ def calculadora_de_producao(raiz: Path, perfil: Any) -> Callable[[float, float],
         staging_dir=raiz / "staging",
         perfil=perfil,
     )
+
+    def _captacao(lat: float, lng: float) -> tuple[float | None, float | None]:
+        """Populacao e renda da captacao de 1,5 km, com a malha carregada como a Viabilidade a
+        carrega (`_setores_para_catchment`: o municipio do ponto e os vizinhos do quadro).
+        NUNCA levanta: a captacao e' contexto, e sem ela a linha fica nula (indecidivel)."""
+        try:
+            _u, _c, setores = _resolver_e_carregar(lat, lng, cfg)
+            return captacao(lat, lng, setores)
+        except Exception:  # noqa: BLE001 -- contexto (DEC-042): ausencia nao e' erro do ponto
+            return None, None
 
     def calcular(lat: float, lng: float) -> dict[str, Any]:
         try:
@@ -214,12 +252,17 @@ def calculadora_de_producao(raiz: Path, perfil: Any) -> Callable[[float, float],
             # incidentes de INSUMO, e gravar o ponto como permanente o deixaria na curva
             # de densidade ate' um `--recalcular-tudo` manual. Voltam na proxima noite.
             if int(getattr(exc, "status_code", 0)) == 400:
-                raise FalhaPermanente(STATUS_SEM_MALHA, str(exc.detail)) from exc
+                raise FalhaPermanente(
+                    STATUS_SEM_MALHA, str(exc.detail), area_km2=float(iso.area_km2)
+                ) from exc
             raise FalhaDoServico(f"{exc.codigo}: {exc.detail}") from exc
         try:
             ent = agregar_entradas_c10(setores, iso.geometria, lat, lng)
         except EntradasC10Indisponiveis as exc:
-            raise FalhaPermanente(STATUS_SEM_ENTRADAS, str(exc)) from exc
+            raise FalhaPermanente(
+                STATUS_SEM_ENTRADAS, str(exc), area_km2=float(iso.area_km2)
+            ) from exc
+        pop_cap, renda_cap = _captacao(lat, lng)
         return {
             "pop_c10": float(ent.pop_c10),
             "dom_c10": float(ent.dom_c10),
@@ -228,6 +271,8 @@ def calculadora_de_producao(raiz: Path, perfil: Any) -> Callable[[float, float],
             "renda_fonte": str(ent.renda_fonte),
             "area_km2": float(iso.area_km2),
             "versao_rotas": iso.versao,
+            "pop_captacao": pop_cap,
+            "renda_pc_captacao": renda_cap,
         }
 
     return calcular
@@ -291,10 +336,14 @@ def rodar(
     # substitui a linha dele. Se o lote parar no meio (Valhalla fora), o que nao foi refeito
     # segue valendo, em vez de sumir da tela ate' a proxima noite.
     anterior = ler_anterior(saida)
+    # So' conta como feita a linha da regra de AGORA: a de versao antiga (ou sem versao, as
+    # de antes da captacao) volta a ser pendente e e' refeita uma vez, sem passo manual.
+    versao = pd.to_numeric(anterior["versao_calculo"], errors="coerce")
+    atuais = anterior[versao == VERSAO_CALCULO]
     feitas = (
         set()
         if recalcular_tudo
-        else {(float(a), float(b)) for a, b in zip(anterior["lat5"], anterior["lng5"], strict=True)}
+        else {(float(a), float(b)) for a, b in zip(atuais["lat5"], atuais["lng5"], strict=True)}
     )
     pendentes = [k for k in coords if k not in feitas]
     r.ja_calculadas = r.coordenadas_unicas - len(pendentes)
@@ -322,7 +371,9 @@ def rodar(
 
     for i, (lat, lng) in enumerate(pendentes, start=1):
         linha: dict[str, Any] = {c: None for c in COLUNAS}
-        linha.update({"lat5": lat, "lng5": lng, "calculado_em": relogio()})
+        linha.update(
+            {"lat5": lat, "lng5": lng, "calculado_em": relogio(), "versao_calculo": VERSAO_CALCULO}
+        )
         try:
             valores = calcular(lat, lng)
         except FalhaDoServico as exc:
@@ -336,7 +387,8 @@ def rodar(
             continue
         except FalhaPermanente as exc:
             seguidas = 0
-            linha.update({"status": exc.status, "motivo": exc.motivo[:300]})
+            extras = {c: v for c, v in getattr(exc, "extras", {}).items() if c in COLUNAS}
+            linha.update({**extras, "status": exc.status, "motivo": exc.motivo[:300]})
             r.calculadas_agora[exc.status] += 1
         except Exception as exc:  # noqa: BLE001 -- lote: registra o tipo e segue
             seguidas = 0

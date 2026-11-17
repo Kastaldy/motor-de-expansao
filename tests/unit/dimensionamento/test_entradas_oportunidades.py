@@ -218,8 +218,8 @@ def test_main_usa_os_caminhos_do_site_e_devolve_o_codigo(tmp_path, monkeypatch, 
 
 def test_calculadora_de_producao_so_grava_o_erro_que_depende_do_ponto(tmp_path, monkeypatch):
     """Achado da revisão: o 404 `base_geo_ausente` também sai de partição ILEGÍVEL e o 500 é
-    a malha ausente — incidentes de insumo. Gravá-los como permanentes deixaria o imóvel na
-    curva de densidade até um `--recalcular-tudo` manual. Só o 400 (coordenada fora da
+    a malha ausente — incidentes de insumo. Gravá-los como permanentes deixaria o imóvel sem
+    projeção até um `--recalcular-tudo` manual. Só o 400 (coordenada fora da
     malha) depende do ponto."""
     from motor_expansao.api import coord, service
     from motor_expansao.api.errors import APIError
@@ -250,3 +250,114 @@ def test_a_ultima_falha_do_servico_vai_para_o_resumo(tmp_path):
     kb = eo.chave_coordenada(*B)
     r = _rodar(_lista(tmp_path, [A, B]), tmp_path / "entradas_c10.parquet", Calc(servico={kb}))
     assert r.como_dict()["ultima_falha_do_servico"] == "timeout"
+
+
+# --------------------------------------------------------------------------- emenda 1
+def test_linha_de_versao_antiga_e_refeita_uma_vez_sem_passo_manual(tmp_path):
+    """As linhas de antes da captacao (sem `versao_calculo`) voltam a ser pendentes: o lote
+    seguinte ao deploy as refaz sozinho, e na outra noite ja' nao as toca."""
+    saida = tmp_path / "entradas_c10.parquet"
+    antigas = pd.DataFrame([
+        {"lat5": k[0], "lng5": k[1], "status": "ok", "pop_c10": 1e5, "dom_c10": 3e4,
+         "renda_pc_c10": 2e3, "area_km2": 18.0}
+        for k in (eo.chave_coordenada(*A), eo.chave_coordenada(*B))
+    ])
+    antigas.to_parquet(saida)
+    calc = Calc()
+    r = _rodar(_lista(tmp_path, [A, B]), saida, calc)
+    assert r.ja_calculadas == 0 and sorted(calc.chamadas) == sorted(
+        [eo.chave_coordenada(*A), eo.chave_coordenada(*B)]
+    )
+    df = pd.read_parquet(saida)
+    assert set(df["versao_calculo"]) == {eo.VERSAO_CALCULO} and len(df) == 2
+
+    calc = Calc()
+    r = _rodar(_lista(tmp_path, [A, B]), saida, calc)
+    assert calc.chamadas == [] and r.ja_calculadas == 2
+
+
+def test_falha_permanente_tambem_leva_a_versao(tmp_path):
+    saida = tmp_path / "entradas_c10.parquet"
+    kb = eo.chave_coordenada(*B)
+    _rodar(_lista(tmp_path, [A, B]), saida, Calc(permanentes={kb}))
+    df = pd.read_parquet(saida).set_index(["lat5", "lng5"])
+    assert df.loc[kb, "versao_calculo"] == eo.VERSAO_CALCULO
+    calc = Calc()
+    _rodar(_lista(tmp_path, [A, B]), saida, calc)
+    assert calc.chamadas == []
+
+
+def _producao(monkeypatch, tmp_path, *, captacao_falha=False, sem_renda=False):
+    """A calculadora de producao com o Valhalla, a malha e a captacao trocados por falsos."""
+    from motor_expansao.api import coord, service
+    from motor_expansao.dashboard import alcance_ponto
+    from motor_expansao.dimensionamento import catchment_batch, entradas_c10
+
+    geom = object()
+    iso = type("Iso", (), {"geometria": geom, "area_km2": 12.0, "versao": "t"})()
+    monkeypatch.setattr(alcance_ponto, "isocrona_carro", lambda lat, lng, minutos: iso)
+    monkeypatch.setattr(coord, "validar_brasil", lambda lat, lng: None)
+    cargas: list[dict] = []
+
+    def _resolver(lat, lng, cfg, **kw):
+        cargas.append(kw)
+        if captacao_falha and not kw:
+            raise RuntimeError("particao ilegivel")
+        return "SP", "3550308", "SETORES_ISO" if kw else "SETORES_CAPTACAO"
+
+    def _catch(lat, lng, setores, raio_km):
+        assert setores == "SETORES_CAPTACAO" and raio_km == 1.5
+        return {"pop_captacao": 3_210.0, "renda_per_capita_captacao": 1_900.0}
+
+    monkeypatch.setattr(service, "_resolver_e_carregar", _resolver)
+    def _agregar(setores, g, lat, lng):
+        if sem_renda:
+            raise entradas_c10.EntradasC10Indisponiveis("Sem renda publicada na area.")
+        return entradas_c10.EntradasC10(1e5, 3e4, 2e3, 40, "calibrada")
+
+    monkeypatch.setattr(entradas_c10, "agregar_entradas_c10", _agregar)
+    monkeypatch.setattr(catchment_batch, "calcular_catchment_unidade", _catch)
+    return eo.calculadora_de_producao(tmp_path, None), cargas, geom
+
+
+def test_calculadora_de_producao_grava_a_captacao_da_viabilidade(tmp_path, monkeypatch):
+    """A captacao usa a malha carregada como a Viabilidade a carrega (sem a geometria da
+    isocrona): a MESMA zona morta do card "Guardrail" e do PDF."""
+    calc, cargas, geom = _producao(monkeypatch, tmp_path)
+    v = calc(-23.5, -46.6)
+    assert v["pop_captacao"] == 3_210.0 and v["renda_pc_captacao"] == 1_900.0
+    assert cargas == [{"geometria": geom}, {}]
+
+
+def test_captacao_que_falha_fica_nula_e_nao_derruba_o_ponto(tmp_path, monkeypatch):
+    calc, _cargas, _geom = _producao(monkeypatch, tmp_path, captacao_falha=True)
+    v = calc(-23.5, -46.6)
+    assert v["pop_captacao"] is None and v["renda_pc_captacao"] is None
+    assert v["pop_c10"] == 1e5, "a conta do modelo segue valendo"
+
+
+def test_falha_depois_da_isocrona_leva_a_area_para_a_linha(tmp_path, monkeypatch):
+    """Achado da revisao: com a area na linha, o site decide pela isocrona presa antes do
+    status, como o simulador -- o mesmo imovel nao tem um motivo em cada tela."""
+    calc, _cargas, _geom = _producao(monkeypatch, tmp_path, sem_renda=True)
+    with pytest.raises(eo.FalhaPermanente) as exc:
+        calc(-23.5, -46.6)
+    assert exc.value.status == eo.STATUS_SEM_ENTRADAS and exc.value.extras == {"area_km2": 12.0}
+
+
+def test_rodar_grava_os_extras_da_falha_permanente(tmp_path):
+    kb = eo.chave_coordenada(*B)
+
+    class CalcArea(Calc):
+        def __call__(self, lat, lng):
+            if (lat, lng) == kb:
+                raise eo.FalhaPermanente(eo.STATUS_SEM_ENTRADAS, "Sem renda.", area_km2=0.5,
+                                         coluna_que_nao_existe=1)
+            return super().__call__(lat, lng)
+
+    saida = tmp_path / "entradas_c10.parquet"
+    _rodar(_lista(tmp_path, [A, B]), saida, CalcArea())
+    df = pd.read_parquet(saida)
+    assert list(df.columns) == list(eo.COLUNAS), "extra fora do contrato nao vira coluna"
+    linha = df.set_index(["lat5", "lng5"]).loc[kb]
+    assert linha["status"] == eo.STATUS_SEM_ENTRADAS and linha["area_km2"] == 0.5
