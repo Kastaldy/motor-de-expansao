@@ -421,6 +421,12 @@ export default function ExecutiveScreen({
     () => destaquesDoRecorte(carteira?.unidades ?? [], baseDestaque),
     [carteira, baseDestaque],
   )
+  // Unidades fora do SSS SÓ pela rampa de abertura no ano-base (DEC-088). A base zero vem
+  // somada em `unidades_rampa` e sai aqui: loja madura sem faturamento não está em rampa.
+  const emRampaSss = Math.max(
+    (carteira?.sss.unidades_rampa ?? 0) - (carteira?.sss.unidades_base_zero ?? 0),
+    0,
+  )
 
   function limparRecorte() {
     setUf('')
@@ -1085,8 +1091,16 @@ export default function ExecutiveScreen({
                   <Glass style={{ flexShrink: 0, padding: '14px 16px' }}>
                     <Rotulo>Mesma base, ano a ano (SSS)</Rotulo>
                     <div style={{ font: '400 10.5px/1.5 var(--f-ui)', color: 'var(--tx-muted)', marginBottom: 10 }}>
-                      {carteira.sss.unidades} unidades presentes nos dois períodos. Comparar total
-                      contra total infla o crescimento numa rede que abre lojas.
+                      {/* Base pequena (texto a aprovar): o aviso cola no número, que fica. */}
+                      {carteira.sss.base_pequena ? 'Base pequena: ' : ''}
+                      {carteira.sss.unidades} unidades presentes nos dois períodos
+                      {carteira.sss.maturacao_min_meses
+                        ? `, com ${carteira.sss.maturacao_min_meses} meses ou mais de operação no ano-base`
+                        : ''}
+                      {emRampaSss > 0
+                        ? ` (${emRampaSss} em rampa no ano-base ${emRampaSss === 1 ? 'fica' : 'ficam'} fora)`
+                        : ''}
+                      . Comparar total contra total infla o crescimento numa rede que abre lojas.
                     </div>
                     {(['faturamento', 'ativos'] as const).map((chave) => {
                       const m = carteira.sss.metricas?.[chave]
@@ -1209,6 +1223,7 @@ export default function ExecutiveScreen({
                   expandido={destaquesAbertos}
                   onExpandir={setDestaquesAbertos}
                   onUnidade={abrirFicha}
+                  maturacaoMeses={carteira.sss.maturacao_min_meses}
                 />
               </div>
               <div style={{ ...TRILHO_PAINEL, display: 'grid' }}>

@@ -1433,16 +1433,24 @@ export interface RedeUnidade {
     faturamento: number | null
     variacao_pct: number | null
   }
-  /** SSS da unidade: o mesmo mês, um ano antes. `var_pct` nulo quando ela não operou o
-   *  mês inteiro nos dois períodos — a unidade continua na lista, dizendo por que não
-   *  entra na conta, em vez de sumir. Ausente na ficha, que é outro payload. */
+  /** SSS da unidade: o mesmo mês, um ano antes. `var_pct` nulo quando ela não entra na
+   *  base comparável — a unidade continua na lista, dizendo por que não entra na conta,
+   *  em vez de sumir. Ausente na ficha, que é outro payload. */
   sss?: {
     competencia_base: string
     faturamento: number | null
     ano_anterior: number | null
     var_pct: number | null
+    /** Por que ficou fora (DEC-088); `null` quando entra. Identificador, sem acento. */
+    motivo?: RedeSssMotivo | null
   }
 }
+
+/** Por que uma unidade que operou o período atual inteiro fica fora do SSS (DEC-088):
+ *  `sem_ano_anterior` não existia há um ano (ou não operou o período-base inteiro);
+ *  `em_rampa` existia, mas estava nos primeiros meses de operação no ano-base;
+ *  `base_zero` madura, mas sem faturamento no ano-base. */
+export type RedeSssMotivo = 'sem_ano_anterior' | 'em_rampa' | 'base_zero'
 
 export interface RedeRegua {
   rotulo: string
@@ -1458,12 +1466,24 @@ export interface RedeRegua {
 export interface RedeSss {
   disponivel: boolean
   competencia_base: string
-  /** unidades COMPARÁVEIS: as do recorte que operaram o mês inteiro nos dois períodos */
+  /** unidades COMPARÁVEIS: as do recorte que operaram o mês inteiro nos dois períodos e
+   *  já tinham `maturacao_min_meses` de operação no início do ano-base (DEC-088) */
   unidades: number
   /** quantas unidades o recorte tem no mês escolhido */
   unidades_recorte: number
-  /** `unidades_recorte - unidades` — as que não existiam há um ano e por isso não entram */
+  /** as que não existiam há um ano, ou não operaram o período inteiro em algum dos dois
+   *  lados. Fecha a conta: `unidades + unidades_fora + unidades_rampa = unidades_recorte` */
   unidades_fora: number
+  /** as que existiam e operaram o ano-base inteiro, mas ficaram fora SÓ pela maturação
+   *  ou por base zero (DEC-088). Ausente em payload anterior a ela = 0. */
+  unidades_rampa?: number
+  /** a parte de `unidades_rampa` que saiu por base zero (faturamento nulo no ano-base) */
+  unidades_base_zero?: number
+  /** meses de operação exigidos no dia 1º do período-base (3, DEC-088) */
+  maturacao_min_meses?: number
+  /** menos de `base_pequena_min` unidades na base: o número aparece, com aviso */
+  base_pequena?: boolean
+  base_pequena_min?: number
   metricas?: Record<string, { atual: number | null; ano_anterior: number | null; var_pct: number | null }>
   /** SSS mês a mês, alinhado a `serie_meses`. `unidades[i]` é a base comparável DAQUELE
    *  mês: ela muda de ponto para ponto, e sem ela uma alta de base pequena parece alta

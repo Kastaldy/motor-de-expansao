@@ -1369,3 +1369,49 @@ def serie_diaria(df: pd.DataFrame, unidade_id: str, coluna: str) -> pd.DataFrame
     # Primeiro dia de cada mes: o cumulativo JA e' o valor do dia (reset no dia 1).
     diario = diario.fillna(valores)
     return pd.DataFrame({"data": sub["_data"].to_numpy(), "valor": diario.to_numpy()})
+
+
+# ---------------------------------------------------------------------------
+# SSS: maturacao minima no ano-base (DEC-088)
+# ---------------------------------------------------------------------------
+
+#: Meses de operacao que a unidade precisa ter COMPLETADO no dia 1o do periodo-base para
+#: entrar no SSS (decisao do Felipe, 17/11/2026, DEC-088). Ate aqui bastava ter operado o
+#: periodo inteiro nos dois anos, e a unidade em RAMPA de abertura no ano-base entrava:
+#: a base dela e' o faturamento de quem acabou de abrir, e o "crescimento" contra ela e'
+#: a rampa, nao a mesma loja vendendo mais. Medido na base de producao: out/2026 da rede
+#: saia -0,7% com 69 unidades; com 3 meses, -3,0% com 60.
+SSS_MATURACAO_MIN_MESES = 3
+
+#: Abaixo deste numero de unidades na base, o SSS do recorte sai com o aviso "base
+#: pequena" -- mostrado, nunca escondido. Com 2 ou 3 unidades, uma so' decide o sinal.
+SSS_BASE_PEQUENA_MIN = 5
+
+
+def madura_no_inicio(
+    inauguracao: pd.Series,
+    inicio_base: pd.Timestamp | pd.Series,
+    meses: int = SSS_MATURACAO_MIN_MESES,
+) -> pd.Series:
+    """A unidade ja' tinha `meses` de operacao no INICIO do periodo-base? Regra POR DATA.
+
+    `inauguracao <= inicio_base - meses` (calendario, `DateOffset`): inaugurada em 01/07
+    tem exatamente 3 meses em 01/10 e entra; em 02/07, nao. Inauguracao vazia conta como
+    MADURA, como no resto da aba (`operacao_mes_cheio`): a base de producao nao tem
+    unidade sem data, e tirar a unidade antiga sem cadastro da conta esconderia uma loja
+    que existe.
+
+    Uma regra so', usada pelo SSS do recorte, pelo SSS de cada unidade e pela serie mes a
+    mes. NAO usa `meses_operacao`: aquele e' medido no FIM da janela, e numa janela longa
+    a unidade que abriu dentro do ano-base ja aparece "madura" no fim dele.
+
+    `inicio_base` pode ser um `Timestamp` (o mesmo para todas) ou uma serie alinhada a
+    `inauguracao`. NaT no `inicio_base` nao amadurece ninguem com data.
+    """
+    datas = pd.to_datetime(inauguracao, errors="coerce")
+    if isinstance(inicio_base, pd.Series):
+        inicio = pd.to_datetime(inicio_base, errors="coerce").reindex(datas.index)
+    else:
+        inicio = pd.Timestamp(inicio_base) if inicio_base is not None else pd.NaT
+    corte = inicio - pd.DateOffset(months=int(meses))
+    return (datas.isna() | (datas <= corte)).astype(bool)

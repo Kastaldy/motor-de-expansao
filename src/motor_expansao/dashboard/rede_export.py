@@ -696,29 +696,68 @@ def _pagina_de_graficos_da_rede(
 
     sss = payload.get("sss") or {}
     if sss.get("disponivel") and sss.get("metricas"):
-        faturamento = sss["metricas"].get("faturamento") or {}
-        variacao = faturamento.get("var_pct")
         pdf.set_text_color(*CINZA_TEXTO)
         pdf.set_font("Helvetica", "", 9)
-        pdf.set_xy(36, 424)
-        pdf.cell(
-            PAGINA_LARGURA - 72,
-            12,
-            # O denominador entra junto de propósito. "18 unidades, +9%" sozinho é lido
-            # como o crescimento da carteira inteira; o que o SSS mede é a parte dela que
-            # já existia um ano atrás, e o resto ficou de fora porque abrir loja não é
-            # crescer. Desde 2026-08 o SSS acompanha os filtros da tela, então este texto
-            # fala do RECORTE impresso, não da rede.
-            ascii_seguro(
-                f"Mesma base ano a ano (SSS): {sss.get('unidades', 0)} de "
-                f"{sss.get('unidades_recorte', sss.get('unidades', 0))} unidades do recorte "
-                f"estavam abertas nos dois períodos; faturamento "
-                f"{'+' if (variacao or 0) >= 0 else ''}{_br(variacao, 1)}% contra "
-                f"{sss.get('competencia_base', '')}."
-            ),
-        )
+        for indice, texto in enumerate(linhas_do_sss(sss)):
+            pdf.set_xy(36, 424 + 13 * indice)
+            pdf.cell(PAGINA_LARGURA - 72, 12, ascii_seguro(texto))
 
     rodape(pdf, _texto_do_rodape(payload))
+
+
+def linhas_do_sss(sss: Mapping[str, Any]) -> list[str]:
+    """As linhas do SSS no PDF da carteira: o número com a base dele e, se houver, quem
+    ficou de fora e por quê. Lê SÓ o payload — a regra é do servidor (`_rede_sss`).
+
+    O denominador entra junto de propósito. "18 unidades, +9%" sozinho é lido como o
+    crescimento da carteira inteira; o que o SSS mede é a parte dela que já existia um ano
+    atrás, e o resto ficou de fora porque abrir loja não é crescer. Desde 2026-08 o SSS
+    acompanha os filtros da tela, então este texto fala do RECORTE impresso, não da rede.
+
+    Desde a DEC-088 quem estava na rampa de abertura no ano-base também fica fora, e a
+    segunda linha separa as duas razões: "não existia" e "estava em rampa" são leituras
+    diferentes para o time. Payload antigo, sem os campos novos, sai como antes.
+    """
+    faturamento = (sss.get("metricas") or {}).get("faturamento") or {}
+    variacao = faturamento.get("var_pct")
+    unidades = int(sss.get("unidades", 0) or 0)
+    meses = sss.get("maturacao_min_meses")
+    maturidade = f", com {meses} meses ou mais de operação no ano-base" if meses else ""
+    # Texto a aprovar (Felipe): com menos de `base_pequena_min` unidades o número continua
+    # impresso, e o aviso cola nele -- "base pequena: 3 de 40 unidades".
+    rotulo = "Mesma base ano a ano (SSS)" + (" - base pequena" if sss.get("base_pequena") else "")
+    linhas = [
+        f"{rotulo}: {unidades} de "
+        f"{sss.get('unidades_recorte', unidades)} unidades do recorte estavam abertas nos "
+        f"dois períodos{maturidade}; faturamento "
+        f"{'+' if (variacao or 0) >= 0 else ''}{_br(variacao, 1)}% contra "
+        f"{sss.get('competencia_base', '')}."
+    ]
+
+    fora = int(sss.get("unidades_fora", 0) or 0)
+    base_zero = int(sss.get("unidades_base_zero", 0) or 0)
+    rampa = max(int(sss.get("unidades_rampa", 0) or 0) - base_zero, 0)
+    partes: list[str] = []
+    if fora and meses:
+        partes.append(
+            f"{fora} não existia há um ano (ou não operou o período inteiro)"
+            if fora == 1
+            else f"{fora} não existiam há um ano (ou não operaram o período inteiro)"
+        )
+    if rampa and meses:
+        partes.append(
+            f"{rampa} {'estava' if rampa == 1 else 'estavam'} nos {meses} primeiros meses de "
+            "operação no ano-base (rampa de abertura)"
+        )
+    if base_zero:
+        partes.append(f"{base_zero} sem faturamento no ano-base")
+    if partes:
+        linhas.append(
+            "Fora da conta: "
+            + (partes[0] if len(partes) == 1 else ", ".join(partes[:-1]) + " e " + partes[-1])
+            + "."
+        )
+    return linhas
 
 
 def _pagina_de_graficos_da_ficha(pdf: UltraPDF, payload: Mapping[str, Any]) -> None:
