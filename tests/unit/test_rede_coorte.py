@@ -114,6 +114,20 @@ def test_peer_set_exclui_quem_coletou_menos_e_unidade_nova() -> None:
     assert rc.comparar(rede, "u001", ["faturamento"]).n == 9
 
 
+def test_peer_set_no_periodo_le_o_gate_do_periodo() -> None:
+    """O quadro de PERÍODO não tem `operacao_mes_cheio`, tem `operacao_periodo_cheio`.
+
+    Lendo só a coluna mensal (até 17/11/2026), o padrão "operou inteira" punha no peer set,
+    no modo período, a unidade inaugurada no meio da janela.
+    """
+    rede = _rede({"12_23": 12}).drop(columns=["operacao_mes_cheio", "no_peer_set"])
+    rede["operacao_periodo_cheio"] = True
+    rede.loc[rede["unidade_id"] == "u003", "operacao_periodo_cheio"] = False
+    rede = rc.anotar_coortes(rede)
+    assert int(rede["no_peer_set"].sum()) == 11
+    assert not bool(rede.loc[rede["unidade_id"] == "u003", "no_peer_set"].iloc[0])
+
+
 def test_peer_set_sobrevive_ao_mes_em_curso() -> None:
     """No dia 3 do mes TODAS as unidades tem 3 dias -- e a coorte tem de continuar de pe.
 

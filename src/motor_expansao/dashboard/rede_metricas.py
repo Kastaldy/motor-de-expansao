@@ -775,11 +775,79 @@ def _meses_inteiros_na_janela(
     )
 
 
+def meses_fechados(
+    inicio: pd.Timestamp, fim: pd.Timestamp, ultimo_dado: pd.Timestamp | None
+) -> list[pd.Period]:
+    """Os meses FECHADOS da janela `[inicio, fim]`: a base do Churn Médio (DEC-088).
+
+    Mês fechado = mês civil INTEIRO dentro da janela (do dia 1 ao último dia) e já
+    encerrado na base -- o último dia dele é `<= ultimo_dado`, o último dia com dado. O
+    mês em curso nunca entra, nem quando a janela o cobre de ponta a ponta no calendário:
+    no dia 17, novembro ainda não acabou.
+
+    Lista vazia quando nenhum mês cabe (o próprio mês em curso, ou "17/10 a 16/11", que
+    atravessa a virada sem conter um mês inteiro): é o sinal para o churn seguir a conta
+    da janela, `cancelados / pagantes_inicio`.
+    """
+    if ultimo_dado is None or pd.isna(ultimo_dado):
+        return []
+    inicio = pd.Timestamp(inicio).normalize()
+    fim = pd.Timestamp(fim).normalize()
+    if pd.isna(inicio) or pd.isna(fim) or inicio > fim:
+        return []
+    limite = min(fim, pd.Timestamp(ultimo_dado).normalize())
+    mes = inicio.to_period("M")
+    if inicio != mes.to_timestamp(how="start"):
+        mes += 1
+    meses: list[pd.Period] = []
+    while mes.to_timestamp(how="end").normalize() <= limite:
+        meses.append(mes)
+        mes += 1
+    return meses
+
+
+def churn_dos_meses_fechados(
+    df: pd.DataFrame, meses: list[pd.Period], mensal: pd.DataFrame | None = None
+) -> pd.DataFrame:
+    """Churn Médio por unidade: a MÉDIA SIMPLES do churn de cada mês fechado (DEC-088).
+
+    O churn de cada mês é EXATAMENTE o do fechamento mensal (`cancelados do mês /
+    pagantes_m1`), o mesmo número de cada ponto da série da unidade -- e é por isso que ele
+    sai de `fechamento_mensal`, e não de uma conta paralela. `mensal`, quando vem, é esse
+    fechamento já pronto (o da tela); sem ele, o fechamento é refeito sobre a fatia que
+    vai do mês ANTERIOR ao primeiro (a base dele) até o último mês.
+
+    O divisor é o número de meses em que a unidade TEVE churn (`churn_meses`), nunca o
+    tamanho da janela: quem inaugurou no meio dela não tem base nos meses de antes, e
+    dividir por 12 fixo puniria a data de abertura. Indexado por `unidade_id`; unidade sem
+    nenhum mês com base sai com churn NaN e `churn_meses` 0.
+    """
+    vazio = pd.DataFrame(
+        {"churn_pct": pd.Series(dtype="float64"), "churn_meses": pd.Series(dtype="float64")}
+    )
+    if not meses or not len(df):
+        return vazio
+    if mensal is None:
+        desde = (meses[0] - 1).to_timestamp(how="start")
+        ate = meses[-1].to_timestamp(how="end").normalize()
+        mensal = fechamento_mensal(df[(df["_data"] >= desde) & (df["_data"] <= ate)])
+    if not len(mensal):
+        return vazio
+    alvo = {str(m) for m in meses}
+    dos_meses = mensal[mensal["competencia"].astype(str).isin(alvo)]
+    churn = pd.to_numeric(dos_meses["churn_pct"], errors="coerce")
+    por_unidade = churn.groupby(dos_meses["unidade_id"], observed=True)
+    return pd.DataFrame(
+        {"churn_pct": por_unidade.mean(), "churn_meses": por_unidade.count().astype("float64")}
+    )
+
+
 def fechamento_periodo(
     df: pd.DataFrame,
     inicio: pd.Timestamp,
     fim: pd.Timestamp,
     financeiro: pd.DataFrame | None = None,
+    mensal: pd.DataFrame | None = None,
 ) -> pd.DataFrame:
     """Uma linha por unidade com o agregado de `[inicio, fim]` - as DUAS pontas dentro.
 
@@ -806,6 +874,15 @@ def fechamento_periodo(
     do churn da janela, o análogo livre do `[REC_MES_ANTERIOR]` do PowerBI. NaN quando a
     unidade não tem histórico antes do intervalo - churn sem base é desconhecido, nunca
     zero (dividir por zero pintaria de vermelho quem só é nova).
+
+    Churn Médio (DEC-088): quando a janela contém ao menos um mês FECHADO
+    (`meses_fechados`), `churn_pct` passa a ser a MÉDIA do churn mensal desses meses, e
+    `churn_meses` diz quantos entraram na conta. A conta acima (`cancelados /
+    pagantes_inicio`) ACUMULA: doze meses de cancelamento sobre a base de um mês só davam
+    70% de churn para uma rede que perde ~5,9% ao mês. Sem nenhum mês fechado na janela, ela
+    segue valendo como sempre (e `churn_meses` sai NaN); para um mês civil fechado as duas
+    leituras coincidem. `cancelados` continua sendo o TOTAL do período. `mensal` é o
+    fechamento mensal já calculado (opcional; ver `churn_dos_meses_fechados`).
 
     `financeiro` sobrepoe o faturamento pela planilha do Financeiro, mas SO' nas
     competencias que a janela cobre inteiras -- e' o unico recorte para o qual a planilha,
@@ -879,7 +956,21 @@ def fechamento_periodo(
     )
     fech["periodo_inicio"] = inicio
     fech["periodo_fim"] = fim
-    return _derivar_periodo(fech, inicio, fim)
+    derivado = _derivar_periodo(fech, inicio, fim)
+
+    meses = meses_fechados(inicio, fim, df["_data"].max())
+    if not meses:
+        derivado["churn_meses"] = float("nan")
+        return derivado
+    medio = churn_dos_meses_fechados(df, meses, mensal)
+    derivado["churn_pct"] = pd.to_numeric(
+        derivado["unidade_id"].map(medio["churn_pct"]), errors="coerce"
+    )
+    derivado["churn_meses"] = (
+        pd.to_numeric(derivado["unidade_id"].map(medio["churn_meses"]), errors="coerce")
+        .fillna(0.0)
+    )
+    return derivado
 
 
 ORIGEM_MISTA = "misto"
@@ -1031,7 +1122,9 @@ def _derivar_periodo(
     f["operacao_periodo_cheio"] = f["inauguracao"].isna() | (f["inauguracao"] <= inicio)
     # Churn da janela: cancelados do intervalo sobre a base com que ele COMEÇOU. O
     # `pagantes_m1` do mensal não serve aqui - o "mês anterior" de um intervalo livre não
-    # existe, e para um mês civil os dois coincidem (ver os testes de equivalência).
+    # existe, e para um mês civil os dois coincidem (ver os testes de equivalência). É a
+    # conta da janela SEM mês fechado: com um ou mais, `fechamento_periodo` a troca pelo
+    # Churn Médio (DEC-088), porque esta acumula e doze meses dariam ~70%.
     f["churn_pct"] = _divisao(100.0 * f["cancelados"], f["pagantes_inicio"])
     competencia_fim = pd.Series([fim.to_period("M")] * len(f), index=f.index, dtype="period[M]")
     f["meses_operacao"] = _meses_operacao(f["inauguracao"], competencia_fim)
@@ -1044,7 +1137,7 @@ def _derivar_periodo(
 _TROCAS_PERIODO: tuple[str, ...] = ("competencia", "mes_completo", "operacao_mes_cheio")
 _EXTRAS_PERIODO: tuple[str, ...] = (
     "periodo_inicio", "periodo_fim", "periodo_completo", "operacao_periodo_cheio",
-    "pagantes_inicio", "origem_faturamento",
+    "pagantes_inicio", "origem_faturamento", "churn_meses",
 )
 
 
@@ -1185,7 +1278,7 @@ def contexto_comparativo(
     a rede toda (filtrar antes tornaria "media da rede" dependente do filtro da tela).
 
     `comparaveis` limita QUEM entra no ranking e na media -- por padrao, quem operou a
-    janela inteira (`operacao_mes_cheio`). Uma unidade inaugurada no dia 30 recebe posicao
+    janela inteira (`operacao_periodo_cheio` no periodo, `operacao_mes_cheio` no mes). Uma unidade inaugurada no dia 30 recebe posicao
     e "% vs media" NULOS em vez de um "92o de 92" que so mede a data de abertura. A
     planilha do time comete esse erro de forma parecida, dividindo por 91 e incluindo a
     ADMINISTRACAO (R$ 218 de faturamento) na media contra a qual as 89 sao medidas.
@@ -1216,14 +1309,28 @@ def mascara_comparaveis(mes: pd.DataFrame, comparaveis: pd.Series | None = None)
     `medias_da_rede` (a linha "media da rede" da Carteira) -- senao a linha e o "% vs media"
     da celula mediriam contra universos diferentes e uma unidade com o valor da linha nao
     leria "na media".
+
+    Le `operacao_periodo_cheio` quando o quadro e' de PERIODO (`fechamento_periodo`) e
+    `operacao_mes_cheio` quando e' mensal. Ate 17/11/2026 so' a coluna mensal era lida, e o
+    quadro de periodo -- que e' o que a tela usa desde o calendario -- nao a tem: TODA unidade
+    entrava no ranking e na media, inclusive a inaugurada no meio da janela.
     """
     if comparaveis is None:
+        coluna = coluna_de_operacao_cheia(mes)
         comparaveis = (
-            mes["operacao_mes_cheio"].fillna(False).astype(bool)
-            if "operacao_mes_cheio" in mes.columns
+            mes[coluna].fillna(False).astype(bool)
+            if coluna is not None
             else pd.Series(True, index=mes.index)
         )
     return comparaveis.reindex(mes.index).fillna(False).astype(bool)
+
+
+def coluna_de_operacao_cheia(quadro: pd.DataFrame) -> str | None:
+    """Qual coluna diz "operou a janela inteira": a do periodo, a do mes, ou nenhuma."""
+    for coluna in ("operacao_periodo_cheio", "operacao_mes_cheio"):
+        if coluna in quadro.columns:
+            return coluna
+    return None
 
 
 def medias_da_rede(

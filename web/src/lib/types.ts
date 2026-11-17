@@ -1370,6 +1370,10 @@ export interface RedeMetrica {
   rank_total: number | null
   /** distância da média da rede, em % */
   vs_media_pct: number | null
+  /** true quando a unidade NÃO operou o período anterior inteiro (DEC-088): o M-1 vem, mas
+   *  sem seta — churn e NPS variam em pontos (`atual - m1`), e só o `delta_pct` nulo não
+   *  bastaria para apagá-la. Ausente nos demais casos. */
+  m1_parcial?: boolean
 }
 
 export type RedeSeveridade = 'alta' | 'media' | 'ok' | 'sem_base'
@@ -1506,8 +1510,10 @@ export interface RedeCarteira {
    *  absolutas e o diagnóstico, que continuam mensais mesmo com período livre. */
   mes: string
   meses: string[]
-  /** o intervalo analisado, as duas pontas inclusive */
-  periodo: { inicio: string; fim: string; dias: number; mes_inteiro: boolean }
+  /** o intervalo analisado, as duas pontas inclusive. `churn_medio` (DEC-088): o período
+   *  tem ao menos um mês FECHADO e o churn é a média do churn desses meses — a tela rotula
+   *  "Churn Médio"; sem ele (mês em curso), "Churn". Opcional: servidor anterior não manda. */
+  periodo: { inicio: string; fim: string; dias: number; mes_inteiro: boolean; churn_medio?: boolean }
   /** contra o que as setas de variação comparam: mês inteiro -> mês anterior; qualquer
    *  outro recorte -> a janela imediatamente anterior de MESMO tamanho */
   periodo_anterior: { inicio: string; fim: string }

@@ -116,9 +116,18 @@ def anotar_coortes(mes: pd.DataFrame) -> pd.DataFrame:
     else:
         cobertura_ok = dias >= COBERTURA_MINIMA_DA_JANELA * float(dias.max())
 
+    # Quadro de PERIODO traz `operacao_periodo_cheio`; o mensal, `operacao_mes_cheio`. Ler so'
+    # a mensal (como ate 17/11/2026) punha no peer set, no modo periodo, quem inaugurou no meio
+    # da janela -- a coluna nao existia ali e o padrao era "operou inteira".
+    coluna_cheia = next(
+        (c for c in ("operacao_periodo_cheio", "operacao_mes_cheio") if c in saida.columns), None
+    )
+    operou_inteira = (
+        saida[coluna_cheia] if coluna_cheia is not None else pd.Series(True, index=saida.index)
+    )
     saida["no_peer_set"] = (
         cobertura_ok.fillna(False).astype(bool)
-        & saida.get("operacao_mes_cheio", pd.Series(True, index=saida.index)).fillna(False).astype(bool)
+        & operou_inteira.fillna(False).astype(bool)
         & saida["coorte"].ne(COORTE_INDEFINIDA)
     )
     return saida
