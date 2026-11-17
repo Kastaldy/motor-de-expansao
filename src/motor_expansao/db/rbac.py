@@ -63,6 +63,24 @@ WHERE u.login_usuario = %s AND u.ativo
 """
 
 
+# Os masters franquia a que a pessoa responde (perfil `master`, migration 025, DEC-087). CONSULTA
+# PROPRIA, e nao uma coluna a mais no `SQL_IDENTIDADE`, por tres razoes: (1) o JOIN de la' ja'
+# multiplica permissao x pais, e um terceiro LEFT JOIN multiplicaria de novo as linhas de TODA
+# requisicao controlada de TODO perfil; (2) so' as leituras de `/api/rede/` de quem tem
+# `rede.ver_propria` precisam deste dado, entao so' elas pagam a ida ao banco; (3) o `SQL_VALIDAR`
+# da sessao e o `/api/verify` ficam intocados.
+#
+# `u.ativo` nao e' redundante com o chamador ja' ter resolvido a identidade: entre as duas
+# consultas a pessoa pode ser desativada, e entao o recorte sai VAZIO -- falha fechada.
+SQL_MASTERS_DO_USUARIO = """
+SELECT um.master_franquia
+FROM usuario_masters um
+JOIN usuarios u ON u.id_usuario = um.id_usuario
+WHERE um.id_usuario = %s AND u.ativo
+ORDER BY um.master_franquia
+"""
+
+
 @dataclass(frozen=True)
 class Identidade:
     """Quem e', e o que pode. `id_usuario` alimenta o `app.id_usuario` do D19."""
@@ -136,3 +154,26 @@ def identidade(remote_user: str | None) -> Identidade | None:
     return Identidade(
         id_usuario=id_usuario, login=login, perfil=perfil, permissoes=chaves, paises=paises
     )
+
+
+def masters_do_usuario(id_usuario: int) -> frozenset[str]:
+    """Os `master_franquia` a que esta pessoa esta' vinculada (`usuario_masters`, 025).
+
+    Conjunto VAZIO e' resposta legitima -- pessoa sem vinculo, ou desativada --, e quem chama tem
+    de tratar vazio como "nenhuma unidade", NUNCA como "sem recorte": e' o que mantem o perfil
+    `master` fechado quando o vinculo falta ou o nome do master mudou no cadastro.
+
+    Mesma politica de erro de `identidade`: banco fora levanta `BancoIndisponivel` (ou a subclasse
+    `BancoSemProvaDeQueda`), e quem decide entre 503 e degradar e' o chamador. Nada aqui vira
+    "sem recorte" por falha -- devolver a rede inteira a um master porque o banco piscou seria
+    exatamente o vazamento que este recorte existe para impedir.
+    """
+    # `bool` e' subclasse de `int` e `True` viraria a pessoa de id 1; texto (um login passado por
+    # engano no lugar do id) chegaria ao Postgres como erro de conversao cru. Os dois sao defeito
+    # de quem chama, e o `TypeError` diz isso antes de ir ao banco.
+    if isinstance(id_usuario, bool) or not isinstance(id_usuario, int):
+        raise TypeError(f"id_usuario tem de ser int, nao {type(id_usuario).__name__}")
+
+    with conexao() as con:
+        linhas = con.execute(SQL_MASTERS_DO_USUARIO, (id_usuario,)).fetchall()
+    return frozenset(linha[0] for linha in linhas if linha[0] is not None)

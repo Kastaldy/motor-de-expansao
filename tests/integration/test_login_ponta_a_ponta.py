@@ -1005,7 +1005,10 @@ def test_023_anotar_e_de_todos_os_perfis_e_ver_autor_so_de_growth(con: Any) -> N
         "WHERE pe.chave LIKE 'concorrente.%%'"
     ).fetchall()
     todos = {r[0] for r in con.execute("SELECT nome_perfil FROM perfis").fetchall()}
-    assert {p for p, c in linhas if c == "concorrente.anotar"} == todos
+    # Todos MENOS o `master` (decisao de 17/11/2026, DEC-087): a 023 deu `anotar` a todo perfil que
+    # existia em 05/11/2026, e o master nasce na 025 de proposito sem ela -- ele so' alcanca a
+    # Visao Executiva recortada, e nao o Mapa onde as anotacoes vivem.
+    assert {p for p, c in linhas if c == "concorrente.anotar"} == todos - {"master"}
     assert {p for p, c in linhas if c == "concorrente.ver_autor"} == {"growth"}
 
 
@@ -1143,3 +1146,88 @@ def test_024_incluir_e_so_de_growth_e_lideres(con: Any) -> None:
         "WHERE pe.chave = 'rede.unidade_incluir'"
     ).fetchall()
     assert {r[0] for r in linhas} == {"growth", "lideres"}
+
+
+# ======================================================================================
+# 5. O PERFIL MASTER (025, DEC-087) — o que só o banco de verdade prova
+#
+# Aqui pelo mesmo motivo das seções 3 e 4: é este o arquivo que o passo do banco do CI roda. A
+# promessa é "o master vê só as unidades dele": o gate a cumpre com dublê (`rede.ver_propria`),
+# mas o VÍNCULO que diz quais são as dele — e o que acontece quando ele falta — só o banco prova.
+# ======================================================================================
+
+from motor_expansao.db import rbac as db_rbac  # noqa: E402
+
+_MASTER_DE_ENSAIO = "Master Ensaio"
+
+
+def _vincular(con: Any, id_usuario: int, master: str) -> None:
+    con.execute(
+        "INSERT INTO usuario_masters (id_usuario, master_franquia) VALUES (%s, %s)",
+        (id_usuario, master),
+    )
+
+
+def test_025_o_master_tem_so_rede_ver_propria_e_so_ele_a_tem(con: Any) -> None:
+    linhas = con.execute(
+        "SELECT p.nome_perfil, pe.chave FROM perfil_permissoes pp "
+        "JOIN perfis p ON p.id_perfil = pp.id_perfil "
+        "JOIN permissoes pe ON pe.id_permissao = pp.id_permissao "
+        "WHERE p.nome_perfil = 'master' OR pe.chave = 'rede.ver_propria'"
+    ).fetchall()
+    assert {c for p, c in linhas if p == "master"} == {"rede.ver_propria"}
+    assert {p for p, c in linhas if c == "rede.ver_propria"} == {"master"}
+
+
+def test_025_a_identidade_do_master_nao_tem_rede_ver(con: Any) -> None:
+    """O que o gate recebe do banco: a chave própria, e nenhuma das que abrem a rede inteira,
+    a escrita do cadastro ou o Mapa."""
+    pessoa = _pessoa_com_perfil(con, "master")
+    con.execute("INSERT INTO usuario_paises (id_usuario, pais) VALUES (%s, 'BR')", (pessoa,))
+    login = con.execute(
+        "SELECT login_usuario FROM usuarios WHERE id_usuario = %s", (pessoa,)
+    ).fetchone()[0]
+    quem = db_rbac.identidade(login)
+    assert quem is not None and quem.perfil == "master"
+    assert quem.permissoes == frozenset({"rede.ver_propria"})
+    assert quem.paises == frozenset({"BR"})
+
+
+def test_025_vincula_e_desvincula(con: Any) -> None:
+    pessoa = _pessoa_com_perfil(con, "master")
+    assert db_rbac.masters_do_usuario(pessoa) == frozenset()  # sem vínculo: recorte VAZIO
+    _vincular(con, pessoa, _MASTER_DE_ENSAIO)
+    _vincular(con, pessoa, "Outro Master Ensaio")
+    assert db_rbac.masters_do_usuario(pessoa) == frozenset(
+        {_MASTER_DE_ENSAIO, "Outro Master Ensaio"}
+    )
+    # PK composta: o mesmo vínculo duas vezes é recusado.
+    with pytest.raises(psycopg.errors.UniqueViolation):
+        _vincular(con, pessoa, _MASTER_DE_ENSAIO)
+    # Desvincular é apagar a linha (não há histórico a preservar).
+    con.execute(
+        "DELETE FROM usuario_masters WHERE id_usuario = %s AND master_franquia = %s",
+        (pessoa, "Outro Master Ensaio"),
+    )
+    assert db_rbac.masters_do_usuario(pessoa) == frozenset({_MASTER_DE_ENSAIO})
+
+
+def test_025_nome_de_master_com_espaco_nas_pontas_ou_curto_e_recusado(con: Any) -> None:
+    """O CHECK é a última linha: um espaço que ninguém vê faria o vínculo nunca casar com o
+    cadastro — o master entraria e veria a carteira vazia sem que nada acusasse."""
+    pessoa = _pessoa_com_perfil(con, "master")
+    for ruim in (f" {_MASTER_DE_ENSAIO}", f"{_MASTER_DE_ENSAIO} ", "M", ""):
+        with pytest.raises(psycopg.errors.CheckViolation):
+            _vincular(con, pessoa, ruim)
+
+
+def test_025_desativar_esvazia_o_recorte_e_apagar_leva_o_vinculo(con: Any) -> None:
+    pessoa = _pessoa_com_perfil(con, "master")
+    _vincular(con, pessoa, _MASTER_DE_ENSAIO)
+    con.execute("UPDATE usuarios SET ativo = false WHERE id_usuario = %s", (pessoa,))
+    assert db_rbac.masters_do_usuario(pessoa) == frozenset()
+    con.execute("DELETE FROM usuarios WHERE id_usuario = %s", (pessoa,))
+    restantes = con.execute(
+        "SELECT count(*) FROM usuario_masters WHERE id_usuario = %s", (pessoa,)
+    ).fetchone()[0]
+    assert restantes == 0

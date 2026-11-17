@@ -580,6 +580,14 @@ def _piloto_ocupado() -> JSONResponse:
 # A SPA esconde as abas via /api/me; este middleware e' quem barra de verdade.
 @app.middleware("http")
 async def _controle_de_acesso_por_aba(request: Request, call_next):  # type: ignore[no-untyped-def]
+    # Caminho com `?` ou `#` DECODIFICADOS (`%3F`, `%23`): o gate decide por `request.url.path`,
+    # que o Starlette remonta e corta no `?`/`#`, e o roteador despacha pelo `scope["path"]`
+    # inteiro. `/api/rede/unidade/x%3F.pdf` chegava ao gate como a FICHA (allowlist do master,
+    # DEC-087) e a rota como o PDF. Nenhuma rota legitima tem esses caracteres no caminho
+    # (os ids sao slug), entao recusar e' mais simples e mais seguro que reconciliar os dois.
+    caminho_cru = str(getattr(request, "scope", {}).get("path", request.url.path))
+    if caminho_cru.startswith("/api/") and ("?" in caminho_cru or "#" in caminho_cru):
+        return JSONResponse({"detail": "Caminho inválido."}, status_code=400)
     remote_user = request.headers.get("Remote-User")
     # Painel de acessos (emenda DEC-027): controle PROPRIO por allowlist de env,
     # fora do mecanismo de abas — e 404 (nao 403), a existencia nao e' anunciada.
@@ -11554,7 +11562,9 @@ _NOTA_DO_PERIODO: dict[str, str] = {
 }
 
 
-def _notas_da_fonte(contexto: dict[str, Any], recorte: pd.DataFrame) -> list[str]:
+def _notas_da_fonte(
+    contexto: dict[str, Any], recorte: pd.DataFrame, *, restrito: bool = False
+) -> list[str]:
     """De onde vem o faturamento — e o degrau que a troca de fonte cria na série.
 
     Sem planilha do Financeiro, a nota é a antiga: a Growth não deduz o TEM SAÚDE e por
@@ -11564,7 +11574,8 @@ def _notas_da_fonte(contexto: dict[str, Any], recorte: pd.DataFrame) -> list[str
     receita de agregador em maio/2025) e o período em curso continua na Growth. Quem não
     souber disso vai ler o degrau como queda de faturamento.
     """
-    fonte = _rede_fonte_faturamento(contexto, recorte)
+    # `restrito` (master): a nota das unidades sem par cita NOMES de fora do recorte.
+    fonte = _rede_fonte_faturamento(contexto, recorte, restrito=restrito)
     origens = set(fonte["por_mes"].values())
     if rede_metricas.ORIGEM_FINANCEIRO not in origens:
         return [
@@ -11596,14 +11607,16 @@ def _notas_da_fonte(contexto: dict[str, Any], recorte: pd.DataFrame) -> list[str
     return notas
 
 
-def _rede_notas(contexto: dict[str, Any], recorte: pd.DataFrame) -> list[str]:
+def _rede_notas(
+    contexto: dict[str, Any], recorte: pd.DataFrame, *, restrito: bool = False
+) -> list[str]:
     """Notas de método. Toda degradação é DITA, nunca silenciosa."""
     notas = [
         "Receita por recorrente = faturamento sem agregador dos últimos 30 dias "
         "dividido pelos recorrentes ativos. NÃO é o TICKET_MEDIO do PowerBI, que vem "
         "da venda individual (tabela que a API Growth não expõe).",
     ]
-    notas.extend(_notas_da_fonte(contexto, recorte))
+    notas.extend(_notas_da_fonte(contexto, recorte, restrito=restrito))
     if contexto["competencia_diagnostico"] and contexto["competencia_diagnostico"] != contexto["mes"]:
         notas.append(
             f"Diagnóstico e alertas calculados sobre {contexto['competencia_diagnostico']}, "
@@ -11636,17 +11649,212 @@ def _rede_notas(contexto: dict[str, Any], recorte: pd.DataFrame) -> list[str]:
     return notas
 
 
-def _rede_filtrar(contexto: dict[str, Any], filtros: dict[str, str | None]) -> pd.DataFrame:
+# --- Recorte do MASTER franqueado (perfil `master`, 17/11/2026) ----------------------------
+# O master entra na Visão Executiva e enxerga SÓ as unidades dele: as que o cadastro
+# (`master_franquia`) atribui ao(s) master(s) vinculado(s) ao usuário (`usuario_masters`,
+# migration 025). O gate (`acesso.rota_da_rede_propria`) só o deixa chegar às rotas de LEITURA
+# da aba; o recorte em si é feito AQUI, no servidor, antes de qualquer agregação -- a tela nunca
+# recebe a unidade de outro master para depois escondê-la. Os agregados da REDE (média e total
+# da rede inteira, ranking, quartis de coorte, curva de rampa, concorrência nacional) ficam: é
+# contra eles que o master se compara, e nenhum deles identifica unidade.
+#
+# Fail-closed em todo caminho: master sem vínculo, ou vinculado a um nome que o cadastro não
+# tem, vê a carteira VAZIA; banco que não responde vira 503. Nenhum erro devolve a rede inteira.
+# Sem banco no comando (modo JSON), nada muda: não há perfil `master` fora do RBAC do banco.
+
+_CAPACIDADE_REDE_VER = "rede.ver"
+# `getattr` porque a constante nasce no `acesso.py` na mesma entrega; a string é o contrato.
+_CAPACIDADE_REDE_PROPRIA: str = getattr(acesso, "CAPACIDADE_REDE_PROPRIA", "rede.ver_propria")
+_DETALHE_FORA_DA_AREA = "Seu usuário não tem acesso a esta área do piloto. Fale com o Felipe."
+# 404, e não 403, para a unidade de outro master: o 403 confirmaria que ela existe.
+_DETALHE_FORA_DA_CARTEIRA = "Unidade não encontrada na sua carteira."
+_DETALHE_ACESSO_INDISPONIVEL = "Acesso indisponível no momento. Tente novamente em instantes."
+# O que o master lê no lugar do nome de uma Ultra que não é dele (vizinha, canibalização).
+_ROTULO_OUTRA_ULTRA = "Outra unidade Ultra"
+
+
+def _chave_master(valor: object) -> str:
+    """Nome de master para COMPARAR: sem espaço nas pontas e sem caixa.
+
+    O vínculo é digitado por quem cria o usuário e o cadastro é editado na tela: "Dalmo
+    Ribeiro" e "dalmo ribeiro " são a mesma pessoa, e um recorte vazio por causa de caixa
+    pareceria ao master que ele não tem unidade nenhuma.
+    """
+    return str(valor or "").strip().casefold()
+
+
+def _identidade_da_rede(remote_user: str | None) -> Any:
+    """Quem pede, pelo RBAC do banco: a MESMA resolução do gate (`motivo_bloqueio_por_banco`).
+
+    Banco fora (ou sem prova de queda, que é subclasse) vira 503 aqui, nunca a rede inteira.
+    """
+    from motor_expansao import db
+    from motor_expansao.db import rbac
+
+    try:
+        return rbac.identidade(acesso.normalizar_usuario(remote_user))
+    except (db.BancoIndisponivel, db.BancoNaoConfigurado) as erro:
+        _LOG_FALHA.warning("recorte da rede: banco indisponivel ao resolver a identidade", exc_info=True)
+        raise _http_banco_sem_resposta(erro) from erro
+
+
+def _http_banco_sem_resposta(erro: Exception) -> HTTPException:
+    """O 503 da rota quando o banco nao respondeu -- com a MESMA regua do gate.
+
+    Sem prova de queda (pool saturado, lock, statement timeout) e' o "piloto ocupado" com
+    `Retry-After`, que a SPA repete sozinha (`repetirEm503`); com a queda provada, o
+    "acesso indisponivel". Uma terceira redacao aqui desencontraria das duas portas.
+    """
+    from motor_expansao import db
+
+    if isinstance(erro, db.BancoSemProvaDeQueda) and not acesso.banco_em_falha():
+        return HTTPException(
+            503, DETALHE_PILOTO_OCUPADO, headers={"Retry-After": RETRY_AFTER_PILOTO_OCUPADO_S}
+        )
+    return HTTPException(503, _DETALHE_ACESSO_INDISPONIVEL)
+
+
+def _ids_dos_masters(masters: Collection[str]) -> frozenset[str]:
+    """As unidades do cadastro cujo `master_franquia` é um dos `masters` (vazio se nenhuma)."""
+    alvos = {_chave_master(m) for m in masters} - {""}
+    if not alvos:
+        return frozenset()
+    return frozenset(
+        str(uid)
+        for uid, registro in _rede_cadastro().unidades.items()
+        if _chave_master(registro.get("master_franquia")) in alvos
+    )
+
+
+def _recorte_da_rede(remote_user: str | None) -> frozenset[str] | None:
+    """`None` = sem recorte (vê a rede); `frozenset` = SÓ estes `unidade_id`, talvez nenhum.
+
+    `def`, e não `async def`: consulta o Postgres com driver síncrono (trava por AST em
+    `test_rbac_banco_fora_do_loop.py`), e as rotas que a chamam rodam no threadpool.
+    """
+    if not acesso.banco_no_comando():
+        return None
+    from motor_expansao import db
+    from motor_expansao.db import rbac
+
+    eu = _identidade_da_rede(remote_user)
+    if eu is None:
+        raise HTTPException(403, _DETALHE_FORA_DA_AREA)
+    if eu.pode(_CAPACIDADE_REDE_VER):
+        return None
+    if not eu.pode(_CAPACIDADE_REDE_PROPRIA):
+        raise HTTPException(403, _DETALHE_FORA_DA_AREA)
+    try:
+        masters = rbac.masters_do_usuario(eu.id_usuario)
+    except (db.BancoIndisponivel, db.BancoNaoConfigurado) as erro:
+        _LOG_FALHA.warning("recorte da rede: banco indisponivel ao ler os masters", exc_info=True)
+        raise _http_banco_sem_resposta(erro) from erro
+    return _ids_dos_masters(masters)
+
+
+def _exigir_rede_inteira(remote_user: str | None) -> None:
+    """Segunda camada nas rotas da rede FORA da allowlist do master (exports, PDFs, escrita).
+
+    O gate já barra o master nelas; isto é a defesa para o dia em que uma regra de lá mudar.
+    Só nega quem tem o recorte (`rede.ver_propria` sem `rede.ver`): para todos os outros
+    perfis quem decide continua sendo o gate, e nada muda.
+    """
+    if not acesso.banco_no_comando():
+        return
+    try:
+        eu = _identidade_da_rede(remote_user)
+    except HTTPException:
+        # Fail-OPEN (dev, ou `MOTOR_ACESSO_FAIL_CLOSED=0`): com o banco fora o gate ja' deixa
+        # todo mundo passar, e estas rotas nao recortam nada -- negar aqui so' trocaria o 200
+        # de antes por 503 para todos os perfis. Em PRODUCAO o 503 fica: la' o gate ja' nega
+        # `rede.ver` com o banco fora, e esta camada nao pode ser a que libera.
+        if acesso.em_producao():
+            raise
+        return
+    if eu is not None and not eu.pode(_CAPACIDADE_REDE_VER) and eu.pode(_CAPACIDADE_REDE_PROPRIA):
+        raise HTTPException(403, _DETALHE_FORA_DA_AREA)
+
+
+def _exigir_na_carteira(unidade_id: str, permitidos: frozenset[str] | None) -> None:
+    """404 para a unidade fora do recorte, ANTES de ler qualquer dado dela."""
+    if permitidos is not None and str(unidade_id) not in permitidos:
+        raise HTTPException(404, _DETALHE_FORA_DA_CARTEIRA)
+
+
+def _rede_cadastro_do_recorte(cadastro: Any, permitidos: frozenset[str]) -> Any:
+    """O cadastro só com as unidades do recorte: os filtros não listam master de outro."""
+    from dataclasses import replace as _com
+
+    return _com(
+        cadastro,
+        unidades={uid: registro for uid, registro in cadastro.unidades.items() if str(uid) in permitidos},
+    )
+
+
+def _rede_reconhece_ultra(permitidos: frozenset[str]) -> Callable[..., bool]:
+    """`(nome, lat, lng) -> True` quando a Ultra citada é uma unidade DO recorte.
+
+    As vizinhas da ficha e a canibalização vêm do cadastro amplo das Ultra
+    (`unidades_ultra_mapeadas.parquet`), sem `unidade_id`. Casa pela chave do nome ou pelo
+    ponto (o mesmo raio de "mesmo lugar" das unidades sem rede); sem casamento, a Ultra é de
+    OUTRO master e o nome some -- errar para o lado de esconder é o fail-closed.
+    """
+    cheio = _rede_fechamento()
+    nomes: set[str] = set()
+    if len(cheio):
+        do_recorte = cheio[cheio["unidade_id"].astype(str).isin(permitidos)]
+        nomes = {_chave_unidade(n) for n in do_recorte["unidade_cru"].dropna().unique()} - {""}
+    pontos = _rede_pontos()
+    pontos = pontos[pontos["unidade_id"].astype(str).isin(permitidos)]
+    lats = pontos["lat"].to_numpy(dtype=float)
+    lngs = pontos["lng"].to_numpy(dtype=float)
+
+    def reconhece(nome: object, lat: object = None, lng: object = None) -> bool:
+        if nome is not None and _chave_unidade(nome) in nomes:
+            return True
+        la, ln = _numf(lat), _numf(lng)
+        if la is None or ln is None or not len(lats):
+            return False
+        return float(rede_inteligencia.distancias_m(la, ln, lats, lngs).min()) <= _SEM_REDE_MESMO_PONTO_M
+
+    return reconhece
+
+
+def _rede_nome_da_vizinha(
+    nome: Any,
+    reconhece: Callable[..., bool] | None,
+    lat: object = None,
+    lng: object = None,
+) -> Any:
+    """O nome de uma Ultra citada, ou o rótulo neutro quando ela não é do recorte do master.
+
+    `reconhece=None` é quem vê a rede inteira: o nome passa como sempre passou.
+    """
+    if reconhece is None or nome is None:
+        return nome
+    return nome if reconhece(nome, lat, lng) else _ROTULO_OUTRA_ULTRA
+
+
+def _rede_filtrar(
+    contexto: dict[str, Any],
+    filtros: dict[str, str | None],
+    permitidos: frozenset[str] | None = None,
+) -> pd.DataFrame:
     """Aplica os filtros da tela. A média da rede e o ranking já foram calculados ANTES.
 
     A ordem importa: se o ranking fosse calculado depois do filtro, a mesma unidade
     mudaria de posição ao mexer num filtro — é exatamente o defeito do semáforo
     relativo que o HTML do time tem hoje.
+
+    `permitidos` (recorte do master) vem PRIMEIRO e os filtros da tela só estreitam dentro
+    dele: `?master=` de outro master dá carteira vazia, nunca as unidades daquele.
     """
     dados = contexto["atual"]
     cadastro = _rede_cadastro()
     diagnosticos = contexto["diagnosticos"]
 
+    if permitidos is not None:
+        dados = dados[dados["unidade_id"].astype(str).isin(permitidos)]
     if filtros.get("uf"):
         dados = dados[dados["uf"].astype(str).str.upper() == str(filtros["uf"]).upper()]
     if filtros.get("master"):
@@ -11686,12 +11894,19 @@ def _rede_filtrar(contexto: dict[str, Any], filtros: dict[str, str | None]) -> p
 
 
 @app.get("/api/rede/filtros")
-def rede_filtros(mes: str | None = None) -> dict[str, Any]:
+def rede_filtros(
+    mes: str | None = None,
+    remote_user: str | None = Header(default=None, alias="Remote-User"),
+) -> dict[str, Any]:
     """Vocabulário dos filtros, réguas vigentes e contadores de qualidade.
 
     As réguas são SERVIDAS, não repetidas no cliente: é impossível a tela mostrar
     uma régua e o motor aplicar outra.
+
+    Para o master, o vocabulário sai SÓ das unidades dele: a lista de masters e consultores
+    da rede inteira já diria quem opera o quê. Réguas e metas são da rede e ficam.
     """
+    permitidos = _recorte_da_rede(remote_user)
     _rede_exigir_base()
     meses = _rede_meses()
     if not meses:
@@ -11699,6 +11914,9 @@ def rede_filtros(mes: str | None = None) -> dict[str, Any]:
     contexto = _rede_mes(mes if mes in meses else meses[0])
     atual = contexto["atual"]
     cadastro = _rede_cadastro()
+    if permitidos is not None:
+        atual = atual[atual["unidade_id"].astype(str).isin(permitidos)]
+        cadastro = _rede_cadastro_do_recorte(cadastro, permitidos)
 
     com_coordenada = sum(
         1
@@ -11758,7 +11976,9 @@ def rede_filtros(mes: str | None = None) -> dict[str, Any]:
         "cadastro": {
             "disponivel": bool(cadastro.disponivel),
             "versao": int(cadastro.versao),
-            "campos_editaveis": list(rede_cadastro.CAMPOS_EDITAVEIS),
+            # O master não edita o cadastro (não tem `rede.cadastro_editar`): lista vazia, e a
+            # tela não oferece o lápis que o gate recusaria.
+            "campos_editaveis": [] if permitidos is not None else list(rede_cadastro.CAMPOS_EDITAVEIS),
         },
         "referencia": pd.Timestamp(contexto["referencia"]).strftime("%d/%m/%Y"),
         "fonte": "Growth API",
@@ -11777,6 +11997,8 @@ def _rede_carteira_payload(
     busca: str | None = None,
     ordenar: str = "prioridade",
     direcao: str = "desc",
+    *,
+    permitidos: frozenset[str] | None = None,
 ) -> dict[str, Any]:
     """Payload da carteira. Uma função só, para que tela, CSV, XLSX e PDF nunca divirjam.
 
@@ -11784,6 +12006,9 @@ def _rede_carteira_payload(
     aceito e vira o intervalo daquela competência: é por ele que o contrato v1 da rota
     `/api/executiva/{uf}` e os links antigos seguem funcionando sem saber que existe
     calendário. Sem nenhum dos três, o padrão é a última competência com dado.
+
+    `permitidos` é o recorte do master (`_recorte_da_rede`): `None` mantém a rede inteira,
+    como para todo outro chamador (inclusive `/api/mapa/*`).
     """
     meses = _rede_meses()
     if not meses:
@@ -11807,6 +12032,7 @@ def _rede_carteira_payload(
             "severidade": severidade,
             "busca": busca,
         },
+        permitidos,
     )
     cadastro = _rede_cadastro()
     unidades = [
@@ -11924,13 +12150,15 @@ def _rede_carteira_payload(
         "serie_rede": series["faturamento"],
         "series": series,
         "unidades": unidades,
-        "notas": _rede_notas(contexto, recorte),
-        "fonte_faturamento": _rede_fonte_faturamento(contexto, recorte),
+        "notas": _rede_notas(contexto, recorte, restrito=permitidos is not None),
+        "fonte_faturamento": _rede_fonte_faturamento(
+            contexto, recorte, restrito=permitidos is not None
+        ),
     }
 
 
 def _rede_fonte_faturamento(
-    contexto: dict[str, Any], recorte: pd.DataFrame
+    contexto: dict[str, Any], recorte: pd.DataFrame, *, restrito: bool = False
 ) -> dict[str, Any]:
     """De onde veio o faturamento de cada camada da aba.
 
@@ -11956,7 +12184,10 @@ def _rede_fonte_faturamento(
         # O quarteto do topo segue a JANELA escolhida, e a planilha só alcança competência
         # coberta inteira: mês fechado selecionado sai `financeiro`; mês em curso, `ux`.
         "periodo": _origem_dominante(recorte),
-        "unidades_sem_par": list(cheio.attrs.get("financeiro_sem_par", [])),
+        # `restrito` (master): são NOMES de unidades da planilha sem par na Growth -- de fora
+        # do recorte por definição, porque o recorte sai da base Growth. Ficam só para quem vê
+        # a rede inteira.
+        "unidades_sem_par": [] if restrito else list(cheio.attrs.get("financeiro_sem_par", [])),
     }
 
 
@@ -12013,15 +12244,29 @@ def rede_carteira(
     busca: str | None = None,
     ordenar: str = "prioridade",
     direcao: str = "desc",
+    remote_user: str | None = Header(default=None, alias="Remote-User"),
 ) -> dict[str, Any]:
-    """Nível 1: a carteira da rede, priorizada, com o quarteto de contexto por métrica."""
+    """Nível 1: a carteira da rede, priorizada, com o quarteto de contexto por métrica.
+
+    Para o master, só as unidades dele (recorte ANTES de qualquer soma); a linha da rede
+    inteira, o ranking e o "% vs média da rede" ficam, porque são a régua de comparação.
+    """
+    permitidos = _recorte_da_rede(remote_user)
     return _rede_carteira_payload(
-        mes, inicio, fim, uf, master, consultor, coorte, severidade, busca, ordenar, direcao
+        mes, inicio, fim, uf, master, consultor, coorte, severidade, busca, ordenar, direcao,
+        permitidos=permitidos,
     )
 
 
-def _rede_ficha_payload(unidade_id: str, mes: str | None = None) -> dict[str, Any]:
-    """Payload da ficha. Lê do MESMO `_rede_mes` que a carteira."""
+def _rede_ficha_payload(
+    unidade_id: str, mes: str | None = None, *, permitidos: frozenset[str] | None = None
+) -> dict[str, Any]:
+    """Payload da ficha. Lê do MESMO `_rede_mes` que a carteira.
+
+    `permitidos` (recorte do master): unidade de fora é 404 antes de qualquer leitura, e o
+    cadastro sai sem campo editável.
+    """
+    _exigir_na_carteira(unidade_id, permitidos)
     meses = _rede_meses()
     if not meses:
         _rede_exigir_base()
@@ -12149,16 +12394,19 @@ def _rede_ficha_payload(unidade_id: str, mes: str | None = None) -> dict[str, An
         "cadastro": {
             "disponivel": bool(cadastro.disponivel),
             "versao": int(cadastro.versao),
-            "campos_editaveis": list(rede_cadastro.CAMPOS_EDITAVEIS),
+            # Master não edita (sem `rede.cadastro_editar`): a ficha não oferece o lápis.
+            "campos_editaveis": [] if permitidos is not None else list(rede_cadastro.CAMPOS_EDITAVEIS),
             "valores": {c: registro.get(c) or "" for c in rede_cadastro.CAMPOS_EDITAVEIS},
         },
         "reguas": rede_diagnostico.REGUAS_VIGENTES,
         "meta_nps": rede_diagnostico.META_NPS,
-        "notas": _rede_notas(contexto, linhas),
+        "notas": _rede_notas(contexto, linhas, restrito=permitidos is not None),
         # A ficha mostra faturamento em quatro lugares (quarteto, série de 12 meses, rosca e
         # benchmark de coorte) e o PDF dela vai para o franqueado. Sem isto, o rodapé do PDF
         # continuava creditando a Growth por um número que já vem do Financeiro.
-        "fonte_faturamento": _rede_fonte_faturamento(contexto, linhas),
+        "fonte_faturamento": _rede_fonte_faturamento(
+            contexto, linhas, restrito=permitidos is not None
+        ),
     }
 
 
@@ -12184,9 +12432,14 @@ def _rede_serie_diaria(unidade_id: str, mes_sel: str) -> dict[str, Any]:
 # saía para unidade nenhuma. O Starlette resolve por ORDEM DE DECLARAÇÃO, não por
 # especificidade.
 @app.get("/api/rede/unidade/{unidade_id}.pdf")
-def rede_unidade_pdf(unidade_id: str, mes: str | None = None) -> Response:
+def rede_unidade_pdf(
+    unidade_id: str,
+    mes: str | None = None,
+    remote_user: str | None = Header(default=None, alias="Remote-User"),
+) -> Response:
     from motor_expansao.dashboard import rede_export
 
+    _exigir_rede_inteira(remote_user)  # master não exporta (2a camada; o gate já barra)
     payload = _rede_ficha_payload(unidade_id, mes)
     return _anexo(
         rede_export.ficha_pdf(payload),
@@ -12239,22 +12492,30 @@ def _logos_agregador_para_pdf() -> dict[str, Any]:
 
 
 @app.get("/api/rede/unidade/{unidade_id}/concorrencia.pdf")
-def rede_unidade_concorrencia_pdf(unidade_id: str, mes: str | None = None) -> Response:
+def rede_unidade_concorrencia_pdf(
+    unidade_id: str,
+    mes: str | None = None,
+    remote_user: str | None = Header(default=None, alias="Remote-User"),
+) -> Response:
     """A concorrência da unidade em PDF: o raio, a região e o que cada concorrente oferece.
 
     Nenhum dado novo: são as três leituras que a janela já faz (ficha, inteligência e censo
     do ponto), e da ficha o PDF só usa nome e UF -- aluno e faturamento NÃO saem no arquivo.
     O censo é o único bloco que pode faltar sem derrubar o relatório: o PDF diz que não leu,
     como a tela.
+
+    Lê pelos PAYLOADS, e não pelas rotas: a rota resolve quem pede, e chamada por dentro ela
+    não teria o `Remote-User` desta requisição.
     """
+    _exigir_rede_inteira(remote_user)  # master não exporta (2a camada; o gate já barra)
     if unidade_id.startswith(_PREFIXO_SEM_REDE):
         # unidade do cadastro sem dado na rede: o PDF só usa nome, UF e o raio
-        sem_rede = rede_unidade_sem_rede(unidade_id)
+        sem_rede = _rede_unidade_sem_rede_payload(unidade_id)
         ficha = {"unidade": sem_rede["unidade"], "mes": ""}
         inteligencia = {"mapa": sem_rede["mapa"]}
     else:
         ficha = _rede_ficha_payload(unidade_id, mes)
-        inteligencia = rede_unidade_inteligencia(unidade_id, mes)
+        inteligencia = _rede_unidade_inteligencia_payload(unidade_id, mes)
     return _concorrencia_pdf_da_unidade(unidade_id, ficha, inteligencia)
 
 
@@ -12294,9 +12555,13 @@ def _concorrencia_pdf_da_unidade(
 
 
 @app.get("/api/rede/unidade/{unidade_id}")
-def rede_unidade(unidade_id: str, mes: str | None = None) -> dict[str, Any]:
+def rede_unidade(
+    unidade_id: str,
+    mes: str | None = None,
+    remote_user: str | None = Header(default=None, alias="Remote-User"),
+) -> dict[str, Any]:
     """Nível 2: a ficha da unidade — série de 12 meses, funil, coorte e recomendações."""
-    return _rede_ficha_payload(unidade_id, mes)
+    return _rede_ficha_payload(unidade_id, mes, permitidos=_recorte_da_rede(remote_user))
 
 
 # --- Inteligência da rede ---------------------------------------------------
@@ -12670,9 +12935,13 @@ def _rede_setores_entorno(unidade_id: str) -> str:
 
 
 @app.get("/api/rede/unidade/{unidade_id}/setores")
-def rede_unidade_setores(unidade_id: str) -> Response:
+def rede_unidade_setores(
+    unidade_id: str,
+    remote_user: str | None = Header(default=None, alias="Remote-User"),
+) -> Response:
     """Camadas de renda domiciliar e densidade do mapa da ficha. Carregadas SÓ quando a pessoa
     liga uma delas: os polígonos de setor de uma praça densa passam de 1 MB."""
+    _exigir_na_carteira(unidade_id, _recorte_da_rede(remote_user))
     return Response(_rede_setores_entorno(unidade_id), media_type="application/json")
 
 
@@ -12765,14 +13034,27 @@ def _rede_unidade_sem_rede(unidade_id: str) -> dict[str, Any]:
 
 
 @app.get("/api/rede/unidades-sem-rede")
-def rede_unidades_sem_rede() -> dict[str, Any]:
+def rede_unidades_sem_rede(
+    remote_user: str | None = Header(default=None, alias="Remote-User"),
+) -> dict[str, Any]:
     """Para a busca do Mapa: as unidades do cadastro que ainda não têm dado na Growth."""
+    _exigir_rede_inteira(remote_user)  # fora da allowlist do master (2a camada)
     return {"unidades": _rede_unidades_sem_rede()}
 
 
 @app.get("/api/rede/unidade-sem-rede/{unidade_id}")
-def rede_unidade_sem_rede(unidade_id: str) -> dict[str, Any]:
+def rede_unidade_sem_rede(
+    unidade_id: str,
+    remote_user: str | None = Header(default=None, alias="Remote-User"),
+) -> dict[str, Any]:
     """A ficha dessa unidade: só território (o raio e as concorrentes), sem aluno nem faturamento."""
+    _exigir_rede_inteira(remote_user)  # fora da allowlist do master (2a camada)
+    return _rede_unidade_sem_rede_payload(unidade_id)
+
+
+def _rede_unidade_sem_rede_payload(unidade_id: str) -> dict[str, Any]:
+    """O corpo de `rede_unidade_sem_rede`, para quem chama por dentro (mapa, PDF) sem o
+    `Remote-User` da requisição."""
     unidade = _rede_unidade_sem_rede(unidade_id)
     mapa = None
     if unidade["lat"] is not None and unidade["lng"] is not None:
@@ -12815,7 +13097,7 @@ def mapa_unidades() -> dict[str, Any]:
 def mapa_unidade(unidade_id: str) -> dict[str, Any]:
     """A ficha da unidade no mapa para quem não tem a Executiva: território e concorrência."""
     if unidade_id.startswith(_PREFIXO_SEM_REDE):
-        return rede_unidade_sem_rede(unidade_id)
+        return _rede_unidade_sem_rede_payload(unidade_id)
     unidade = next((u for u in _mapa_unidades_da_rede() if u["id"] == unidade_id), None)
     if unidade is None:
         raise HTTPException(404, f"Unidade {unidade_id} fora da base da rede.")
@@ -13341,8 +13623,14 @@ def _rede_contexto_e_recorte(
     inicio: str | None,
     fim: str | None,
     filtros: dict[str, str | None],
+    *,
+    permitidos: frozenset[str] | None = None,
 ) -> tuple[dict[str, Any], pd.DataFrame]:
-    """O MESMO período e o MESMO recorte da carteira — os painéis não divergem dela."""
+    """O MESMO período e o MESMO recorte da carteira — os painéis não divergem dela.
+
+    O `contexto` segue sendo o da REDE (cache de `_rede_periodo`): o recorte do master
+    (`permitidos`) entra só no `_rede_filtrar`, depois.
+    """
     meses = _rede_meses()
     if not meses:
         _rede_exigir_base()
@@ -13352,7 +13640,7 @@ def _rede_contexto_e_recorte(
     else:
         periodo_inicio, periodo_fim = _rede_periodo_do_mes(mes if mes in meses else meses[0])
     contexto = _rede_periodo(periodo_inicio, periodo_fim)
-    return contexto, _rede_filtrar(contexto, filtros)
+    return contexto, _rede_filtrar(contexto, filtros, permitidos)
 
 
 def _rede_mes_base(cheio: pd.DataFrame, competencia: str | None) -> pd.DataFrame:
@@ -13404,14 +13692,23 @@ def rede_inteligencia_recorte(
     severidade: str | None = None,
     busca: str | None = None,
     maduras: bool = True,
+    remote_user: str | None = Header(default=None, alias="Remote-User"),
 ) -> dict[str, Any]:
     """Painéis de inteligência do RECORTE: praça × execução, rampa, sinais, retenção e
-    o que mudou. Mesmos filtros e mesmo período da carteira."""
+    o que mudou. Mesmos filtros e mesmo período da carteira.
+
+    Para o master, o recorte é o dele; a curva de rampa, o percentil de risco e a
+    movimentação nacional da concorrência são da rede e ficam. A Ultra vizinha de outro
+    master aparece como "Outra unidade Ultra", sem nome.
+    """
+    permitidos = _recorte_da_rede(remote_user)
     contexto, recorte = _rede_contexto_e_recorte(
         mes, inicio, fim,
         {"uf": uf, "master": master, "consultor": consultor, "coorte": coorte,
          "severidade": severidade, "busca": busca},
+        permitidos=permitidos,
     )
+    reconhece = _rede_reconhece_ultra(permitidos) if permitidos is not None else None
     competencia = contexto["competencia_diagnostico"]
     cheio = contexto["cheio"]
     ids = [str(u) for u in recorte["unidade_id"]]
@@ -13554,7 +13851,9 @@ def rede_inteligencia_recorte(
             {
                 "id": uid,
                 "nome": nomes[uid],
-                "vizinha": territorio[uid].get("ultra_mais_proxima_nome"),
+                "vizinha": _rede_nome_da_vizinha(
+                    territorio[uid].get("ultra_mais_proxima_nome"), reconhece
+                ),
                 "distancia_m": territorio[uid].get("ultra_mais_proxima_m"),
             }
             for uid in ids
@@ -13595,8 +13894,27 @@ def _rede_pares_de_praca(
 
 
 @app.get("/api/rede/unidade/{unidade_id}/inteligencia")
-def rede_unidade_inteligencia(unidade_id: str, mes: str | None = None) -> dict[str, Any]:
+def rede_unidade_inteligencia(
+    unidade_id: str,
+    mes: str | None = None,
+    remote_user: str | None = Header(default=None, alias="Remote-User"),
+) -> dict[str, Any]:
     """Território, retenção, rampa, sinais e concorrência nova de UMA unidade."""
+    return _rede_unidade_inteligencia_payload(
+        unidade_id, mes, permitidos=_recorte_da_rede(remote_user)
+    )
+
+
+def _rede_unidade_inteligencia_payload(
+    unidade_id: str, mes: str | None = None, *, permitidos: frozenset[str] | None = None
+) -> dict[str, Any]:
+    """O corpo de `rede_unidade_inteligencia`; o PDF de concorrência chama este, por dentro.
+
+    `permitidos` (recorte do master): unidade de fora é 404; os PARES de praça saem só das
+    unidades dele (cada par leva nome e faturamento); os cortes do quadrante e a curva de
+    rampa seguem da rede, que é a régua; Ultra vizinha de outro master perde o nome.
+    """
+    _exigir_na_carteira(unidade_id, permitidos)
     meses = _rede_meses()
     if not meses:
         _rede_exigir_base()
@@ -13618,7 +13936,12 @@ def rede_unidade_inteligencia(unidade_id: str, mes: str | None = None) -> dict[s
         _rede_pontos_quadrante(ids, atual, _rede_mes_base(cheio, competencia), territorio, contexto["diagnosticos"])
     )
     ponto = next((p for p in quadrante["pontos"] if p["id"] == unidade_id), None)
-    pares = _rede_pares_de_praca(quadrante["pontos"], ponto)
+    candidatos = quadrante["pontos"]
+    if permitidos is not None:
+        # O quadrante (e os cortes dele) continua sendo o da REDE; só a lista de pares, que
+        # mostra nome e faturamento de cada unidade, fica nas unidades do próprio master.
+        candidatos = [p for p in candidatos if str(p["id"]) in permitidos]
+    pares = _rede_pares_de_praca(candidatos, ponto)
     posicao = rede_inteligencia.posicao_na_rampa(cheio, competencia, [unidade_id])
 
     mes_base = _rede_mes_base(cheio, competencia)
@@ -13630,10 +13953,32 @@ def rede_unidade_inteligencia(unidade_id: str, mes: str | None = None) -> dict[s
             "totalpass": _num(_numf(base.get("alunos_totalpass"))),
         }
 
+    fatos = territorio.get(unidade_id)
+    mapa = _rede_mapa_unidade(unidade_id)
+    if permitidos is not None:
+        # Cópias: `_rede_territorio` é cacheado, e mexer no dict dele apagaria o nome da
+        # vizinha também para quem vê a rede inteira.
+        reconhece = _rede_reconhece_ultra(permitidos)
+        if fatos is not None:
+            fatos = {
+                **fatos,
+                "ultra_mais_proxima_nome": _rede_nome_da_vizinha(
+                    fatos.get("ultra_mais_proxima_nome"), reconhece
+                ),
+            }
+        if mapa is not None:
+            mapa = {
+                **mapa,
+                "ultra": [
+                    {**u, "nome": _rede_nome_da_vizinha(u.get("nome"), reconhece, u.get("lat"), u.get("lng"))}
+                    for u in (mapa.get("ultra") or [])
+                ],
+            }
+
     return {
         "unidade_id": unidade_id,
         "competencia": competencia,
-        "territorio": territorio.get(unidade_id),
+        "territorio": fatos,
         "quadrante": {
             "ponto": ponto,
             "pares": pares,
@@ -13678,7 +14023,7 @@ def rede_unidade_inteligencia(unidade_id: str, mes: str | None = None) -> dict[s
                 if not (i.get("rede") and i["rede"] in _rede_redes_estudio())
             ],
         },
-        "mapa": _rede_mapa_unidade(unidade_id),
+        "mapa": mapa,
         "planos": _rede_planos_unidade(unidade_id),
         "planos_wellhub": _rede_planos_unidade(unidade_id, "wellhub"),
         "movimentacao": _rede_movimentacao_unidade(unidade_id),
@@ -13714,9 +14059,11 @@ def rede_carteira_csv(
     busca: str | None = None,
     ordenar: str = "prioridade",
     direcao: str = "desc",
+    remote_user: str | None = Header(default=None, alias="Remote-User"),
 ) -> Response:
     from motor_expansao.dashboard import rede_export
 
+    _exigir_rede_inteira(remote_user)  # master não exporta (2a camada; o gate já barra)
     payload = _rede_carteira_payload(
         mes, inicio, fim, uf, master, consultor, coorte, severidade, busca, ordenar, direcao
     )
@@ -13740,9 +14087,11 @@ def rede_carteira_xlsx(
     busca: str | None = None,
     ordenar: str = "prioridade",
     direcao: str = "desc",
+    remote_user: str | None = Header(default=None, alias="Remote-User"),
 ) -> Response:
     from motor_expansao.dashboard import rede_export
 
+    _exigir_rede_inteira(remote_user)  # master não exporta (2a camada; o gate já barra)
     payload = _rede_carteira_payload(
         mes, inicio, fim, uf, master, consultor, coorte, severidade, busca, ordenar, direcao
     )
@@ -13766,9 +14115,11 @@ def rede_carteira_pdf(
     busca: str | None = None,
     ordenar: str = "prioridade",
     direcao: str = "desc",
+    remote_user: str | None = Header(default=None, alias="Remote-User"),
 ) -> Response:
     from motor_expansao.dashboard import rede_export
 
+    _exigir_rede_inteira(remote_user)  # master não exporta (2a camada; o gate já barra)
     payload = _rede_carteira_payload(
         mes, inicio, fim, uf, master, consultor, coorte, severidade, busca, ordenar, direcao
     )
@@ -13816,6 +14167,9 @@ def rede_cadastro_atribuir(
     `MOTOR_DATA_DIR` — nenhum artefato do M1 fica sob mount de escrita. O autor sai
     do `Remote-User`, que o Caddy já repassa ao piloto atrás do Authelia.
     """
+    # O master não tem `rede.cadastro_editar` e o gate já o barra; isto é a 2a camada, para
+    # que nenhuma regra de rota futura o deixe reatribuir unidade (nem a de outro master).
+    _exigir_rede_inteira(remote_user)
     try:
         cadastro = rede_cadastro.atribuir(
             unidade_id,
@@ -14156,7 +14510,11 @@ def concorrente_observacoes_contagem(
 
 
 @app.get("/api/executiva/{uf}")
-def executiva(uf: str, mes: str | None = None) -> dict[str, Any]:
+def executiva(
+    uf: str,
+    mes: str | None = None,
+    remote_user: str | None = Header(default=None, alias="Remote-User"),
+) -> dict[str, Any]:
     """Contrato v1 da Visão Executiva, servido pelo núcleo novo (BLK-EXEC-02).
 
     A rota continua registrada e com o MESMO payload de antes — só os números
@@ -14173,7 +14531,10 @@ def executiva(uf: str, mes: str | None = None) -> dict[str, Any]:
         `AGUAS CLARAS` junto com o studio `AGUAS CLARAS - DF`.
 
     O laço Python por unidade morreu junto: tudo vem de `_rede_mes`, vetorizado.
+
+    Contrato LEGADO e da rede inteira: fora do alcance do master (2a camada; o gate já barra).
     """
+    _exigir_rede_inteira(remote_user)
     uf_sel = uf.upper()
     payload = _rede_carteira_payload(mes=mes, uf=uf_sel)
     if not payload["unidades"]:
