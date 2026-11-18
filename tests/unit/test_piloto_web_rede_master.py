@@ -254,6 +254,25 @@ def test_filtros_do_master_so_com_o_vocabulario_dele(banco: _Banco) -> None:
     assert filtros["reguas"] == pilot.rede_filtros(mes=MES, remote_user=REDE_INTEIRA)["reguas"]
 
 
+def test_filtro_por_franqueado_nao_atravessa_o_recorte_do_master(banco: _Banco) -> None:
+    """O master so' ve os franqueados das unidades dele, e pedir o de fora da' vazio."""
+    from motor_expansao.dashboard import rede_cadastro
+
+    rede_cadastro.atribuir("icarai-rj", {"franqueado": "Dalmo Ribeiro"}, base=pilot.CADASTRO_DIR)
+    rede_cadastro.atribuir("botafogo-rj", {"franqueado": "Fernando / Franklin"}, base=pilot.CADASTRO_DIR)
+    pilot.limpar_caches()
+
+    assert pilot.rede_filtros(mes=MES, remote_user=MASTER)["franqueados"] == ["Dalmo Ribeiro"]
+    assert pilot.rede_filtros(mes=MES, remote_user=REDE_INTEIRA)["franqueados"] == [
+        "Dalmo Ribeiro", "Fernando / Franklin",
+    ]
+    alheio = pilot.rede_carteira(mes=MES, franqueado="Fernando / Franklin", remote_user=MASTER)
+    assert alheio["unidades"] == [] and alheio["totais"]["no_recorte"] == 0
+    assert "BOTAFOGO" not in json.dumps(alheio, ensure_ascii=False)
+    proprio = pilot.rede_carteira(mes=MES, franqueado="Dalmo Ribeiro", remote_user=MASTER)
+    assert {u["id"] for u in proprio["unidades"]} == {"icarai-rj"}
+
+
 # ---------------------------------------------------------------------------
 # Ficha, setores e inteligencia da unidade
 # ---------------------------------------------------------------------------

@@ -49,8 +49,10 @@ ARQUIVO_LOG = "cadastro_log.jsonl"
 
 #: Unica lista branca de campos que a tela pode escrever. O cadastro NAO e' porta de
 #: escrita para qualquer coisa: faturamento, inauguracao e identidade vem da Growth e
-#: continuam intocaveis pela interface.
-CAMPOS_EDITAVEIS: tuple[str, ...] = ("consultor", "consultor_2", "master_franquia")
+#: continuam intocaveis pela interface. `franqueado` entrou em 18/11/2026, junto do filtro
+#: por franqueado da Visao Executiva: a troca de dono de uma unidade sai pela tela, sem
+#: comando na VPS.
+CAMPOS_EDITAVEIS: tuple[str, ...] = ("consultor", "consultor_2", "master_franquia", "franqueado")
 
 #: Campos que a leitura devolve (os editaveis mais os semeados da planilha).
 CAMPOS_CADASTRO: tuple[str, ...] = (

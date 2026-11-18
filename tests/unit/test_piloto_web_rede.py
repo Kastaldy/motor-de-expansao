@@ -268,6 +268,45 @@ def test_busca_e_filtros_de_severidade(rede: Path) -> None:
     assert all(u["severidade"] == "alta" for u in alta["unidades"])
 
 
+def _com_franqueados() -> None:
+    """Dono por unidade (18/11/2026): duas do mesmo franqueado, uma de outro, o resto sem."""
+    for uid, nome in (
+        ("botafogo-rj", "Fernando / Franklin"),
+        ("icarai-rj", "Fernando / Franklin"),
+        ("augusta-sp", "Humberto Monday"),
+    ):
+        rede_cadastro.atribuir(uid, {"franqueado": nome}, base=pilot.CADASTRO_DIR)
+    _limpar_caches()
+
+
+def test_filtro_por_franqueado(rede: Path) -> None:
+    """Recorte pelo DONO da unidade (`franqueado` do cadastro), no molde do consultor."""
+    _com_franqueados()
+    assert pilot.rede_filtros()["franqueados"] == ["Fernando / Franklin", "Humberto Monday"]
+
+    completa = pilot.rede_carteira(mes="2026-07")
+    dele = pilot.rede_carteira(mes="2026-07", franqueado="Fernando / Franklin")
+    assert {u["id"] for u in dele["unidades"]} == {"botafogo-rj", "icarai-rj"}
+    assert {u["franqueado"] for u in dele["unidades"]} == {"Fernando / Franklin"}
+    # Ranking e "% vs media" seguem os da REDE, como em todo outro filtro.
+    de_todas = next(u for u in completa["unidades"] if u["id"] == "botafogo-rj")
+    assert next(u for u in dele["unidades"] if u["id"] == "botafogo-rj")["metricas"] == de_todas["metricas"]
+    # Soma com os outros filtros (estreita), e nome desconhecido da' vazio, nunca a rede.
+    assert pilot.rede_carteira(
+        mes="2026-07", franqueado="Fernando / Franklin", consultor="MARISE"
+    )["totais"]["no_recorte"] == 1
+    assert pilot.rede_carteira(mes="2026-07", franqueado="Ninguem")["totais"]["no_recorte"] == 0
+
+    inteligencia = pilot.rede_inteligencia_recorte(mes="2026-07", franqueado="Humberto Monday")
+    assert inteligencia["retencao"]["no_recorte"] == 1
+
+    linhas = list(csv.reader(io.StringIO(
+        pilot.rede_carteira_csv(mes="2026-07", franqueado="Humberto Monday").body.decode("utf-8-sig")
+    ), delimiter=";"))
+    assert sum("AUGUSTA" in ";".join(linha) for linha in linhas) == 1
+    assert not any("BOTAFOGO" in ";".join(linha) for linha in linhas)
+
+
 def test_ordenacao_poe_nulos_por_ultimo_nas_duas_direcoes(rede: Path) -> None:
     """O `?? -Infinity` da v1 so funcionava em `desc`.
 
