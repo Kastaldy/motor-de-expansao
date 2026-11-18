@@ -380,6 +380,7 @@ export default function ExecutiveScreen({
     if (entrada.tipo === 'unidade') abrirFichaPorId(entrada.id)
     else if (entrada.dimensao === 'uf') setUf(entrada.valor)
     else if (entrada.dimensao === 'master') setMaster(entrada.valor)
+    else if (entrada.dimensao === 'franqueado') setFranqueado(entrada.valor)
     else setConsultor(entrada.valor)
     onEntradaAplicada?.()
     // eslint-disable-next-line react-hooks/exhaustive-deps
