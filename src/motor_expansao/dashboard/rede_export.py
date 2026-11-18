@@ -717,13 +717,20 @@ def linhas_do_sss(sss: Mapping[str, Any]) -> list[str]:
     Desde a DEC-088 quem estava na rampa de abertura no ano-base também fica fora, e a
     segunda linha separa as duas razões: "não existia" e "estava em rampa" são leituras
     diferentes para o time. Payload antigo, sem os campos novos, sai como antes.
+
+    Desde a emenda 1 da DEC-088 o número é o dos meses do GRÁFICO, com a base mudando de
+    um mês para o outro (`janela` no payload): a primeira linha diz quais meses e a faixa
+    da base, e quem ficou fora é contado no último mês da janela.
     """
     faturamento = (sss.get("metricas") or {}).get("faturamento") or {}
     variacao = faturamento.get("var_pct")
     unidades = int(sss.get("unidades", 0) or 0)
     meses = sss.get("maturacao_min_meses")
-    maturidade = f", com {meses} meses ou mais de operação no ano-base" if meses else ""
     rotulo = "Mesma base ano a ano (SSS)"
+    janela = sss.get("janela") or None
+    if janela:
+        return _linhas_do_sss_na_janela(sss, janela, variacao, unidades, meses, rotulo)
+    maturidade = f", com {meses} meses ou mais de operação no ano-base" if meses else ""
     linhas = [
         f"{rotulo}: {unidades} de "
         f"{sss.get('unidades_recorte', unidades)} unidades do recorte estavam abertas nos "
@@ -752,6 +759,73 @@ def linhas_do_sss(sss: Mapping[str, Any]) -> list[str]:
     if partes:
         linhas.append(
             "Fora da conta: "
+            + (partes[0] if len(partes) == 1 else ", ".join(partes[:-1]) + " e " + partes[-1])
+            + "."
+        )
+    return linhas
+
+
+def _mes_rotulo(competencia: object) -> str:
+    """`"2025-10"` -> `"Out/2025"`, como a tela escreve. Fora desse formato, o texto cru."""
+    texto = str(competencia or "")
+    ano, _, mes = texto.partition("-")
+    if not (ano.isdigit() and mes.isdigit() and 1 <= int(mes) <= 12):
+        return texto
+    return f"{_MESES_PT[int(mes) - 1].capitalize()}/{ano}"
+
+
+def _linhas_do_sss_na_janela(
+    sss: Mapping[str, Any],
+    janela: Mapping[str, Any],
+    variacao: Any,
+    unidades: int,
+    meses: Any,
+    rotulo: str,
+) -> list[str]:
+    """As linhas do SSS com a janela do gráfico (emenda 1 da DEC-088).
+
+    Três linhas no máximo: o número com os meses e a faixa da base, a regra de entrada de
+    cada mês e quem ficou fora no último mês. `cell` não quebra linha, então cada uma tem
+    de caber na largura da página (`test_linhas_do_sss_cabem_no_pdf_no_pior_caso`).
+    """
+    inicio, fim = _mes_rotulo(janela.get("inicio")), _mes_rotulo(janela.get("fim"))
+    nos_meses = fim if inicio == fim else f"{inicio} a {fim}"
+    menor = int(sss.get("unidades_min", unidades) or 0)
+    maior = int(sss.get("unidades_max", unidades) or 0)
+    base = f"{maior}" if menor == maior else f"{menor} a {maior}"
+    recorte = sss.get("unidades_recorte", unidades)
+    linhas = [
+        f"{rotulo}, {nos_meses}: faturamento "
+        f"{'+' if (variacao or 0) >= 0 else ''}{_br(variacao, 1)}% contra os mesmos meses um ano "
+        f"antes, com {base} das {recorte} unidades do recorte por mês."
+    ]
+    if meses:
+        linhas.append(
+            "Cada mês compara só quem operou o mês inteiro nos dois anos e já tinha "
+            f"{meses} meses ou mais de operação no início do mês-base."
+        )
+
+    fora = int(sss.get("unidades_fora", 0) or 0)
+    base_zero = int(sss.get("unidades_base_zero", 0) or 0)
+    rampa = max(int(sss.get("unidades_rampa", 0) or 0) - base_zero, 0)
+    partes: list[str] = []
+    if fora:
+        partes.append(
+            f"{fora} não existia há um ano (ou não operou o mês inteiro)"
+            if fora == 1
+            else f"{fora} não existiam há um ano (ou não operaram o mês inteiro)"
+        )
+    if rampa:
+        partes.append(
+            f"{rampa} {'estava' if rampa == 1 else 'estavam'} na rampa de abertura "
+            f"(menos de {meses or 3} meses de operação no ano-base)"
+        )
+    if base_zero:
+        partes.append(f"{base_zero} sem faturamento no ano-base")
+    if partes:
+        mes_final = _mes_rotulo(sss.get("mes_final") or janela.get("fim"))
+        linhas.append(
+            f"Fora da conta em {mes_final}: "
             + (partes[0] if len(partes) == 1 else ", ".join(partes[:-1]) + " e " + partes[-1])
             + "."
         )

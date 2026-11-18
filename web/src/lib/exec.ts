@@ -436,6 +436,34 @@ function contraMesBase(competenciaBase: string | undefined): string {
     : 'contra o mesmo mês do ano anterior'
 }
 
+/**
+ * A janela do SSS por extenso curto: `"de Out/2025 a Out/2026"` (um mês só: `"de Out/2026"`).
+ *
+ * Desde a emenda 1 da DEC-088 o número grande do card soma os meses do GRÁFICO, e não o
+ * período escolhido: a frase tem de dizer quais meses, senão "+1,4%" é lido como o do
+ * período da tela. `null` em payload anterior à emenda, que não tinha janela.
+ */
+export function janelaDoSss(sss: RedeSss | null | undefined): string | null {
+  const janela = sss?.janela
+  if (!janela) return null
+  return janela.inicio === janela.fim
+    ? `de ${rotuloMesCompetencia(janela.fim)}`
+    : `de ${rotuloMesCompetencia(janela.inicio)} a ${rotuloMesCompetencia(janela.fim)}`
+}
+
+/** A base mensal do SSS: `"60"` quando é a mesma em todos os meses, `"de 35 a 60"` quando
+ *  muda de um mês para o outro (emenda 1 da DEC-088). */
+export function baseMensalDoSss(sss: RedeSss): string {
+  const menor = sss.unidades_min ?? sss.unidades
+  const maior = sss.unidades_max ?? sss.unidades
+  return menor === maior ? num(maior) : `de ${num(menor)} a ${num(maior)}`
+}
+
+/** A base do SSS muda de um mês para o outro dentro da janela? */
+export function baseDoSssVaria(sss: RedeSss): boolean {
+  return (sss.unidades_min ?? sss.unidades) !== (sss.unidades_max ?? sss.unidades)
+}
+
 /** Maturação mínima no ano-base quando o payload não a traz (servidor anterior à DEC-088).
  *  O valor que vale é o do servidor, `sss.maturacao_min_meses`. */
 export const SSS_MATURACAO_PADRAO = 3
@@ -471,14 +499,18 @@ function clausulasForaDoSss(sss: RedeSss): { n: number; um: string; varios: stri
  * Sem unidade em rampa, é o texto de sempre ("As outras 9 não existiam há um ano…"). Com
  * ela (DEC-088), a rampa aparece SEPARADA de "não existia": são leituras diferentes para o
  * time — uma é loja nova, a outra é loja que existia, mas ainda não servia de base.
+ *
+ * Com a janela do gráfico (emenda 1 da DEC-088), as contas são do ÚLTIMO mês dela, e a
+ * frase começa por ele: "Em Out/2026, 31 não existiam há um ano…".
  */
 export function foraDaBaseSss(sss: RedeSss): string | null {
   const { fora, rampa, baseZero, meses } = contasForaDoSss(sss)
   // "A outra"/"As outras N" só faz sentido quando alguém FICOU na base E quando um motivo
   // só explica todas as de fora. Com dois motivos, "as outras 9" diria que 9 são TODAS as
-  // de fora, e são 10: a frase fala em números e cada motivo leva o seu.
+  // de fora, e são 10: a frase fala em números e cada motivo leva o seu. Na janela do
+  // gráfico a base muda de um mês para o outro, e "as outras" não teria a quem se referir.
   const motivos = [fora, rampa, baseZero].filter((n) => n > 0).length
-  const outras = (sss.unidades ?? 0) > 0 && motivos === 1
+  const outras = !sss.mes_final && (sss.unidades ?? 0) > 0 && motivos === 1
   const sujeito = (n: number) => (!outras ? num(n) : n === 1 ? 'A outra' : `As outras ${num(n)}`)
   const frases: string[] = []
 
@@ -521,7 +553,12 @@ export function foraDaBaseSss(sss: RedeSss): string | null {
       )
     }
   }
-  return frases.length > 0 ? frases.join(' ') : null
+  if (frases.length === 0) return null
+  // Sem "as outras", a primeira frase sempre começa por um número: o prefixo do mês não
+  // precisa mexer em maiúscula.
+  return sss.mes_final
+    ? `Em ${rotuloMesCompetencia(sss.mes_final)}, ${frases.join(' ')}`
+    : frases.join(' ')
 }
 
 /**
@@ -603,16 +640,21 @@ export function narrativaDoRecorte(carteira: RedeCarteira, rotuloRecorte: string
   )
 
   const sss = carteira.sss
+  // Com a janela do gráfico (emenda 1 da DEC-088), o SSS é dos meses do GRÁFICO, e não do
+  // período da tela: a frase começa por eles, e quem ficou fora é contado no último mês.
+  const janela = janelaDoSss(sss)
+  const noMesFinal = sss?.mes_final ? `em ${rotuloMesCompetencia(sss.mes_final)}, ` : ''
   if (!sss?.disponivel) {
     // Com unidade em rampa no ano-base (DEC-088), "nenhuma operou o mês inteiro" seria
     // falso: elas operaram, só não tinham idade para servir de base. A frase diz quem.
     const clausulas = sss ? clausulasForaDoSss(sss) : []
+    const referencia = janela ?? contraMesBase(sss?.competencia_base)
     frases.push(
       sss && (sss.unidades_rampa ?? 0) > 0
-        ? `Não há base comparável neste recorte ${contraMesBase(sss.competencia_base)}: ` +
+        ? `Não há base comparável neste recorte ${referencia}: ${noMesFinal}` +
             `${juntarComE(clausulas.map((c) => `${c.n} ${plural(c.n, c.um, c.varios)}`))}, ` +
             'então o crescimento na mesma base não é medido.'
-        : `Não há base comparável neste recorte ${contraMesBase(sss?.competencia_base)}: nenhuma ` +
+        : `Não há base comparável neste recorte ${referencia}: nenhuma ` +
             'unidade operou o mês inteiro nos dois períodos, então o crescimento na mesma base ' +
             'não é medido.',
     )
@@ -620,30 +662,35 @@ export function narrativaDoRecorte(carteira: RedeCarteira, rotuloRecorte: string
     // A base comparável é o que separa "crescemos" de "abrimos loja" — por isso ela
     // aparece ANTES do número, e não como ressalva no fim da frase. Sem aviso de base
     // pequena (Felipe, 17/11/2026): mesmo uma loja diz se o SSS subiu ou caiu.
-    const base =
-      sss.unidades_recorte === 1
-        ? 'na mesma base (a única unidade do recorte)'
-        : `na mesma base (${sss.unidades} das ${sss.unidades_recorte} unidades)`
-    const contra = contraMesBase(sss.competencia_base)
+    let base: string
+    if (sss.unidades_recorte === 1) base = 'na mesma base (a única unidade do recorte)'
+    else if (janela) {
+      base =
+        `na mesma base (${baseMensalDoSss(sss)} das ${num(sss.unidades_recorte)} unidades` +
+        `${baseDoSssVaria(sss) ? ', conforme o mês' : ''})`
+    } else base = `na mesma base (${sss.unidades} das ${sss.unidades_recorte} unidades)`
+    const abertura = janela ? `${maiusculaInicial(janela)}, ${base}` : maiusculaInicial(base)
+    const contra = janela ? 'contra os mesmos meses um ano antes' : contraMesBase(sss.competencia_base)
     const variacao = sss.metricas?.faturamento?.var_pct ?? null
     let miolo: string
     if (variacao === null) {
-      miolo = `${maiusculaInicial(base)}, a variação de faturamento ${contra} não foi apurada`
+      miolo = `${abertura}, a variação de faturamento ${contra} não foi apurada`
     } else if (Math.abs(variacao) < RUIDO) {
-      miolo = `${maiusculaInicial(base)}, o faturamento fica estável ${contra}`
+      miolo = `${abertura}, o faturamento fica estável ${contra}`
     } else {
       const verbo = variacao > 0 ? 'cresce' : 'cai'
-      miolo = `${maiusculaInicial(base)}, o faturamento ${verbo} ${pct(Math.abs(variacao), 1)} ${contra}`
+      miolo = `${abertura}, o faturamento ${verbo} ${pct(Math.abs(variacao), 1)} ${contra}`
     }
     // Uma razão só: "a outra"/"as outras N", como sempre foi. Mais de uma (DEC-088): cada
     // uma com o seu número — "31 não existiam há um ano e 9 estavam na rampa de abertura".
+    // Na janela do gráfico, sempre com número e com o mês: a base muda de mês para mês.
     const clausulas = clausulasForaDoSss(sss)
     let fora = ''
-    if (clausulas.length === 1) {
+    if (clausulas.length === 1 && !sss.mes_final) {
       const [c] = clausulas
       fora = `; ${c.n === 1 ? `a outra ${c.um}` : `as outras ${c.n} ${c.varios}`}`
-    } else if (clausulas.length > 1) {
-      fora = `; ${juntarComE(clausulas.map((c) => `${c.n} ${plural(c.n, c.um, c.varios)}`))}`
+    } else if (clausulas.length > 0) {
+      fora = `; ${noMesFinal}${juntarComE(clausulas.map((c) => `${c.n} ${plural(c.n, c.um, c.varios)}`))}`
     }
     frases.push(`${miolo}${fora}.`)
   }
@@ -699,6 +746,10 @@ export interface DestaqueDoRecorte {
   variacao_pct: number
   /** faturamento do período que gerou a variação — o par do número acima, nunca o MTD */
   faturamento: number | null
+  /** na leitura ano a ano: meses do gráfico em que a unidade entrou na base, de quantos
+   *  (emenda 1 da DEC-088). Quem abriu há pouco entra com poucos meses, e a linha diz. */
+  meses?: number | null
+  meses_janela?: number | null
 }
 
 /** Contra o que "quem puxa e quem segura" compara.
@@ -743,7 +794,16 @@ export function destaquesDoRecorte(
     // Desempate por nome: sem ele, duas unidades com a mesma variação trocam de lugar
     // entre renders e a lista "pisca" a cada refetch.
     .sort((a, b) => (a.v === b.v ? a.u.nome.localeCompare(b.u.nome, 'pt-BR') : b.v - a.v))
-    .map<DestaqueDoRecorte>((e) => ({ unidade: e.u, variacao_pct: e.v, faturamento: e.fat }))
+    .map<DestaqueDoRecorte>((e) => {
+      const item: DestaqueDoRecorte = { unidade: e.u, variacao_pct: e.v, faturamento: e.fat }
+      // Quantos meses do gráfico entraram na conta da unidade (emenda 1 da DEC-088): só na
+      // leitura ano a ano, e só quando o servidor manda.
+      if (base === 'sss' && e.u.sss?.meses != null) {
+        item.meses = e.u.sss.meses
+        item.meses_janela = e.u.sss.meses_janela ?? null
+      }
+      return item
+    })
 
   // Separado por SINAL, e não por posição na lista. Cortar as N primeiras e as N últimas
   // parece equivalente e não é: num recorte de 4 unidades comparáveis, as quatro caíam em

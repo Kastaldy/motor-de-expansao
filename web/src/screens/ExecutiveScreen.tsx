@@ -32,12 +32,14 @@ import {
   COR_SEVERIDADE,
   METRICAS_EM_PONTOS,
   ORDEM_SEVERIDADE,
+  baseMensalDoSss,
   chaveDaQuery,
   corComAlfa,
   creditoDaFonte,
   destaquesDoRecorte,
   filtrarUnidades,
   formatarMetrica,
+  janelaDoSss,
   lerDelta,
   linhaDaRede,
   narrativaDoRecorte,
@@ -432,6 +434,9 @@ export default function ExecutiveScreen({
     (carteira?.sss.unidades_rampa ?? 0) - (carteira?.sss.unidades_base_zero ?? 0),
     0,
   )
+  // A janela do SSS, que é a do gráfico (emenda 1 da DEC-088): "de Out/2025 a Out/2026".
+  // `null` em payload anterior à emenda, e os textos voltam aos de antes.
+  const janelaSss = janelaDoSss(carteira?.sss)
 
   function limparRecorte() {
     setUf('')
@@ -1109,14 +1114,33 @@ export default function ExecutiveScreen({
                   <Glass style={{ flexShrink: 0, padding: '14px 16px' }}>
                     <Rotulo>Mesma base, ano a ano (SSS)</Rotulo>
                     <div style={{ font: '400 10.5px/1.5 var(--f-ui)', color: 'var(--tx-muted)', marginBottom: 10 }}>
-                      {carteira.sss.unidades}{' '}
-                      {carteira.sss.unidades === 1 ? 'unidade presente' : 'unidades presentes'} nos dois períodos
-                      {carteira.sss.maturacao_min_meses
-                        ? `, com ${carteira.sss.maturacao_min_meses} meses ou mais de operação no ano-base`
-                        : ''}
-                      {emRampaSss > 0
-                        ? ` (${emRampaSss} em rampa no ano-base ${emRampaSss === 1 ? 'fica' : 'ficam'} fora)`
-                        : ''}
+                      {janelaSss ? (
+                        // Emenda 1 da DEC-088: o SSS é o dos meses do gráfico, com a base
+                        // mudando de um mês para o outro; quem está em rampa é contado no
+                        // último mês da janela.
+                        <>
+                          {`${janelaSss.charAt(0).toUpperCase()}${janelaSss.slice(1)}, `}
+                          {baseMensalDoSss(carteira.sss)}{' '}
+                          {(carteira.sss.unidades_max ?? carteira.sss.unidades) === 1 ? 'unidade' : 'unidades'} por mês
+                          {carteira.sss.maturacao_min_meses
+                            ? `, com ${carteira.sss.maturacao_min_meses} meses ou mais de operação no ano-base`
+                            : ''}
+                          {emRampaSss > 0 && carteira.sss.mes_final
+                            ? ` (em ${rotuloMesCompetencia(carteira.sss.mes_final)}, ${emRampaSss} em rampa ${emRampaSss === 1 ? 'fica' : 'ficam'} fora)`
+                            : ''}
+                        </>
+                      ) : (
+                        <>
+                          {carteira.sss.unidades}{' '}
+                          {carteira.sss.unidades === 1 ? 'unidade presente' : 'unidades presentes'} nos dois períodos
+                          {carteira.sss.maturacao_min_meses
+                            ? `, com ${carteira.sss.maturacao_min_meses} meses ou mais de operação no ano-base`
+                            : ''}
+                          {emRampaSss > 0
+                            ? ` (${emRampaSss} em rampa no ano-base ${emRampaSss === 1 ? 'fica' : 'ficam'} fora)`
+                            : ''}
+                        </>
+                      )}
                       . Comparar total contra total infla o crescimento numa rede que abre lojas.
                     </div>
                     {(['faturamento', 'ativos'] as const).map((chave) => {
@@ -1125,7 +1149,9 @@ export default function ExecutiveScreen({
                       return (
                         <div key={chave} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginTop: 6 }}>
                           <span style={{ font: '400 11.5px/1 var(--f-ui)', color: 'var(--tx-label)' }}>
-                            {chave === 'faturamento' ? 'Faturamento' : 'Alunos ativos'}
+                            {chave === 'faturamento'
+                              ? 'Faturamento'
+                              : `Alunos ativos${janelaSss && carteira.sss.mes_foto ? ` em ${rotuloMesCompetencia(carteira.sss.mes_foto)}` : ''}`}
                           </span>
                           <span className="num" style={{ font: '600 12px/1 var(--f-num)', color: 'var(--tx-strong)' }}>
                             {chave === 'faturamento' ? brlCurto(m.atual) : num(m.atual)}{' '}
@@ -1241,6 +1267,7 @@ export default function ExecutiveScreen({
                   onExpandir={setDestaquesAbertos}
                   onUnidade={abrirFicha}
                   maturacaoMeses={carteira.sss.maturacao_min_meses}
+                  janelaSss={janelaSss}
                 />
               </div>
               <div style={{ ...TRILHO_PAINEL, display: 'grid' }}>
