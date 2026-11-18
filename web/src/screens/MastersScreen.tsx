@@ -1,6 +1,7 @@
 import { useEffect, useState, type ReactNode } from 'react'
 
 import BotaoInicio from '../components/BotaoInicio'
+import MapaDoTerritorio from '../components/masters/MapaDoTerritorio'
 import {
   Aviso,
   BarraMeta,
@@ -11,7 +12,7 @@ import {
   Kpi,
   Spinner,
 } from '../components/primitives'
-import { api, ApiError } from '../lib/api'
+import { api, ApiError, baixar } from '../lib/api'
 import {
   barrasPorAno,
   barrasPorFase,
@@ -26,6 +27,7 @@ import {
   textoAnoDaMeta,
   textoContrato,
   textoPrazo,
+  textoDoRelatorio,
   textoProgressoDaMeta,
   topoDoGrafico,
   type MetaDoAno,
@@ -36,6 +38,7 @@ import {
   type MastersPayload,
   type TrimestreMeta,
 } from '../lib/masters'
+import type { Tema } from '../lib/tema'
 
 /* ---------------------------------------------------------------------------
    Tela Masters (DEC-089) — um card por master franqueado e, ao clicar, o painel
@@ -432,6 +435,65 @@ function BarraEmUnidades({ md }: { md: MetaDoAno }) {
   )
 }
 
+/** O botão ÚNICO do relatório (BLK-MASTERS-04; 18/11/2026, Juan: "maior, do lado direito, e
+ *  apenas um botão só"). Com duas ou mais áreas, o servidor manda um PDF por área num .zip. */
+function BotaoDoRelatorio({ p }: { p: MasterPainel }) {
+  const [gerando, setGerando] = useState(false)
+  const [erro, setErro] = useState<string | null>(null)
+
+  async function gerar() {
+    setGerando(true)
+    setErro(null)
+    try {
+      const { blob, filename } = await api.relatorioMaster(p.id)
+      baixar(blob, filename)
+    } catch (e) {
+      setErro(e instanceof ApiError ? e.message : 'Falha ao gerar o relatório do master.')
+    } finally {
+      setGerando(false)
+    }
+  }
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 6 }}>
+      <Botao
+        onClick={gerar}
+        disabled={gerando}
+        title="Relatório do master: o estudo de área e as metas, com os padrões das unidades quando a região tem dado"
+        style={{ padding: '13px 24px', font: '700 14.5px/1 var(--f-ui)' }}
+      >
+        {gerando ? 'Gerando o relatório…' : 'Gerar relatório'}
+      </Botao>
+      <div
+        style={{
+          font: '400 11px/1.4 var(--f-ui)',
+          color: 'var(--tx-sub)',
+          textAlign: 'right',
+          maxWidth: 280,
+          display: 'flex',
+          alignItems: 'center',
+          gap: 6,
+        }}
+      >
+        {gerando && <Spinner tamanho={12} />}
+        {gerando ? 'Gerando no servidor; pode levar até um minuto por área.' : textoDoRelatorio(p.regioes)}
+      </div>
+      {erro && (
+        <div
+          style={{
+            font: '400 12px/1.4 var(--f-ui)',
+            color: 'var(--warn-text)',
+            textAlign: 'right',
+            maxWidth: 320,
+          }}
+        >
+          {erro}
+        </div>
+      )}
+    </div>
+  )
+}
+
 /** Simulação da meta do ano só na prévia local (18/11/2026, Juan: "simulação só na prévia"):
  *  `import.meta.env.DEV` é verdadeiro no `npm run dev` e falso no build que vai para produção. */
 const SIMULAR_META_SEM_DADO = import.meta.env.DEV
@@ -571,7 +633,67 @@ function Linha({
   )
 }
 
-function PainelMaster({ p, onVoltar }: { p: MasterPainel; onVoltar: () => void }) {
+type VisaoDoMaster = 'expansao' | 'unidades'
+
+const VISOES: { chave: VisaoDoMaster; rotulo: string; sub: string }[] = [
+  { chave: 'expansao', rotulo: 'Expansão', sub: 'meta, território, inaugurações e contratos' },
+  { chave: 'unidades', rotulo: 'Unidades', sub: 'as unidades em operação' },
+]
+
+/** Os dois seletores do painel (18/11/2026, Juan: "dentro da aba do master, dois seletores que
+ *  mudem o que mostra na página, um para expansão e outro para unidades"). */
+function SeletorDaVisao({
+  valor,
+  onTrocar,
+}: {
+  valor: VisaoDoMaster
+  onTrocar: (v: VisaoDoMaster) => void
+}) {
+  return (
+    <div role="group" aria-label="O que mostrar do master" style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+      {VISOES.map((v) => {
+        const ativo = v.chave === valor
+        return (
+          <button
+            key={v.chave}
+            type="button"
+            aria-pressed={ativo}
+            onClick={() => onTrocar(v.chave)}
+            style={{
+              minWidth: 200,
+              padding: '10px 16px',
+              textAlign: 'left',
+              borderRadius: 'var(--r-md)',
+              border: `1.5px solid ${ativo ? 'var(--ac)' : 'var(--line-soft)'}`,
+              background: ativo ? 'var(--ac-a16)' : 'var(--surf-card)',
+              color: ativo ? 'var(--ac-text)' : 'var(--tx-soft)',
+              cursor: 'pointer',
+            }}
+          >
+            <div style={{ font: '700 14px/1.2 var(--f-ui)' }}>{v.rotulo}</div>
+            <div style={{ font: '400 11px/1.3 var(--f-ui)', color: 'var(--tx-sub)', marginTop: 3 }}>
+              {v.sub}
+            </div>
+          </button>
+        )
+      })}
+    </div>
+  )
+}
+
+function PainelMaster({
+  p,
+  tema,
+  visao,
+  onVisao,
+  onVoltar,
+}: {
+  p: MasterPainel
+  tema: Tema
+  visao: VisaoDoMaster
+  onVisao: (v: VisaoDoMaster) => void
+  onVoltar: () => void
+}) {
   const m = p.meta
   const contrato = textoContrato(m)
   const nAssinados = p.assinados.reduce((s, f) => s + f.unidades.length, 0)
@@ -584,34 +706,45 @@ function PainelMaster({ p, onVoltar }: { p: MasterPainel; onVoltar: () => void }
           ← Todos os masters
         </Botao>
       </div>
-      <div>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
-          <h2 style={{ font: '600 22px/1.1 var(--f-ui)', color: 'var(--tx-max)', margin: 0 }}>
-            {p.nome}
-          </h2>
-          {p.tipo_area && <Chip tom="blue">{p.tipo_area}</Chip>}
-        </div>
-        {p.territorio && (
-          <div style={{ font: '600 13px/1.4 var(--f-ui)', color: 'var(--tx-label)', marginTop: 6 }}>
-            Território {p.territorio}
+      <div
+        style={{
+          display: 'flex',
+          justifyContent: 'space-between',
+          alignItems: 'flex-start',
+          gap: 20,
+          flexWrap: 'wrap',
+        }}
+      >
+        <div>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+            <h2 style={{ font: '600 22px/1.1 var(--f-ui)', color: 'var(--tx-max)', margin: 0 }}>
+              {p.nome}
+            </h2>
+            {p.tipo_area && <Chip tom="blue">{p.tipo_area}</Chip>}
           </div>
-        )}
-        <div style={{ font: '400 12px/1.5 var(--f-ui)', color: 'var(--tx-sub)', marginTop: 2 }}>
-          {p.regioes.length
-            ? p.regioes.map((r) => `${r.nome} (${r.tipo.toLowerCase()})`).join(' · ')
-            : 'Sem região definida no contrato.'}
-        </div>
-        {p.nota && (
-          <div
-            style={{
-              font: 'italic 400 12px/1.5 var(--f-ui)',
-              color: 'var(--tx-label)',
-              marginTop: 4,
-            }}
-          >
-            {p.nota}
+          {p.territorio && (
+            <div style={{ font: '600 13px/1.4 var(--f-ui)', color: 'var(--tx-label)', marginTop: 6 }}>
+              Território {p.territorio}
+            </div>
+          )}
+          <div style={{ font: '400 12px/1.5 var(--f-ui)', color: 'var(--tx-sub)', marginTop: 2 }}>
+            {p.regioes.length
+              ? p.regioes.map((r) => `${r.nome} (${r.tipo.toLowerCase()})`).join(' · ')
+              : 'Sem região definida no contrato.'}
           </div>
-        )}
+          {p.nota && (
+            <div
+              style={{
+                font: 'italic 400 12px/1.5 var(--f-ui)',
+                color: 'var(--tx-label)',
+                marginTop: 4,
+              }}
+            >
+              {p.nota}
+            </div>
+          )}
+        </div>
+        <BotaoDoRelatorio p={p} />
       </div>
 
       <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap' }}>
@@ -629,168 +762,204 @@ function PainelMaster({ p, onVoltar }: { p: MasterPainel; onVoltar: () => void }
         />
       </div>
 
-      {/* A meta em destaque, com o mesmo rosado do slide de metas do relatório; a barra até
-          100% fica embaixo do gráfico por trimestre (18/11/2026, Juan). */}
-      <Glass
-        style={{
-          padding: '16px 18px',
-          border: '1.5px solid var(--gr-rosa)',
-          background: 'color-mix(in srgb, var(--gr-rosa) 7%, var(--surf-card))',
-        }}
-      >
-        <div style={{ display: 'flex', gap: 24, flexWrap: 'wrap', alignItems: 'flex-start' }}>
-          <div style={{ flex: '0 1 320px', minWidth: 220 }}>
-            <Eyebrow cor="var(--gr-rosa)">Meta de aberturas de {m.ano}</Eyebrow>
-            <div
-              className="num"
-              style={{ font: '700 44px/1 var(--f-num)', color: 'var(--gr-rosa)', marginTop: 10 }}
-            >
-              {m.por_ano ? pct(m.pct_ano) : m.n_ano}
-            </div>
-            <div
-              style={{
-                font: '400 12.5px/1.6 var(--f-ui)',
-                color: 'var(--tx-sub)',
-                marginTop: 8,
-              }}
-            >
-              <div>
-                {m.por_ano
-                  ? `${m.n_ano} de ${m.por_ano} unidades abertas em ${m.ano}`
-                  : `unidades abertas em ${m.ano} que contam para a meta`}
-              </div>
-              <div>desde o início: {m.n_contam} contam para a meta</div>
-              {contrato && <div>meta do contrato: {contrato}</div>}
-              <div>prazo do contrato: {textoPrazo(m, p.hoje)}</div>
-              {m.sem_data.length > 0 && (
-                <div>
-                  {m.sem_data.length === 1
-                    ? '1 sem data no Growth, fora da conta do ano'
-                    : `${m.sem_data.length} sem data no Growth, fora da conta do ano`}
-                </div>
-              )}
-            </div>
-          </div>
-          {/* A "Meta de <ano>" com a barra em cima e o gráfico por trimestre embaixo, na mesma
-              largura (18/11/2026, Juan: "deixe a meta aparecendo acima do gráfico"). */}
-          <div style={{ flex: '2 1 360px', minWidth: 300, maxWidth: 600 }}>
-            <BarraDaMetaDoAno md={md} ano={m.ano} />
-            <div
-              style={{ font: '600 12.5px/1.3 var(--f-ui)', color: 'var(--tx-max)', marginTop: 22 }}
-            >
-              Unidades abertas em {m.ano} que contam para a meta, até o fim de cada trimestre
-            </div>
-            <div
-              style={{ font: '400 11px/1.4 var(--f-ui)', color: 'var(--tx-sub)', margin: '3px 0 8px' }}
-            >
-              em destaque, os trimestres com abertura (entre parênteses, quantas); zera a cada ano
-            </div>
-            <GraficoMeta
-              trimestres={m.trimestres}
-              porAno={md?.meta ?? null}
-              simulada={md?.simulada ?? false}
-              hoje={p.hoje}
-            />
-          </div>
-        </div>
-      </Glass>
+      {/* Dois seletores que trocam o que a página mostra (18/11/2026, Juan): a expansão do
+          master (meta, território, inaugurações e contratos) ou as unidades dele em operação. */}
+      <SeletorDaVisao valor={visao} onTrocar={onVisao} />
 
-      <div
-        style={{
-          display: 'grid',
-          gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))',
-          gap: 12,
-          alignItems: 'start',
-        }}
-      >
-        <Lista titulo="Em operação" n={p.em_operacao.length} vazio="Nenhuma unidade em operação.">
-          {p.em_operacao.map((u) => (
-            <Linha
-              key={`${u.unidade}-${u.uf}`}
-              nome={rotuloUnidade(u.unidade, u.uf)}
-              direita={u.inauguracao ? `desde ${dataBr(u.inauguracao)}` : undefined}
-              etiquetas={etiquetasDaUnidade(u)}
-            />
-          ))}
-        </Lista>
-        <Lista
-          titulo="Em inauguração"
-          n={p.em_inauguracao.length}
-          vazio="Nenhuma unidade com inauguração marcada nem em pré-venda."
+      {visao === 'unidades' ? (
+        // Unidades: as em operação, com as aberturas por ano ao lado.
+        <div
+          style={{
+            display: 'grid',
+            gridTemplateColumns: 'repeat(auto-fit, minmax(320px, 1fr))',
+            gap: 12,
+            alignItems: 'start',
+          }}
         >
-          {p.em_inauguracao.map((u) => (
-            <Linha
-              key={`${u.unidade}-${u.uf}`}
-              nome={rotuloUnidade(u.unidade, u.uf)}
-              direita={u.previsao ? `abre ${dataBr(u.previsao)}` : (u.fase ?? undefined)}
-            />
-          ))}
-        </Lista>
-        <Lista titulo="Contratos assinados" n={nAssinados} vazio="Nenhum contrato assinado.">
-          {p.assinados.map((f) => (
-            <div key={f.fase} style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-              <div style={{ font: '600 11.5px/1 var(--f-ui)', color: 'var(--tx-label)' }}>
-                {f.fase} ({f.unidades.length})
+          <Lista titulo="Em operação" n={p.em_operacao.length} vazio="Nenhuma unidade em operação.">
+            {p.em_operacao.map((u) => (
+              <Linha
+                key={`${u.unidade}-${u.uf}`}
+                nome={rotuloUnidade(u.unidade, u.uf)}
+                direita={u.inauguracao ? `desde ${dataBr(u.inauguracao)}` : undefined}
+                etiquetas={etiquetasDaUnidade(u)}
+              />
+            ))}
+          </Lista>
+          <CartaoGrafico
+            titulo="Em operação: aberturas por ano"
+            sub={
+              porAno.semData
+                ? `${porAno.semData} sem data no Growth, fora do gráfico`
+                : `${m.ano} em destaque`
+            }
+            cor="var(--ac)"
+            barras={porAno.barras}
+            vazio="Sem data de inauguração no Growth para estas unidades."
+          />
+        </div>
+      ) : (
+        // Expansão: a meta, o território, as inaugurações e os contratos assinados.
+        <>
+        {/* A meta em destaque, com o mesmo rosado do slide de metas do relatório; a barra até
+            100% fica embaixo do gráfico por trimestre (18/11/2026, Juan). */}
+        <Glass
+          style={{
+            padding: '16px 18px',
+            border: '1.5px solid var(--gr-rosa)',
+            background: 'color-mix(in srgb, var(--gr-rosa) 7%, var(--surf-card))',
+          }}
+        >
+          <div style={{ display: 'flex', gap: 24, flexWrap: 'wrap', alignItems: 'flex-start' }}>
+            <div style={{ flex: '0 1 320px', minWidth: 220 }}>
+              <Eyebrow cor="var(--gr-rosa)">Meta de aberturas de {m.ano}</Eyebrow>
+              <div
+                className="num"
+                style={{ font: '700 44px/1 var(--f-num)', color: 'var(--gr-rosa)', marginTop: 10 }}
+              >
+                {m.por_ano ? pct(m.pct_ano) : m.n_ano}
               </div>
-              {f.unidades.map((u) => (
-                <Linha
-                  key={`${f.fase}-${u.unidade}`}
-                  nome={u.unidade}
-                  direita={[u.cidade, u.uf].filter(Boolean).join(' / ') || undefined}
-                  etiquetas={u.dentro_territorio === false ? ['fora do território'] : []}
-                />
-              ))}
+              <div
+                style={{
+                  font: '400 12.5px/1.6 var(--f-ui)',
+                  color: 'var(--tx-sub)',
+                  marginTop: 8,
+                }}
+              >
+                <div>
+                  {m.por_ano
+                    ? `${m.n_ano} de ${m.por_ano} unidades abertas em ${m.ano}`
+                    : `unidades abertas em ${m.ano} que contam para a meta`}
+                </div>
+                <div>desde o início: {m.n_contam} contam para a meta</div>
+                {contrato && <div>meta do contrato: {contrato}</div>}
+                <div>prazo do contrato: {textoPrazo(m, p.hoje)}</div>
+                {m.sem_data.length > 0 && (
+                  <div>
+                    {m.sem_data.length === 1
+                      ? '1 sem data no Growth, fora da conta do ano'
+                      : `${m.sem_data.length} sem data no Growth, fora da conta do ano`}
+                  </div>
+                )}
+              </div>
             </div>
-          ))}
-        </Lista>
-      </div>
+            {/* A "Meta de <ano>" com a barra em cima e o gráfico por trimestre embaixo, na mesma
+                largura (18/11/2026, Juan: "deixe a meta aparecendo acima do gráfico"). */}
+            <div style={{ flex: '2 1 360px', minWidth: 300, maxWidth: 600 }}>
+              <BarraDaMetaDoAno md={md} ano={m.ano} />
+              <div
+                style={{ font: '600 12.5px/1.3 var(--f-ui)', color: 'var(--tx-max)', marginTop: 22 }}
+              >
+                Unidades abertas em {m.ano} que contam para a meta, até o fim de cada trimestre
+              </div>
+              <div
+                style={{ font: '400 11px/1.4 var(--f-ui)', color: 'var(--tx-sub)', margin: '3px 0 8px' }}
+              >
+                em destaque, os trimestres com abertura (entre parênteses, quantas); zera a cada ano
+              </div>
+              <GraficoMeta
+                trimestres={m.trimestres}
+                porAno={md?.meta ?? null}
+                simulada={md?.simulada ?? false}
+                hoje={p.hoje}
+              />
+            </div>
+          </div>
+        </Glass>
 
-      {/* Um gráfico para cada grupo, no fim do painel (18/11/2026, Juan). */}
-      <div
-        style={{
-          display: 'grid',
-          gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))',
-          gap: 12,
-          alignItems: 'start',
-        }}
-      >
-        <CartaoGrafico
-          titulo="Em operação: aberturas por ano"
-          sub={
-            porAno.semData
-              ? `${porAno.semData} sem data no Growth, fora do gráfico`
-              : `${m.ano} em destaque`
-          }
-          cor="var(--ac)"
-          barras={porAno.barras}
-          vazio="Sem data de inauguração no Growth para estas unidades."
-        />
-        <CartaoGrafico
-          titulo="Em inauguração: por mês previsto"
-          sub="data de inauguração no Growth; pré-venda sem data por último"
-          cor="var(--gr-azul)"
-          barras={barrasPorPrevisao(p.em_inauguracao)}
-          vazio="Nenhuma unidade em inauguração."
-        />
-        <CartaoGrafico
-          titulo="Contratos assinados: por fase"
-          sub="da fase mais perto de abrir à mais longe"
-          cor="var(--gr-verde)"
-          barras={barrasPorFase(p.assinados)}
-          vazio="Nenhum contrato assinado."
-        />
-      </div>
+        {/* Uma parte do relatório na tela (18/11/2026, Juan): o território no mapa, como na
+            carteira, com renda e densidade para ligar. Sem região no contrato, não há o que mostrar. */}
+        {p.regioes.length > 0 && (
+          <Glass style={{ padding: '14px 16px', minWidth: 0 }}>
+            <Eyebrow>Território no mapa</Eyebrow>
+            <div
+              style={{ font: '400 11px/1.4 var(--f-ui)', color: 'var(--tx-sub)', margin: '3px 0 10px' }}
+            >
+              as regiões do contrato e as unidades Ultra nelas; ligue a renda ou a densidade para ver o
+              território por dentro (as mesmas do Mapa do motor)
+            </div>
+            <MapaDoTerritorio masterId={p.id} tema={tema} />
+          </Glass>
+        )}
+
+        <div
+          style={{
+            display: 'grid',
+            gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))',
+            gap: 12,
+            alignItems: 'start',
+          }}
+        >
+          <Lista
+            titulo="Em inauguração"
+            n={p.em_inauguracao.length}
+            vazio="Nenhuma unidade com inauguração marcada nem em pré-venda."
+          >
+            {p.em_inauguracao.map((u) => (
+              <Linha
+                key={`${u.unidade}-${u.uf}`}
+                nome={rotuloUnidade(u.unidade, u.uf)}
+                direita={u.previsao ? `abre ${dataBr(u.previsao)}` : (u.fase ?? undefined)}
+              />
+            ))}
+          </Lista>
+          <Lista titulo="Contratos assinados" n={nAssinados} vazio="Nenhum contrato assinado.">
+            {p.assinados.map((f) => (
+              <div key={f.fase} style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                <div style={{ font: '600 11.5px/1 var(--f-ui)', color: 'var(--tx-label)' }}>
+                  {f.fase} ({f.unidades.length})
+                </div>
+                {f.unidades.map((u) => (
+                  <Linha
+                    key={`${f.fase}-${u.unidade}`}
+                    nome={u.unidade}
+                    direita={[u.cidade, u.uf].filter(Boolean).join(' / ') || undefined}
+                    etiquetas={u.dentro_territorio === false ? ['fora do território'] : []}
+                  />
+                ))}
+              </div>
+            ))}
+          </Lista>
+        </div>
+
+        {/* Um gráfico para cada grupo, no fim do painel (18/11/2026, Juan). */}
+        <div
+          style={{
+            display: 'grid',
+            gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))',
+            gap: 12,
+            alignItems: 'start',
+          }}
+        >
+          <CartaoGrafico
+            titulo="Em inauguração: por mês previsto"
+            sub="data de inauguração no Growth; pré-venda sem data por último"
+            cor="var(--gr-azul)"
+            barras={barrasPorPrevisao(p.em_inauguracao)}
+            vazio="Nenhuma unidade em inauguração."
+          />
+          <CartaoGrafico
+            titulo="Contratos assinados: por fase"
+            sub="da fase mais perto de abrir à mais longe"
+            cor="var(--gr-verde)"
+            barras={barrasPorFase(p.assinados)}
+            vazio="Nenhum contrato assinado."
+          />
+        </div>
+        </>
+      )}
     </div>
   )
 }
 
-export default function MastersScreen({ onInicio }: { onInicio: () => void }) {
+export default function MastersScreen({ onInicio, tema }: { onInicio: () => void; tema: Tema }) {
   const [lista, setLista] = useState<MastersPayload | null>(null)
   const [erro, setErro] = useState<string | null>(null)
   const [carregando, setCarregando] = useState(true)
   const [aberto, setAberto] = useState<string | null>(null)
   const [painel, setPainel] = useState<MasterPainel | null>(null)
   const [erroPainel, setErroPainel] = useState<string | null>(null)
+  const [visao, setVisao] = useState<VisaoDoMaster>('expansao')
 
   useEffect(() => {
     let vivo = true
@@ -872,7 +1041,13 @@ export default function MastersScreen({ onInicio }: { onInicio: () => void }) {
               }
             />
           ) : painel ? (
-            <PainelMaster p={painel} onVoltar={() => setAberto(null)} />
+            <PainelMaster
+              p={painel}
+              tema={tema}
+              visao={visao}
+              onVisao={setVisao}
+              onVoltar={() => setAberto(null)}
+            />
           ) : (
             <div style={{ display: 'flex', justifyContent: 'center', padding: 40 }}>
               <Spinner tamanho={18} />

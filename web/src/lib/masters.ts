@@ -104,7 +104,7 @@ export interface MasterPainel {
   nome: string
   territorio: string | null
   tipo_area: string | null
-  regioes: { nome: string; tipo: string }[]
+  regioes: { id: string | null; nome: string; tipo: string }[]
   nota: string | null
   resumo: MasterResumo
   meta: MetaMaster
@@ -169,6 +169,18 @@ export function topoDoGrafico(trimestres: TrimestreMeta[], porAno: number | null
 export function rotuloDaBarra(t: TrimestreMeta): string {
   if (t.futuro) return ''
   return t.novas > 0 ? `${t.acumulado} (+${t.novas})` : String(t.acumulado)
+}
+
+/* ---- O botão do relatório (BLK-MASTERS-04, 18/11/2026, Juan: "um botão para gerar o relatório
+   desse master; no caso de masters que têm duas ou mais áreas, entregar as áreas que ele tem") ---- */
+
+/** O que o botão ÚNICO do relatório entrega (18/11/2026, Juan: "deixe apenas um botão só"): com
+ *  duas ou mais áreas, um PDF por área num .zip; senão, o PDF do master. */
+export function textoDoRelatorio(regioes: MasterPainel['regioes']): string {
+  const nomes = regioes.map((r) => r.nome)
+  if (nomes.length < 2) return 'PDF do master'
+  const lista = `${nomes.slice(0, -1).join(', ')} e ${nomes[nomes.length - 1]}`
+  return `um PDF por área (${lista}), num arquivo .zip`
 }
 
 /* ---- A barra da meta do ano (18/11/2026, Juan: "uma barra que vai até 100%, quanto % eles
@@ -318,4 +330,55 @@ export function etiquetasDaUnidade(u: UnidadeEmOperacao): string[] {
   if (!u.conta_para_meta) out.push(u.meta_de ? `fora da meta (meta: ${u.meta_de})` : 'fora da meta')
   if (u.operacao_de) out.push(`operação: ${u.operacao_de}`)
   return out
+}
+
+/* ---- Mapa do território no painel (BLK-MASTERS-04; 18/11/2026, Juan: "o mapa, assim como está
+   na carteira, com a área e a opção de ligar a renda e a densidade") ---- */
+
+/** `/api/masters/{id}/mapa`: o território do mapa do relatório em PDF. */
+export interface MasterMapa {
+  /** Na ordem do contrato, com a cor de cada região (a mesma do PDF). */
+  regioes: { id: string; nome: string; cor: string }[]
+  /** `[hex_id, índice da região em regioes]`: os hexágonos povoados do território. */
+  hexes: [string, number][]
+  /** `[lat, lng, nome]` das unidades Ultra dentro do território. */
+  ultra: [number, number, string][]
+  /** `[oeste, sul, leste, norte]`; `null` sem hexágono (master sem região no contrato). */
+  bbox: [number, number, number, number] | null
+  icone_ultra: string | null
+}
+
+/** `/api/masters/{id}/mapa/camadas`: `[hex_id, renda domiciliar, densidade]`, a conta do Mapa. */
+export interface MasterCamadas {
+  disponivel: boolean
+  hexes: [string, number | null, number | null][]
+  faixas: Record<'renda_domiciliar' | 'densidade', { ate: number | null; rotulo: string; cor: number[] }[]>
+}
+
+/** `#RRGGBB` -> `[r, g, b]`. */
+export function rgbDeHex(cor: string): [number, number, number] {
+  const n = Number.parseInt(cor.replace('#', ''), 16)
+  return [(n >> 16) & 255, (n >> 8) & 255, n & 255]
+}
+
+/** A vista que enquadra o território na caixa do mapa (Web Mercator do deck.gl: o mundo tem
+ *  512 px no zoom 0). Fica entre o zoom 4 (o país) e o 12 (um bairro). */
+export function vistaDoTerritorio(
+  bbox: [number, number, number, number],
+  largura: number,
+  altura: number,
+  margem = 28,
+): { longitude: number; latitude: number; zoom: number } {
+  const [oeste, sul, leste, norte] = bbox
+  const y = (lat: number) => Math.log(Math.tan(Math.PI / 4 + (lat * Math.PI) / 360))
+  const fracaoX = Math.max(leste - oeste, 0.01) / 360
+  const fracaoY = Math.max(y(norte) - y(sul), 0.0002) / (2 * Math.PI)
+  const zoom = Math.log2(
+    Math.min(
+      Math.max(largura - 2 * margem, 50) / (512 * fracaoX),
+      Math.max(altura - 2 * margem, 50) / (512 * fracaoY),
+    ),
+  )
+  const latitude = (Math.atan(Math.sinh((y(norte) + y(sul)) / 2)) * 180) / Math.PI
+  return { longitude: (oeste + leste) / 2, latitude, zoom: Math.min(12, Math.max(4, zoom)) }
 }

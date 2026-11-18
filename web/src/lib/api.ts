@@ -1,7 +1,7 @@
 /** Cliente do backend do piloto. Tudo passa pelo proxy /api do Vite. */
 
 import type { AluguelReferencia, TipoImovelAluguel } from './aluguel-referencia'
-import type { MasterPainel, MastersPayload } from './masters'
+import type { MasterCamadas, MasterMapa, MasterPainel, MastersPayload } from './masters'
 import type {
   AcaoImobiliaria,
   AcessosFicha,
@@ -609,6 +609,31 @@ export const api = {
   /** O painel de um master: as listas por status e a meta do ano por trimestre. */
   master: (id: string) =>
     pedir<MasterPainel>(`/api/masters/${encodeURIComponent(id)}`, {}, 30_000),
+
+  /** O território do master no mapa do painel (BLK-MASTERS-04): hexágonos por região e Ultra. */
+  masterMapa: (id: string) =>
+    pedir<MasterMapa>(`/api/masters/${encodeURIComponent(id)}/mapa`, {}, 60_000),
+
+  /** Renda domiciliar e densidade dos hexágonos do território, pedidas ao ligar uma camada
+   *  (a primeira leitura de uma UF no servidor é lenta, como na ficha da carteira). */
+  masterCamadas: (id: string) =>
+    pedir<MasterCamadas>(`/api/masters/${encodeURIComponent(id)}/mapa/camadas`, {}, 120_000),
+
+  /** O relatório do master (BLK-MASTERS-04), gerado no servidor: com duas ou mais áreas, um PDF
+   *  por área num .zip; senão, o PDF. Com `regiao`, o PDF daquela área. 404 diz o que falta no
+   *  servidor (painel de unidades, config dos territórios). */
+  relatorioMaster: (id: string, regiao?: string | null) =>
+    pedirArquivo(
+      `/api/masters/relatorio/${encodeURIComponent(id)}${
+        regiao ? `?regiao=${encodeURIComponent(regiao)}` : ''
+      }`,
+      { method: 'GET' },
+      `relatorio_master_${id}${regiao ? `_${regiao}` : ''}.pdf`,
+      {
+        falha: 'Falha ao gerar o relatório do master',
+        timeout: 'O relatório do master demorou demais para ficar pronto; tente de novo.',
+      },
+    ),
 
   /* ---- Aba Acessos (emenda DEC-027; restrita por allowlist no backend) ---- */
 

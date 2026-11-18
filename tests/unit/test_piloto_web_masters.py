@@ -14,8 +14,11 @@ Chama as rotas DIRETO (sem TestClient), como o resto da suíte do piloto.
 
 from __future__ import annotations
 
+import asyncio
 import dataclasses
+import io
 import json
+import os
 import sys
 from pathlib import Path
 from typing import Any
@@ -272,3 +275,268 @@ def test_a_migration_026_da_a_capacidade_so_a_growth_e_lideres() -> None:
     assert "('growth', 'masters.ver')" in sql and "('lideres', 'masters.ver')" in sql
     for fora in ("consultoria", "expansao", "'master'"):
         assert fora not in sql.split("INSERT INTO perfil_permissoes")[1]
+
+
+# ---------------------------------------------------------------------------
+# O relatório em PDF (BLK-MASTERS-04)
+# ---------------------------------------------------------------------------
+
+CONFIG_MASTERS = {
+    "masters": [
+        {
+            "id": "rjsp",
+            "nome_planilha": "RJ/SP 01 — Fulano",
+            "nome_exibicao": "RJ/SP 01",
+            "regioes": [
+                {"id": "rj", "nome": "Rio de Janeiro", "ufs": ["RJ"]},
+                {"id": "sp", "nome": "São Paulo", "ufs": ["SP"]},
+            ],
+        },
+        {
+            "id": "sp03",
+            "nome_planilha": "SP 03 — Beltrano",
+            "nome_exibicao": "SP 03",
+            "regioes": [{"id": "sp", "nome": "São Paulo", "ufs": ["SP"]}],
+        },
+    ]
+}
+FONTES_DO_RELATORIO = (
+    ("UNI_DIM_PARQUET", "dim_unidade.parquet"),
+    ("UNI_FATO_PARQUET", "fato_unidade_mes.parquet"),
+    ("MERCADO_PARQUET", "hexagonos_mercado_mapeado.parquet"),
+    ("CONCORRENTES_PARQUET", "concorrentes_mapeados.parquet"),
+    ("ULTRA_MAPEADAS_PARQUET", "unidades_ultra_mapeadas.parquet"),
+)
+
+
+@pytest.fixture
+def relatorio(masters: Path, monkeypatch: pytest.MonkeyPatch) -> list[dict[str, Any]]:
+    """O piloto com tudo o que o relatório pede na staging e o GERADOR trocado por um falso: aqui
+    se confere a rota (área, cache, 404, gate); o PDF em si tem os testes dele."""
+    from motor_expansao.masters import gerar as G
+
+    territorios = masters / ingestao.ARQ_TERRITORIOS
+    territorios.write_text(json.dumps(CONFIG_MASTERS, ensure_ascii=False), encoding="utf-8")
+    monkeypatch.setattr(pilot, "MASTERS_TERRITORIOS", territorios)
+    for constante, nome in FONTES_DO_RELATORIO:
+        (masters / nome).write_bytes(b"x")
+        monkeypatch.setattr(pilot, constante, masters / nome)
+    chamadas: list[dict[str, Any]] = []
+
+    def falso(e: Any, master: Any, gerado_em: Any, regiao_id: Any = None, planilha: Any = None):
+        chamadas.append(
+            {"master": master.id, "regiao": regiao_id, "dia": gerado_em, "planilha": planilha}
+        )
+        return b"%PDF-falso", f"relatorio_master_{master.id}_{regiao_id}.pdf"
+
+    monkeypatch.setattr(G, "pdf_do_master", falso)
+    pilot.limpar_caches()
+    yield chamadas
+    pilot.limpar_caches()
+
+
+def _pedir(master_id: str, regiao: str | None = None) -> Any:
+    return asyncio.run(pilot.api_master_relatorio(master_id, regiao=regiao, remote_user=None))
+
+
+def test_relatorio_de_uma_area_do_master(relatorio: list[dict[str, Any]]) -> None:
+    r = _pedir("rjsp", "sp")
+    assert r.media_type == "application/pdf" and r.body == b"%PDF-falso"
+    assert r.headers["content-disposition"] == 'attachment; filename="relatorio_master_rjsp_sp.pdf"'
+    (c,) = relatorio
+    assert (c["master"], c["regiao"], c["dia"]) == ("rjsp", "sp", HOJE)
+    # A planilha chega ao gerador pelo nome que ela usa, remontada da ingestão.
+    inaug, pipe = c["planilha"]
+    assert set(inaug["master_secao"]) == {"RJ/SP 01 — Fulano", "SP 03 — Beltrano"}
+    assert set(pipe["master"]) == {"RJ/SP 01 — Fulano"}
+
+
+def test_relatorio_fica_em_cache_ate_uma_fonte_mudar(relatorio: list[dict[str, Any]]) -> None:
+    _pedir("rjsp", "rj")
+    _pedir("rjsp", "rj")
+    assert len(relatorio) == 1
+    # Painel de unidades novo na staging (a cópia do mês): gera de novo.
+    dim = pilot.UNI_DIM_PARQUET
+    os.utime(dim, ns=(dim.stat().st_atime_ns, dim.stat().st_mtime_ns + 10**9))
+    _pedir("rjsp", "rj")
+    assert len(relatorio) == 2
+
+
+def test_relatorio_responde_404_dizendo_o_que_falta(relatorio: list[dict[str, Any]]) -> None:
+    assert _status(lambda: _pedir("zeta")) == (404, "Master não encontrado.")
+    assert _status(lambda: _pedir("sp03", "rj")) == (404, "Área não encontrada para este master.")
+    pilot.UNI_FATO_PARQUET.unlink()
+    status, detalhe = _status(lambda: _pedir("rjsp", "sp"))
+    assert status == 404 and "fato_unidade_mes.parquet" in detalhe
+    assert relatorio == []
+
+
+def test_relatorio_tem_o_gate_da_tela(monkeypatch: pytest.MonkeyPatch) -> None:
+    caminho = "/api/masters/relatorio/rjsp"
+    assert acesso.capacidade_necessaria(caminho, "GET") == "masters.ver"
+    _identidade(monkeypatch, {"rede.ver"})
+    assert acesso.motivo_bloqueio_por_banco(caminho, "GET", "alguem") is not None
+
+
+def test_botao_unico_entrega_um_pdf_por_area_num_zip(relatorio: list[dict[str, Any]]) -> None:
+    """Sem `regiao` (o botão único da tela): master com duas ou mais áreas recebe um .zip com um
+    PDF por área; com uma área só, o PDF dela (18/11/2026, Juan: "deixe apenas um botão só")."""
+    import zipfile
+
+    r = _pedir("rjsp")
+    assert r.media_type == "application/zip"
+    assert (
+        r.headers["content-disposition"]
+        == 'attachment; filename="relatorios_master_rjsp_2026T4_novo.zip"'
+    )
+    with zipfile.ZipFile(io.BytesIO(r.body)) as zf:
+        assert zf.namelist() == ["relatorio_master_rjsp_rj.pdf", "relatorio_master_rjsp_sp.pdf"]
+        assert zf.read("relatorio_master_rjsp_sp.pdf") == b"%PDF-falso"
+    assert [c["regiao"] for c in relatorio] == ["rj", "sp"]
+
+    um = _pedir("sp03")
+    assert um.media_type == "application/pdf"
+    assert relatorio[-1]["regiao"] is None
+
+
+# ---------------------------------------------------------------------------
+# O mapa do território no painel (BLK-MASTERS-04; 18/11/2026, Juan: "o mapa, assim como está na
+# carteira, com a área e a opção de ligar a renda e a densidade")
+# ---------------------------------------------------------------------------
+
+
+def _hex(lat: float, lng: float) -> str:
+    import h3
+
+    return str(h3.latlng_to_cell(lat, lng, 7))
+
+
+RIO, SAMPA, INTERIOR, VAZIO = (
+    _hex(-22.90, -43.20),
+    _hex(-23.55, -46.63),
+    _hex(-22.90, -47.06),
+    _hex(-21.20, -47.80),
+)
+
+
+@pytest.fixture
+def mapa(masters: Path, monkeypatch: pytest.MonkeyPatch) -> dict[str, list[str]]:
+    """Territórios, mercado e Ultra mínimos na staging; a partição da UF e a renda do hexágono
+    trocadas por falsas (a conta da renda tem os testes dela; aqui se confere a rota)."""
+    territorios = masters / ingestao.ARQ_TERRITORIOS
+    territorios.write_text(json.dumps(CONFIG_MASTERS, ensure_ascii=False), encoding="utf-8")
+    monkeypatch.setattr(pilot, "MASTERS_TERRITORIOS", territorios)
+    mercado = masters / "hexagonos_mercado_mapeado.parquet"
+    pd.DataFrame(
+        {
+            "uf": ["RJ", "SP", "SP", "SP", "MG"],
+            "nome_municipio": ["Rio de Janeiro", "São Paulo", "Campinas", "Ribeirão Preto", "BH"],
+            "hex_id": [RIO, SAMPA, INTERIOR, VAZIO, _hex(-19.9, -43.9)],
+            "lat": [-22.90, -23.55, -22.90, -21.20, -19.9],
+            "lng": [-43.20, -46.63, -47.06, -47.80, -43.9],
+            # Hexágono sem gente fica fora, como no mapa do relatório em PDF.
+            "pop_hex_base": [9000.0, 12000.0, 3000.0, 0.0, 5000.0],
+            "outra_coluna": [1, 2, 3, 4, 5],
+        }
+    ).to_parquet(mercado)
+    monkeypatch.setattr(pilot, "MERCADO_PARQUET", mercado)
+    ultra = masters / "unidades_ultra_mapeadas.parquet"
+    pd.DataFrame(
+        {
+            "ultra_id": ["u1", "u2", "u3"],
+            "unidade": ["Tijuca", "Paulista", "Savassi"],
+            "uf": ["RJ", "SP", "MG"],
+            "lat": [-22.90, -23.55, -19.9],
+            "lng": [-43.20, -46.63, -43.9],
+            "hex_id_res7": [RIO, SAMPA, _hex(-19.9, -43.9)],
+            "flag_coord_valida": [True, True, True],
+        }
+    ).to_parquet(ultra)
+    monkeypatch.setattr(pilot, "ULTRA_MAPEADAS_PARQUET", ultra)
+    monkeypatch.setattr(pilot, "_icone_ultra", lambda: "data:image/png;base64,eA==")
+    lidas: list[str] = []
+
+    def carregar_uf(uf: str) -> pd.DataFrame:
+        lidas.append(uf)
+        if uf == "RJ":
+            raise HTTPException(404, "Partição da UF RJ não encontrada.")
+        return pd.DataFrame(
+            {
+                "hex_id": [SAMPA, INTERIOR, VAZIO],
+                "renda_teste": [6100.4, None, 2000.0],
+                "densidade_pop_setor_hab_km2": [8123.46, 310.0, 2.0],
+            }
+        )
+
+    monkeypatch.setattr(pilot, "carregar_uf", carregar_uf)
+    monkeypatch.setattr(pilot, "_renda_domiciliar_hex", lambda r: r.get("renda_teste"))
+    pilot.limpar_caches()
+    yield {"lidas": lidas}
+    pilot.limpar_caches()
+
+
+def _json(resposta: Any) -> Any:
+    return json.loads(resposta.body)
+
+
+def test_mapa_mostra_o_territorio_por_regiao_com_a_cor_do_pdf(mapa: dict[str, Any]) -> None:
+    from motor_expansao.masters.mapa import CORES_REGIAO
+
+    d = _json(pilot.api_master_mapa("rjsp"))
+    assert d["regioes"] == [
+        {"id": "rj", "nome": "Rio de Janeiro", "cor": CORES_REGIAO[0]},
+        {"id": "sp", "nome": "São Paulo", "cor": CORES_REGIAO[1]},
+    ]
+    # Só os povoados das UFs do master, cada um com o índice da região dele.
+    assert sorted(d["hexes"]) == sorted([[RIO, 0], [SAMPA, 1], [INTERIOR, 1]])
+    # Só as Ultra dentro do território, com o nome para a dica.
+    assert sorted(u[2] for u in d["ultra"]) == ["Paulista", "Tijuca"]
+    assert d["bbox"] == [-47.06, -23.55, -43.2, -22.9]
+    assert d["icone_ultra"].startswith("data:image/png")
+    # O master de uma área só vê a dele.
+    assert sorted(h for h, _ in _json(pilot.api_master_mapa("sp03"))["hexes"]) == sorted(
+        [SAMPA, INTERIOR]
+    )
+
+
+def test_camadas_usam_a_renda_e_a_densidade_do_mapa_do_motor(mapa: dict[str, Any]) -> None:
+    d = _json(pilot.api_master_mapa_camadas("rjsp"))
+    assert d["disponivel"] is True
+    # A renda arredondada a reais e a densidade a uma casa; sem leitura vai None (cinza na tela).
+    # O hexágono sem gente não entra, e a UF sem partição (RJ) fica sem leitura, sem derrubar.
+    assert sorted(d["hexes"]) == sorted([[SAMPA, 6100.0, 8123.5], [INTERIOR, None, 310.0]])
+    assert sorted(mapa["lidas"]) == ["RJ", "SP"]
+    # As faixas são as da ficha da carteira (a régua do núcleo).
+    from motor_expansao.dashboard import constants as C
+
+    assert d["faixas"] == {
+        "renda_domiciliar": pilot._faixas_camada(C.RENDA_MEDIA_DOMICILIAR_BANDS),
+        "densidade": pilot._faixas_camada(C.DENSIDADE_POP_BANDS),
+    }
+
+
+def test_mapa_fica_em_cache_ate_uma_fonte_mudar(mapa: dict[str, Any]) -> None:
+    pilot.api_master_mapa_camadas("rjsp")
+    pilot.api_master_mapa_camadas("rjsp")
+    assert len(mapa["lidas"]) == 2  # RJ e SP, uma vez
+    m = pilot.MERCADO_PARQUET
+    os.utime(m, ns=(m.stat().st_atime_ns, m.stat().st_mtime_ns + 10**9))
+    pilot.api_master_mapa_camadas("rjsp")
+    assert len(mapa["lidas"]) == 4
+
+
+def test_mapa_responde_404_dizendo_o_que_falta(mapa: dict[str, Any]) -> None:
+    assert _status(lambda: pilot.api_master_mapa("zeta")) == (404, "Master não encontrado.")
+    pilot.MASTERS_TERRITORIOS.unlink()
+    status, detalhe = _status(lambda: pilot.api_master_mapa("rjsp"))
+    assert status == 404 and "masters_territorios.json" in detalhe
+    status, detalhe = _status(lambda: pilot.api_master_mapa_camadas("rjsp"))
+    assert status == 404 and "masters_territorios.json" in detalhe
+
+
+@pytest.mark.parametrize("caminho", ["/api/masters/rjsp/mapa", "/api/masters/rjsp/mapa/camadas"])
+def test_mapa_tem_o_gate_da_tela(monkeypatch: pytest.MonkeyPatch, caminho: str) -> None:
+    assert acesso.capacidade_necessaria(caminho, "GET") == "masters.ver"
+    assert acesso.abas_necessarias(caminho) == frozenset({"masters"})
+    _identidade(monkeypatch, {"rede.ver"})
+    assert acesso.motivo_bloqueio_por_banco(caminho, "GET", "alguem") is not None

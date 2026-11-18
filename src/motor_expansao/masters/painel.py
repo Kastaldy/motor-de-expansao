@@ -110,6 +110,12 @@ def _texto(v: Any) -> str | None:
     return t or None
 
 
+def _ids_das_regioes(c: Any) -> list[str | None]:
+    """O id de cada região; ingestão antiga (sem a coluna) vem sem id, uma posição por região."""
+    ids: list[str | None] = list(_lista(c.get("regioes_ids")))
+    return ids or [None] * len(_lista(c.get("regioes")))
+
+
 def painel_do_master(
     master_id: str,
     contratos: pd.DataFrame,
@@ -225,9 +231,15 @@ def painel_do_master(
         "nome": str(c["nome"]),
         "territorio": _texto(c.get("territorio")),
         "tipo_area": _texto(c.get("tipo_area")),
+        # O id de cada região vai junto: o botão do relatório pede uma por área (BLK-MASTERS-04).
         "regioes": [
-            {"nome": n, "tipo": t}
-            for n, t in zip(_lista(c.get("regioes")), _lista(c.get("regioes_tipos")), strict=False)
+            {"id": i, "nome": n, "tipo": t}
+            for n, t, i in zip(
+                _lista(c.get("regioes")),
+                _lista(c.get("regioes_tipos")),
+                _ids_das_regioes(c),
+                strict=False,
+            )
         ],
         "nota": _texto(c.get("nota")),
         "resumo": {

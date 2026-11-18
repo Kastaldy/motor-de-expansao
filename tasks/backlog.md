@@ -5345,7 +5345,7 @@ READ-ONLY sobre o M1. Não muda o que os testes verificam, só como/quando rodam
 
 **Aplicação na VPS (Felipe, um comando por vez, nesta ordem).** (1) migration 026 com a credencial de dono (`docs/banco_conexao.md` §8); (2) cópia de `masters_contratos.parquet`, `masters_inauguradas.parquet`, `masters_pipeline.parquet` e `masters_manifesto.json` para `/opt/motor-expansao/data/staging/`; (3) `masters` em `superficies` do `/opt/motor-expansao/data/perfil.json` (o do repo, `data/perfis/BR/perfil.json`); (4) imagem nova do `motor-expansao-web` por digest.
 
-### BLK-MASTERS-04 — Botão "gerar relatório" no painel do master (PR seguinte ao BLK-MASTERS-03)
+### BLK-MASTERS-04 — Relatório no painel do master: botão "gerar relatório" e o mapa do território (PR seguinte ao BLK-MASTERS-03)
 
 | Campo | Valor |
 |---|---|
@@ -5357,6 +5357,12 @@ READ-ONLY sobre o M1. Não muda o que os testes verificam, só como/quando rodam
 | **Depende de** | BLK-MASTERS-03 |
 | **Autonomia** | **manual (NÃO loop-safe)** — dado confidencial. |
 
-**O que entrega.** No painel de cada master, o botão que gera o relatório dele no servidor: o modelo antigo mais os padrões das unidades quando a região tem dado (o modelo "novo" do BLK-MASTERS-02). Master com 2 ou mais áreas recebe um relatório por área (um botão por área), como o RJ/SP 01 saiu em RJ e SP. Mercado, concorrentes, pinos Ultra e malha do Censo vêm dos arquivos que o motor já usa na VPS (atualizados), e não de cópias locais.
+**O que entrega.** No painel de cada master, duas partes do relatório (pedidos do Juan na prévia de 18/11/2026):
+1. **Um botão só, "Gerar relatório", maior e à direita do cabeçalho**, que gera o relatório no servidor: o modelo antigo mais os padrões das unidades quando a região tem dado (o modelo "novo" do BLK-MASTERS-02). Master com 2 ou mais áreas recebe um `.zip` com um PDF por área, como o RJ/SP 01 saiu em RJ e SP; com uma área ou nenhuma, o PDF. A primeira versão tinha um botão por área, e o Juan pediu um só: "parece ao clicar que são dois relatórios".
+2. **O mapa do território, como na carteira** ("deixe uma parte do relatório nessa aba, o mapa, assim como está na carteira, com a área e a opção de ligar a renda e a densidade"): os hexágonos povoados de cada região, com a cor da região do PDF, as unidades Ultra dentro do território e os botões "Renda domiciliar" e "Densidade demográfica" da ficha (uma camada por vez, com as faixas da régua do núcleo). A renda e a densidade são as do Mapa do motor para o mesmo hexágono (`_renda_domiciliar_hex` sobre a partição da UF e `densidade_pop_setor_hab_km2`), e não o polígono de setor da ficha: um território de estado inteiro tem dezenas de milhares de setores. Rotas `GET /api/masters/{id}/mapa` e `GET /api/masters/{id}/mapa/camadas`, no gate `masters.ver`.
+
+3. **Dois seletores no painel, "Expansão" e "Unidades"**, que trocam o que a página mostra: a Expansão (padrão) com a meta, o mapa, as inaugurações e os contratos assinados; a Unidades com as unidades em operação e as aberturas por ano. Cabeçalho, botão e os quatro números ficam nas duas.
+
+Mercado, concorrentes, pinos Ultra e malha do Censo vêm dos arquivos que o motor já usa na VPS (atualizados), e não de cópias locais.
 
 **O que falta levar ao servidor.** (1) o código do relatório em PDF (`masters/relatorio_pdf.py`, `relatorio_funcionamento.py`, `gerar.py`, `analise.py`, `area.py`, hoje no ramo `feat/relatorio-masters`); (2) as regiões com municípios do `territorios.json` (a ingestão do BLK-MASTERS-03 leva só os nomes); (3) o painel BLK-UNI (`dim_unidade.parquet`, `fato_unidade_mes.parquet`) por cópia MENSAL do Felipe para `/opt/motor-expansao/data/staging` (escolha do Juan em 18/11/2026), de onde saem a lista de unidades do master e os padrões.

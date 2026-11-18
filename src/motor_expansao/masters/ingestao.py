@@ -43,6 +43,8 @@ ARQ_CONTRATOS = "masters_contratos.parquet"
 ARQ_INAUGURADAS = "masters_inauguradas.parquet"
 ARQ_PIPELINE = "masters_pipeline.parquet"
 ARQ_MANIFESTO = "masters_manifesto.json"
+#: A config dos territórios, para o relatório em PDF gerado no servidor (BLK-MASTERS-04).
+ARQ_TERRITORIOS = "masters_territorios.json"
 #: Versão do formato dos arquivos acima; o piloto recusa outra.
 ESQUEMA = 1
 
@@ -53,6 +55,7 @@ COLUNAS_CONTRATOS: tuple[str, ...] = (
     "tipo_area",
     "regioes",
     "regioes_tipos",
+    "regioes_ids",
     "nota",
     "meta_quantidade",
     "meta_por_ano",
@@ -87,6 +90,9 @@ class Tabelas:
     inauguradas: pd.DataFrame
     pipeline: pd.DataFrame
     manifesto: dict[str, Any]
+    #: A config dos territórios como veio (regiões com municípios, meta): o relatório em PDF do
+    #: servidor (BLK-MASTERS-04) precisa dela para o mercado e os mapas de cada região.
+    territorios: dict[str, Any] | None = None
 
 
 def _sha256(caminho: Path) -> str:
@@ -232,6 +238,7 @@ def montar_tabelas(planilha: Path, territorios: Path, agora: datetime | None = N
                 "tipo_area": aba.get(m.id, {}).get("tipo_area", ""),
                 "regioes": [r.nome for r in m.regioes],
                 "regioes_tipos": [r.tipo_label for r in m.regioes],
+                "regioes_ids": [r.id for r in m.regioes],
                 "nota": m.nota,
                 "meta_quantidade": m.meta.quantidade,
                 "meta_por_ano": m.meta.por_ano,
@@ -247,7 +254,8 @@ def montar_tabelas(planilha: Path, territorios: Path, agora: datetime | None = N
     contratos["meta_por_ano"] = contratos["meta_por_ano"].astype("Int64")
 
     agora = agora or datetime.now(UTC)
-    versao = json.loads(territorios.read_text(encoding="utf-8")).get("versao")
+    config = json.loads(territorios.read_text(encoding="utf-8"))
+    versao = config.get("versao")
     manifesto = {
         "esquema": ESQUEMA,
         "gerado_em": agora.isoformat(timespec="seconds"),
@@ -269,12 +277,12 @@ def montar_tabelas(planilha: Path, territorios: Path, agora: datetime | None = N
             "pipeline": len(pipeline),
         },
     }
-    return Tabelas(contratos, inauguradas, pipeline, manifesto)
+    return Tabelas(contratos, inauguradas, pipeline, manifesto, config)
 
 
 def gravar(tabelas: Tabelas, saida: Path) -> list[Path]:
-    """Grava os quatro arquivos em `saida`, cada um por arquivo temporário + rename (o piloto
-    nunca lê um parquet pela metade). O manifesto vai por último: ele descreve os outros três."""
+    """Grava os arquivos em `saida`, cada um por arquivo temporário + rename (o piloto nunca lê
+    um parquet pela metade). O manifesto vai por último: ele descreve os outros."""
     saida = Path(saida)
     saida.mkdir(parents=True, exist_ok=True)
     feitos: list[Path] = []
@@ -288,9 +296,53 @@ def gravar(tabelas: Tabelas, saida: Path) -> list[Path]:
         df.to_parquet(tmp, index=False)
         os.replace(tmp, destino)
         feitos.append(destino)
+    if tabelas.territorios is not None:
+        destino = saida / ARQ_TERRITORIOS
+        tmp = destino.with_name(destino.name + ".tmp")
+        tmp.write_text(
+            json.dumps(tabelas.territorios, ensure_ascii=False, indent=2), encoding="utf-8"
+        )
+        os.replace(tmp, destino)
+        feitos.append(destino)
     destino = saida / ARQ_MANIFESTO
     tmp = destino.with_name(destino.name + ".tmp")
     tmp.write_text(json.dumps(tabelas.manifesto, ensure_ascii=False, indent=2), encoding="utf-8")
     os.replace(tmp, destino)
     feitos.append(destino)
     return feitos
+
+
+def planilha_do_relatorio(
+    inauguradas: pd.DataFrame, pipeline: pd.DataFrame, masters: dict[str, Master]
+) -> tuple[pd.DataFrame, pd.DataFrame]:
+    """As tabelas ingeridas no formato em que o relatório em PDF lê a planilha
+    (`dados.ler_planilha_masters`): o master pelo nome da planilha (`nome_planilha` da config), e
+    não pelo id. Atribuição a quem não é master da config fica vazia e não casa com nenhum."""
+    nomes = {k: m.nome_planilha for k, m in masters.items()}
+
+    def nome(v: Any) -> str | None:
+        return nomes.get(v) if isinstance(v, str) else None
+
+    def sim_nao(v: Any) -> str | None:
+        return "Sim" if v is True else "Não" if v is False else None
+
+    inaug = pd.DataFrame(
+        {
+            "master_secao": inauguradas["master_id"].map(nome),
+            "unidade": inauguradas["unidade"],
+            "uf": inauguradas["uf"],
+            "meta": inauguradas["meta_master_id"].map(nome),
+            "operacao": inauguradas["operacao_master_id"].map(nome),
+        }
+    )
+    pipe = pd.DataFrame(
+        {
+            "master": pipeline["master_id"].map(nome),
+            "unidade": pipeline["unidade"],
+            "cidade": pipeline["cidade"],
+            "uf": pipeline["uf"],
+            "fase": pipeline["fase"],
+            "dentro_territorio": pipeline["dentro_territorio"].map(sim_nao),
+        }
+    )
+    return inaug, pipe

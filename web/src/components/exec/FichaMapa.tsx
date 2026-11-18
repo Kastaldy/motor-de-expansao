@@ -6,9 +6,10 @@ import { Map } from 'react-map-gl/maplibre'
 import 'maplibre-gl/dist/maplibre-gl.css'
 
 import { api, ApiError } from '../../lib/api'
+import { corDaFaixaDoServidor } from '../../lib/colors'
 import { num } from '../../lib/format'
 import type { Tema } from '../../lib/tema'
-import type { RedeCamadaSetor, RedeFaixaCamada, RedeMapaConcorrente, RedeSetoresEntorno, RedeUnidadeMapa } from '../../lib/types'
+import type { RedeCamadaSetor, RedeMapaConcorrente, RedeSetoresEntorno, RedeUnidadeMapa } from '../../lib/types'
 import { metros, nomeRede } from './Inteligencia'
 
 /* ---------------------------------------------------------------------------
@@ -55,14 +56,6 @@ const CAMADAS: { chave: RedeCamadaSetor; rotulo: string; legenda: string }[] = [
   { chave: 'renda_domiciliar', rotulo: 'Renda domiciliar', legenda: 'Renda domiciliar (R$/domicílio)' },
   { chave: 'densidade', rotulo: 'Densidade demográfica', legenda: 'Densidade (hab/km²)' },
 ]
-
-/** Cor do setor pela faixa do núcleo. Sem leitura = cinza translúcido, nunca a faixa mais baixa. */
-function corDaFaixa(valor: number | null, faixas: RedeFaixaCamada[]): [number, number, number, number] {
-  if (valor === null) return [120, 120, 140, 50]
-  const faixa = faixas.find((f) => f.ate === null || valor <= f.ate) ?? faixas[faixas.length - 1]
-  const [r, g, b] = faixa.cor
-  return [r, g, b, 150]
-}
 
 /**
  * `tema` vem da TELA (a mesma prop que o `ExecMap` recebe), e não do `<html data-tema>`.
@@ -125,7 +118,7 @@ export default function FichaMapa({
               positionFormat: 'XY',
               filled: true,
               stroked: false,
-              getFillColor: (d) => corDaFaixa(d[camada], faixas),
+              getFillColor: (d) => corDaFaixaDoServidor(d[camada], faixas),
               updateTriggers: { getFillColor: [camada] },
             }),
           ]

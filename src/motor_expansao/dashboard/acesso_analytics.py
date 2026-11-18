@@ -146,7 +146,9 @@ FEATURES_ROTULOS: tuple[tuple[str | None, str, str], ...] = (
     # Camada imobiliária: o dossiê (prefixo com barra) antes da lista — first-match.
     (None, "/api/oportunidades/", "Baixou dossiê de imóvel"),
     (None, "/api/oportunidades", "Consultou oportunidades imobiliárias"),
-    # Tela Masters (DEC-089): o painel de um master (prefixo com barra) antes da lista.
+    # Tela Masters (DEC-089): o relatório (BLK-MASTERS-04) antes do painel, e o painel de um
+    # master (prefixo com barra) antes da lista; first-match por prefixo.
+    (None, "/api/masters/relatorio/", "Gerou relatório de master"),
     (None, "/api/masters/", "Abriu o painel de um master"),
     (None, "/api/masters", "Consultou os masters"),
     # Gestos da tela imobiliária (rotas no-op cujo valor é a linha da trilha —

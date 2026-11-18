@@ -8,6 +8,7 @@ import {
   SCORE_BANDS_HEX,
   bandSolid,
   camadaCor,
+  corDaFaixaDoServidor,
   scoreBandToColor,
 } from './colors'
 
@@ -70,5 +71,21 @@ describe('camadaCor', () => {
   it('passo fora de 1..4 cai na camada 1 em vez de quebrar o painel', () => {
     expect(camadaCor(9)).toBe(camadaCor(1))
     expect(camadaCor(0)).toBe(camadaCor(1))
+  })
+})
+
+describe('corDaFaixaDoServidor (faixas da régua do núcleo, vindas do servidor)', () => {
+  const faixas = [
+    { ate: 1000, cor: [10, 20, 30, 255] },
+    { ate: 5000, cor: [40, 50, 60, 255] },
+    { ate: null, cor: [70, 80, 90, 255] },
+  ]
+  it('pinta pela primeira faixa cujo teto cobre o valor, com a última aberta', () => {
+    expect(corDaFaixaDoServidor(1000, faixas)).toEqual([10, 20, 30, 150])
+    expect(corDaFaixaDoServidor(1001, faixas)).toEqual([40, 50, 60, 150])
+    expect(corDaFaixaDoServidor(99999, faixas, 170)).toEqual([70, 80, 90, 170])
+  })
+  it('sem leitura fica cinza translúcido, nunca a faixa mais baixa', () => {
+    expect(corDaFaixaDoServidor(null, faixas)).toEqual([120, 120, 140, 50])
   })
 })

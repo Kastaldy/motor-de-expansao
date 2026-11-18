@@ -213,8 +213,11 @@ def test_o_alvo_e_repassado_quando_existe(gravacoes: list[dict[str, Any]]) -> No
     assert gravacoes[0]["alvo"] == {"hex_id": "87a8100efffffff"}
 
 
-def test_as_quatro_rotas_usam_os_rotulos_do_contrato() -> None:
-    """Os rotulos sao o que distingue as quatro superficies dentro do mesmo `tipo`.
+def test_as_rotas_de_relatorio_usam_os_rotulos_do_contrato() -> None:
+    """Os rotulos sao o que distingue as superficies dentro do mesmo `tipo`.
+
+    Eram quatro; o relatorio do master (BLK-MASTERS-04, emenda 1 da DEC-089) e' a quinta, com
+    `formato="zip"` quando o master tem duas ou mais areas (um PDF por area num arquivo so').
 
     Um `relatorio="Municipal"` com maiuscula, ou um quinto rotulo inventado, nao quebraria
     nada em tempo de execucao -- so' tornaria o evento inconsultavel pela chave que a §2.2
@@ -229,9 +232,9 @@ def test_as_quatro_rotas_usam_os_rotulos_do_contrato() -> None:
         r'\s*formato="([^"]+)"',
         fonte,
     )
-    assert len(chamadas) == 4, f"esperava as quatro superficies, achei {chamadas}"
-    assert {r for r, _f in chamadas} == {"municipal", "pontual", "simulador", "comparacao"}
-    assert {f for _r, f in chamadas} == {"pdf", "xlsx"}
+    assert len(chamadas) == 5, f"esperava as cinco superficies, achei {chamadas}"
+    assert {r for r, _f in chamadas} == {"municipal", "pontual", "simulador", "comparacao", "master"}
+    assert {f for _r, f in chamadas} == {"pdf", "xlsx", "zip"}
 
 
 # --------------------------------------------------------------------------------------

@@ -10,12 +10,15 @@ import {
   metaDoAno,
   pct,
   rotuloDaBarra,
+  rgbDeHex,
   rotuloUnidade,
   textoAnoDaMeta,
   textoContrato,
   textoPrazo,
+  textoDoRelatorio,
   textoProgressoDaMeta,
   topoDoGrafico,
+  vistaDoTerritorio,
   type TrimestreMeta,
 } from './masters'
 
@@ -108,6 +111,18 @@ describe('tela Masters (DEC-089): textos', () => {
     )
   })
 
+  it('o botão único do relatório: um PDF por área num .zip, ou o PDF do master', () => {
+    const r = (id: string, nome: string) => ({ id, nome, tipo: 'Exclusividade' })
+    expect(textoDoRelatorio([r('df', 'Distrito Federal'), r('go', 'Goiás')])).toBe(
+      'um PDF por área (Distrito Federal e Goiás), num arquivo .zip',
+    )
+    expect(textoDoRelatorio([r('a', 'ABCD'), r('l', 'Litoral'), r('v', 'Vale')])).toBe(
+      'um PDF por área (ABCD, Litoral e Vale), num arquivo .zip',
+    )
+    expect(textoDoRelatorio([r('sp', 'São Paulo')])).toBe('PDF do master')
+    expect(textoDoRelatorio([])).toBe('PDF do master')
+  })
+
   it('a escala da barra vai de 0 à meta (ou às aberturas, quando passaram) e marca a meta', () => {
     // Abaixo da meta: a escala vai até a meta, e a linha dela fica no fim.
     expect(escalaDaBarra({ meta: 9, abertas: 7 })).toEqual({
@@ -198,5 +213,19 @@ describe('tela Masters (DEC-089): textos', () => {
         operacao_de: null,
       }),
     ).toEqual(['sem data no Growth', 'fora da meta (meta: outra atribuição)'])
+  })
+  it('o mapa do território: a cor da região e a vista que enquadra o território', () => {
+    expect(rgbDeHex('#00A79D')).toEqual([0, 167, 157])
+    expect(rgbDeHex('#C23C8E')).toEqual([194, 60, 142])
+    // DF/GO (o Goiás inteiro): centro no meio da caixa e um zoom de estado.
+    const v = vistaDoTerritorio([-53.2, -19.5, -45.9, -12.4], 1200, 480)
+    expect(v.longitude).toBeCloseTo(-49.55, 2)
+    expect(v.latitude).toBeGreaterThan(-16.1)
+    expect(v.latitude).toBeLessThan(-15.8)
+    expect(v.zoom).toBeGreaterThan(5)
+    expect(v.zoom).toBeLessThan(6.5)
+    // Caixa mais estreita, zoom menor; território de um ponto só não passa do zoom 12.
+    expect(vistaDoTerritorio([-53.2, -19.5, -45.9, -12.4], 320, 480).zoom).toBeLessThan(v.zoom)
+    expect(vistaDoTerritorio([-47.9, -15.8, -47.9, -15.8], 1200, 480).zoom).toBe(12)
   })
 })
