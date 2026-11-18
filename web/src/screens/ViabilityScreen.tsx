@@ -407,10 +407,10 @@ export default function ViabilityScreen({
   /** Falta alguma premissa em dinheiro sem a qual não há conta (ticket ou aluguel). */
   const faltaTicket =
     moedaLocal != null && (!ticketLocalReais || ticketLocalReais <= 0 || aluguelReais == null)
-  // Mix recorrente × agregador, em % de balcão. Vazio = padrão do motor. Só é editável
-  // onde o perfil declara as premissas como provisórias (o aviso); no Brasil o mix tem
-  // dono e segue somente-leitura.
-  const mixEditavel = avisoDeViabilidade() != null
+  // Mix recorrente × agregador, em % de balcão. Vazio = padrão do motor (`SIM_SHARE_BALCAO`).
+  // Editável em TODOS os países desde 18/11/2026 (pedido do Felipe): até então só onde o
+  // perfil declarava as premissas como provisórias (o aviso, AR), e no Brasil era somente
+  // leitura. O servidor já aceitava o campo nos dois caminhos (densidade e v2).
   const [pctBalcao, setPctBalcao] = useState<number | undefined>(undefined)
   // `null` = ainda sem premissa. Nascia em 800, e numa instância sem faixa de
   // comparáveis o 800 sobrava e a tela calculava sozinha com ele. Agora, sem p50, a
@@ -518,7 +518,7 @@ export default function ViabilityScreen({
           lng: alvoLng,
           m2,
           ticket: ticketDaConta,
-          shareBalcao: mixEditavel ? fracaoDoPercentual(pctBalcao) : undefined,
+          shareBalcao: fracaoDoPercentual(pctBalcao),
           ticketsStudios: ticketsStudiosEmReais(),
         }),
       )
@@ -565,7 +565,7 @@ export default function ViabilityScreen({
       aluguel: aluguelDaConta() ?? 0,
       ticket: ticketDaConta,
       // % digitado -> FRAÇÃO (o contrato). Vazio some do JSON e o motor usa o padrão.
-      share_balcao: mixEditavel ? fracaoDoPercentual(pctBalcao) : undefined,
+      share_balcao: fracaoDoPercentual(pctBalcao),
       demanda: demandaUsar,
       n_studios: nStudios,
       // Um ticket por studio ATIVO (o backend devolve 422 se o tamanho divergir), na
@@ -1461,7 +1461,6 @@ export default function ViabilityScreen({
             </div>
             {/* Mix recorrente × agregador: de quantos desses alunos pagam o plano de
                 balcão. Vazio = padrão do motor; o agregador é o complemento. */}
-            {mixEditavel && (
               <div style={{ display: 'flex', gap: 10, alignItems: 'flex-end', marginTop: 10 }}>
                 <Campo label="Recorrente (balcão)">
                   <CampoNumero
@@ -1509,7 +1508,6 @@ export default function ViabilityScreen({
                   </div>
                 </div>
               </div>
-            )}
             <div
               style={{
                 font: '400 10.5px/1.4 var(--f-ui)',
