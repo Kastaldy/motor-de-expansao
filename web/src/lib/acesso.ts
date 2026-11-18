@@ -26,6 +26,7 @@ export type Aba =
   | 'imobiliaria'
   | 'executiva'
   | 'viabilidade'
+  | 'masters'
   | 'acessos'
 
 export const TODAS_AS_ABAS: readonly Aba[] = Object.freeze([
@@ -34,6 +35,7 @@ export const TODAS_AS_ABAS: readonly Aba[] = Object.freeze([
   'imobiliaria',
   'executiva',
   'viabilidade',
+  'masters',
   'acessos',
 ])
 
@@ -47,8 +49,11 @@ export const TODAS_AS_ABAS: readonly Aba[] = Object.freeze([
  * Só a TELA dedicada entra aqui. A camada de imóveis DENTRO do Mapa Territorial
  * (pins + seção da ficha do hexágono) segue a aba `mapa` de propósito — decisão do
  * Felipe em 2026-08-24: quem tem o mapa vê os imóveis por lá.
+ *
+ * `masters` (DEC-089) traz os contratos e as metas dos masters, da planilha
+ * confidencial: também só aparece para quem o /api/me listar.
  */
-const ABAS_SEM_FAIL_OPEN: ReadonlySet<Aba> = new Set(['acessos', 'imobiliaria'])
+const ABAS_SEM_FAIL_OPEN: ReadonlySet<Aba> = new Set(['acessos', 'imobiliaria', 'masters'])
 
 /** Telas do App que o controle conhece (subconjunto local do `Tela` do App.tsx). */
 export type TelaControlada =
@@ -59,6 +64,7 @@ export type TelaControlada =
   | 'mapa'
   | 'viabilidade'
   | 'executiva'
+  | 'masters'
   | 'acessos'
 
 /** Que aba libera cada tela. O modo de ponto é o Explorar com a ficha por cima
@@ -74,6 +80,9 @@ const ABA_DA_TELA: Record<Exclude<TelaControlada, 'inicio'>, Aba> = {
   'oportunidades-imob': 'imobiliaria',
   executiva: 'executiva',
   viabilidade: 'viabilidade',
+  // Tela Masters com aba PRÓPRIA (DEC-089), como a imobiliária: os contratos dos
+  // masters não vão junto com a Visão Executiva.
+  masters: 'masters',
   acessos: 'acessos',
 }
 

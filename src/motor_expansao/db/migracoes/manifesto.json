@@ -183,6 +183,13 @@
       "documento": "025-perfil-master.md",
       "sha256_bloco": "8edccc88f02e830436c1e9bdc74b86a57dd0bf189db66220c083542cdb519aec",
       "sha256_arquivo": "af3da6d5de2c1d9241447f1b475b3b7fde1a51db5c904862f3c1049e748f1e2b"
+    },
+    {
+      "versao": "026",
+      "arquivo": "026-permissao-masters.sql",
+      "documento": "026-permissao-masters.md",
+      "sha256_bloco": "c49c952bbd89cd3939beb531ed5ddc92df1a17b2b7993b5202884d5bf72d09d5",
+      "sha256_arquivo": "f90e3ed1da987aaf6344d1252e2beed2ff024152d349095d1badb271c14d1b59"
     }
   ]
 }

@@ -5326,3 +5326,37 @@ Menores, no código do banco:
 **Ataque (em ordem).** (1) Ligar **`-n auto`** no `ci.yml` — a alavanca principal, já que o custo é volume serial e não há gargalo pontual para enxugar. (2) Isolar o que não tolera paralelismo: integração PostGIS e testes que tocam arquivos/portas → `--dist loadscope` + markers de serialização. (3) Medir o ganho real pelo nº de cores do runner. **Meta:** `test` ≤ ~8 min sem perder cobertura. **Ressalva:** o xdist **coleta por worker**, então o ganho vem da execução paralela entre cores — validar que compensa no runner usado (se não, avaliar dividir a suíte: `unit` em todo PR, integração só quando o path relevante muda).
 
 READ-ONLY sobre o M1. Não muda o que os testes verificam, só como/quando rodam.
+
+### BLK-MASTERS-03 — Tela Masters no piloto (DEC-089)
+
+| Campo | Valor |
+|---|---|
+| **Criticidade** | **Crítica** — capacidade nova no RBAC (migration 026 em `src/motor_expansao/db/`), aba nova no gate e dado confidencial novo servido pelo piloto. READ-ONLY sobre o M1. |
+| **Prioridade** | Alta — pedido do Juan em 18/11/2026. |
+| **Esteira** | PR próprio (`tema/relatorio-masters-no-piloto`) → aprovação de Felipe ou Vinicius (DEC-019) → aplicação manual na VPS. |
+| **Quem** | Juan (código); Felipe (migration, cópia dos arquivos e deploy na VPS) |
+| **Status** | Em PR |
+| **Depende de** | — (o relatório em PDF, BLK-MASTERS-01/02, segue no ramo `feat/relatorio-masters`) |
+| **Autonomia** | **manual (NÃO loop-safe)** — migration e dado confidencial. |
+
+**O que entrega.** Item "Masters" na barra lateral do piloto BR: um card por master (com o nome do master, o titular, e o território à parte) e, ao clicar, o painel dele com as unidades em operação, em inauguração, os contratos assinados por fase, a meta de aberturas (do ano por trimestre, desde o início e do contrato, com o prazo), a barra da meta do ano (em unidades: o 0 e a meta numa linha rosa) em cima do gráfico por trimestre (sem `por_ano` na config, "não informada" em produção; simulada, aberturas do ano ± 2, só na prévia local) e um gráfico por grupo. Só Growth e Líderes (`masters.ver`).
+
+**De onde vêm os dados.** A planilha de levantamento dos masters e o `territorios.json` (confidenciais, fora do git) são ingeridos por `scripts/ingerir_masters.py` em três parquets e um manifesto em `data/staging`, só com o que a tela mostra (o texto livre da área fica de fora); a data de inauguração vem da base do Growth, que o motor atualiza todo dia. Planilha nova = nova ingestão e nova cópia à VPS.
+
+**Aplicação na VPS (Felipe, um comando por vez, nesta ordem).** (1) migration 026 com a credencial de dono (`docs/banco_conexao.md` §8); (2) cópia de `masters_contratos.parquet`, `masters_inauguradas.parquet`, `masters_pipeline.parquet` e `masters_manifesto.json` para `/opt/motor-expansao/data/staging/`; (3) `masters` em `superficies` do `/opt/motor-expansao/data/perfil.json` (o do repo, `data/perfis/BR/perfil.json`); (4) imagem nova do `motor-expansao-web` por digest.
+
+### BLK-MASTERS-04 — Botão "gerar relatório" no painel do master (PR seguinte ao BLK-MASTERS-03)
+
+| Campo | Valor |
+|---|---|
+| **Criticidade** | **Alta** — rota nova que gera PDF com dado confidencial; reaproveita `masters.ver` (sem migration). READ-ONLY sobre o M1. |
+| **Prioridade** | Alta — pedido do Juan em 18/11/2026, na prévia da tela Masters. |
+| **Esteira** | PR próprio depois do BLK-MASTERS-03 (escolha do Juan: "PR seguinte"). |
+| **Quem** | Juan (código); Felipe (cópias para a VPS e deploy) |
+| **Status** | Aberto |
+| **Depende de** | BLK-MASTERS-03 |
+| **Autonomia** | **manual (NÃO loop-safe)** — dado confidencial. |
+
+**O que entrega.** No painel de cada master, o botão que gera o relatório dele no servidor: o modelo antigo mais os padrões das unidades quando a região tem dado (o modelo "novo" do BLK-MASTERS-02). Master com 2 ou mais áreas recebe um relatório por área (um botão por área), como o RJ/SP 01 saiu em RJ e SP. Mercado, concorrentes, pinos Ultra e malha do Censo vêm dos arquivos que o motor já usa na VPS (atualizados), e não de cópias locais.
+
+**O que falta levar ao servidor.** (1) o código do relatório em PDF (`masters/relatorio_pdf.py`, `relatorio_funcionamento.py`, `gerar.py`, `analise.py`, `area.py`, hoje no ramo `feat/relatorio-masters`); (2) as regiões com municípios do `territorios.json` (a ingestão do BLK-MASTERS-03 leva só os nomes); (3) o painel BLK-UNI (`dim_unidade.parquet`, `fato_unidade_mes.parquet`) por cópia MENSAL do Felipe para `/opt/motor-expansao/data/staging` (escolha do Juan em 18/11/2026), de onde saem a lista de unidades do master e os padrões.

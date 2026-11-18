@@ -117,6 +117,8 @@ from motor_expansao.dimensionamento.payload_viabilidade import (  # noqa: E402
     montar_payload_viabilidade,
 )
 from motor_expansao.dimensionamento.viabilidade_v2 import DemandaV2In  # noqa: E402
+from motor_expansao.masters import ingestao as masters_ingestao  # noqa: E402  (DEC-089)
+from motor_expansao.masters import painel as masters_painel  # noqa: E402  (tela Masters)
 from motor_expansao.recomendacao import (  # noqa: E402  (recomendação única, DEC-077)
     COLUNAS_OBRIGATORIAS as _REC_COLUNAS_OBRIGATORIAS,
 )
@@ -10343,6 +10345,13 @@ GROWTH_PARQUET = STAGING_DIR / "growth_api_historico.parquet"
 # funcionando inteira com o faturamento da Growth: nenhuma tela pode cair porque a
 # ingestao mensal atrasou.
 FATURAMENTO_FINANCEIRO_PARQUET = STAGING_DIR / "faturamento_financeiro.parquet"
+# Tela Masters (DEC-089): a planilha de levantamento dos masters INGERIDA por
+# `scripts/ingerir_masters.py` (só o que a tela mostra). AUSENTE = a rota responde 404
+# dizendo que os dados não foram carregados, e o resto do piloto segue igual.
+MASTERS_CONTRATOS_PARQUET = STAGING_DIR / masters_ingestao.ARQ_CONTRATOS
+MASTERS_INAUGURADAS_PARQUET = STAGING_DIR / masters_ingestao.ARQ_INAUGURADAS
+MASTERS_PIPELINE_PARQUET = STAGING_DIR / masters_ingestao.ARQ_PIPELINE
+MASTERS_MANIFESTO = STAGING_DIR / masters_ingestao.ARQ_MANIFESTO
 
 # Siglas de UF que aparecem como SUFIXO do nome da unidade, em três grafias que
 # convivem nas bases: "Bangú / RJ", "BANGU - RJ" e "Icaraí RJ". O separador é
@@ -16626,6 +16635,115 @@ def _montar_oportunidades(caminho_entradas: Path, coef: Any | None) -> list[dict
             }
         )
     return itens
+
+
+# ============================================================================
+# Tela Masters (DEC-089): o que cada master tem em operação, em inauguração e assinado, e a
+# meta de aberturas. Contratos, inauguradas e assinadas vêm da planilha de levantamento
+# INGERIDA (`scripts/ingerir_masters.py`; os parquets chegam à staging por scp do Felipe); a
+# data de inauguração vem da base do Growth, que o motor atualiza todo dia. Só leitura. As
+# regras de status e da meta moram em `motor_expansao.masters.painel`, testáveis sem o app.
+# ============================================================================
+
+
+def _masters_hoje() -> pd.Timestamp:
+    """Hoje no fuso do Brasil, sem hora. Função, e não constante, para o teste fixar a data."""
+    return pd.Timestamp.now(tz="America/Sao_Paulo").tz_localize(None).normalize()
+
+
+@functools.lru_cache(maxsize=1)
+def _masters_tabelas() -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, dict[str, Any]] | None:
+    """Os três parquets e o manifesto da ingestão; None se algum falta ou é de outro esquema."""
+    caminhos = (
+        MASTERS_CONTRATOS_PARQUET,
+        MASTERS_INAUGURADAS_PARQUET,
+        MASTERS_PIPELINE_PARQUET,
+        MASTERS_MANIFESTO,
+    )
+    if not all(p.exists() for p in caminhos):
+        return None
+    try:
+        manifesto = json.loads(MASTERS_MANIFESTO.read_text(encoding="utf-8"))
+        if manifesto.get("esquema") != masters_ingestao.ESQUEMA:
+            print(
+                f"[masters] esquema {manifesto.get('esquema')!r} da ingestão não é o "
+                f"{masters_ingestao.ESQUEMA} deste piloto — rode scripts/ingerir_masters.py",
+                file=sys.stderr,
+            )
+            return None
+        return (
+            pd.read_parquet(MASTERS_CONTRATOS_PARQUET),
+            pd.read_parquet(MASTERS_INAUGURADAS_PARQUET),
+            pd.read_parquet(MASTERS_PIPELINE_PARQUET),
+            manifesto,
+        )
+    except (OSError, ValueError) as erro:
+        print(f"[masters] ingestão ilegível ({erro})", file=sys.stderr)
+        return None
+
+
+@functools.lru_cache(maxsize=1)
+def _masters_datas() -> masters_painel.Datas:
+    """Inauguração de cada unidade do Growth, por nome + UF, em todas as grafias dela."""
+    registros = [
+        (nome, u.uf, u.inauguracao)
+        for u in rede_metricas.catalogo_de(_rede_base()).values()
+        for nome in {u.nome, *u.nomes_crus}
+    ]
+    return masters_painel.indexar_datas(registros, _chave_unidade)
+
+
+def _masters_exigir() -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, dict[str, Any]]:
+    tabelas = _masters_tabelas()
+    if tabelas is None:
+        raise HTTPException(
+            404,
+            "Os dados dos masters ainda não foram carregados neste servidor "
+            "(scripts/ingerir_masters.py).",
+        )
+    return tabelas
+
+
+def _masters_fontes(manifesto: dict[str, Any]) -> dict[str, Any]:
+    """De quando é cada fonte da tela: a planilha, a ingestão e o último dia da base do Growth."""
+    base = _rede_base()
+    growth_ate = (
+        pd.Timestamp(base["_data"].max()).strftime("%Y-%m-%d")
+        if len(base) and "_data" in base.columns
+        else None
+    )
+    return {
+        "planilha_de": (manifesto.get("planilha") or {}).get("modificada_em"),
+        "ingerido_em": manifesto.get("gerado_em"),
+        "growth_ate": growth_ate,
+    }
+
+
+@app.get("/api/masters")
+def api_masters() -> dict[str, Any]:
+    """Um card por master, na ordem da config: em operação, em inauguração, assinados e a meta."""
+    contratos, inauguradas, pipeline, manifesto = _masters_exigir()
+    hoje = _masters_hoje()
+    return {
+        "masters": masters_painel.cards(
+            contratos, inauguradas, pipeline, _masters_datas(), _chave_unidade, hoje
+        ),
+        "hoje": hoje.strftime("%Y-%m-%d"),
+        "fontes": _masters_fontes(manifesto),
+    }
+
+
+@app.get("/api/masters/{master_id}")
+def api_master(master_id: str) -> dict[str, Any]:
+    """O painel de um master: as listas por status e a meta do ano por trimestre."""
+    contratos, inauguradas, pipeline, manifesto = _masters_exigir()
+    hoje = _masters_hoje()
+    painel = masters_painel.painel_do_master(
+        master_id, contratos, inauguradas, pipeline, _masters_datas(), _chave_unidade, hoje
+    )
+    if painel is None:
+        raise HTTPException(404, "Master não encontrado.")
+    return {**painel, "hoje": hoje.strftime("%Y-%m-%d"), "fontes": _masters_fontes(manifesto)}
 
 
 @app.get("/api/oportunidades")
