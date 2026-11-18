@@ -1610,6 +1610,8 @@ export interface RedeFiltros {
   masters: string[]
   masters_regiao: string[]
   consultores: string[]
+  /** Donos das unidades (cadastro `franqueado`); para o master, só os das unidades dele. */
+  franqueados: string[]
   masters_franquia: string[]
   coortes: { chave: string; rotulo: string; n: number }[]
   severidades: { chave: RedeSeveridade; rotulo: string }[]
@@ -2248,6 +2250,8 @@ export interface RedeQuery {
   uf?: string
   master?: string
   consultor?: string
+  /** dono da unidade, pelo `franqueado` do cadastro */
+  franqueado?: string
   coorte?: string
   severidade?: string
   busca?: string

@@ -176,6 +176,7 @@ export default function ExecutiveScreen({
   const [uf, setUf] = useState('')
   const [master, setMaster] = useState('')
   const [consultor, setConsultor] = useState('')
+  const [franqueado, setFranqueado] = useState('')
   const [coorte, setCoorte] = useState('')
   const [severidades, setSeveridades] = useState<RedeSeveridade[]>([])
   const [busca, setBusca] = useState('')
@@ -217,10 +218,11 @@ export default function ExecutiveScreen({
       uf: uf || undefined,
       master: master || undefined,
       consultor: consultor || undefined,
+      franqueado: franqueado || undefined,
       coorte: coorte || undefined,
       severidade: severidades.length ? severidades.join(',') : undefined,
     }),
-    [periodo, uf, master, consultor, coorte, severidades],
+    [periodo, uf, master, consultor, franqueado, coorte, severidades],
   )
 
   /* O recorte que os PEDIDOS usam, separado do que os seletores mostram (17/11/2026).
@@ -378,6 +380,7 @@ export default function ExecutiveScreen({
     if (entrada.tipo === 'unidade') abrirFichaPorId(entrada.id)
     else if (entrada.dimensao === 'uf') setUf(entrada.valor)
     else if (entrada.dimensao === 'master') setMaster(entrada.valor)
+    else if (entrada.dimensao === 'franqueado') setFranqueado(entrada.valor)
     else setConsultor(entrada.valor)
     onEntradaAplicada?.()
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -398,7 +401,9 @@ export default function ExecutiveScreen({
     setDirecao(chave === 'churn_pct' || chave === 'nome' ? 'asc' : 'desc')
   }
 
-  const temRecorte = Boolean(uf || master || consultor || coorte || busca || severidades.length)
+  const temRecorte = Boolean(
+    uf || master || consultor || franqueado || coorte || busca || severidades.length,
+  )
 
   /* Sujeito das frases do panorama. A busca NÃO entra: ela é filtro de tabela, feito no
      cliente, e os painéis descrevem o recorte que o SERVIDOR somou. Dizer "MARISE" numa
@@ -406,9 +411,9 @@ export default function ExecutiveScreen({
      busca ativa, uma linha logo abaixo avisa que ela não alcança os painéis. */
   const rotuloRecorte = useMemo(() => {
     const rotuloCoorte = coorte ? filtros?.coortes.find((c) => c.chave === coorte)?.rotulo : null
-    const partes = [consultor, master, uf, rotuloCoorte].filter(Boolean) as string[]
+    const partes = [franqueado, consultor, master, uf, rotuloCoorte].filter(Boolean) as string[]
     return partes.length ? partes.join(' · ') : 'a rede'
-  }, [consultor, master, uf, coorte, filtros])
+  }, [franqueado, consultor, master, uf, coorte, filtros])
 
   const narrativa = useMemo(
     () => (carteira ? narrativaDoRecorte(carteira, rotuloRecorte) : []),
@@ -432,6 +437,7 @@ export default function ExecutiveScreen({
     setUf('')
     setMaster('')
     setConsultor('')
+    setFranqueado('')
     setCoorte('')
     setSeveridades([])
     setBusca('')
@@ -695,6 +701,18 @@ export default function ExecutiveScreen({
             options={[
               { value: TODOS, label: 'Todos' },
               ...(filtros?.masters ?? []).map((m) => ({ value: m, label: m })),
+            ]}
+          />
+        </Filtro>
+        <Filtro rotulo="Franqueado">
+          <Select
+            label="Franqueado"
+            value={franqueado || TODOS}
+            onChange={(v) => setFranqueado(v === TODOS ? '' : v)}
+            maxWidth={148}
+            options={[
+              { value: TODOS, label: 'Todos' },
+              ...(filtros?.franqueados ?? []).map((f) => ({ value: f, label: f })),
             ]}
           />
         </Filtro>

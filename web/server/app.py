@@ -12289,6 +12289,17 @@ def _rede_filtrar(
             if str(registro.get("consultor") or "") == alvo
         }
         dados = dados[dados["unidade_id"].isin(ids)]
+    if filtros.get("franqueado"):
+        # O DONO da unidade, pelo `franqueado` do cadastro (planilha "Controle Franqueados",
+        # carga de 18/11/2026), no molde do master e do consultor. Para o master, o recorte
+        # dele ja' veio antes: franqueado de fora do recorte da' carteira vazia.
+        alvo_franqueado = str(filtros["franqueado"])
+        ids_franqueado = {
+            uid
+            for uid, registro in cadastro.unidades.items()
+            if str(registro.get("franqueado") or "") == alvo_franqueado
+        }
+        dados = dados[dados["unidade_id"].isin(ids_franqueado)]
     if filtros.get("severidade"):
         alvos = {s.strip() for s in str(filtros["severidade"]).split(",") if s.strip()}
         dados = dados[
@@ -12349,6 +12360,8 @@ def rede_filtros(
             {str(m) for m in atual["master"].dropna().unique() if str(m).strip()}
         ),
         "consultores": rede_cadastro.valores_distintos(cadastro, "consultor"),
+        # Dono da unidade (cadastro). Para o master, só os franqueados das unidades dele.
+        "franqueados": rede_cadastro.valores_distintos(cadastro, "franqueado"),
         "masters_franquia": rede_cadastro.valores_distintos(cadastro, "master_franquia"),
         "coortes": rede_coorte.resumo_coortes(atual),
         "severidades": [
@@ -12409,6 +12422,7 @@ def _rede_carteira_payload(
     ordenar: str = "prioridade",
     direcao: str = "desc",
     *,
+    franqueado: str | None = None,
     permitidos: frozenset[str] | None = None,
 ) -> dict[str, Any]:
     """Payload da carteira. Uma função só, para que tela, CSV, XLSX e PDF nunca divirjam.
@@ -12439,6 +12453,7 @@ def _rede_carteira_payload(
             "uf": uf,
             "master": master,
             "consultor": consultor,
+            "franqueado": franqueado,
             "coorte": coorte,
             "severidade": severidade,
             "busca": busca,
@@ -12659,6 +12674,7 @@ def rede_carteira(
     busca: str | None = None,
     ordenar: str = "prioridade",
     direcao: str = "desc",
+    franqueado: str | None = None,
     remote_user: str | None = Header(default=None, alias="Remote-User"),
 ) -> dict[str, Any]:
     """Nível 1: a carteira da rede, priorizada, com o quarteto de contexto por métrica.
@@ -12670,6 +12686,7 @@ def rede_carteira(
     permitidos = _recorte_da_rede(remote_user)
     return _rede_carteira_payload(
         mes, inicio, fim, uf, master, consultor, coorte, severidade, busca, ordenar, direcao,
+        franqueado=franqueado,
         permitidos=permitidos,
     )
 
@@ -14110,6 +14127,7 @@ def rede_inteligencia_recorte(
     severidade: str | None = None,
     busca: str | None = None,
     maduras: bool = True,
+    franqueado: str | None = None,
     remote_user: str | None = Header(default=None, alias="Remote-User"),
 ) -> dict[str, Any]:
     """Painéis de inteligência do RECORTE: praça × execução, rampa, sinais, retenção e
@@ -14122,8 +14140,8 @@ def rede_inteligencia_recorte(
     permitidos = _recorte_da_rede(remote_user)
     contexto, recorte = _rede_contexto_e_recorte(
         mes, inicio, fim,
-        {"uf": uf, "master": master, "consultor": consultor, "coorte": coorte,
-         "severidade": severidade, "busca": busca},
+        {"uf": uf, "master": master, "consultor": consultor, "franqueado": franqueado,
+         "coorte": coorte, "severidade": severidade, "busca": busca},
         permitidos=permitidos,
     )
     reconhece = _rede_reconhece_ultra(permitidos) if permitidos is not None else None
@@ -14477,13 +14495,15 @@ def rede_carteira_csv(
     busca: str | None = None,
     ordenar: str = "prioridade",
     direcao: str = "desc",
+    franqueado: str | None = None,
     remote_user: str | None = Header(default=None, alias="Remote-User"),
 ) -> Response:
     from motor_expansao.dashboard import rede_export
 
     _exigir_rede_inteira(remote_user)  # master não exporta (2a camada; o gate já barra)
     payload = _rede_carteira_payload(
-        mes, inicio, fim, uf, master, consultor, coorte, severidade, busca, ordenar, direcao
+        mes, inicio, fim, uf, master, consultor, coorte, severidade, busca, ordenar, direcao,
+        franqueado=franqueado,
     )
     return _anexo(
         rede_export.carteira_csv(payload),
@@ -14505,13 +14525,15 @@ def rede_carteira_xlsx(
     busca: str | None = None,
     ordenar: str = "prioridade",
     direcao: str = "desc",
+    franqueado: str | None = None,
     remote_user: str | None = Header(default=None, alias="Remote-User"),
 ) -> Response:
     from motor_expansao.dashboard import rede_export
 
     _exigir_rede_inteira(remote_user)  # master não exporta (2a camada; o gate já barra)
     payload = _rede_carteira_payload(
-        mes, inicio, fim, uf, master, consultor, coorte, severidade, busca, ordenar, direcao
+        mes, inicio, fim, uf, master, consultor, coorte, severidade, busca, ordenar, direcao,
+        franqueado=franqueado,
     )
     return _anexo(
         rede_export.carteira_xlsx(payload),
@@ -14533,13 +14555,15 @@ def rede_carteira_pdf(
     busca: str | None = None,
     ordenar: str = "prioridade",
     direcao: str = "desc",
+    franqueado: str | None = None,
     remote_user: str | None = Header(default=None, alias="Remote-User"),
 ) -> Response:
     from motor_expansao.dashboard import rede_export
 
     _exigir_rede_inteira(remote_user)  # master não exporta (2a camada; o gate já barra)
     payload = _rede_carteira_payload(
-        mes, inicio, fim, uf, master, consultor, coorte, severidade, busca, ordenar, direcao
+        mes, inicio, fim, uf, master, consultor, coorte, severidade, busca, ordenar, direcao,
+        franqueado=franqueado,
     )
     return _anexo(
         rede_export.carteira_pdf(payload),
@@ -14579,7 +14603,7 @@ def rede_cadastro_atribuir(
     remote_user: str | None = Header(default=None, alias="Remote-User"),
     remote_email: str | None = Header(default=None, alias="Remote-Email"),
 ) -> dict[str, Any]:
-    """Atribui consultor / master franqueado a uma unidade.
+    """Atribui consultor, master franqueado e franqueado a uma unidade.
 
     Única rota de escrita do piloto. Grava num diretório PRÓPRIO, fora do
     `MOTOR_DATA_DIR` — nenhum artefato do M1 fica sob mount de escrita. O autor sai
