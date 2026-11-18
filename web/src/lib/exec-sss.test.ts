@@ -9,8 +9,11 @@
 import { describe, expect, it } from 'vitest'
 
 import {
+  baseDoSssVaria,
+  baseMensalDoSss,
   destaquesDoRecorte,
   foraDaBaseSss,
+  janelaDoSss,
   motivoSemBase,
   narrativaDoRecorte,
 } from './exec'
@@ -241,5 +244,106 @@ describe('quem puxa e quem segura com a unidade em rampa', () => {
 
   it('na leitura mês contra mês, a rampa do ano-base não vira rótulo', () => {
     expect(motivoSemBase(emRampa, 'mes')).toBe('não operou o período inteiro há um ano')
+  })
+})
+
+/**
+ * Emenda 1 da DEC-088 (Felipe, 18/11/2026): o número grande é a SOMA DAS BARRAS do gráfico,
+ * com a base mudando de um mês para o outro. Os textos dizem quais meses e a faixa da base,
+ * e contam quem ficou fora no último mês da janela.
+ */
+describe('SSS na janela do gráfico (emenda 1 da DEC-088)', () => {
+  const naJanela = (p: Partial<RedeSss> = {}): RedeSss =>
+    sss({
+      competencia_base: 'Out/2024 a Out/2025',
+      janela: { inicio: '2025-10', fim: '2026-10', base_inicio: '2024-10', base_fim: '2025-10' },
+      unidades: 60,
+      unidades_min: 35,
+      unidades_max: 60,
+      mes_final: '2026-10',
+      unidades_mes_final: 60,
+      mes_foto: '2026-10',
+      metricas: { faturamento: { atual: 160_087_368, ano_anterior: 157_816_713, var_pct: 1.4 } },
+      ...p,
+    })
+
+  it('a janela e a base mensal por extenso', () => {
+    expect(janelaDoSss(naJanela())).toBe('de Out/2025 a Out/2026')
+    const umMes = naJanela({
+      janela: { inicio: '2026-10', fim: '2026-10', base_inicio: '2025-10', base_fim: '2025-10' },
+    })
+    expect(janelaDoSss(umMes)).toBe('de Out/2026')
+    // Payload anterior à emenda: sem janela, os textos voltam aos de antes.
+    expect(janelaDoSss(sss())).toBeNull()
+    expect(baseMensalDoSss(naJanela())).toBe('de 35 a 60')
+    expect(baseDoSssVaria(naJanela())).toBe(true)
+    expect(baseMensalDoSss(naJanela({ unidades_min: 60 }))).toBe('60')
+    expect(baseDoSssVaria(naJanela({ unidades_min: 60 }))).toBe(false)
+  })
+
+  it('quem ficou fora é contado no último mês, sempre com número', () => {
+    expect(foraDaBaseSss(naJanela())).toBe(
+      'Em Out/2026, 31 não existiam há um ano (ou não operaram o mês inteiro) e 9 ainda estavam ' +
+        'nos 3 primeiros meses de operação no ano-base, a rampa de abertura, e ficam fora da conta.',
+    )
+    // Um motivo só: sem "as outras N", porque a base muda de um mês para o outro.
+    expect(foraDaBaseSss(naJanela({ unidades_rampa: 0 }))).toBe(
+      'Em Out/2026, 31 não existiam há um ano, ou não operaram o mês inteiro nos dois períodos, ' +
+        'e por isso ficam fora da conta.',
+    )
+  })
+
+  it('a narrativa diz os meses do gráfico e a faixa da base', () => {
+    expect(narrativaDoRecorte(carteira(naJanela()), 'a rede')[1]).toBe(
+      'De Out/2025 a Out/2026, na mesma base (de 35 a 60 das 100 unidades, conforme o mês), o ' +
+        'faturamento cresce 1,4% contra os mesmos meses um ano antes; em Out/2026, 31 não ' +
+        'existiam há um ano e 9 estavam na rampa de abertura (menos de 3 meses de operação no ' +
+        'ano-base).',
+    )
+  })
+
+  it('SSS indisponível na janela diz os meses, e não um mês-base', () => {
+    const frase = narrativaDoRecorte(
+      carteira(
+        naJanela({
+          disponivel: false,
+          unidades: 0,
+          unidades_min: 0,
+          unidades_max: 0,
+          unidades_recorte: 3,
+          unidades_mes_final: 0,
+          unidades_fora: 2,
+          unidades_rampa: 1,
+          metricas: undefined,
+        }),
+      ),
+      'uma coorte nova',
+    )[1]
+    expect(frase).toBe(
+      'Não há base comparável neste recorte de Out/2025 a Out/2026: em Out/2026, 2 não existiam ' +
+        'há um ano e 1 estava na rampa de abertura (menos de 3 meses de operação no ano-base), ' +
+        'então o crescimento na mesma base não é medido.',
+    )
+  })
+
+  it('quem puxa leva quantos meses do gráfico entraram na conta da unidade', () => {
+    const recente = unidade('RECENTE', {
+      sss: {
+        competencia_base: 'Out/2024 a Out/2025',
+        faturamento: 120_000,
+        ano_anterior: 100_000,
+        var_pct: 20,
+        motivo: null,
+        meses: 2,
+        meses_janela: 13,
+      },
+      fechado: { competencia: '2026-10', faturamento: 60_000, variacao_pct: 5 },
+    })
+    const [anoAno] = destaquesDoRecorte([recente], 'sss').puxam
+    expect(anoAno.meses).toBe(2)
+    expect(anoAno.meses_janela).toBe(13)
+    // Mês contra mês anterior não carrega a conta do SSS.
+    const [mesAMes] = destaquesDoRecorte([recente], 'mes').puxam
+    expect(mesAMes.meses).toBeUndefined()
   })
 })
