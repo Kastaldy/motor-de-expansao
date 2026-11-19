@@ -430,6 +430,7 @@ def mapa(masters: Path, monkeypatch: pytest.MonkeyPatch) -> dict[str, list[str]]
     pd.DataFrame(
         {
             "uf": ["RJ", "SP", "SP", "SP", "MG"],
+            "cod_municipio": ["3304557", "3550308", "3509502", "3543402", "3106200"],
             "nome_municipio": ["Rio de Janeiro", "São Paulo", "Campinas", "Ribeirão Preto", "BH"],
             "hex_id": [RIO, SAMPA, INTERIOR, VAZIO, _hex(-19.9, -43.9)],
             "lat": [-22.90, -23.55, -22.90, -21.20, -19.9],
@@ -441,6 +442,8 @@ def mapa(masters: Path, monkeypatch: pytest.MonkeyPatch) -> dict[str, list[str]]
             "oferta_consumida_mercado_estimada": [300.0, 900.0, 100.0, 0.0, 100.0],
             "oferta_consumida_ultra_estimada": [100.0, 100.0, 0.0, 0.0, 0.0],
             "oferta_efetiva_disponivel": [600.0, 1000.0, 500.0, 0.0, 800.0],
+            # Academias que alcançam o hexágono a 1 km (a camada "concorrentes" do relatório).
+            "n_concorrentes_influencia_1km": [2, 5, 0, 0, 1],
             "outra_coluna": [1, 2, 3, 4, 5],
         }
     ).to_parquet(mercado)
@@ -492,32 +495,53 @@ def test_mapa_mostra_o_territorio_por_regiao_com_a_cor_do_pdf(mapa: dict[str, An
         {"id": "rj", "nome": "Rio de Janeiro", "cor": CORES_REGIAO[0]},
         {"id": "sp", "nome": "São Paulo", "cor": CORES_REGIAO[1]},
     ]
-    # Só os povoados das UFs do master, cada um com o índice da região dele.
-    assert sorted(d["hexes"]) == sorted([[RIO, 0], [SAMPA, 1], [INTERIOR, 1]])
+    # O território vai DEMARCADO (19/11/2026, Juan): um contorno por região, a união dos
+    # hexágonos dela (todos, e não só os povoados), com anéis fechados em [lng, lat].
+    assert sorted(c["regiao"] for c in d["contornos"]) == [0, 1]
+    for c in d["contornos"]:
+        for poligono in c["poligonos"]:
+            anel = poligono[0]
+            assert len(anel) >= 6 and anel[0] == anel[-1]
+            assert all(-48 < lng < -43 and -24 < lat < -21 for lng, lat in anel)
+    # Os municípios do território (com a caixa de cada um), para os setores ao aproximar.
+    assert [m[:3] for m in d["municipios"]] == [
+        ["RJ", "3304557", "Rio de Janeiro"],
+        ["SP", "3509502", "Campinas"],
+        ["SP", "3543402", "Ribeirão Preto"],
+        ["SP", "3550308", "São Paulo"],
+    ]
+    assert d["n_hexes"] == 3  # os povoados
     # Só as Ultra dentro do território, com o nome para a dica.
     assert sorted(u[2] for u in d["ultra"]) == ["Paulista", "Tijuca"]
-    assert d["bbox"] == [-47.06, -23.55, -43.2, -22.9]
+    assert d["bbox"] == [-47.8, -23.55, -43.2, -21.2]
     assert d["icone_ultra"].startswith("data:image/png")
     # O master de uma área só vê a dele.
-    assert sorted(h for h, _ in _json(pilot.api_master_mapa("sp03"))["hexes"]) == sorted(
-        [SAMPA, INTERIOR]
-    )
+    assert [c["regiao"] for c in _json(pilot.api_master_mapa("sp03"))["contornos"]] == [0]
 
 
 def test_camadas_usam_a_renda_e_a_densidade_do_mapa_do_motor(mapa: dict[str, Any]) -> None:
     d = _json(pilot.api_master_mapa_camadas("rjsp"))
     assert d["disponivel"] is True
-    # A renda arredondada a reais e a densidade a uma casa; sem leitura vai None (cinza na tela).
-    # O hexágono sem gente não entra, e a UF sem partição (RJ) fica sem leitura, sem derrubar.
-    assert sorted(d["hexes"]) == sorted([[SAMPA, 6100.0, 8123.5], [INTERIOR, None, 310.0]])
+    # [hex, renda, densidade, espaço livre, concorrentes]: os mapas do relatório. A renda a reais e
+    # a densidade a uma casa; sem leitura vai None (cinza na tela). O hexágono sem gente não
+    # entra, e a UF sem partição (RJ) fica sem renda nem densidade, sem derrubar o resto.
+    assert sorted(d["hexes"]) == sorted(
+        [
+            [RIO, None, None, 600.0, 2.0],
+            [SAMPA, 6100.0, 8123.5, 1000.0, 5.0],
+            [INTERIOR, None, 310.0, 500.0, 0.0],
+        ]
+    )
     assert sorted(mapa["lidas"]) == ["RJ", "SP"]
-    # As faixas são as da ficha da carteira (a régua do núcleo).
+    # As faixas são as do núcleo e as do relatório; concorrentes começa em "nenhuma".
     from motor_expansao.dashboard import constants as C
+    from motor_expansao.masters.relatorio_pdf import CONC_1KM_BANDS
 
-    assert d["faixas"] == {
-        "renda_domiciliar": pilot._faixas_camada(C.RENDA_MEDIA_DOMICILIAR_BANDS),
-        "densidade": pilot._faixas_camada(C.DENSIDADE_POP_BANDS),
-    }
+    assert d["faixas"]["renda_domiciliar"] == pilot._faixas_camada(C.RENDA_MEDIA_DOMICILIAR_BANDS)
+    assert d["faixas"]["densidade"] == pilot._faixas_camada(C.DENSIDADE_POP_BANDS)
+    assert d["faixas"]["espaco_livre"] == pilot._faixas_camada(C.OFERTA_DISPONIVEL_ALUNOS_BANDS)
+    assert d["faixas"]["concorrentes"][0]["rotulo"] == "nenhuma"
+    assert d["faixas"]["concorrentes"][1:] == pilot._faixas_camada(CONC_1KM_BANDS)
 
 
 def test_mapa_fica_em_cache_ate_uma_fonte_mudar(mapa: dict[str, Any]) -> None:
@@ -663,3 +687,28 @@ def test_recomendacao_e_crescimento_tem_o_gate_da_tela(
     assert acesso.capacidade_necessaria(caminho, "GET") == "masters.ver"
     _identidade(monkeypatch, {"rede.ver"})
     assert acesso.motivo_bloqueio_por_banco(caminho, "GET", "alguem") is not None
+
+
+def test_setores_do_censo_so_dos_municipios_do_territorio(
+    mapa: dict[str, Any], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """De perto, renda e densidade passam aos setores do Censo (19/11/2026, Juan: "o censitário"),
+    um município por vez, pela mesma leitura do mapa de calor do município."""
+    pedidos: list[tuple[str, str]] = []
+
+    def setores(uf: str, cod: str) -> list[dict[str, Any]]:
+        pedidos.append((uf, cod))
+        return [{"setor": "1", "anel": [[0, 0]], "densidade": 10.0, "renda_domiciliar": 5000.0}]
+
+    monkeypatch.setattr(pilot, "_setores_heatmap_features", setores)
+    d = _json(pilot.api_master_setores("rjsp", "sp", "3550308"))
+    assert d["setores"][0]["renda_domiciliar"] == 5000.0
+    assert pedidos == [("SP", "3550308")]
+    # Município fora do território (BH, de outro estado): 404, sem ler nada.
+    assert _status(lambda: pilot.api_master_setores("rjsp", "MG", "3106200")) == (
+        404,
+        "Município fora do território do master.",
+    )
+    # E o master de uma área não lê os setores da outra.
+    assert _status(lambda: pilot.api_master_setores("sp03", "RJ", "3304557"))[0] == 404
+    assert pedidos == [("SP", "3550308")]

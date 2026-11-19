@@ -8,6 +8,7 @@ import type {
   MasterMapa,
   MasterPainel,
   MastersPayload,
+  SetorDoMaster,
 } from './masters'
 import type {
   AcaoImobiliaria,
@@ -631,6 +632,14 @@ export const api = {
       `/api/masters/${encodeURIComponent(id)}/recomendacao`,
       {},
       120_000,
+    ),
+
+  /** Os setores do Censo de um município do território (renda e densidade), ao aproximar. */
+  masterSetores: (id: string, uf: string, cod: string) =>
+    pedir<{ setores: SetorDoMaster[] }>(
+      `/api/masters/${encodeURIComponent(id)}/setores/${encodeURIComponent(uf)}/${encodeURIComponent(cod)}`,
+      {},
+      60_000,
     ),
 
   /** Quanto o master pode crescer no território: mercado, atendido, espaço livre e academias. */

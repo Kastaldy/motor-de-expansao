@@ -41,20 +41,16 @@ export default function CrescimentoDoTerritorio({ masterId }: { masterId: string
   const carregando = '…'
   return (
     <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap' }}>
-      {/* Os quatro em destaque (18/11/2026, Juan: "mercado fitness e já atendido, deixe destacado";
-          "falta os outros dois"), cada um com uma cor: turquesa para o mercado, rosa para o que já
-          é atendido, verde para o espaço livre e coral para as academias que cabem nele. */}
+      {/* Os quatro no cartão da carteira (19/11/2026, Juan: escuros, com as letras brancas). */}
       <KpiDestaque
         label="Mercado fitness"
         valor={t ? `${alunosCurto(t.mercado_alunos)} alunos` : carregando}
         sub="potencial do território, pelo motor"
-        cor="var(--ac)"
       />
       <KpiDestaque
         label="Já atendido"
         valor={t ? pct(t.pct_atendido) : carregando}
         sub="por redes e Ultra (as independentes ficam fora da conta)"
-        cor="var(--gr-rosa)"
       />
       <KpiDestaque
         label="Espaço livre (residual)"
@@ -66,46 +62,36 @@ export default function CrescimentoDoTerritorio({ masterId }: { masterId: string
             maior ? `; o maior em ${maior.nome} (${alunosCurto(maior.espaco_livre_alunos)})` : ''
           }`
         }
-        cor="var(--gr-verde)"
       />
       <KpiDestaque
         label="Academias que cabem"
         valor={t ? num(t.academias_que_cabem) : carregando}
         sub={`no espaço livre, de ${num(dados?.capacidade_por_academia ?? 2500)} alunos cada`}
-        cor="var(--gr-coral)"
       />
     </div>
   )
 }
 
-/** Um número em destaque na linha de crescimento: cartão maior, borda e fundo na cor dele. */
-function KpiDestaque({ label, valor, sub, cor }: { label: string; valor: string; sub: string; cor: string }) {
+/** Um número da linha de crescimento no cartão da carteira (19/11/2026, Juan: "deixe ela escura
+ *  com as letras brancas, igual a da carteira"): os mesmos tokens `--kpi-*`, que já sabem do tema. */
+function KpiDestaque({ label, valor, sub }: { label: string; valor: string; sub: string }) {
   return (
     <Glass
       style={{
-        flex: 1,
-        minWidth: 220,
-        padding: '15px 18px',
-        border: `1.5px solid ${cor}`,
-        background: `color-mix(in srgb, ${cor} 9%, var(--surf-card))`,
+        flex: '1 1 200px',
+        minWidth: 0,
+        padding: '13px 15px',
+        background: 'var(--kpi-fundo)',
+        border: '1px solid var(--kpi-borda)',
       }}
     >
-      <div
-        style={{
-          font: '700 11px/1.2 var(--f-ui)',
-          color: cor,
-          textTransform: 'uppercase',
-          letterSpacing: '0.06em',
-        }}
-      >
-        {label}
-      </div>
+      <div style={{ font: '600 10.5px/1.2 var(--f-ui)', color: 'var(--kpi-rotulo)' }}>{label}</div>
       <div
         className="num"
         style={{
-          font: '700 34px/1 var(--f-num)',
-          color: cor,
-          marginTop: 8,
+          font: '700 22px/1 var(--f-num)',
+          color: 'var(--kpi-valor)',
+          marginTop: 7,
           whiteSpace: 'nowrap',
           overflow: 'hidden',
           textOverflow: 'ellipsis',
@@ -113,7 +99,7 @@ function KpiDestaque({ label, valor, sub, cor }: { label: string; valor: string;
       >
         {valor}
       </div>
-      <div style={{ font: '400 11px/1.3 var(--f-ui)', color: 'var(--tx-sub)', marginTop: 6 }}>{sub}</div>
+      <div style={{ font: '400 10.5px/1.3 var(--f-ui)', color: 'var(--kpi-apoio)', marginTop: 6 }}>{sub}</div>
     </Glass>
   )
 }

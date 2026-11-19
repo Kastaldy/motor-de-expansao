@@ -16950,50 +16950,89 @@ def _masters_master_do_mapa(master_id: str) -> Any:
     return master
 
 
-@functools.lru_cache(maxsize=16)
-def _masters_mapa(master_id: str, fontes: tuple[tuple[str, int], ...]) -> str:
-    """O território do master (JSON): regiões com a cor, hexágonos por região, unidades Ultra no
-    território e o enquadramento. `fontes` (datas dos arquivos) é a chave: arquivo novo, mapa novo."""
+@functools.lru_cache(maxsize=8)
+def _masters_mercado(master_id: str, fontes: tuple[tuple[str, int], ...]) -> pd.DataFrame:
+    """Os hexágonos do mercado no território do master, com a região de cada um e o que o mapa e
+    as camadas leem (uma leitura por master; `fontes` é a chave: arquivo novo, leitura nova)."""
+    import pyarrow.parquet as pq
+
     from motor_expansao.masters import mapa as masters_mapa
-    from motor_expansao.masters.dados import ler_ultra
 
     master = _masters_master_do_mapa(master_id)
     ufs = sorted(master.ufs_envolvidas)
-    colunas = list(masters_mapa.COLUNAS_MERCADO_MAPA)
+    tem = set(pq.read_schema(MERCADO_PARQUET).names) if ufs else set()
+    # Academias que alcançam o hexágono (1 km): a de influência (DEC-057) e, em artefato antigo, a
+    # de mapeadas a 1 km -- a mesma escolha do relatório (`gerar._estudo_de_area`).
+    conc = next(
+        (c for c in ("n_concorrentes_influencia_1km", "n_concorrentes_mapeados_1km") if c in tem),
+        None,
+    )
+    colunas = [*masters_mapa.COLUNAS_MERCADO_MAPA, "oferta_efetiva_disponivel"]
+    colunas += [conc] if conc else []
     mercado = (
         pd.read_parquet(MERCADO_PARQUET, columns=colunas, filters=[("uf", "in", ufs)])
         if ufs
         else pd.DataFrame(columns=colunas)
     )
+    m = masters_mapa.com_regiao(mercado, master)
+    return m.rename(columns={conc: "concorrentes_1km"}) if conc else m
+
+
+def _masters_hexes_povoados(master_id: str, fontes: tuple[tuple[str, int], ...]) -> set[str]:
+    """Os hexágonos povoados do território: os das camadas e os da recomendação."""
+    m = _masters_mercado(master_id, fontes)
+    return set(m.loc[pd.to_numeric(m["pop_hex_base"], errors="coerce") > 0, "hex_id"].astype(str))
+
+
+@functools.lru_cache(maxsize=16)
+def _masters_mapa(master_id: str, fontes: tuple[tuple[str, int], ...]) -> str:
+    """O território do master (JSON): regiões com a cor, o CONTORNO de cada uma (o território vai
+    demarcado, não pintado), os municípios (para os setores do Censo ao aproximar), as unidades
+    Ultra no território e o enquadramento."""
+    from motor_expansao.masters import mapa as masters_mapa
+    from motor_expansao.masters.dados import ler_ultra
+
+    master = _masters_master_do_mapa(master_id)
     ultra = ler_ultra(ULTRA_MAPEADAS_PARQUET) if ULTRA_MAPEADAS_PARQUET.exists() else None
-    saida = masters_mapa.territorio(mercado, master, ultra)
+    saida = masters_mapa.territorio(_masters_mercado(master_id, fontes), master, ultra)
     saida["icone_ultra"] = _icone_ultra() if saida["ultra"] else None
     return json.dumps(saida, ensure_ascii=False)
 
 
 @functools.lru_cache(maxsize=8)
 def _masters_camadas(master_id: str, fontes: tuple[tuple[str, int], ...]) -> str:
-    """Renda domiciliar e densidade de cada hexágono do território (JSON), com as faixas de cor
-    do núcleo, as mesmas da ficha da carteira. A renda é a do Mapa do motor (`_renda_domiciliar_hex`
-    na partição da UF, `carregar_uf`); a densidade, a do hexágono (`densidade_pop_setor_hab_km2`)."""
+    """As camadas do mapa (JSON), os mapas do relatório por hexágono (19/11/2026, Juan: "renda,
+    densidade e todos os mapas que geram no relatório"): `[hex_id, renda, densidade, espaço livre,
+    concorrentes]`, com as faixas de cor do núcleo. Renda e densidade são as do Mapa do motor
+    (`_renda_domiciliar_hex` na partição da UF; `densidade_pop_setor_hab_km2`); espaço livre e
+    concorrentes, as do relatório (`oferta_efetiva_disponivel` e as academias que alcançam o
+    hexágono a 1 km). De perto, renda e densidade passam aos setores do Censo (`/setores`)."""
     from motor_expansao.dashboard import constants as _constants
+    from motor_expansao.masters.relatorio_pdf import CONC_1KM_BANDS
 
     master = _masters_master_do_mapa(master_id)
-    ids = {h for h, _ in json.loads(_masters_mapa(master_id, fontes))["hexes"]}
-    linhas: list[list[Any]] = []
+    m = _masters_mercado(master_id, fontes)
+    m = m[pd.to_numeric(m["pop_hex_base"], errors="coerce") > 0]
+    ids = set(m["hex_id"].astype(str))
+    renda: dict[str, Any] = {}
+    densidade: dict[str, Any] = {}
     for uf in sorted(master.ufs_envolvidas):
         try:
             df = carregar_uf(uf)
         except HTTPException:
-            continue  # UF sem partição: os hexágonos dela ficam cinza (sem leitura)
+            continue  # UF sem partição: renda e densidade ficam cinza (sem leitura)
         for _, r in df[df["hex_id"].isin(ids)].iterrows():
-            linhas.append(
-                [
-                    str(r["hex_id"]),
-                    _num(_renda_domiciliar_hex(r), 0),
-                    _num(r.get("densidade_pop_setor_hab_km2"), 1),
-                ]
-            )
+            renda[str(r["hex_id"])] = _num(_renda_domiciliar_hex(r), 0)
+            densidade[str(r["hex_id"])] = _num(r.get("densidade_pop_setor_hab_km2"), 1)
+    conc = m["concorrentes_1km"] if "concorrentes_1km" in m else pd.Series(None, index=m.index)
+    linhas = [
+        [h, renda.get(h), densidade.get(h), _num(livre, 0), _num(c, 0)]
+        for h, livre, c in zip(
+            m["hex_id"].astype(str), m["oferta_efetiva_disponivel"], conc, strict=True
+        )
+    ]
+    # Concorrentes: zero academias é "nenhuma" (a primeira faixa do relatório é 1 concorrente).
+    nenhuma = [{"ate": 0.0, "rotulo": "nenhuma", "cor": [120, 120, 140, 40]}]
     return json.dumps(
         {
             "disponivel": bool(linhas),
@@ -17001,6 +17040,8 @@ def _masters_camadas(master_id: str, fontes: tuple[tuple[str, int], ...]) -> str
             "faixas": {
                 "renda_domiciliar": _faixas_camada(_constants.RENDA_MEDIA_DOMICILIAR_BANDS),
                 "densidade": _faixas_camada(_constants.DENSIDADE_POP_BANDS),
+                "espaco_livre": _faixas_camada(_constants.OFERTA_DISPONIVEL_ALUNOS_BANDS),
+                "concorrentes": nenhuma + _faixas_camada(CONC_1KM_BANDS),
             },
         },
         ensure_ascii=False,
@@ -17032,7 +17073,7 @@ def _masters_recomendacao(
     master = _masters_master_do_mapa(master_id)
     if regra is None:
         return json.dumps({"recomendacao": None})
-    ids = {h for h, _ in json.loads(_masters_mapa(master_id, fontes))["hexes"]}
+    ids = _masters_hexes_povoados(master_id, fontes)
     partes = []
     for uf in sorted(master.ufs_envolvidas):
         try:
@@ -17136,6 +17177,24 @@ def api_master_mapa(master_id: str) -> Response:
     _masters_master_do_mapa(master_id)
     return Response(
         content=_masters_mapa(master_id, _masters_assinatura_do_mapa()),
+        media_type="application/json",
+    )
+
+
+@app.get("/api/masters/{master_id}/setores/{uf}/{cod_municipio}")
+def api_master_setores(master_id: str, uf: str, cod_municipio: str) -> Response:
+    """Os setores do Censo de UM município do território, com renda domiciliar e densidade: o mapa
+    do painel os pinta ao aproximar (19/11/2026, Juan: "o censitário"), como a ficha da carteira.
+    A mesma leitura do mapa de calor do município (`_setores_heatmap_features`, em cache por
+    município). Município fora do território do master: 404."""
+    _masters_master_do_mapa(master_id)
+    territorio = json.loads(_masters_mapa(master_id, _masters_assinatura_do_mapa()))
+    if [uf.upper(), cod_municipio] not in [[u, c] for u, c, *_ in territorio["municipios"]]:
+        raise HTTPException(404, "Município fora do território do master.")
+    return Response(
+        content=json.dumps(
+            {"setores": _setores_heatmap_features(uf.upper(), cod_municipio)}, ensure_ascii=False
+        ),
         media_type="application/json",
     )
 

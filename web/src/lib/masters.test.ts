@@ -13,6 +13,7 @@ import {
   etiquetasDaUnidade,
   focoDoHexagono,
   metaDoAno,
+  municipiosAVista,
   pct,
   recorteDoTop,
   rotuloDaBarra,
@@ -301,5 +302,17 @@ describe('tela Masters (DEC-089): textos', () => {
     expect(alunosCurto(846_210)).toBe('846 mil')
     expect(alunosCurto(730)).toBe('730')
     expect(alunosCurto(null)).toBe('—')
+  })
+  it('os setores do Censo carregam só para os municípios à vista, os de mais área primeiro', () => {
+    const mun = (cod: string, caixa: [number, number, number, number]) =>
+      ['DF', cod, cod, caixa] as [string, string, string, [number, number, number, number]]
+    const todos = [
+      mun('fora', [-50, -20, -49.5, -19.5]),
+      mun('pequeno', [-48.0, -15.9, -47.95, -15.85]),
+      mun('grande', [-48.3, -16.1, -47.5, -15.5]),
+    ]
+    const vista: [[number, number], [number, number]] = [[-48.1, -16.0], [-47.9, -15.8]]
+    expect(municipiosAVista(todos, vista).map((m) => m[1])).toEqual(['grande', 'pequeno'])
+    expect(municipiosAVista(todos, vista, 1).map((m) => m[1])).toEqual(['grande'])
   })
 })

@@ -340,24 +340,66 @@ export function etiquetasDaUnidade(u: UnidadeEmOperacao): string[] {
 /* ---- Mapa do território no painel (BLK-MASTERS-04; 18/11/2026, Juan: "o mapa, assim como está
    na carteira, com a área e a opção de ligar a renda e a densidade") ---- */
 
-/** `/api/masters/{id}/mapa`: o território do mapa do relatório em PDF. */
+/** `/api/masters/{id}/mapa`: o território DEMARCADO (19/11/2026, Juan: "não precisa deixar a área
+ *  colorida, só deixe ela demarcada igual fica no motor"). */
 export interface MasterMapa {
   /** Na ordem do contrato, com a cor de cada região (a mesma do PDF). */
   regioes: { id: string; nome: string; cor: string }[]
-  /** `[hex_id, índice da região em regioes]`: os hexágonos povoados do território. */
-  hexes: [string, number][]
+  /** O contorno de cada região: polígonos `[anel externo, buracos...]`, anéis de `[lng, lat]`. */
+  contornos: { regiao: number; poligonos: [number, number][][][] }[]
+  /** `[uf, cod_municipio, nome, [oeste, sul, leste, norte]]`: os setores vêm por município. */
+  municipios: [string, string, string, [number, number, number, number]][]
   /** `[lat, lng, nome]` das unidades Ultra dentro do território. */
   ultra: [number, number, string][]
   /** `[oeste, sul, leste, norte]`; `null` sem hexágono (master sem região no contrato). */
   bbox: [number, number, number, number] | null
+  /** Hexágonos povoados do território. */
+  n_hexes: number
   icone_ultra: string | null
 }
 
-/** `/api/masters/{id}/mapa/camadas`: `[hex_id, renda domiciliar, densidade]`, a conta do Mapa. */
+/** As camadas do mapa: os mapas do relatório (19/11/2026, Juan). */
+export type CamadaDoMapa = 'renda_domiciliar' | 'densidade' | 'espaco_livre' | 'concorrentes'
+
+/** `/api/masters/{id}/mapa/camadas`: `[hex_id, renda, densidade, espaço livre, concorrentes]`. */
 export interface MasterCamadas {
   disponivel: boolean
-  hexes: [string, number | null, number | null][]
-  faixas: Record<'renda_domiciliar' | 'densidade', { ate: number | null; rotulo: string; cor: number[] }[]>
+  hexes: [string, number | null, number | null, number | null, number | null][]
+  faixas: Record<CamadaDoMapa, { ate: number | null; rotulo: string; cor: number[] }[]>
+}
+
+/** Um setor do Censo de `/api/masters/{id}/setores/{uf}/{cod}` (a leitura do mapa de calor). */
+export interface SetorDoMaster {
+  setor: string | null
+  anel: number[][]
+  densidade: number | null
+  renda_domiciliar: number | null
+}
+
+/** De que zoom em diante renda e densidade passam do hexágono aos setores do Censo (a escala de
+ *  cidade): de longe, um estado inteiro tem dezenas de milhares de setores e a tela travaria. */
+export const ZOOM_SETORES = 11
+/** Quantos municípios à vista têm os setores carregados de uma vez. */
+export const MAX_MUNICIPIOS_COM_SETORES = 6
+
+/** Os municípios do território que aparecem na tela (`[[oeste, sul], [leste, norte]]`), os de
+ *  maior área à vista primeiro, até `max`. */
+export function municipiosAVista(
+  municipios: MasterMapa['municipios'],
+  vista: [[number, number], [number, number]],
+  max = MAX_MUNICIPIOS_COM_SETORES,
+): MasterMapa['municipios'] {
+  const [[vo, vs], [vl, vn]] = vista
+  const comArea = municipios
+    .map((m) => {
+      const [o, s, l, n] = m[3]
+      const largura = Math.min(l, vl) - Math.max(o, vo)
+      const altura = Math.min(n, vn) - Math.max(s, vs)
+      return { m, area: largura >= 0 && altura >= 0 ? (largura + 1e-6) * (altura + 1e-6) : -1 }
+    })
+    .filter((x) => x.area >= 0)
+  comArea.sort((a, b) => b.area - a.area)
+  return comArea.slice(0, max).map((x) => x.m)
 }
 
 /** `#RRGGBB` -> `[r, g, b]`. */
