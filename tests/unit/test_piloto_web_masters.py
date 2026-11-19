@@ -519,25 +519,20 @@ def test_mapa_mostra_o_territorio_por_regiao_com_a_cor_do_pdf(mapa: dict[str, An
     assert [c["regiao"] for c in _json(pilot.api_master_mapa("sp03"))["contornos"]] == [0]
 
 
-def test_camadas_por_hexagono_sao_espaco_livre_e_concorrentes(mapa: dict[str, Any]) -> None:
-    d = _json(pilot.api_master_mapa_camadas("rjsp"))
-    assert d["disponivel"] is True
-    # [hex, espaço livre, concorrentes]: os mapas do relatório que ele desenha por hexágono. O
-    # hexágono sem gente não entra. Renda e densidade são sempre do Censo (19/11/2026, Juan:
-    # "deixe o padrão sempre censitário"), e não leem mais a partição da UF.
-    assert sorted(d["hexes"]) == sorted(
-        [[RIO, 600.0, 2.0], [SAMPA, 1000.0, 5.0], [INTERIOR, 500.0, 0.0]]
-    )
-    assert mapa["lidas"] == []
-    # As faixas são as do núcleo e as do relatório; concorrentes começa em "nenhuma".
+def test_as_camadas_sao_so_renda_e_densidade_do_censo(mapa: dict[str, Any]) -> None:
+    """Renda e densidade, sempre do Censo (19/11/2026, Juan: "deixe o padrão sempre censitário"),
+    com as faixas do núcleo; espaço livre e concorrentes saíram ("a camada de espaço livre e
+    academias concorrentes não precisa ter"). Nada lê a partição da UF."""
     from motor_expansao.dashboard import constants as C
-    from motor_expansao.masters.relatorio_pdf import CONC_1KM_BANDS
 
-    assert d["faixas"]["renda_domiciliar"] == pilot._faixas_camada(C.RENDA_MEDIA_DOMICILIAR_BANDS)
-    assert d["faixas"]["densidade"] == pilot._faixas_camada(C.DENSIDADE_POP_BANDS)
-    assert d["faixas"]["espaco_livre"] == pilot._faixas_camada(C.OFERTA_DISPONIVEL_ALUNOS_BANDS)
-    assert d["faixas"]["concorrentes"][0]["rotulo"] == "nenhuma"
-    assert d["faixas"]["concorrentes"][1:] == pilot._faixas_camada(CONC_1KM_BANDS)
+    d = _json(pilot.api_master_mapa_camadas("rjsp"))
+    assert d == {
+        "faixas": {
+            "renda_domiciliar": pilot._faixas_camada(C.RENDA_MEDIA_DOMICILIAR_BANDS),
+            "densidade": pilot._faixas_camada(C.DENSIDADE_POP_BANDS),
+        }
+    }
+    assert mapa["lidas"] == []
 
 
 def test_mapa_fica_em_cache_ate_uma_fonte_mudar(

@@ -369,15 +369,13 @@ export interface MasterMapa {
   icone_ultra: string | null
 }
 
-/** As camadas do mapa: os mapas do relatório (19/11/2026, Juan). */
-export type CamadaDoMapa = 'renda_domiciliar' | 'densidade' | 'espaco_livre' | 'concorrentes'
+/** As camadas do mapa: renda e densidade, sempre do Censo (19/11/2026, Juan: "a camada de espaço
+ *  livre e academias concorrentes não precisa ter"). */
+export type CamadaDoMapa = 'renda_domiciliar' | 'densidade'
 
-/** `/api/masters/{id}/mapa/camadas`: as faixas das quatro camadas e, por hexágono, as duas que o
- *  relatório desenha por hexágono: `[hex_id, espaço livre, concorrentes]`. Renda e densidade são
- *  sempre do Censo (19/11/2026, Juan: "deixe o padrão sempre censitário"). */
+/** `/api/masters/{id}/mapa/camadas`: as faixas de cor da renda e da densidade, sempre do Censo
+ *  (19/11/2026, Juan: "deixe o padrão sempre censitário"); os setores vêm de `/setores`. */
 export interface MasterCamadas {
-  disponivel: boolean
-  hexes: [string, number | null, number | null][]
   faixas: Record<CamadaDoMapa, { ate: number | null; rotulo: string; cor: number[] }[]>
 }
 
