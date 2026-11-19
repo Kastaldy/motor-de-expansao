@@ -11,7 +11,7 @@
 import { cellToBoundary } from 'h3-js'
 
 import { num } from './format'
-import type { RecomendacaoTop10, SegmentoTop10Payload } from './types'
+import type { RecomendacaoTop10, SegmentoTop10, SegmentoTop10Payload } from './types'
 
 export interface MasterResumo {
   em_operacao: number
@@ -429,14 +429,28 @@ export interface FocoNoMapa {
   hexId: string
   /** O contorno do hexágono, `[lng, lat]` (o limite da região, desenhado no mapa). */
   contorno: [number, number][]
+  /** A vaga clicada: o segmento dá a cor do hexágono no mapa e o rótulo (MV1, P1) vai em cima
+   *  dele (19/11/2026, Juan: "deixe o hexágono com a cor correspondendo ao que foi clicado, e
+   *  com o nome MV1 ou P1"). `null` = sem vaga (o hexágono sai no rosa de antes). */
+  marca: { segmento: SegmentoTop10; rotulo: string } | null
 }
 
 /** O foco de um hexágono recomendado: o contorno dele (h3), para o mapa aproximar e desenhar o
  *  limite da região (18/11/2026, Juan: "precisa aparecer o limite da região, como se fosse o
  *  raio, para facilitar"). */
-export function focoDoHexagono(hexId: string, nome: string): FocoNoMapa {
+export function focoDoHexagono(
+  hexId: string,
+  nome: string,
+  marca: FocoNoMapa['marca'] = null,
+): FocoNoMapa {
   const contorno = cellToBoundary(hexId).map(([lat, lng]) => [lng, lat] as [number, number])
-  return { nome, hexId, contorno }
+  return { nome, hexId, contorno, marca }
+}
+
+/** O centro de um contorno (a média dos vértices): onde o rótulo MV1/P1 fica no hexágono. */
+export function centroDoContorno(contorno: [number, number][]): [number, number] {
+  const n = contorno.length || 1
+  return [contorno.reduce((s, p) => s + p[0], 0) / n, contorno.reduce((s, p) => s + p[1], 0) / n]
 }
 
 /** `[oeste, sul, leste, norte]` de um contorno `[lng, lat]`. */

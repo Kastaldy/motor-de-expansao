@@ -3,6 +3,7 @@ import { useEffect, useState } from 'react'
 import { api, ApiError } from '../../lib/api'
 import type { FocoNoMapa } from '../../lib/masters'
 import { TOP_INICIAL, focoDoHexagono, recorteDoTop, temMaisQueOTop } from '../../lib/masters'
+import { rotuloNoMapa } from '../../lib/top10'
 import type { RecomendacaoTop10 } from '../../lib/types'
 import { Botao, Eyebrow, Glass, Spinner } from '../primitives'
 import Top10Regioes from '../Top10Regioes'
@@ -53,7 +54,9 @@ export default function RecomendacaoDoTerritorio({
     const v = [...bloco.mata_virgem.vagas, ...bloco.premium.vagas].find((x) => x.hex_id === hexId)
     const regiao = v?.nome_regiao ?? v?.nome_municipio ?? 'Região recomendada'
     const nome = v?.nome_regiao && v.nome_municipio ? `${regiao} (${v.nome_municipio})` : regiao
-    onFocar(focoDoHexagono(hexId, nome))
+    // O segmento e o rótulo da vaga (MV1, P1): a cor e o nome do hexágono no mapa.
+    const marca = v && !v.vazia ? { segmento: v.segmento, rotulo: rotuloNoMapa(v) } : null
+    onFocar(focoDoHexagono(hexId, nome, marca))
   }
 
   return (

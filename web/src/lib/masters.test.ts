@@ -7,6 +7,7 @@ import {
   barrasPorFase,
   barrasPorPrevisao,
   caixaDoContorno,
+  centroDoContorno,
   corDoCartao,
   dataBr,
   escalaDaBarra,
@@ -264,6 +265,13 @@ describe('tela Masters (DEC-089): textos', () => {
     const [o, s, l, n] = caixaDoContorno(f.contorno)
     expect(o).toBeLessThan(l)
     expect(s).toBeLessThan(n)
+    expect(f.marca).toBeNull()
+    // A vaga clicada no top 5 vai junto: a cor (o segmento) e o nome (MV1, P1) no mapa.
+    const mv = focoDoHexagono('87a8c2092ffffff', 'Guará (Brasília)', { segmento: 'mata_virgem', rotulo: 'MV1' })
+    expect(mv.marca).toEqual({ segmento: 'mata_virgem', rotulo: 'MV1' })
+    // O rótulo fica no meio do hexágono.
+    const [cx, cy] = centroDoContorno(f.contorno)
+    expect(cx > o && cx < l && cy > s && cy < n).toBe(true)
   })
 
   it('o top 5 e o top 20 da régua do motor: mesma ordem do servidor, só menos vagas', () => {

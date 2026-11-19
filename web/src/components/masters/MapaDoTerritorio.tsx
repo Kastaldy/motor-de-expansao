@@ -1,5 +1,5 @@
 import type { Layer } from '@deck.gl/core'
-import { IconLayer, PathLayer, PolygonLayer } from '@deck.gl/layers'
+import { IconLayer, PathLayer, PolygonLayer, TextLayer } from '@deck.gl/layers'
 import DeckGL from '@deck.gl/react'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { Map } from 'react-map-gl/maplibre'
@@ -10,8 +10,9 @@ import { corDaFaixaDoServidor } from '../../lib/colors'
 import { tracoComHalo } from '../../lib/contorno-halo'
 import { num, renda } from '../../lib/format'
 import type { CamadaDoMapa, FocoNoMapa, MasterCamadas, MasterMapa, SetorDoTerritorio } from '../../lib/masters'
-import { caixaDoContorno, vistaDoTerritorio } from '../../lib/masters'
+import { caixaDoContorno, centroDoContorno, vistaDoTerritorio } from '../../lib/masters'
 import type { Tema } from '../../lib/tema'
+import { RGB_TOP10, TOKEN_COR_TOP10 } from '../../lib/top10'
 
 /* ---------------------------------------------------------------------------
    Mapa do território no painel do master (BLK-MASTERS-04).
@@ -226,7 +227,10 @@ export default function MapaDoTerritorio({
       )
     }
     if (foco) {
-      // O limite da região (o hexágono recomendado), em rosa: "como se fosse o raio" (Juan).
+      // O limite da região (o hexágono recomendado): "como se fosse o raio" (Juan, 18/11). Na cor
+      // do segmento clicado, verde Mata Virgem ou violeta Premium, com o rótulo MV1/P1 em cima,
+      // como no mapa do motor (Juan, 19/11); sem vaga, o rosa de antes.
+      const rgb = foco.marca ? RGB_TOP10[tema][foco.marca.segmento] : ([194, 60, 142] as const)
       arr.push(
         new PolygonLayer<FocoNoMapa>({
           id: 'regiao-em-foco',
@@ -234,12 +238,38 @@ export default function MapaDoTerritorio({
           getPolygon: (d) => d.contorno,
           filled: true,
           stroked: true,
-          getFillColor: [194, 60, 142, 45],
-          getLineColor: [194, 60, 142, 255],
+          getFillColor: [rgb[0], rgb[1], rgb[2], 70],
+          getLineColor: [rgb[0], rgb[1], rgb[2], 255],
           lineWidthUnits: 'pixels',
           getLineWidth: 3,
+          updateTriggers: { getFillColor: [tema], getLineColor: [tema] },
         }),
       )
+      if (foco.marca) {
+        // O chip do mapa do motor (`rank-labels` do HexMap): fundo escuro, texto claro e a borda
+        // na cor do segmento, legível sobre qualquer camada.
+        arr.push(
+          new TextLayer<{ texto: string; posicao: [number, number] }>({
+            id: 'regiao-em-foco-rotulo',
+            data: [{ texto: foco.marca.rotulo, posicao: centroDoContorno(foco.contorno) }],
+            getPosition: (d) => d.posicao,
+            getText: (d) => d.texto,
+            getSize: 14,
+            sizeUnits: 'pixels',
+            fontFamily: "'IBM Plex Mono', ui-monospace, monospace",
+            fontWeight: 700,
+            getColor: [238, 243, 248, 255],
+            background: true,
+            getBackgroundColor: [8, 11, 16, 214],
+            getBorderColor: [rgb[0], rgb[1], rgb[2], 230],
+            getBorderWidth: 1.5,
+            backgroundPadding: [7, 4, 7, 4],
+            backgroundBorderRadius: 5,
+            pickable: false,
+            updateTriggers: { getBorderColor: [tema] },
+          }),
+        )
+      }
     }
     return arr
   }, [mapa, def, camadas, setores, tema, foco])
@@ -419,13 +449,26 @@ export default function MapaDoTerritorio({
                 padding: '7px 10px',
                 borderRadius: 'var(--r-sm)',
                 background: 'var(--surf-panel)',
-                border: '1px solid var(--gr-rosa)',
+                border: `1px solid ${foco.marca ? TOKEN_COR_TOP10[foco.marca.segmento] : 'var(--gr-rosa)'}`,
                 backdropFilter: 'blur(10px)',
                 font: '600 11.5px/1.3 var(--f-ui)',
                 color: 'var(--tx-max)',
               }}
             >
-              <span>Região: {foco.nome}</span>
+              <span>
+                {foco.marca && (
+                  <span
+                    style={{
+                      font: '700 11.5px/1 var(--f-num)',
+                      color: TOKEN_COR_TOP10[foco.marca.segmento],
+                      marginRight: 6,
+                    }}
+                  >
+                    {foco.marca.rotulo}
+                  </span>
+                )}
+                Região: {foco.nome}
+              </span>
               <button
                 type="button"
                 onClick={() => {

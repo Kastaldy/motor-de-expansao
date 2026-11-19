@@ -12,6 +12,8 @@ import { fileURLToPath } from 'node:url'
 
 import { describe, expect, it } from 'vitest'
 
+import { RGB_TOP10 } from '../lib/top10'
+
 const ler = (rel: string) =>
   readFileSync(fileURLToPath(new URL(rel, import.meta.url)), 'utf-8').replace(/\r\n/g, '\n')
 const semComentario = (s: string) => s.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/.*$/gm, '')
@@ -88,6 +90,19 @@ describe('cores do Top 10: token de tema e espelho do deck.gl', () => {
         // O alpha só importa no "fora" (os segmentos usam o alphaHex do tema no fill).
         if (campo === 'top10Fora') expect(pele[3], `${tema} alpha do fora`).toBe(esperado[3])
       }
+    }
+  })
+
+  it('o espelho RGB do mapa do master (`RGB_TOP10`) bate com os tokens nos DOIS temas', () => {
+    const temas = [
+      ['escuro', blocoDeTema(':root')],
+      ['claro', blocoDeTema("[data-tema='claro']")],
+    ] as const
+    for (const [tema, tokens] of temas) {
+      expect([...RGB_TOP10[tema].mata_virgem], `${tema} mv`).toEqual(rgbaDoToken(tokens['--top10-mv']).slice(0, 3))
+      expect([...RGB_TOP10[tema].premium], `${tema} premium`).toEqual(
+        rgbaDoToken(tokens['--top10-premium']).slice(0, 3),
+      )
     }
   })
 
