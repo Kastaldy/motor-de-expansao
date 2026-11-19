@@ -17024,34 +17024,23 @@ def _masters_master_do_mapa(master_id: str) -> Any:
 
 @functools.lru_cache(maxsize=8)
 def _masters_mercado(master_id: str, fontes: tuple[tuple[str, int], ...]) -> pd.DataFrame:
-    """Os hexágonos do mercado no território do master, com a região de cada um e o que o mapa e
-    as camadas leem (uma leitura por master; `fontes` é a chave: arquivo novo, leitura nova)."""
-    import pyarrow.parquet as pq
-
+    """Os hexágonos do mercado no território do master, com a região de cada um e o que o mapa lê
+    (uma leitura por master; `fontes` é a chave: arquivo novo, leitura nova)."""
     from motor_expansao.masters import mapa as masters_mapa
 
     master = _masters_master_do_mapa(master_id)
     ufs = sorted(master.ufs_envolvidas)
-    tem = set(pq.read_schema(MERCADO_PARQUET).names) if ufs else set()
-    # Academias que alcançam o hexágono (1 km): a de influência (DEC-057) e, em artefato antigo, a
-    # de mapeadas a 1 km -- a mesma escolha do relatório (`gerar._estudo_de_area`).
-    conc = next(
-        (c for c in ("n_concorrentes_influencia_1km", "n_concorrentes_mapeados_1km") if c in tem),
-        None,
-    )
-    colunas = [*masters_mapa.COLUNAS_MERCADO_MAPA, "oferta_efetiva_disponivel"]
-    colunas += [conc] if conc else []
+    colunas = list(masters_mapa.COLUNAS_MERCADO_MAPA)
     mercado = (
         pd.read_parquet(MERCADO_PARQUET, columns=colunas, filters=[("uf", "in", ufs)])
         if ufs
         else pd.DataFrame(columns=colunas)
     )
-    m = masters_mapa.com_regiao(mercado, master)
-    return m.rename(columns={conc: "concorrentes_1km"}) if conc else m
+    return masters_mapa.com_regiao(mercado, master)
 
 
 def _masters_hexes_povoados(master_id: str, fontes: tuple[tuple[str, int], ...]) -> set[str]:
-    """Os hexágonos povoados do território: os das camadas e os da recomendação."""
+    """Os hexágonos povoados do território: os da recomendação."""
     m = _masters_mercado(master_id, fontes)
     return set(m.loc[pd.to_numeric(m["pop_hex_base"], errors="coerce") > 0, "hex_id"].astype(str))
 
@@ -17071,37 +17060,19 @@ def _masters_mapa(master_id: str, fontes: tuple[tuple[str, int], ...]) -> str:
     return json.dumps(saida, ensure_ascii=False)
 
 
-@functools.lru_cache(maxsize=8)
-def _masters_camadas(master_id: str, fontes: tuple[tuple[str, int], ...]) -> str:
-    """As camadas do mapa (JSON), os mapas do relatório (19/11/2026, Juan: "renda, densidade e
-    todos os mapas que geram no relatório"), com as faixas de cor do núcleo para as quatro. Espaço
-    livre e concorrentes vão por hexágono, como no relatório: `[hex_id, espaço livre, concorrentes]`
-    (`oferta_efetiva_disponivel` e as academias que alcançam o hexágono a 1 km). Renda e densidade
-    são SEMPRE do Censo ("deixe o padrão sempre censitário"): aqui vão só as faixas delas; os
-    setores vêm de `/setores`, os polígonos do território inteiro, em qualquer zoom."""
+def _masters_camadas() -> str:
+    """As camadas do mapa (JSON): renda domiciliar e densidade, SEMPRE do Censo ("deixe o padrão
+    sempre censitário"), com as faixas de cor do núcleo; os setores vêm de `/setores`, os
+    polígonos do território inteiro, em qualquer zoom. Espaço livre e academias concorrentes, que
+    iam por hexágono, saíram (19/11/2026, Juan: "a camada de espaço livre e academias
+    concorrentes não precisa ter"); seguem só no relatório em PDF."""
     from motor_expansao.dashboard import constants as _constants
-    from motor_expansao.masters.relatorio_pdf import CONC_1KM_BANDS
 
-    m = _masters_mercado(master_id, fontes)
-    m = m[pd.to_numeric(m["pop_hex_base"], errors="coerce") > 0]
-    conc = m["concorrentes_1km"] if "concorrentes_1km" in m else pd.Series(None, index=m.index)
-    linhas = [
-        [h, _num(livre, 0), _num(c, 0)]
-        for h, livre, c in zip(
-            m["hex_id"].astype(str), m["oferta_efetiva_disponivel"], conc, strict=True
-        )
-    ]
-    # Concorrentes: zero academias é "nenhuma" (a primeira faixa do relatório é 1 concorrente).
-    nenhuma = [{"ate": 0.0, "rotulo": "nenhuma", "cor": [120, 120, 140, 40]}]
     return json.dumps(
         {
-            "disponivel": bool(linhas),
-            "hexes": linhas,
             "faixas": {
                 "renda_domiciliar": _faixas_camada(_constants.RENDA_MEDIA_DOMICILIAR_BANDS),
                 "densidade": _faixas_camada(_constants.DENSIDADE_POP_BANDS),
-                "espaco_livre": _faixas_camada(_constants.OFERTA_DISPONIVEL_ALUNOS_BANDS),
-                "concorrentes": nenhuma + _faixas_camada(CONC_1KM_BANDS),
             },
         },
         ensure_ascii=False,
@@ -17356,11 +17327,10 @@ def api_master_setores(master_id: str) -> Response:
 
 @app.get("/api/masters/{master_id}/mapa/camadas")
 def api_master_mapa_camadas(master_id: str) -> Response:
-    """As faixas das quatro camadas e o espaço livre e os concorrentes por hexágono: pedidos só
-    quando a pessoa liga uma camada, como na ficha da carteira (a primeira leitura é lenta)."""
+    """As faixas de cor da renda e da densidade: pedidas só quando a pessoa liga uma camada."""
     _masters_master_do_mapa(master_id)
     return Response(
-        content=_masters_camadas(master_id, _masters_assinatura_do_mapa()),
+        content=_masters_camadas(),
         media_type="application/json",
     )
 

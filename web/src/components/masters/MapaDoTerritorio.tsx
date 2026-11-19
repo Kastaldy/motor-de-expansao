@@ -1,5 +1,4 @@
 import type { Layer } from '@deck.gl/core'
-import { H3HexagonLayer } from '@deck.gl/geo-layers'
 import { IconLayer, PathLayer, PolygonLayer } from '@deck.gl/layers'
 import DeckGL from '@deck.gl/react'
 import { useEffect, useMemo, useRef, useState } from 'react'
@@ -22,14 +21,14 @@ import type { Tema } from '../../lib/tema'
    19/11/2026: o território só DEMARCADO ("não precisa deixar a área colorida, só
    deixe ela demarcada igual fica no motor"): o contorno de cada região, em BRANCO
    sobre o halo escuro do motor (`tracoComHalo`; 19/11/2026, Juan: "mostre o limite do
-   território em branco"); e as camadas são os mapas do relatório
-   (renda, densidade, espaço livre e concorrentes), uma por vez. Renda e densidade
-   são SEMPRE do Censo ("deixe o padrão sempre censitário"): os polígonos dos setores
-   do território inteiro, como na ficha da carteira, em QUALQUER zoom (19/11/2026,
+   território em branco"); e duas camadas, uma por vez: renda e densidade, SEMPRE
+   do Censo ("deixe o padrão sempre censitário"), com os polígonos dos setores do
+   território inteiro, como na ficha da carteira, em QUALQUER zoom (19/11/2026,
    Juan: "deixe a densidade e a renda (quando ativadas) aparecendo sem limite de
    zoom"; antes, de longe, ia um ponto por setor, e os polígonos só no zoom de
-   cidade). Espaço livre e concorrentes por hexágono, como no relatório. Camada
-   visual, READ-ONLY.
+   cidade). Espaço livre e academias concorrentes saíram ("a camada de espaço livre
+   e academias concorrentes não precisa ter"); seguem só no PDF. Camada visual,
+   READ-ONLY.
    --------------------------------------------------------------------------- */
 
 const BASEMAP = {
@@ -37,13 +36,10 @@ const BASEMAP = {
   claro: 'https://basemaps.cartocdn.com/gl/positron-gl-style/style.json',
 } as const
 
-/** `indice`: a posição do valor na linha (setor `[renda, densidade, anéis]` nas do Censo;
- *  hexágono `[hex, espaço livre, concorrentes]` nas outras). */
-const CAMADAS: { chave: CamadaDoMapa; rotulo: string; legenda: string; indice: 0 | 1 | 2; censo: boolean }[] = [
-  { chave: 'renda_domiciliar', rotulo: 'Renda domiciliar', legenda: 'Renda domiciliar (por domicílio)', indice: 0, censo: true },
-  { chave: 'densidade', rotulo: 'Densidade demográfica', legenda: 'Densidade (hab/km²)', indice: 1, censo: true },
-  { chave: 'espaco_livre', rotulo: 'Espaço livre', legenda: 'Espaço livre (alunos por hexágono)', indice: 1, censo: false },
-  { chave: 'concorrentes', rotulo: 'Academias concorrentes', legenda: 'Academias que alcançam o hexágono (1 km)', indice: 2, censo: false },
+/** `indice`: a posição do valor na linha do setor, `[renda, densidade, anéis]`. */
+const CAMADAS: { chave: CamadaDoMapa; rotulo: string; legenda: string; indice: 0 | 1 }[] = [
+  { chave: 'renda_domiciliar', rotulo: 'Renda domiciliar', legenda: 'Renda domiciliar (por domicílio)', indice: 0 },
+  { chave: 'densidade', rotulo: 'Densidade demográfica', legenda: 'Densidade (hab/km²)', indice: 1 },
 ]
 
 const ALTURA = 480
@@ -57,15 +53,11 @@ function listaDeNomes(nomes: string[]): string {
 
 type Vista = { longitude: number; latitude: number; zoom: number; pitch: number; bearing: number }
 type Dica = { titulo: string; linhas: string[]; x: number; y: number }
-type LinhaHex = MasterCamadas['hexes'][number]
 
 /** O valor de uma camada, como texto, para a dica. */
 function textoDoValor(camada: CamadaDoMapa, v: number | null | undefined): string {
   if (v == null) return 'sem leitura'
-  if (camada === 'renda_domiciliar') return renda(v)
-  if (camada === 'densidade') return `${num(v)} hab/km²`
-  if (camada === 'espaco_livre') return `${num(v)} alunos`
-  return v === 1 ? '1 academia' : `${num(v)} academias`
+  return camada === 'renda_domiciliar' ? renda(v) : `${num(v)} hab/km²`
 }
 
 export default function MapaDoTerritorio({
@@ -135,7 +127,7 @@ export default function MapaDoTerritorio({
   function alternarCamada(chave: CamadaDoMapa) {
     const proxima = camada === chave ? null : chave
     setCamada(proxima)
-    if (proxima && CAMADAS.find((c) => c.chave === proxima)?.censo && !setores && !carregandoSetores) {
+    if (proxima && !setores && !carregandoSetores) {
       setCarregandoSetores(true)
       setErroCamadas(null) // um erro antigo não fica na tela depois de uma nova tentativa
       api
@@ -160,50 +152,30 @@ export default function MapaDoTerritorio({
     const arr: Layer[] = []
     const faixas = def && camadas ? camadas.faixas[def.chave] : null
 
-    if (def && faixas && camadas) {
-      if (def.censo) {
-        // Os polígonos dos setores do território inteiro, em qualquer zoom (sem os pontos de longe).
-        const i = def.indice as 0 | 1
-        arr.push(
-          new PolygonLayer<SetorDoTerritorio>({
-            id: 'setores',
-            data: setores ?? [],
-            getPolygon: (d) => d[2],
-            positionFormat: 'XY',
-            filled: true,
-            stroked: false,
-            pickable: true,
-            getFillColor: (d) => corDaFaixaDoServidor(d[i], faixas, 150),
-            updateTriggers: { getFillColor: [def.chave] },
-            onHover: (info) => {
-              const d = info.object as SetorDoTerritorio | undefined
-              setDica(
-                d
-                  ? { titulo: 'Setor do Censo', linhas: [`${def.rotulo}: ${textoDoValor(def.chave, d[i])}`], x: info.x, y: info.y }
-                  : null,
-              )
-            },
-          }),
-        )
-      } else {
-        arr.push(
-          new H3HexagonLayer<LinhaHex>({
-            id: 'camada',
-            data: camadas.hexes,
-            getHexagon: (d) => d[0],
-            filled: true,
-            stroked: false,
-            extruded: false,
-            pickable: true,
-            getFillColor: (d) => corDaFaixaDoServidor(d[def.indice as 1 | 2] ?? null, faixas, 170),
-            updateTriggers: { getFillColor: [def.chave] },
-            onHover: (info) => {
-              const d = info.object as LinhaHex | undefined
-              setDica(d ? { titulo: def.rotulo, linhas: [textoDoValor(def.chave, d[def.indice as 1 | 2])], x: info.x, y: info.y } : null)
-            },
-          }),
-        )
-      }
+    if (def && faixas) {
+      // Os polígonos dos setores do território inteiro, em qualquer zoom (sem os pontos de longe).
+      const i = def.indice
+      arr.push(
+        new PolygonLayer<SetorDoTerritorio>({
+          id: 'setores',
+          data: setores ?? [],
+          getPolygon: (d) => d[2],
+          positionFormat: 'XY',
+          filled: true,
+          stroked: false,
+          pickable: true,
+          getFillColor: (d) => corDaFaixaDoServidor(d[i], faixas, 150),
+          updateTriggers: { getFillColor: [def.chave] },
+          onHover: (info) => {
+            const d = info.object as SetorDoTerritorio | undefined
+            setDica(
+              d
+                ? { titulo: 'Setor do Censo', linhas: [`${def.rotulo}: ${textoDoValor(def.chave, d[i])}`], x: info.x, y: info.y }
+                : null,
+            )
+          },
+        }),
+      )
     }
 
     // O território DEMARCADO: o limite de cada região em branco, por cima do halo escuro do motor
@@ -272,7 +244,7 @@ export default function MapaDoTerritorio({
     return arr
   }, [mapa, def, camadas, setores, tema, foco])
 
-  const faixasDaLegenda = def && camadas?.disponivel ? camadas.faixas[def.chave] : null
+  const faixasDaLegenda = def && camadas ? camadas.faixas[def.chave] : null
 
   return (
     <div
@@ -387,13 +359,10 @@ export default function MapaDoTerritorio({
                 <div>Carregando as camadas do território…</div>
               ) : erroCamadas ? (
                 <div>{erroCamadas}</div>
-              ) : camadas && !camadas.disponivel ? (
-                <div>Camadas indisponíveis para este território.</div>
               ) : faixasDaLegenda ? (
                 <>
                   <div style={{ font: '600 10px/1.4 var(--f-ui)', color: 'var(--tx-label)', marginBottom: 3 }}>
-                    {def.legenda}
-                    {def.censo && ' · setores do Censo'}
+                    {def.legenda} · setores do Censo
                   </div>
                   {faixasDaLegenda.map((f) => (
                     <div key={f.rotulo} style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
@@ -407,7 +376,7 @@ export default function MapaDoTerritorio({
                     <span style={{ width: 10, height: 10, borderRadius: 2, background: 'rgb(120,120,140)', opacity: 0.4 }} />
                     sem leitura
                   </div>
-                  {def.censo && carregandoSetores && (
+                  {carregandoSetores && (
                     <div style={{ marginTop: 3 }}>Carregando os setores do Censo…</div>
                   )}
                 </>

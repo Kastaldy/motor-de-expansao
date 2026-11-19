@@ -4,9 +4,9 @@ densidade"). Funções puras: o servidor lê o mercado e as unidades Ultra e cha
 
 O território vai DEMARCADO, não pintado (19/11/2026, Juan: "não precisa deixar a área colorida, só
 deixe ela demarcada igual fica no motor"): o contorno de cada região, a união dos hexágonos dela
-(todos, e não só os povoados, senão o contorno sairia cheio de buracos), com a cor da região do
-PDF. As camadas (renda, densidade, espaço livre e concorrentes, os mapas do relatório) ficam no
-servidor, com a conta do motor para o mesmo hexágono, e os setores do Censo vêm por município.
+(todos, e não só os povoados, senão o contorno sairia cheio de buracos); a tela o desenha em
+branco. As camadas (renda e densidade, sempre do Censo) ficam no servidor, com os setores do
+território inteiro.
 """
 
 from __future__ import annotations
@@ -20,7 +20,7 @@ from motor_expansao.masters.analise import atribuir_regiao
 from motor_expansao.masters.territorios import Master
 
 #: Cor de cada região, na ordem do contrato (validada para daltonismo com rótulo direto): a do
-#: mapa da tela do master e a do mapa do território no PDF (`relatorio_pdf` importa daqui).
+#: mapa do território no PDF (`relatorio_pdf` importa daqui); a tela desenha o limite em branco.
 CORES_REGIAO = ("#00A79D", "#C23C8E", "#F0941E", "#5B3FA8")
 #: Colunas do mercado que o mapa lê (o servidor filtra pelas UFs do master).
 COLUNAS_MERCADO_MAPA = (
