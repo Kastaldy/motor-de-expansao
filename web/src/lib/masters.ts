@@ -381,44 +381,10 @@ export interface MasterCamadas {
   faixas: Record<CamadaDoMapa, { ate: number | null; rotulo: string; cor: number[] }[]>
 }
 
-/** Um setor do Censo como ponto (`/api/masters/{id}/setores-pontos`): `[lng, lat, renda
- *  domiciliar, densidade]`. É a renda e a densidade de longe, como nos mapas de calor do relatório. */
-export type PontoDeSetor = [number, number, number | null, number | null]
-
-/** Um setor do Censo de `/api/masters/{id}/setores/{uf}/{cod}` (a leitura do mapa de calor). */
-export interface SetorDoMaster {
-  setor: string | null
-  anel: number[][]
-  densidade: number | null
-  renda_domiciliar: number | null
-}
-
-/** De que zoom em diante renda e densidade passam dos PONTOS aos POLÍGONOS dos setores do Censo
- *  (a escala de cidade): de longe, um estado inteiro tem dezenas de milhares de setores, e os
- *  polígonos de todos travariam a tela; um ponto por setor não. */
-export const ZOOM_SETORES = 11
-/** Quantos municípios à vista têm os setores carregados de uma vez. */
-export const MAX_MUNICIPIOS_COM_SETORES = 6
-
-/** Os municípios do território que aparecem na tela (`[[oeste, sul], [leste, norte]]`), os de
- *  maior área à vista primeiro, até `max`. */
-export function municipiosAVista(
-  municipios: MasterMapa['municipios'],
-  vista: [[number, number], [number, number]],
-  max = MAX_MUNICIPIOS_COM_SETORES,
-): MasterMapa['municipios'] {
-  const [[vo, vs], [vl, vn]] = vista
-  const comArea = municipios
-    .map((m) => {
-      const [o, s, l, n] = m[3]
-      const largura = Math.min(l, vl) - Math.max(o, vo)
-      const altura = Math.min(n, vn) - Math.max(s, vs)
-      return { m, area: largura >= 0 && altura >= 0 ? (largura + 1e-6) * (altura + 1e-6) : -1 }
-    })
-    .filter((x) => x.area >= 0)
-  comArea.sort((a, b) => b.area - a.area)
-  return comArea.slice(0, max).map((x) => x.m)
-}
+/** Uma peça de setor do Censo do território (`/api/masters/{id}/setores`): `[renda domiciliar,
+ *  densidade, anéis]`, com os anéis `[externo, buracos...]` em `[lng, lat]`. Renda e densidade
+ *  são pintadas com elas em QUALQUER zoom (19/11/2026, Juan: "sem limite de zoom"). */
+export type SetorDoTerritorio = [number | null, number | null, number[][][]]
 
 /** `#RRGGBB` -> `[r, g, b]`. */
 export function rgbDeHex(cor: string): [number, number, number] {

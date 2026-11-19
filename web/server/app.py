@@ -17268,8 +17268,8 @@ def _masters_camadas(master_id: str, fontes: tuple[tuple[str, int], ...]) -> str
     todos os mapas que geram no relatório"), com as faixas de cor do núcleo para as quatro. Espaço
     livre e concorrentes vão por hexágono, como no relatório: `[hex_id, espaço livre, concorrentes]`
     (`oferta_efetiva_disponivel` e as academias que alcançam o hexágono a 1 km). Renda e densidade
-    são SEMPRE do Censo ("deixe o padrão sempre censitário"): um ponto por setor de longe
-    (`/setores-pontos`) e os polígonos de perto (`/setores/{uf}/{cod}`)."""
+    são SEMPRE do Censo ("deixe o padrão sempre censitário"): aqui vão só as faixas delas; os
+    setores vêm de `/setores`, os polígonos do território inteiro, em qualquer zoom."""
     from motor_expansao.dashboard import constants as _constants
     from motor_expansao.masters.relatorio_pdf import CONC_1KM_BANDS
 
@@ -17435,14 +17435,21 @@ def api_master_mapa(master_id: str, remote_user: str | None = Header(default=Non
     )
 
 
-#: O que os PONTOS dos setores leem da partição geo, sem a geometria: o centro (a caixa) e o que a
-#: renda domiciliar e a densidade do mapa de calor usam (`_setores_heatmap_features`).
-_COLUNAS_PONTO_DE_SETOR = [
+#: Casas decimais das coordenadas dos setores do território (5 = cerca de 1 m): o território
+#: inteiro vai numa resposta só, e a sexta casa só pesaria no fio.
+MASTERS_SETORES_CASAS = 5
+#: A simplificação de cada setor do território acompanha o TAMANHO dele: 2% do lado (a raiz da
+#: área), entre a do mapa de calor do município (`SETORES_HEATMAP_SIMPLIFY_GRAUS`, cerca de 11 m,
+#: que fica para os setores urbanos) e 0,002 grau (cerca de 220 m, nos rurais grandes). Medido no
+#: DF/GO em 19/11/2026 (18.279 setores): com os 11 m em todos, 1,33 milhão de vértices e 29 MB de
+#: JSON, porque os contornos dos setores rurais grandes seguem rios e estradas; com esta régua,
+#: cerca de 320 mil (7,3 MB de JSON). Só 1 de cada 3 setores sai da simplificação de 11 m.
+MASTERS_SETORES_FRACAO_DO_LADO = 0.02
+MASTERS_SETORES_SIMPLIFY_MAX_GRAUS = 0.002
+#: O que a renda domiciliar (`renda.setor.renda_domiciliar_da_linha`) e a densidade leem de cada
+#: setor, além da geometria.
+_COLUNAS_SETOR_NO_TERRITORIO = [
     "cod_setor",
-    "bbox_minx",
-    "bbox_miny",
-    "bbox_maxx",
-    "bbox_maxy",
     "densidade_pop_setor_hab_km2",
     "renda_responsavel_media_setor_2022",
     "renda_per_capita_setor_2022",
@@ -17450,94 +17457,83 @@ _COLUNAS_PONTO_DE_SETOR = [
 ]
 
 
-@functools.lru_cache(maxsize=2048)
-def _setores_pontos(uf: str, cod_municipio: str) -> tuple[tuple[Any, ...], ...]:
-    """Um ponto por setor do município, no centro da caixa dele: `(lng, lat, renda domiciliar,
-    densidade)`, com a MESMA conta dos polígonos (`_setores_heatmap_features`), sem ler a
-    geometria. Município sem partição: nada."""
-    from motor_expansao.pipelines.materializar_setores_censitarios_geo import ler_particao_setores
+def _setores_do_municipio_no_territorio(uf: str, cod_municipio: str) -> list[list[Any]]:
+    """Os setores de um município para o mapa do território do master: uma linha por peça,
+    `[renda domiciliar, densidade, anéis]`. Renda e densidade são as do mapa de calor do município
+    (`_setores_heatmap_features`); a geometria sai simplificada pelo tamanho do setor
+    (`MASTERS_SETORES_FRACAO_DO_LADO`), e as peças e os buracos pelo mesmo `_aneis`. Município sem
+    partição: nada."""
+    import numpy as np
+    import shapely
 
-    try:
-        df = ler_particao_setores(
-            CENSO_GEO_DIR, uf=uf, cod_municipio=cod_municipio, columns=_COLUNAS_PONTO_DE_SETOR
-        )
-    except Exception:  # noqa: BLE001 — partição ausente ou ilegível não derruba o território
-        return ()
-    if df.empty:
-        return ()
+    from motor_expansao.dashboard.data import read_censo_geo_partition
+
+    df = read_censo_geo_partition(CENSO_GEO_DIR, uf, cod_municipio)
+    if df.empty or "geometry_wkb" not in df.columns:
+        return []
+    geoms = shapely.from_wkb(df["geometry_wkb"].to_numpy(), on_invalid="ignore")
+    invalidas = ~shapely.is_valid(geoms) & ~shapely.is_missing(geoms)
+    geoms[invalidas] = shapely.buffer(geoms[invalidas], 0)
+    lado = np.sqrt(np.nan_to_num(shapely.area(geoms)))
+    tolerancia = np.clip(
+        lado * MASTERS_SETORES_FRACAO_DO_LADO,
+        SETORES_HEATMAP_SIMPLIFY_GRAUS,
+        MASTERS_SETORES_SIMPLIFY_MAX_GRAUS,
+    )
+    # Sem `preserve_topology`: 0,6 s contra 7,5 s no DF/GO, com os mesmos vértices; o anel que
+    # sair cruzado volta válido no `_aneis` (`set_precision`, e `buffer(0)` se preciso).
+    geoms = shapely.simplify(geoms, tolerancia, preserve_topology=False)
+
     _renda_staging_configurado()  # aponta os insumos da renda para o STAGING_DIR (1x)
-    pontos = []
-    for r in df.to_dict("records"):
-        caixa = [_numf(r.get(c)) for c in ("bbox_minx", "bbox_miny", "bbox_maxx", "bbox_maxy")]
-        if any(v is None for v in caixa):
+    colunas = [c for c in _COLUNAS_SETOR_NO_TERRITORIO if c in df.columns]
+    casas = MASTERS_SETORES_CASAS
+    linhas: list[list[Any]] = []
+    for geom, r in zip(geoms, df[colunas].to_dict("records"), strict=True):
+        if geom is None or geom.is_empty:
             continue
-        oeste, sul, leste, norte = caixa  # type: ignore[misc]
-        lng, lat = (oeste + leste) / 2, (sul + norte) / 2
-        pontos.append(
-            (
-                round(lng, 5),
-                round(lat, 5),
-                _num(_renda_setor.renda_domiciliar_da_linha(r, uf, cod_municipio), 0),
-                _num(r.get("densidade_pop_setor_hab_km2"), 1),
-            )
-        )
-    return tuple(pontos)
+        renda = _num(_renda_setor.renda_domiciliar_da_linha(r, uf, cod_municipio), 0)
+        densidade = _num(r.get("densidade_pop_setor_hab_km2"), 1)
+        for parte in cobertura_1km._aneis(geom):
+            aneis = [[[round(x, casas), round(y, casas)] for x, y in anel] for anel in parte]
+            linhas.append([renda, densidade, aneis])
+    return linhas
 
 
 @functools.lru_cache(maxsize=4)
-def _masters_setores_pontos(master_id: str, fontes: tuple[tuple[str, int], ...]) -> str:
-    """Os pontos dos setores de TODOS os municípios do território (JSON): a renda e a densidade
-    "sempre censitárias" de longe, como nos mapas de calor do relatório (um ponto por setor)."""
+def _masters_setores(master_id: str, fontes: tuple[tuple[str, int], ...]) -> str:
+    """Os polígonos dos setores do Censo de TODOS os municípios do território (JSON), com renda
+    domiciliar e densidade: o mapa do painel pinta a renda e a densidade com eles em QUALQUER zoom
+    (19/11/2026, Juan: "deixe a densidade e a renda (quando ativadas) aparecendo sem limite de
+    zoom"). Antes, de longe, ia um ponto por setor, e os polígonos só no zoom de cidade."""
     territorio = json.loads(_masters_mapa(master_id, fontes))
-    pontos = [
-        list(p) for uf, cod, *_ in territorio["municipios"] for p in _setores_pontos(uf, cod)
+    linhas = [
+        linha
+        for uf, cod, *_ in territorio["municipios"]
+        for linha in _setores_do_municipio_no_territorio(uf, cod)
     ]
-    return json.dumps({"setores": pontos}, ensure_ascii=False)
+    return json.dumps({"setores": linhas}, ensure_ascii=False, separators=(",", ":"))
 
 
-@app.get("/api/masters/{master_id}/setores-pontos")
-def api_master_setores_pontos(
-    master_id: str,
-    remote_user: str | None = Header(default=None, alias="Remote-User"),
-) -> Response:
-    """Os setores do Censo do território inteiro como pontos `[lng, lat, renda, densidade]`: a
-    renda e a densidade do mapa de longe (de perto, os polígonos de `/setores/{uf}/{cod}`)."""
-    _masters_master_do_mapa(master_id)
-    _masters_exigir_do_pedido(master_id, remote_user)
-    return Response(
-        content=_masters_setores_pontos(master_id, _masters_assinatura_do_mapa()),
-        media_type="application/json",
-    )
-
-
-@app.get("/api/masters/{master_id}/setores/{uf}/{cod_municipio}")
+@app.get("/api/masters/{master_id}/setores")
 def api_master_setores(
     master_id: str,
-    uf: str,
-    cod_municipio: str,
     remote_user: str | None = Header(default=None, alias="Remote-User"),
 ) -> Response:
-    """Os setores do Censo de UM município do território, com renda domiciliar e densidade: o mapa
-    do painel os pinta ao aproximar (19/11/2026, Juan: "o censitário"), como a ficha da carteira.
-    A mesma leitura do mapa de calor do município (`_setores_heatmap_features`, em cache por
-    município). Município fora do território do master: 404."""
+    """Os setores do Censo do território inteiro, `[renda, densidade, anéis]` por peça: a renda e
+    a densidade do mapa do painel, sempre do Censo, em qualquer zoom. Pedidos só quando a pessoa
+    liga uma das duas; a primeira leitura do território é lenta, depois fica em cache."""
     _masters_master_do_mapa(master_id)
     _masters_exigir_do_pedido(master_id, remote_user)
-    territorio = json.loads(_masters_mapa(master_id, _masters_assinatura_do_mapa()))
-    if [uf.upper(), cod_municipio] not in [[u, c] for u, c, *_ in territorio["municipios"]]:
-        raise HTTPException(404, "Município fora do território do master.")
     return Response(
-        content=json.dumps(
-            {"setores": _setores_heatmap_features(uf.upper(), cod_municipio)}, ensure_ascii=False
-        ),
+        content=_masters_setores(master_id, _masters_assinatura_do_mapa()),
         media_type="application/json",
     )
 
 
 @app.get("/api/masters/{master_id}/mapa/camadas")
 def api_master_mapa_camadas(master_id: str, remote_user: str | None = Header(default=None, alias="Remote-User")) -> Response:
-    """Renda e densidade dos hexágonos do território: pedidas só quando a pessoa liga uma camada,
-    como na ficha da carteira (a primeira leitura de uma UF é lenta)."""
+    """As faixas das quatro camadas e o espaço livre e os concorrentes por hexágono: pedidos só
+    quando a pessoa liga uma camada, como na ficha da carteira (a primeira leitura é lenta)."""
     _masters_master_do_mapa(master_id)
     _masters_exigir_do_pedido(master_id, remote_user)
     return Response(
