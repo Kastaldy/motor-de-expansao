@@ -170,6 +170,11 @@
   --mst: #f9965a;
   --mst-text: #f9965a;
   --mst-on: #2a1405;
+  /* As duas faces do prédio em perspectiva do card "Solicitar um imóvel" (a opção D
+     que o Juan escolheu no Claude Design, 19/11/2026): a da sombra e a da luz, a luz
+     vindo da direita. Só ilustração; nada de mapa, dado ou texto. */
+  --arte-face-sombra: #111a24;
+  --arte-face-luz: #1a2633;
 
   /* --- Identidade das 4 camadas do funil (--l1..--l4) -----------------------
      Uma matiz por camada, EXCLUSIVA do chrome de navegacao: eyebrow "Camada N de
@@ -679,6 +684,8 @@
   --mst: #d16f1b;
   --mst-text: #9c5a1e;
   --mst-on: #2a1405;
+  --arte-face-sombra: #e2e6e9;
+  --arte-face-luz: #ffffff;
 
   /* --- Identidade das camadas do funil (--l1..--l5) -------------------------
      Mesma regra do resto do bloco: a MATIZ e' preservada e a luminancia desce ate'

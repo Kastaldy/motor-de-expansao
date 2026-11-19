@@ -396,68 +396,54 @@ function ArteFicha() {
    Trilha do master (emenda 2 da DEC-089)
    --------------------------------------------------------------------------- */
 
-/** Um ponto comercial com o toldo, a vitrine e a placa "ALUGA-SE" — o card de pedir um imóvel
- *  (19/11/2026, Juan: "a logo de 'Solicitar um imóvel', faça de outra maneira"; era uma região
- *  tracejada com um prédio e um pino, e o pino repetia o do card do estudo). */
+/** O prédio no lote, em perspectiva — o card de pedir um imóvel (a opção D que o Juan escolheu
+ *  no Claude Design, 19/11/2026: "pensei numa área ou num prédio"): o lote tracejado no chão (a
+ *  área) e o prédio em cima, com a bandeira laranja do pedido, na cor da trilha. A face da
+ *  esquerda fica na sombra e a da direita na luz (`--arte-face-*`); o térreo da direita é a porta. */
 function ArteImovel() {
-  // Seis listras de 20 no toldo, de 44 a 164; o prédio de 50 a 158; a placa à direita.
-  const listras = [0, 1, 2, 3, 4, 5]
   return (
     <Quadro>
-      <defs>
-        <clipPath id="imovel-toldo">
-          <rect x={44} y={62} width={120} height={7} />
-        </clipPath>
-      </defs>
-      {/* A calçada. */}
-      <rect x={36} y={126} width={172} height={3} rx={1.5} fill="var(--line-mid)" />
-      {/* O prédio, com a platibanda em cima. */}
-      <rect x={50} y={30} width={108} height={96} rx={3} fill={CAIXA} stroke="var(--line-mid)" />
-      <rect x={50} y={30} width={108} height={14} rx={3} fill={CAIXA_FUNDA} stroke="var(--line-mid)" />
-      {/* O toldo listrado em dois tons, com a barra de baixo em ondas. */}
-      {listras.map((i) => (
-        <rect
-          key={i}
-          x={44 + i * 20}
-          y={48}
-          width={20}
-          height={14}
-          fill="var(--ac)"
-          fillOpacity={i % 2 === 0 ? 0.9 : 0.4}
-        />
-      ))}
-      {listras.map((i) => (
-        <circle
-          key={`onda-${i}`}
-          cx={54 + i * 20}
-          cy={62}
-          r={10}
-          fill="var(--ac)"
-          fillOpacity={i % 2 === 0 ? 0.9 : 0.4}
-          clipPath="url(#imovel-toldo)"
-        />
-      ))}
-      {/* A vitrine e a porta. */}
-      <rect x={60} y={80} width={54} height={46} rx={2} fill="var(--ac)" fillOpacity={0.12} stroke="var(--ac)" />
-      <path d="M87 80v46" stroke="var(--ac)" strokeOpacity={0.6} />
-      <rect x={124} y={84} width={24} height={42} rx={2} fill={CAIXA_FUNDA} stroke="var(--line-mid)" />
-      <circle cx={143} cy={106} r={1.6} fill="var(--tx-sub)" />
-      {/* A placa pendurada no braço: o pedido de um imóvel para alugar. */}
-      <path d="M158 54h42" stroke="var(--line-mid)" strokeWidth={2} strokeLinecap="round" />
-      <path d="M172 54v9M196 54v9" stroke="var(--line-mid)" />
-      <rect x={161} y={63} width={46} height={19} rx={3} fill="var(--mst)" />
-      <text
-        x={184}
-        y={75.5}
-        textAnchor="middle"
-        style={{ font: '700 7.5px/1 var(--f-ui)', letterSpacing: 0.4 }}
-        fill="var(--mst-on)"
-      >
-        ALUGA-SE
-      </text>
+      {/* O lote. */}
+      <polygon
+        points="34,89 120,132 206,89 120,46"
+        fill="var(--ac)"
+        fillOpacity={0.12}
+        stroke="var(--ac)"
+        strokeWidth={1.8}
+        strokeDasharray="5 4"
+        strokeLinejoin="round"
+      />
+      {/* O prédio: as duas faces e o telhado. */}
+      <polygon points="90,103 120,118 120,62 90,47" fill="var(--arte-face-sombra)" stroke="var(--line-dashed)" strokeLinejoin="round" />
+      <polygon points="120,118 150,103 150,47 120,62" fill="var(--arte-face-luz)" stroke="var(--line-dashed)" strokeLinejoin="round" />
+      <polygon points="90,47 120,62 150,47 120,32" fill="var(--ac)" fillOpacity={0.55} stroke="var(--line-dashed)" strokeLinejoin="round" />
+      <g fill="var(--ac)" fillOpacity={0.6}>
+        {JANELAS_DO_PREDIO.map((pontos) => (
+          <polygon key={pontos} points={pontos} />
+        ))}
+      </g>
+      <polygon points="131.4,112.3 138.6,108.7 138.6,96.7 131.4,100.3" fill={CAIXA_FUNDA} stroke="var(--line-dashed)" />
+      {/* A bandeira do pedido no telhado. */}
+      <path d="M120 47V22" stroke="var(--tx-sub)" strokeWidth={1.6} strokeLinecap="round" />
+      <path d="M120 22L135 26.5L120 31Z" fill="var(--mst)" />
     </Quadro>
   )
 }
+
+/** As janelas do prédio em perspectiva: três andares em duas colunas na face da sombra; dois na
+ *  da luz, cujo térreo é a porta. */
+const JANELAS_DO_PREDIO = [
+  '95.4,93.7 103.2,97.6 103.2,89.6 95.4,85.7',
+  '95.4,78.7 103.2,82.6 103.2,74.6 95.4,70.7',
+  '95.4,63.7 103.2,67.6 103.2,59.6 95.4,55.7',
+  '108,100 115.8,103.9 115.8,95.9 108,92',
+  '108,85 115.8,88.9 115.8,80.9 108,77',
+  '108,70 115.8,73.9 115.8,65.9 108,62',
+  '125.4,88.3 133.2,84.4 133.2,76.4 125.4,80.3',
+  '125.4,73.3 133.2,69.4 133.2,61.4 125.4,65.3',
+  '138,82 145.8,78.1 145.8,70.1 138,74',
+  '138,67 145.8,63.1 145.8,55.1 138,59',
+] as const
 
 /** O painel do master: o nome, os números e a barra da meta — o card que leva à tela Masters. */
 function ArteMeuPainel() {
