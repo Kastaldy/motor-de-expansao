@@ -1,6 +1,7 @@
 /** Cliente do backend do piloto. Tudo passa pelo proxy /api do Vite. */
 
 import type { AluguelReferencia, TipoImovelAluguel } from './aluguel-referencia'
+import type { MasterPainel, MastersPayload } from './masters'
 import type {
   AcaoImobiliaria,
   AcessosFicha,
@@ -598,6 +599,16 @@ export const api = {
   /** Manual do funil: o que cada camada mede e com que régua corta. Estático —
    *  não depende de UF nem de município, então a tela busca uma vez e guarda. */
   metodologia: () => pedir<MetodologiaPayload>('/api/metodologia', {}, 15_000),
+
+  /* ---- Tela Masters (DEC-089; aba própria, `masters.ver`) ---- */
+
+  /** Um card por master: em operação, em inauguração, assinados e a meta.
+   *  404 = a planilha dos masters ainda não foi ingerida neste servidor. */
+  masters: () => pedir<MastersPayload>('/api/masters', {}, 30_000),
+
+  /** O painel de um master: as listas por status e a meta do ano por trimestre. */
+  master: (id: string) =>
+    pedir<MasterPainel>(`/api/masters/${encodeURIComponent(id)}`, {}, 30_000),
 
   /* ---- Aba Acessos (emenda DEC-027; restrita por allowlist no backend) ---- */
 

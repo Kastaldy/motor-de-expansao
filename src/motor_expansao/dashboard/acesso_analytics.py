@@ -146,6 +146,9 @@ FEATURES_ROTULOS: tuple[tuple[str | None, str, str], ...] = (
     # Camada imobiliária: o dossiê (prefixo com barra) antes da lista — first-match.
     (None, "/api/oportunidades/", "Baixou dossiê de imóvel"),
     (None, "/api/oportunidades", "Consultou oportunidades imobiliárias"),
+    # Tela Masters (DEC-089): o painel de um master (prefixo com barra) antes da lista.
+    (None, "/api/masters/", "Abriu o painel de um master"),
+    (None, "/api/masters", "Consultou os masters"),
     # Gestos da tela imobiliária (rotas no-op cujo valor é a linha da trilha —
     # `ACOES_IMOBILIARIA` em `web/server/app.py`). Uma entrada por ação, e não um
     # prefixo genérico: é o que faz a ficha do usuário dizer O QUÊ foi feito, em vez

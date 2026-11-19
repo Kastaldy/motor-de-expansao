@@ -55,10 +55,11 @@ CAPACIDADE_POR_ABA: dict[str, str] = {
     "imobiliaria": "imovel.dossie_ver",
     "viabilidade": "viabilidade.simular",
     "executiva": "rede.ver",
+    "masters": "masters.ver",
 }
 
 #: Espelho de `web/server/acesso.py::ABAS_SENSIVEIS`: o curinga `*` nunca as concede.
-ABAS_SENSIVEIS: frozenset[str] = frozenset({"executiva", "imobiliaria", "viabilidade"})
+ABAS_SENSIVEIS: frozenset[str] = frozenset({"executiva", "imobiliaria", "masters", "viabilidade"})
 
 ABAS: tuple[str, ...] = tuple(CAPACIDADE_POR_ABA)
 

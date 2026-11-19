@@ -228,8 +228,8 @@
     "_nota_moradores": "MORADORES_DOMICILIO_NACIONAL, src/motor_expansao/dashboard/constants.py:447 (IBGE Censo 2022). Fallback quando o municipio nao esta na tabela de uplift."
   },
 
-  "superficies": ["mapa", "oportunidades", "imobiliaria", "executiva", "viabilidade"],
-  "_nota_superficies": "TODAS as abas de ABAS_VALIDAS (web/server/acesso.py:39), que e o estado de hoje: no Brasil quem limita e a permissao do usuario, nao o pais. Listar as cinco aqui e o que garante que o gate de superficie do Bloco C seja INERTE no Brasil — se este campo trouxesse menos que cinco, o perfil estaria mudando o comportamento brasileiro, que e justamente o que ele existe para nao fazer.",
+  "superficies": ["mapa", "oportunidades", "imobiliaria", "executiva", "viabilidade", "masters"],
+  "_nota_superficies": "TODAS as abas de ABAS_VALIDAS (web/server/acesso.py:39), que e o estado de hoje: no Brasil quem limita e a permissao do usuario, nao o pais. Listar todas aqui e o que garante que o gate de superficie do Bloco C seja INERTE no Brasil — se este campo trouxesse menos abas, o perfil estaria mudando o comportamento brasileiro, que e justamente o que ele existe para nao fazer. `masters` (tela Masters, DEC-089) so existe no Brasil.",
 
   "malha_municipal_disponivel": true,
   "_nota_malha_municipal_disponivel": "O Brasil TEM a malha adm2 (data/ibge/municipios_<UF>.geojson), entao /api/ponto, /api/resolver-ponto, /api/relatorio/municipal e /api/relatorio/pontual continuam liberados sem mudar de comportamento. Ver a nota do campo em src/motor_expansao/perfil.py (Perfil.malha_municipal_disponivel).",
