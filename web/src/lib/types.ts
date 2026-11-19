@@ -1439,9 +1439,11 @@ export interface RedeUnidade {
     faturamento: number | null
     variacao_pct: number | null
   }
-  /** SSS da unidade: o mesmo mês, um ano antes. `var_pct` nulo quando ela não entra na
-   *  base comparável — a unidade continua na lista, dizendo por que não entra na conta,
-   *  em vez de sumir. Ausente na ficha, que é outro payload. */
+  /** SSS da unidade, na janela do gráfico e com a regra do card (emenda 1 da DEC-088): a
+   *  soma dos meses em que ela entra na base, contra os mesmos meses um ano antes.
+   *  `var_pct` nulo quando ela não entra em mês nenhum — a unidade continua na lista,
+   *  dizendo por que não entra na conta, em vez de sumir. Ausente na ficha, que é outro
+   *  payload. */
   sss?: {
     competencia_base: string
     faturamento: number | null
@@ -1449,6 +1451,10 @@ export interface RedeUnidade {
     var_pct: number | null
     /** Por que ficou fora (DEC-088); `null` quando entra. Identificador, sem acento. */
     motivo?: RedeSssMotivo | null
+    /** meses do gráfico em que a unidade entrou na base (emenda 1 da DEC-088) */
+    meses?: number
+    /** meses da janela do gráfico */
+    meses_janela?: number
   }
 }
 
@@ -1469,16 +1475,41 @@ export interface RedeRegua {
   meta?: number
 }
 
+/** A janela do SSS, que é a do gráfico (emenda 1 da DEC-088), em competência `AAAA-MM`. */
+export interface RedeSssJanela {
+  inicio: string
+  fim: string
+  base_inicio: string
+  base_fim: string
+}
+
 export interface RedeSss {
   disponivel: boolean
+  /** o ano-base, já escrito pelo servidor: "Out/2024 a Out/2025" (antes da emenda 1 da
+   *  DEC-088, a competência `AAAA-MM` ou o intervalo `DD/MM/AAAA a DD/MM/AAAA`) */
   competencia_base: string
+  /** a janela do número grande, que é a do gráfico: o número soma as barras. Ausente em
+   *  payload anterior à emenda 1 da DEC-088. */
+  janela?: RedeSssJanela | null
   /** unidades COMPARÁVEIS: as do recorte que operaram o mês inteiro nos dois períodos e
-   *  já tinham `maturacao_min_meses` de operação no início do ano-base (DEC-088) */
+   *  já tinham `maturacao_min_meses` de operação no início do ano-base (DEC-088). Com a
+   *  janela do gráfico, as que entraram em PELO MENOS um mês (as que têm SSS na lista). */
   unidades: number
+  /** menor e maior base mensal da janela (emenda 1 da DEC-088) */
+  unidades_min?: number
+  unidades_max?: number
   /** quantas unidades o recorte tem no mês escolhido */
   unidades_recorte: number
+  /** último mês da janela: é dele a conta de quem ficou fora (emenda 1 da DEC-088) */
+  mes_final?: string | null
+  /** unidades na base do último mês. Fecha a conta:
+   *  `unidades_mes_final + unidades_fora + unidades_rampa = unidades_recorte` */
+  unidades_mes_final?: number
+  /** mês da FOTO (alunos ativos, recorrentes): o último da janela que tem base */
+  mes_foto?: string
   /** as que não existiam há um ano, ou não operaram o período inteiro em algum dos dois
-   *  lados. Fecha a conta: `unidades + unidades_fora + unidades_rampa = unidades_recorte` */
+   *  lados. Fecha a conta: `unidades + unidades_fora + unidades_rampa = unidades_recorte`
+   *  (com a janela do gráfico, `unidades_mes_final` no lugar de `unidades`) */
   unidades_fora: number
   /** as que existiam e operaram o ano-base inteiro, mas ficaram fora SÓ pela maturação
    *  ou por base zero (DEC-088). Ausente em payload anterior a ela = 0. */
@@ -1610,6 +1641,8 @@ export interface RedeFiltros {
   masters: string[]
   masters_regiao: string[]
   consultores: string[]
+  /** Donos das unidades (cadastro `franqueado`); para o master, só os das unidades dele. */
+  franqueados: string[]
   masters_franquia: string[]
   coortes: { chave: string; rotulo: string; n: number }[]
   severidades: { chave: RedeSeveridade; rotulo: string }[]
@@ -2248,6 +2281,8 @@ export interface RedeQuery {
   uf?: string
   master?: string
   consultor?: string
+  /** dono da unidade, pelo `franqueado` do cadastro */
+  franqueado?: string
   coorte?: string
   severidade?: string
   busca?: string
