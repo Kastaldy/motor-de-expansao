@@ -10885,21 +10885,6 @@ def _rede_periodo_anterior(inicio: pd.Timestamp, fim: pd.Timestamp) -> tuple[pd.
     return (inicio - pd.Timedelta(days=dias), fim - pd.Timedelta(days=dias))
 
 
-def _rede_periodo_ano_anterior(
-    inicio: pd.Timestamp, fim: pd.Timestamp
-) -> tuple[pd.Timestamp, pd.Timestamp]:
-    """O MESMO intervalo, doze meses antes — a base do SSS.
-
-    Mês inteiro vira o mesmo mês do ano passado (e não "o mesmo dia-do-mês"), que é o que
-    faz julho de 31 dias comparar com julho de 31 dias. Recorte solto anda 12 meses nas
-    duas pontas.
-    """
-    if _eh_mes_inteiro(inicio, fim):
-        base = pd.Period(inicio, freq="M") - 12
-        return (base.to_timestamp(how="start"), base.to_timestamp(how="end").normalize())
-    return (inicio - pd.DateOffset(months=12), fim - pd.DateOffset(months=12))
-
-
 def _eh_mes_inteiro(inicio: pd.Timestamp, fim: pd.Timestamp) -> bool:
     """True quando o intervalo é exatamente um mês do calendário, ponta a ponta."""
     periodo = pd.Period(inicio, freq="M")
@@ -10920,8 +10905,9 @@ def _rede_periodo(inicio: str, fim: str) -> dict[str, Any]:
 
     O que é do INTERVALO e o que é do MÊS
     -------------------------------------
-    Só três coisas seguem o intervalo escolhido: os KPIs/quarteto (`atual`), a comparação
-    com o período anterior (`m1`) e o SSS. Série de 12 meses, faixas absolutas de
+    Só duas coisas seguem o intervalo escolhido: os KPIs/quarteto (`atual`) e a comparação
+    com o período anterior (`m1`). O SSS segue a janela do gráfico, que termina no mês do
+    fim do intervalo (emenda 1 da DEC-088). Série de 12 meses, faixas absolutas de
     faturamento e diagnóstico continuam saindo de MÊS FECHADO, e por motivo, não por
     preguiça: a série é uma linha do tempo mensal, as faixas são limiares de mês inteiro
     (aplicá-las a 3 dias joga a rede toda em "Crítico") e o diagnóstico nunca roda sobre
@@ -10975,9 +10961,6 @@ def _rede_periodo(inicio: str, fim: str) -> dict[str, Any]:
         # linha da rede e no quarteto de cada unidade (CSV e XLSX herdam do quarteto).
         anterior_cru = anterior_cru.assign(churn_pct=float("nan"))
 
-    ini_sss, fim_sss = _rede_periodo_ano_anterior(ini, term)
-    ano_anterior = rede_metricas.fechamento_periodo(base, ini_sss, fim_sss, financeiro=financeiro)
-
     # A receita por recorrente é um NÍVEL — R$ por recorrente NUM MÊS —, e só o mês
     # calendário inteiro pode entregá-la direto. Fora dele, ela sai dos 30 dias que
     # terminam no fim do período, e não do intervalo escolhido, porque o intervalo
@@ -10998,6 +10981,7 @@ def _rede_periodo(inicio: str, fim: str) -> dict[str, Any]:
     referencia = pd.Timestamp(atual_cru["dia_ref"].max())
     competencia = str(pd.Period(term, freq="M"))
     competencia_diagnostico = rede_diagnostico.competencia_base(cheio, competencia)
+    serie_meses = _rede_serie_meses(cheio, competencia)
     diagnosticos = (
         rede_diagnostico.diagnosticar(cheio, competencia_diagnostico)
         if competencia_diagnostico
@@ -11009,8 +10993,6 @@ def _rede_periodo(inicio: str, fim: str) -> dict[str, Any]:
         "fim": term,
         "inicio_anterior": ini_ant,
         "fim_anterior": fim_ant,
-        "inicio_sss": ini_sss,
-        "fim_sss": fim_sss,
         "dias": dias,
         "mes_inteiro": mes_inteiro,
         # `mes` é a competência do FIM do intervalo: é ela que ancora a série de 12 meses,
@@ -11031,10 +11013,12 @@ def _rede_periodo(inicio: str, fim: str) -> dict[str, Any]:
         "meses_churn_anterior": meses_churn_anterior,
         "atual": contexto,
         "m1": anterior_cru.set_index("unidade_id"),
-        "ano_anterior": ano_anterior,
         "cheio": cheio,
         "diagnosticos": diagnosticos,
-        "serie_meses": _rede_serie_meses(cheio, competencia),
+        "serie_meses": serie_meses,
+        # O SSS segue a janela do GRÁFICO (emenda 1 da DEC-088): uma tabela só, de onde
+        # saem as barras, o número grande e o SSS de cada unidade.
+        "sss_tabela": _rede_sss_tabela(cheio, serie_meses),
     }
 
 
@@ -11304,144 +11288,6 @@ def _rede_serie_meses(cheio: pd.DataFrame, mes_sel: str) -> list[str]:
     return meses[-_REDE_MESES_SERIE:]
 
 
-def _rede_sss(
-    atual: pd.DataFrame,
-    ano_anterior: pd.DataFrame,
-    ids: Collection[str] | None = None,
-) -> dict[str, Any]:
-    """Same Store Sales do RECORTE: o mesmo intervalo, doze meses antes, em BASE COMPARÁVEL.
-
-    A rede abriu 33 unidades em 2025; comparar total contra total mede abertura de loja,
-    não desempenho. Entram só as unidades presentes nos DOIS períodos e que operaram o
-    período inteiro nos dois — a definição de "mesma loja".
-
-    `ids` é o recorte da tela (consultor, master, UF, maturidade, severidade, busca).
-    Sem ele, a conta valia a rede inteira **mesmo com filtro aplicado**: o SSS nascia
-    dentro do contexto do mês, que tem cache e nenhuma noção de filtro, então a carteira
-    de um consultor com 5 unidades exibia o crescimento das 60 comparáveis da rede.
-    Medido em 2026-08-10 na base de produção: MARISE (24 unidades), GUILHERME (5) e a
-    rede inteira (92) devolviam os TRÊS o mesmo `+6,2%` sobre `60 unidades`.
-
-    O que o filtro muda é só a CESTA somada. Ranking e "% vs média da rede" continuam
-    saindo da rede inteira — mexer num filtro não pode mudar a posição de ninguém.
-
-    Desde a DEC-088 a "mesma loja" também precisa estar MADURA no ano-base: no mínimo
-    `SSS_MATURACAO_MIN_MESES` (3) de operação no dia 1º do período-base, e faturamento
-    maior que zero nele (`_rede_sss_cesta`). A unidade em rampa de abertura no ano-base
-    inflava o número: out/2026 da rede saía −0,7% com 69 unidades; com a regra, −3,0%
-    com 60.
-
-    As contas de quem ficou de fora são SEPARADAS e fecham com o recorte:
-    `unidades + unidades_fora + unidades_rampa == unidades_recorte`.
-
-    * `unidades_fora` — não existiam há um ano, ou não operaram o período inteiro em
-      algum dos dois lados (a semântica de sempre);
-    * `unidades_rampa` — existiam e operaram o ano-base inteiro, mas ficaram fora SÓ pela
-      maturação ou por base zero; `unidades_base_zero` é a parte delas que saiu pela base
-      zero (é rara, e a tela não pode chamá-la de rampa).
-    """
-    agora, antes = _rede_comparaveis(atual), _rede_comparaveis(ano_anterior)
-    base_rotulo = _rede_rotulo_periodo(ano_anterior)
-    cesta = _rede_sss_cesta(
-        atual, ano_anterior, _rede_inicio_do_quadro(ano_anterior), "operacao_periodo_cheio"
-    )
-    no_recorte = len(cesta)
-    if ids is not None:
-        alvo = set(ids)
-        no_recorte = len(alvo)
-        cesta = cesta[cesta.index.isin(alvo)]
-    comuns = sorted(str(u) for u in cesta.index[cesta["motivo"].isna()])
-    rampa = int(cesta["motivo"].isin(_SSS_MOTIVOS_RAMPA).sum())
-    contagem = {
-        "competencia_base": base_rotulo,
-        "unidades": len(comuns),
-        # Quantas unidades o recorte tem e quantas ficaram DE FORA da base comparável.
-        # É o número que impede a leitura errada: "+6,2%" de 18 unidades não é o
-        # crescimento das 24 do consultor — as outras 6 nem existiam há um ano.
-        "unidades_recorte": no_recorte,
-        "unidades_fora": max(no_recorte - len(comuns) - rampa, 0),
-        "unidades_rampa": rampa,
-        "unidades_base_zero": int((cesta["motivo"] == _SSS_BASE_ZERO).sum()),
-        "maturacao_min_meses": rede_metricas.SSS_MATURACAO_MIN_MESES,
-    }
-    if not comuns:
-        return {
-            "disponivel": False,
-            **contagem,
-            "serie": {"meses": [], "var_pct": [], "unidades": []},
-        }
-
-    agora = agora[agora["unidade_id"].isin(comuns)]
-    antes = antes[antes["unidade_id"].isin(comuns)]
-    metricas: dict[str, Any] = {}
-    for chave in _REDE_SSS_METRICAS:
-        casas = _rede_casas(chave)
-        # `min_count=1`: coluna INTEIRAMENTE sem dado tem de sair vazia, não como R$ 0. É o
-        # caso da receita de agregadores numa janela parcial — a Growth não a envia desde
-        # maio/2025, e o `sum` padrão transformava "não sabemos" em "a rede não fatura com
-        # Gympass", que é uma afirmação falsa sobre R$ 5,1 milhões por mês.
-        atual_valor = _numf(pd.to_numeric(agora[chave], errors="coerce").sum(min_count=1))
-        passado = _numf(pd.to_numeric(antes[chave], errors="coerce").sum(min_count=1))
-        metricas[chave] = {
-            "atual": _num(atual_valor, casas),
-            "ano_anterior": _num(passado, casas),
-            "var_pct": (
-                _num(100.0 * (atual_valor - passado) / passado, 1) if passado else None
-            ),
-        }
-    return {
-        "disponivel": True,
-        **contagem,
-        "metricas": metricas,
-    }
-
-
-def _rede_sss_por_unidade(
-    atual: pd.DataFrame, ano_anterior: pd.DataFrame
-) -> dict[str, dict[str, Any]]:
-    """SSS de CADA unidade: o mesmo intervalo, um ano antes, unidade a unidade.
-
-    O agregado responde "a carteira cresceu?"; esta lista responde "por causa de quem?".
-    A regra de entrada é a MESMA do SSS do recorte (`_rede_sss_cesta`), então uma unidade
-    sem base comparável aparece com `var_pct` nulo em vez de sumir: quem lê a lista
-    precisa saber que ela existe e por que não entra na conta. O porquê viaja em `motivo`
-    (identificador, sem acento; `None` quando ela entra):
-
-    * `sem_ano_anterior` — não existia há um ano, ou não operou o período-base inteiro;
-    * `em_rampa` — existia, mas estava nos primeiros meses de operação no ano-base;
-    * `base_zero` — madura, mas sem faturamento no ano-base.
-    """
-    base_rotulo = _rede_rotulo_periodo(ano_anterior)
-    cesta = _rede_sss_cesta(
-        atual, ano_anterior, _rede_inicio_do_quadro(ano_anterior), "operacao_periodo_cheio"
-    )
-
-    saida: dict[str, dict[str, Any]] = {}
-    for unidade_id, linha in cesta.iterrows():
-        valor = _numf(linha["faturamento"])
-        passado = _numf(linha["ano_anterior"])
-        motivo = linha["motivo"] if isinstance(linha["motivo"], str) else None
-        saida[str(unidade_id)] = {
-            "competencia_base": base_rotulo,
-            "faturamento": _num(valor, 2),
-            "ano_anterior": _num(passado, 2),
-            "var_pct": (
-                _num(100.0 * (valor - passado) / passado, 1)
-                if (motivo is None and valor is not None and passado)
-                else None
-            ),
-            "motivo": motivo,
-        }
-    return saida
-
-
-def _rede_comparaveis(quadro: pd.DataFrame) -> pd.DataFrame:
-    """Só quem operou o período INTEIRO. Unidade em rampa não é "mesma loja"."""
-    if not len(quadro):
-        return quadro
-    return quadro[quadro["operacao_periodo_cheio"].fillna(False).astype(bool)]
-
-
 #: Por que uma unidade que operou o período atual inteiro fica FORA do SSS. Identificadores
 #: (sem acento): a tela traduz cada um no próprio rótulo.
 _SSS_SEM_ANO_ANTERIOR = "sem_ano_anterior"
@@ -11451,12 +11297,17 @@ _SSS_BASE_ZERO = "base_zero"
 #: inteiro, e mesmo assim não serve de base.
 _SSS_MOTIVOS_RAMPA: frozenset[str] = frozenset({_SSS_EM_RAMPA, _SSS_BASE_ZERO})
 
+#: As métricas do SSS que são FLUXO e somam mês a mês na janela do gráfico. As demais de
+#: `_REDE_SSS_METRICAS` (alunos ativos, recorrentes, agregadores) são FOTO, um estoque:
+#: somadas em 13 meses dariam 13 vezes a base de alunos. Elas comparam o último mês da
+#: janela que tem base com o mesmo mês um ano antes.
+_REDE_SSS_FLUXOS: frozenset[str] = frozenset(
+    {"faturamento", "faturamento_sem_agregador", "faturamento_agregador"}
+)
 
-def _rede_inicio_do_quadro(quadro: pd.DataFrame) -> pd.Timestamp:
-    """Dia 1º do período de um quadro de `fechamento_periodo` (NaT se ele vier vazio)."""
-    if not len(quadro) or "periodo_inicio" not in quadro.columns:
-        return pd.NaT
-    return pd.Timestamp(quadro["periodo_inicio"].iloc[0]).normalize()
+#: Mês abreviado dos rótulos que o servidor escreve (`competencia_base`). O front escreve
+#: igual (`rotuloMesCompetencia`): "Out/2025".
+_SSS_MESES = ("Jan", "Fev", "Mar", "Abr", "Mai", "Jun", "Jul", "Ago", "Set", "Out", "Nov", "Dez")
 
 
 def _rede_sss_cesta(
@@ -11535,67 +11386,265 @@ def _rede_sss_cesta(
     )
 
 
-def _rede_rotulo_periodo(quadro: pd.DataFrame) -> str:
-    """Rótulo do intervalo de um quadro de período: competência quando ele é um mês
-    inteiro, `DD/MM/AAAA a DD/MM/AAAA` quando não é.
+def _rede_sss_tabela(cheio: pd.DataFrame, meses: Sequence[str]) -> pd.DataFrame:
+    """A regra do SSS aplicada a CADA mês do gráfico, numa tabela só (emenda 1 da DEC-088).
 
-    A tela imprime este texto como está. Mês inteiro sai como `2025-08` porque a tela
-    já sabe traduzir competência em "Ago/2025"; recorte solto sai por extenso, que é o
-    único jeito de dizer "de 1 a 10 de agosto" sem mentir por arredondamento.
+    Uma linha por unidade e mês da janela do gráfico (`serie_meses`, os 13 últimos meses
+    fechados): a cesta de `_rede_sss_cesta` daquele mês contra o mesmo mês um ano antes, com
+    a maturação medida no dia 1º do mês-base. `motivo` é `None` quando a unidade entra
+    naquele mês; cada métrica de `_REDE_SSS_METRICAS` vem nas duas pontas, `<chave>_agora`
+    e `<chave>_antes`.
+
+    É daqui que saem as TRÊS leituras do SSS: as barras do gráfico, o número grande do card
+    e o SSS de cada unidade. Assim nenhuma conta um mês que as outras não contam. Antes, o
+    número grande era um bloco do período escolhido com a base FIXA, e as barras mostravam
+    13 meses com a base mudando mês a mês. Em jan–out/2026 o card dizia −0,6% (só as 40
+    unidades maduras em 01/01/2025) com as barras quase todas verdes. Felipe, 18/11/2026:
+    "precisamos mostrar no big number o que está aparecendo no gráfico".
+
+    Fica na tabela só quem operou o mês ATUAL inteiro, porque a cesta começa por aí. A
+    tabela é da rede inteira, e não do recorte: a regra é unidade a unidade, e o recorte
+    filtra depois.
     """
-    if not len(quadro):
-        return ""
-    inicio = pd.Timestamp(quadro["periodo_inicio"].iloc[0])
-    fim = pd.Timestamp(quadro["periodo_fim"].iloc[0])
-    if _eh_mes_inteiro(inicio, fim):
-        return str(pd.Period(inicio, freq="M"))
-    return f"{inicio.strftime('%d/%m/%Y')} a {fim.strftime('%d/%m/%Y')}"
+    colunas = [
+        "unidade_id",
+        "competencia",
+        "motivo",
+        *(f"{chave}_{lado}" for chave in _REDE_SSS_METRICAS for lado in ("agora", "antes")),
+    ]
+    if not meses or not len(cheio):
+        return pd.DataFrame(columns=colunas)
 
-
-def _rede_sss_serie(
-    cheio: pd.DataFrame, meses: list[str], ids: Collection[str]
-) -> dict[str, list[Any]]:
-    """SSS mês a mês do recorte, alinhado a `serie_meses`.
-
-    Responde à pergunta que o total não responde numa rede que abre loja: *o
-    crescimento é da operação ou da expansão?* Cada ponto recalcula a própria base
-    comparável — as unidades do recorte que operaram o mês inteiro em `m` E em `m-12`.
-    A cesta muda de um ponto para o outro, e é por isso que `unidades` viaja junto:
-    sem ela, uma alta de base pequena parece uma alta da rede.
-
-    A regra de entrada é a do SSS do recorte (`_rede_sss_cesta`, DEC-088), com o ano-base
-    de CADA ponto: para o mês `m`, a maturação é medida no dia 1º de `m-12`.
-    """
-    if not meses or not len(ids):
-        return {"meses": [], "var_pct": [], "unidades": []}
-
-    do_recorte = cheio[cheio["unidade_id"].isin(set(ids))]
-    grupos = {str(mes): grupo for mes, grupo in do_recorte.groupby("competencia", observed=True)}
-
-    variacoes: list[float | None] = []
-    tamanhos: list[int] = []
+    grupos = {str(mes): grupo for mes, grupo in cheio.groupby("competencia", observed=True)}
+    partes: list[pd.DataFrame] = []
     for mes in meses:
-        base = pd.Period(mes, freq="M") - 12
-        agora, antes = grupos.get(mes), grupos.get(str(base))
-        if agora is None or antes is None:
-            variacoes.append(None)
-            tamanhos.append(0)
+        agora = grupos.get(str(mes))
+        if agora is None or not len(agora):
             continue
+        base = pd.Period(str(mes), freq="M") - 12
+        # Sem o mês-base na série, a cesta marca todo mundo como "sem ano anterior". É
+        # verdade, e a unidade fica na tabela com o motivo, em vez de sumir.
+        antes = grupos.get(str(base), agora.iloc[0:0])
         cesta = _rede_sss_cesta(
             agora, antes, base.to_timestamp(how="start"), "operacao_mes_cheio"
         )
-        entram = cesta[cesta["motivo"].isna()]
-        if not len(entram):
+        if not len(cesta):
+            continue
+        parte = pd.DataFrame(
+            {
+                "unidade_id": [str(u) for u in cesta.index],
+                "competencia": str(mes),
+                "motivo": cesta["motivo"].to_numpy(dtype=object),
+            }
+        )
+        lados = {
+            "agora": agora.drop_duplicates("unidade_id").set_index("unidade_id"),
+            "antes": antes.drop_duplicates("unidade_id").set_index("unidade_id"),
+        }
+        for chave in _REDE_SSS_METRICAS:
+            for lado, quadro in lados.items():
+                if chave == "faturamento":
+                    # As duas pontas do faturamento vêm da CESTA, que esvazia o ano-base de
+                    # quem não o operou inteiro: é o valor que a lista mostra ao lado do motivo.
+                    valores = cesta["faturamento" if lado == "agora" else "ano_anterior"]
+                elif chave in quadro.columns:
+                    valores = pd.to_numeric(quadro[chave], errors="coerce").reindex(cesta.index)
+                else:
+                    valores = pd.Series(float("nan"), index=cesta.index)
+                parte[f"{chave}_{lado}"] = pd.to_numeric(valores, errors="coerce").to_numpy(
+                    dtype="float64"
+                )
+        partes.append(parte)
+
+    if not partes:
+        return pd.DataFrame(columns=colunas)
+    return pd.concat(partes, ignore_index=True)[colunas]
+
+
+def _rede_sss_par(linhas: pd.DataFrame, chave: str) -> tuple[float | None, float | None]:
+    """Soma das duas pontas de uma métrica do SSS, SÓ nas linhas que têm as duas.
+
+    Uma ponta sem a outra não é base de comparação: a receita de agregadores que faltasse
+    num mês do ano-base entraria do lado de hoje e não do lado de lá, e a linha "cresceria"
+    pelo buraco. `(None, None)` quando nenhuma linha tem as duas: não sabemos, não é zero.
+    """
+    agora = pd.to_numeric(linhas[f"{chave}_agora"], errors="coerce")
+    antes = pd.to_numeric(linhas[f"{chave}_antes"], errors="coerce")
+    par = agora.notna() & antes.notna()
+    if not bool(par.any()):
+        return None, None
+    return float(agora[par].sum()), float(antes[par].sum())
+
+
+def _rede_sss_janela(meses: Sequence[str]) -> dict[str, str] | None:
+    """As pontas da janela do SSS (a do gráfico) e as do ano-base, em competência."""
+    if not meses:
+        return None
+    inicio = pd.Period(str(meses[0]), freq="M")
+    fim = pd.Period(str(meses[-1]), freq="M")
+    return {
+        "inicio": str(inicio),
+        "fim": str(fim),
+        "base_inicio": str(inicio - 12),
+        "base_fim": str(fim - 12),
+    }
+
+
+def _rede_sss_rotulo_base(janela: dict[str, str] | None) -> str:
+    """O ano-base da janela por extenso curto: "Out/2024 a Out/2025" (um mês só: "Out/2025")."""
+    if not janela:
+        return ""
+
+    def rotulo(competencia: str) -> str:
+        periodo = pd.Period(competencia, freq="M")
+        return f"{_SSS_MESES[periodo.month - 1]}/{periodo.year}"
+
+    inicio, fim = rotulo(janela["base_inicio"]), rotulo(janela["base_fim"])
+    return inicio if inicio == fim else f"{inicio} a {fim}"
+
+
+def _rede_sss_serie(tabela: pd.DataFrame, meses: Sequence[str]) -> dict[str, list[Any]]:
+    """SSS mês a mês, alinhado a `serie_meses`: as barras do gráfico.
+
+    Responde à pergunta que o total não responde numa rede que abre loja: *o crescimento é
+    da operação ou da expansão?* Cada ponto tem a SUA base, as unidades que entram naquele
+    mês na `_rede_sss_tabela`. A cesta muda de um ponto para o outro, e é por isso que
+    `unidades` viaja junto: sem ela, uma alta de base pequena parece uma alta da rede.
+    """
+    entram = tabela[tabela["motivo"].isna()]
+    grupos = {str(mes): grupo for mes, grupo in entram.groupby("competencia")}
+    variacoes: list[float | None] = []
+    tamanhos: list[int] = []
+    for mes in meses:
+        grupo = grupos.get(str(mes))
+        agora, antes = _rede_sss_par(grupo, "faturamento") if grupo is not None else (None, None)
+        if agora is None or not antes:
             variacoes.append(None)
             tamanhos.append(0)
             continue
-        soma_agora = entram["faturamento"].sum()
-        soma_antes = entram["ano_anterior"].sum()
-        variacoes.append(
-            _num(100.0 * (soma_agora - soma_antes) / soma_antes, 1) if soma_antes else None
+        variacoes.append(_num(100.0 * (agora - antes) / antes, 1))
+        tamanhos.append(len(grupo))
+    return {"meses": list(meses), "var_pct": variacoes, "unidades": tamanhos}
+
+
+def _rede_sss(
+    tabela: pd.DataFrame, meses: Sequence[str], ids: Collection[str]
+) -> dict[str, Any]:
+    """Same Store Sales do RECORTE na janela do GRÁFICO: o número grande é a soma das barras.
+
+    A rede abriu 33 unidades em 2025; comparar total contra total mede abertura de loja, não
+    desempenho. Cada mês da janela do gráfico compara só as unidades que entram na base
+    naquele mês (`_rede_sss_tabela`), contra o mesmo mês um ano antes. O número grande soma
+    o faturamento dessas unidades em todos os meses e compara com a soma do ano-base. A base
+    muda de um mês para o outro, como nas barras (emenda 1 da DEC-088, Felipe, 18/11/2026).
+    A janela é a do gráfico, então o número depende só do mês FINAL do período escolhido.
+
+    `ids` é o recorte da tela (consultor, master, UF, maturidade, severidade, busca). Sem
+    ele, a conta valia a rede inteira **mesmo com filtro aplicado**. Medido em 2026-08-10 na
+    base de produção: MARISE (24 unidades), GUILHERME (5) e a rede inteira (92) devolviam os
+    TRÊS o mesmo `+6,2%` sobre `60 unidades`. O filtro muda só a cesta somada; ranking e
+    "% vs média da rede" continuam saindo da rede inteira.
+
+    Faturamento e as duas receitas são FLUXO e somam os meses. Alunos ativos, recorrentes e
+    agregadores são FOTO: o último mês da janela que tem base (`mes_foto`).
+
+    As contas de quem ficou de fora são do ÚLTIMO mês da janela (`mes_final`) e fecham com
+    o recorte: `unidades_mes_final + unidades_fora + unidades_rampa == unidades_recorte`.
+    `unidades` conta quem entrou em PELO MENOS um mês (quem tem SSS na lista), e
+    `unidades_min`/`unidades_max` são a menor e a maior base mensal da janela.
+    """
+    alvo = {str(u) for u in ids}
+    do_recorte = tabela[tabela["unidade_id"].isin(alvo)]
+    serie = _rede_sss_serie(do_recorte, meses)
+    entram = do_recorte[do_recorte["motivo"].isna()]
+
+    janela = _rede_sss_janela(meses)
+    mes_final = janela["fim"] if janela else None
+    no_final = do_recorte[do_recorte["competencia"] == mes_final]
+    entram_final = int(no_final["motivo"].isna().sum())
+    rampa = int(no_final["motivo"].isin(_SSS_MOTIVOS_RAMPA).sum())
+    tamanhos = [n for n in serie["unidades"] if n]
+    contagem = {
+        "janela": janela,
+        "competencia_base": _rede_sss_rotulo_base(janela),
+        "unidades": int(entram["unidade_id"].nunique()),
+        "unidades_min": min(tamanhos, default=0),
+        "unidades_max": max(tamanhos, default=0),
+        "unidades_recorte": len(alvo),
+        "mes_final": mes_final,
+        "unidades_mes_final": entram_final,
+        "unidades_fora": max(len(alvo) - entram_final - rampa, 0),
+        "unidades_rampa": rampa,
+        "unidades_base_zero": int((no_final["motivo"] == _SSS_BASE_ZERO).sum()),
+        "maturacao_min_meses": rede_metricas.SSS_MATURACAO_MIN_MESES,
+        "serie": serie,
+    }
+    if not len(entram):
+        return {"disponivel": False, **contagem}
+
+    mes_foto = str(max(entram["competencia"]))
+    foto = entram[entram["competencia"] == mes_foto]
+    metricas: dict[str, Any] = {}
+    for chave in _REDE_SSS_METRICAS:
+        atual_valor, passado = _rede_sss_par(
+            entram if chave in _REDE_SSS_FLUXOS else foto, chave
         )
-        tamanhos.append(len(entram))
-    return {"meses": meses, "var_pct": variacoes, "unidades": tamanhos}
+        casas = _rede_casas(chave)
+        metricas[chave] = {
+            "atual": _num(atual_valor, casas),
+            "ano_anterior": _num(passado, casas),
+            "var_pct": (
+                _num(100.0 * (atual_valor - passado) / passado, 1)
+                if (atual_valor is not None and passado)
+                else None
+            ),
+        }
+    return {"disponivel": True, **contagem, "mes_foto": mes_foto, "metricas": metricas}
+
+
+def _rede_sss_por_unidade(
+    tabela: pd.DataFrame, meses: Sequence[str]
+) -> dict[str, dict[str, Any]]:
+    """SSS de CADA unidade, na janela e com a regra do card (`_rede_sss_tabela`).
+
+    O agregado responde "o recorte cresceu?"; esta lista responde "por causa de quem?". A
+    unidade soma os meses do gráfico em que ENTROU na base (`meses`, de `meses_janela`), e
+    as somas das unidades do recorte fecham com o card. Quem não entrou em mês nenhum
+    aparece com `var_pct` nulo em vez de sumir. O porquê viaja em `motivo` (identificador,
+    sem acento), lido no mês mais recente em que ela aparece:
+
+    * `sem_ano_anterior`: não existia há um ano, ou não operou o mês-base inteiro;
+    * `em_rampa`: existia, mas estava nos primeiros meses de operação no ano-base;
+    * `base_zero`: madura, mas sem faturamento no mês-base.
+    """
+    rotulo = _rede_sss_rotulo_base(_rede_sss_janela(meses))
+    saida: dict[str, dict[str, Any]] = {}
+    if not len(tabela):
+        return saida
+    for unidade_id, linhas in tabela.groupby("unidade_id", sort=False):
+        entram = linhas[linhas["motivo"].isna()]
+        if len(entram):
+            valor, passado = _rede_sss_par(entram, "faturamento")
+            motivo = None
+        else:
+            ultima = linhas.sort_values("competencia").iloc[-1]
+            valor = _numf(ultima["faturamento_agora"])
+            passado = _numf(ultima["faturamento_antes"])
+            motivo = ultima["motivo"] if isinstance(ultima["motivo"], str) else None
+        saida[str(unidade_id)] = {
+            "competencia_base": rotulo,
+            "faturamento": _num(valor, 2),
+            "ano_anterior": _num(passado, 2),
+            "var_pct": (
+                _num(100.0 * (valor - passado) / passado, 1)
+                if (motivo is None and valor is not None and passado)
+                else None
+            ),
+            "motivo": motivo,
+            "meses": int(len(entram)),
+            "meses_janela": len(meses),
+        }
+    return saida
 
 
 #: Métricas em REAIS. Vão para a tela com centavo desde 2026-08-10: o time de campo
@@ -12300,6 +12349,17 @@ def _rede_filtrar(
             if str(registro.get("consultor") or "") == alvo
         }
         dados = dados[dados["unidade_id"].isin(ids)]
+    if filtros.get("franqueado"):
+        # O DONO da unidade, pelo `franqueado` do cadastro (planilha "Controle Franqueados",
+        # carga de 18/11/2026), no molde do master e do consultor. Para o master, o recorte
+        # dele ja' veio antes: franqueado de fora do recorte da' carteira vazia.
+        alvo_franqueado = str(filtros["franqueado"])
+        ids_franqueado = {
+            uid
+            for uid, registro in cadastro.unidades.items()
+            if str(registro.get("franqueado") or "") == alvo_franqueado
+        }
+        dados = dados[dados["unidade_id"].isin(ids_franqueado)]
     if filtros.get("severidade"):
         alvos = {s.strip() for s in str(filtros["severidade"]).split(",") if s.strip()}
         dados = dados[
@@ -12360,6 +12420,8 @@ def rede_filtros(
             {str(m) for m in atual["master"].dropna().unique() if str(m).strip()}
         ),
         "consultores": rede_cadastro.valores_distintos(cadastro, "consultor"),
+        # Dono da unidade (cadastro). Para o master, só os franqueados das unidades dele.
+        "franqueados": rede_cadastro.valores_distintos(cadastro, "franqueado"),
         "masters_franquia": rede_cadastro.valores_distintos(cadastro, "master_franquia"),
         "coortes": rede_coorte.resumo_coortes(atual),
         "severidades": [
@@ -12420,6 +12482,7 @@ def _rede_carteira_payload(
     ordenar: str = "prioridade",
     direcao: str = "desc",
     *,
+    franqueado: str | None = None,
     permitidos: frozenset[str] | None = None,
 ) -> dict[str, Any]:
     """Payload da carteira. Uma função só, para que tela, CSV, XLSX e PDF nunca divirjam.
@@ -12450,6 +12513,7 @@ def _rede_carteira_payload(
             "uf": uf,
             "master": master,
             "consultor": consultor,
+            "franqueado": franqueado,
             "coorte": coorte,
             "severidade": severidade,
             "busca": busca,
@@ -12474,7 +12538,7 @@ def _rede_carteira_payload(
     # segura": a variação da competência em curso, com poucos dias corridos, é ruído.
     fechado = _rede_faturamento_fechado(contexto)
     ultimo_fechado = contexto["serie_meses"][-1] if contexto["serie_meses"] else None
-    sss_unidade = _rede_sss_por_unidade(contexto["atual"], contexto["ano_anterior"])
+    sss_unidade = _rede_sss_por_unidade(contexto["sss_tabela"], contexto["serie_meses"])
     for unidade in unidades:
         unidade["fechado"] = fechado.get(
             unidade["id"],
@@ -12497,8 +12561,7 @@ def _rede_carteira_payload(
     ids = list(recorte["unidade_id"])
     kpis = _rede_kpis(recorte, contexto["m1"], contexto)
     series = _rede_series(recorte, contexto)
-    sss = _rede_sss(contexto["atual"], contexto["ano_anterior"], ids)
-    sss["serie"] = _rede_sss_serie(contexto["cheio"], contexto["serie_meses"], ids)
+    sss = _rede_sss(contexto["sss_tabela"], contexto["serie_meses"], ids)
 
     limite_min, limite_max = _rede_limites()
     return {
@@ -12670,6 +12733,7 @@ def rede_carteira(
     busca: str | None = None,
     ordenar: str = "prioridade",
     direcao: str = "desc",
+    franqueado: str | None = None,
     remote_user: str | None = Header(default=None, alias="Remote-User"),
 ) -> dict[str, Any]:
     """Nível 1: a carteira da rede, priorizada, com o quarteto de contexto por métrica.
@@ -12681,6 +12745,7 @@ def rede_carteira(
     permitidos = _recorte_da_rede(remote_user)
     return _rede_carteira_payload(
         mes, inicio, fim, uf, master, consultor, coorte, severidade, busca, ordenar, direcao,
+        franqueado=franqueado,
         permitidos=permitidos,
     )
 
@@ -14121,6 +14186,7 @@ def rede_inteligencia_recorte(
     severidade: str | None = None,
     busca: str | None = None,
     maduras: bool = True,
+    franqueado: str | None = None,
     remote_user: str | None = Header(default=None, alias="Remote-User"),
 ) -> dict[str, Any]:
     """Painéis de inteligência do RECORTE: praça × execução, rampa, sinais, retenção e
@@ -14133,8 +14199,8 @@ def rede_inteligencia_recorte(
     permitidos = _recorte_da_rede(remote_user)
     contexto, recorte = _rede_contexto_e_recorte(
         mes, inicio, fim,
-        {"uf": uf, "master": master, "consultor": consultor, "coorte": coorte,
-         "severidade": severidade, "busca": busca},
+        {"uf": uf, "master": master, "consultor": consultor, "franqueado": franqueado,
+         "coorte": coorte, "severidade": severidade, "busca": busca},
         permitidos=permitidos,
     )
     reconhece = _rede_reconhece_ultra(permitidos) if permitidos is not None else None
@@ -14488,13 +14554,15 @@ def rede_carteira_csv(
     busca: str | None = None,
     ordenar: str = "prioridade",
     direcao: str = "desc",
+    franqueado: str | None = None,
     remote_user: str | None = Header(default=None, alias="Remote-User"),
 ) -> Response:
     from motor_expansao.dashboard import rede_export
 
     _exigir_rede_inteira(remote_user)  # master não exporta (2a camada; o gate já barra)
     payload = _rede_carteira_payload(
-        mes, inicio, fim, uf, master, consultor, coorte, severidade, busca, ordenar, direcao
+        mes, inicio, fim, uf, master, consultor, coorte, severidade, busca, ordenar, direcao,
+        franqueado=franqueado,
     )
     return _anexo(
         rede_export.carteira_csv(payload),
@@ -14516,13 +14584,15 @@ def rede_carteira_xlsx(
     busca: str | None = None,
     ordenar: str = "prioridade",
     direcao: str = "desc",
+    franqueado: str | None = None,
     remote_user: str | None = Header(default=None, alias="Remote-User"),
 ) -> Response:
     from motor_expansao.dashboard import rede_export
 
     _exigir_rede_inteira(remote_user)  # master não exporta (2a camada; o gate já barra)
     payload = _rede_carteira_payload(
-        mes, inicio, fim, uf, master, consultor, coorte, severidade, busca, ordenar, direcao
+        mes, inicio, fim, uf, master, consultor, coorte, severidade, busca, ordenar, direcao,
+        franqueado=franqueado,
     )
     return _anexo(
         rede_export.carteira_xlsx(payload),
@@ -14544,13 +14614,15 @@ def rede_carteira_pdf(
     busca: str | None = None,
     ordenar: str = "prioridade",
     direcao: str = "desc",
+    franqueado: str | None = None,
     remote_user: str | None = Header(default=None, alias="Remote-User"),
 ) -> Response:
     from motor_expansao.dashboard import rede_export
 
     _exigir_rede_inteira(remote_user)  # master não exporta (2a camada; o gate já barra)
     payload = _rede_carteira_payload(
-        mes, inicio, fim, uf, master, consultor, coorte, severidade, busca, ordenar, direcao
+        mes, inicio, fim, uf, master, consultor, coorte, severidade, busca, ordenar, direcao,
+        franqueado=franqueado,
     )
     return _anexo(
         rede_export.carteira_pdf(payload),
@@ -14590,7 +14662,7 @@ def rede_cadastro_atribuir(
     remote_user: str | None = Header(default=None, alias="Remote-User"),
     remote_email: str | None = Header(default=None, alias="Remote-Email"),
 ) -> dict[str, Any]:
-    """Atribui consultor / master franqueado a uma unidade.
+    """Atribui consultor, master franqueado e franqueado a uma unidade.
 
     Única rota de escrita do piloto. Grava num diretório PRÓPRIO, fora do
     `MOTOR_DATA_DIR` — nenhum artefato do M1 fica sob mount de escrita. O autor sai

@@ -218,8 +218,8 @@ describe('passoAlvoDoModo', () => {
 })
 
 describe('DIMENSOES_RECORTE', () => {
-  it('oferece os tres eixos pedidos, com Estado primeiro', () => {
-    expect(DIMENSOES_RECORTE.map((d) => d.id)).toEqual(['uf', 'master', 'consultor'])
+  it('oferece os quatro eixos pedidos, com Estado primeiro e Franqueado (18/11/2026) por ultimo', () => {
+    expect(DIMENSOES_RECORTE.map((d) => d.id)).toEqual(['uf', 'master', 'consultor', 'franqueado'])
   })
 
   it('todo eixo tem rotulo de chip e convite de seletor', () => {
@@ -236,7 +236,8 @@ describe('DIMENSOES_RECORTE', () => {
 
   it('dimensaoPorId devolve null para eixo desconhecido em vez de estourar', () => {
     expect(dimensaoPorId('uf')?.rotulo).toBe('Estado')
-    expect(dimensaoPorId('franqueado')).toBeNull()
+    expect(dimensaoPorId('franqueado')?.rotulo).toBe('Franqueado')
+    expect(dimensaoPorId('cidade')).toBeNull()
     expect(dimensaoPorId('')).toBeNull()
   })
 })

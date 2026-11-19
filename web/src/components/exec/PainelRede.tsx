@@ -2,7 +2,10 @@ import type { ReactNode } from 'react'
 
 import type { BaseDoDestaque, DestaqueDoRecorte, DestaquesDoRecorte } from '../../lib/exec'
 import {
+  baseDoSssVaria,
+  baseMensalDoSss,
   foraDaBaseSss,
+  janelaDoSss,
   motivoSemBase,
   origemDaSerie,
   rotuloMesCompetencia,
@@ -158,8 +161,12 @@ export function EvolucaoRecorte({
  *  `faturamento_sem_agregador` entra junto de propósito: o faturamento total sobe só
  *  porque um agregador mandou mais gente, e é a receita de recorrente que diz se a MESMA
  *  loja melhorou. Alunos e recorrentes fecham a leitura — receita crescendo sem base
- *  crescendo é reajuste de preço, não crescimento. */
-const LINHAS_SSS: { chave: string; rotulo: string; formato: 'brl' | 'int' }[] = [
+ *  crescendo é reajuste de preço, não crescimento.
+ *
+ *  `foto`: alunos e recorrentes são ESTOQUE, não fluxo. Na janela do gráfico (emenda 1 da
+ *  DEC-088) as receitas somam os meses, e os estoques comparam o último mês com base com o
+ *  mesmo mês um ano antes — a linha diz qual mês. */
+const LINHAS_SSS: { chave: string; rotulo: string; formato: 'brl' | 'int'; foto?: boolean }[] = [
   { chave: 'faturamento_sem_agregador', rotulo: 'Receita de recorrentes', formato: 'brl' },
   // A receita de agregadores entra desde que o faturamento passou a vir da planilha do
   // Financeiro. Antes ela era zero contra zero (a Growth parou de enviá-la em mai/2025) e
@@ -167,8 +174,8 @@ const LINHAS_SSS: { chave: string; rotulo: string; formato: 'brl' | 'int' }[] = 
   // medido em 2026-07 contra 2025-07, o total cresce +4,2%, mas recorrentes crescem +0,8%
   // e agregadores +14,7% — o crescimento da mesma loja é quase todo do agregador.
   { chave: 'faturamento_agregador', rotulo: 'Receita de agregadores', formato: 'brl' },
-  { chave: 'ativos', rotulo: 'Alunos ativos', formato: 'int' },
-  { chave: 'pagantes', rotulo: 'Recorrentes', formato: 'int' },
+  { chave: 'ativos', rotulo: 'Alunos ativos', formato: 'int', foto: true },
+  { chave: 'pagantes', rotulo: 'Recorrentes', formato: 'int', foto: true },
 ]
 
 /** Metade da caixa da série divergente, em px. O eixo zero corta no meio.
@@ -182,6 +189,10 @@ const VAO_SSS = 3
 
 export function CrescimentoComparavel({ sss }: { sss: RedeSss }) {
   const base = rotuloMesCompetencia(sss.competencia_base)
+  // Desde a emenda 1 da DEC-088 o número grande é a SOMA DAS BARRAS: a janela do gráfico,
+  // e não o período escolhido na tela. O card diz quais meses ("de Out/2025 a Out/2026"),
+  // senão o número seria lido como o do período. `null` em payload anterior à emenda.
+  const janela = janelaDoSss(sss)
   // Largura medida da fileira de barras: o tamanho do rótulo de cada barra sai dela.
   const [medirSerie, larguraSerie] = useLargura()
 
@@ -195,13 +206,13 @@ export function CrescimentoComparavel({ sss }: { sss: RedeSss }) {
         <div style={{ font: '400 11.5px/1.65 var(--f-ui)', color: 'var(--tx-narrative)' }}>
           {emRampa ? (
             <>
-              Nenhuma das {num(sss.unidades_recorte)} unidades deste recorte entra na mesma base
-              contra {base}. {foraDaBaseSss(sss)}
+              Nenhuma das {num(sss.unidades_recorte)} unidades deste recorte entra na mesma base{' '}
+              {janela ?? `contra ${base}`}. {foraDaBaseSss(sss)}
             </>
           ) : (
             <>
               Nenhuma das {num(sss.unidades_recorte)} unidades deste recorte operou o mês inteiro
-              nos dois períodos (agora e em {base}).
+              nos dois períodos ({janela ? `${janela} e um ano antes` : `agora e em ${base}`}).
             </>
           )}{' '}
           Sem base comparável não há crescimento a medir: o total de hoje contra o total de um
@@ -255,15 +266,17 @@ export function CrescimentoComparavel({ sss }: { sss: RedeSss }) {
           {sinalPct(variacao)}
         </span>
         <span style={{ font: '400 11.5px/1.4 var(--f-ui)', color: 'var(--tx-label)' }}>
-          de faturamento contra {base}
+          de faturamento {janela ? `${janela} contra ${base}` : `contra ${base}`}
         </span>
       </div>
 
       <div style={{ marginTop: 9, font: '400 11.5px/1.65 var(--f-ui)', color: 'var(--tx-narrative)' }}>
         Mesma base: <strong style={{ color: 'var(--tx-strong)' }}>
-          {num(sss.unidades)} de {num(sss.unidades_recorte)}
+          {janela
+            ? `${baseMensalDoSss(sss)} das ${num(sss.unidades_recorte)}`
+            : `${num(sss.unidades)} de ${num(sss.unidades_recorte)}`}
         </strong>{' '}
-        unidades do recorte.
+        unidades do recorte{janela && baseDoSssVaria(sss) ? ', conforme o mês' : ''}.
         {foraDaBase && <> {foraDaBase}</>}
       </div>
 
@@ -276,6 +289,7 @@ export function CrescimentoComparavel({ sss }: { sss: RedeSss }) {
             <div key={l.chave} style={{ display: 'flex', alignItems: 'baseline', gap: 8 }}>
               <span style={{ flex: 1, minWidth: 0, font: '400 11.5px/1.3 var(--f-ui)', color: 'var(--tx-label)' }}>
                 {l.rotulo}
+                {l.foto && janela && sss.mes_foto ? ` em ${rotuloMesCompetencia(sss.mes_foto)}` : ''}
               </span>
               <span className="num" style={{ font: '600 12px/1 var(--f-num)', color: 'var(--tx-strong)' }}>
                 {fmt(m.atual)}
@@ -589,6 +603,7 @@ export function Destaques({
   onExpandir,
   onUnidade,
   maturacaoMeses,
+  janelaSss,
 }: {
   destaques: DestaquesDoRecorte
   base: BaseDoDestaque
@@ -598,6 +613,9 @@ export function Destaques({
   onUnidade: (u: RedeUnidade) => void
   /** `sss.maturacao_min_meses` da carteira (DEC-088), para o rodapé dizer a regra inteira */
   maturacaoMeses?: number
+  /** a janela do SSS já escrita ("de Out/2025 a Out/2026", emenda 1 da DEC-088); `null`
+   *  em payload anterior a ela, e o rodapé volta ao texto de antes */
+  janelaSss?: string | null
 }) {
   const { puxam, seguram, todas, semBase, competencia } = destaques
   const rotuloBase = competencia ? rotuloMesCompetencia(competencia) : null
@@ -692,7 +710,15 @@ export function Destaques({
             : `Ver todas as ${todas.length + semBase.length} unidades`}
         </button>
         <div style={{ flex: 1, minWidth: 200, font: '400 10.5px/1.5 var(--f-ui)', color: 'var(--tx-muted)' }}>
-          {base === 'sss' ? (
+          {base === 'sss' && janelaSss ? (
+            <>
+              Faturamento de cada unidade {janelaSss} contra os mesmos meses um ano antes, somando
+              só os meses em que ela entra na base: operou o mês inteiro nos dois anos e já tinha{' '}
+              {maturacaoMeses ?? SSS_MATURACAO_PADRAO} meses de operação no início do mês-base. É a
+              conta do crescimento comparável do recorte, aberta unidade a unidade; quem abriu há
+              pouco entra com menos meses, e a linha diz quantos ao passar o mouse.
+            </>
+          ) : base === 'sss' ? (
             <>
               Faturamento de cada unidade contra {rotuloBase ?? 'o mesmo mês do ano anterior'},
               em base comparável: entra quem operou o mês inteiro nos dois períodos e já tinha{' '}
@@ -848,7 +874,13 @@ function LinhaDestaque({
   item: DestaqueDoRecorte
   onUnidade: (u: RedeUnidade) => void
 }) {
-  const { unidade: u, variacao_pct, faturamento } = item
+  const { unidade: u, variacao_pct, faturamento, meses, meses_janela } = item
+  // Na leitura ano a ano, a unidade soma só os meses do gráfico em que entrou na base
+  // (emenda 1 da DEC-088). Quem abriu há pouco entra com poucos meses, e o `title` diz.
+  const mesesNaConta =
+    meses != null && meses_janela && meses < meses_janela
+      ? ` · ${meses} de ${meses_janela} meses na conta do SSS`
+      : ''
   return (
     // Linha inteira num `button`: a ficha é o destino natural de quem lê esta lista, e o
     // alvo de clique passa a ser a linha toda em vez do nome. Vem de graça no teclado e no
@@ -860,7 +892,7 @@ function LinhaDestaque({
       // desta lista: uma unidade de 6 meses cresce 600% contra o ano passado por estar em
       // rampa, não por desempenho. Ela continua na lista — é ela quem puxa o agregado —,
       // mas quem passa o mouse descobre o porquê antes de cobrar o franqueado.
-      title={`Abrir a ficha de ${u.nome} · ${u.uf} · ${u.coorte_rotulo}`}
+      title={`Abrir a ficha de ${u.nome} · ${u.uf} · ${u.coorte_rotulo}${mesesNaConta}`}
       style={{
         display: 'flex',
         alignItems: 'center',

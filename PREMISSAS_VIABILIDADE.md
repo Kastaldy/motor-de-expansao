@@ -45,7 +45,7 @@
 | `SIM_MENSALIDADE_BALCAO` | `137` | R$/aluno/mês | `Simulador!J9`, cenário 0 studios | Felipe | `config.py`; **fallback do backend** quando o operador não informa ticket (`payload_viabilidade.py`, que monta o corpo da rota de `web/server/app.py`; `viabilidade_ponto.py`; `backtest_dim.py`). A tela envia `147` — ver conflito **C** na §9 |
 | `SIM_TICKET_AGREGADOR_FATOR` | `0.60` | % do ticket cheio | comentário original de `viabilidade_ponto.py` ("~60% do ticket"), formalizado no FIN-VIAB-01 | Felipe | `config.py` → `Premissas.ticket_agregador_fator` → `Premissas.ticket_agregador` |
 | `SIM_TICKET_AGREGADOR` | `82` | R$/aluno/mês | aba `Simulador`, linha 11 | **congelado (legado)** | `config.py`; só alimenta `viabilidade()` legado e `ticket_agregador_absoluto` |
-| `SIM_SHARE_BALCAO` | `0.69` | % dos alunos totais | mix real da rede (69 balcão / 31 agregadores) | Felipe | `config.py` → `Premissas.share_balcao`; payload `premissas.share_balcao` e `split` |
+| `SIM_SHARE_BALCAO` | `0.69` | % dos alunos totais | mix real da rede (69 balcão / 31 agregadores) | Felipe | `config.py` → `Premissas.share_balcao`; payload `premissas.share_balcao` e `split`. É o PADRÃO: desde 18/11/2026 o campo "Recorrente (balcão)" da Viabilidade é editável também no Brasil (antes só no AR) e o agregador é o complemento; vazio volta a 0,69 |
 | `SIM_CHURN` | `0.06` | % ao mês | `Simulador!E12` | Controladoria | `config.py` → `Premissas.churn` |
 | `SIM_INADIMPLENCIA` | `0.02` | % da receita | DRE | Controladoria | `config.py` → `Premissas.inadimplencia` |
 | `SIM_PERSONAL_MES_RECEITA` | `5 000` | R$/mês | DRE linha 24 (receita fixa de personal) | Controladoria | `config.py` → `Premissas.personal_mes` |
