@@ -17244,14 +17244,20 @@ def api_master_mapa(master_id: str) -> Response:
 #: Casas decimais das coordenadas dos setores do território (5 = cerca de 1 m): o território
 #: inteiro vai numa resposta só, e a sexta casa só pesaria no fio.
 MASTERS_SETORES_CASAS = 5
-#: A simplificação de cada setor do território acompanha o TAMANHO dele: 2% do lado (a raiz da
-#: área), entre a do mapa de calor do município (`SETORES_HEATMAP_SIMPLIFY_GRAUS`, cerca de 11 m,
-#: que fica para os setores urbanos) e 0,002 grau (cerca de 220 m, nos rurais grandes). Medido no
-#: DF/GO em 19/11/2026 (18.279 setores): com os 11 m em todos, 1,33 milhão de vértices e 29 MB de
-#: JSON, porque os contornos dos setores rurais grandes seguem rios e estradas; com esta régua,
-#: cerca de 320 mil (7,3 MB de JSON). Só 1 de cada 3 setores sai da simplificação de 11 m.
-MASTERS_SETORES_FRACAO_DO_LADO = 0.02
-MASTERS_SETORES_SIMPLIFY_MAX_GRAUS = 0.002
+#: A geometria dos setores do território é simplificada como COBERTURA (`shapely.coverage_simplify`):
+#: a borda comum de dois setores vizinhos é simplificada uma vez só e serve aos dois, e o mapa não
+#: abre fresta entre eles. Simplificar setor a setor abria: na prévia de 19/11/2026 apareciam
+#: frestas escuras entre os setores rurais grandes ao aproximar. Duas passadas, porque a tolerância
+#: da cobertura é uma só:
+#: 1. o território inteiro, com uma tolerância fina (cerca de 33 m), que é a dos setores urbanos;
+#: 2. só os setores rurais (lado acima de `MASTERS_SETORES_LADO_RURAL`), com uma tolerância grossa
+#:    (cerca de 280 m) e sem mexer na borda deles com os urbanos (`simplify_boundary=False`).
+#: Medido no DF/GO em 19/11/2026 (18.279 setores): com 11 m em todos os setores, 1,33 milhão de
+#: vértices e 29 MB de JSON, porque os contornos dos setores rurais grandes seguem rios e estradas;
+#: com as duas passadas, cerca de 300 mil.
+MASTERS_SETORES_TOL_COBERTURA = 0.0003
+MASTERS_SETORES_LADO_RURAL = 0.004
+MASTERS_SETORES_TOL_RURAL = 0.0025
 #: O que a renda domiciliar (`renda.setor.renda_domiciliar_da_linha`) e a densidade leem de cada
 #: setor, além da geometria.
 _COLUNAS_SETOR_NO_TERRITORIO = [
@@ -17263,13 +17269,11 @@ _COLUNAS_SETOR_NO_TERRITORIO = [
 ]
 
 
-def _setores_do_municipio_no_territorio(uf: str, cod_municipio: str) -> list[list[Any]]:
-    """Os setores de um município para o mapa do território do master: uma linha por peça,
-    `[renda domiciliar, densidade, anéis]`. Renda e densidade são as do mapa de calor do município
-    (`_setores_heatmap_features`); a geometria sai simplificada pelo tamanho do setor
-    (`MASTERS_SETORES_FRACAO_DO_LADO`), e as peças e os buracos pelo mesmo `_aneis`. Município sem
+def _setores_do_municipio_no_territorio(uf: str, cod_municipio: str) -> list[tuple[Any, Any, Any]]:
+    """Os setores de um município para o mapa do território do master, ainda sem simplificar:
+    `(geometria, renda domiciliar, densidade)`, com a renda e a densidade do mapa de calor do
+    município (`_setores_heatmap_features`). Setor sem geometria fica de fora; município sem
     partição: nada."""
-    import numpy as np
     import shapely
 
     from motor_expansao.dashboard.data import read_censo_geo_partition
@@ -17280,29 +17284,36 @@ def _setores_do_municipio_no_territorio(uf: str, cod_municipio: str) -> list[lis
     geoms = shapely.from_wkb(df["geometry_wkb"].to_numpy(), on_invalid="ignore")
     invalidas = ~shapely.is_valid(geoms) & ~shapely.is_missing(geoms)
     geoms[invalidas] = shapely.buffer(geoms[invalidas], 0)
-    lado = np.sqrt(np.nan_to_num(shapely.area(geoms)))
-    tolerancia = np.clip(
-        lado * MASTERS_SETORES_FRACAO_DO_LADO,
-        SETORES_HEATMAP_SIMPLIFY_GRAUS,
-        MASTERS_SETORES_SIMPLIFY_MAX_GRAUS,
-    )
-    # Sem `preserve_topology`: 0,6 s contra 7,5 s no DF/GO, com os mesmos vértices; o anel que
-    # sair cruzado volta válido no `_aneis` (`set_precision`, e `buffer(0)` se preciso).
-    geoms = shapely.simplify(geoms, tolerancia, preserve_topology=False)
 
     _renda_staging_configurado()  # aponta os insumos da renda para o STAGING_DIR (1x)
     colunas = [c for c in _COLUNAS_SETOR_NO_TERRITORIO if c in df.columns]
-    casas = MASTERS_SETORES_CASAS
-    linhas: list[list[Any]] = []
-    for geom, r in zip(geoms, df[colunas].to_dict("records"), strict=True):
-        if geom is None or geom.is_empty:
-            continue
-        renda = _num(_renda_setor.renda_domiciliar_da_linha(r, uf, cod_municipio), 0)
-        densidade = _num(r.get("densidade_pop_setor_hab_km2"), 1)
-        for parte in cobertura_1km._aneis(geom):
-            aneis = [[[round(x, casas), round(y, casas)] for x, y in anel] for anel in parte]
-            linhas.append([renda, densidade, aneis])
-    return linhas
+    return [
+        (
+            geom,
+            _num(_renda_setor.renda_domiciliar_da_linha(r, uf, cod_municipio), 0),
+            _num(r.get("densidade_pop_setor_hab_km2"), 1),
+        )
+        for geom, r in zip(geoms, df[colunas].to_dict("records"), strict=True)
+        if geom is not None and not geom.is_empty
+    ]
+
+
+def _simplificar_cobertura_do_territorio(geoms: Any) -> Any:
+    """Os setores do território simplificados como cobertura, em duas passadas (ver
+    `MASTERS_SETORES_TOL_COBERTURA`): vizinhos seguem encaixados, sem fresta entre eles."""
+    import numpy as np
+    import shapely
+
+    geoms = np.asarray(geoms, dtype=object)
+    if not len(geoms):
+        return geoms
+    rural = np.sqrt(shapely.area(geoms)) > MASTERS_SETORES_LADO_RURAL
+    geoms = shapely.coverage_simplify(geoms, MASTERS_SETORES_TOL_COBERTURA)
+    if rural.any():
+        geoms[rural] = shapely.coverage_simplify(
+            geoms[rural], MASTERS_SETORES_TOL_RURAL, simplify_boundary=False
+        )
+    return geoms
 
 
 @functools.lru_cache(maxsize=4)
@@ -17310,13 +17321,24 @@ def _masters_setores(master_id: str, fontes: tuple[tuple[str, int], ...]) -> str
     """Os polígonos dos setores do Censo de TODOS os municípios do território (JSON), com renda
     domiciliar e densidade: o mapa do painel pinta a renda e a densidade com eles em QUALQUER zoom
     (19/11/2026, Juan: "deixe a densidade e a renda (quando ativadas) aparecendo sem limite de
-    zoom"). Antes, de longe, ia um ponto por setor, e os polígonos só no zoom de cidade."""
+    zoom"). Antes, de longe, ia um ponto por setor, e os polígonos só no zoom de cidade.
+
+    Uma linha por peça, `[renda domiciliar, densidade, anéis]` (as peças e os buracos pelo mesmo
+    `_aneis` do mapa de calor), com as coordenadas em `MASTERS_SETORES_CASAS` casas. A cobertura
+    é o território inteiro de uma vez, para a borda entre dois municípios também ficar sem fresta."""
     territorio = json.loads(_masters_mapa(master_id, fontes))
-    linhas = [
-        linha
+    setores = [
+        setor
         for uf, cod, *_ in territorio["municipios"]
-        for linha in _setores_do_municipio_no_territorio(uf, cod)
+        for setor in _setores_do_municipio_no_territorio(uf, cod)
     ]
+    geoms = _simplificar_cobertura_do_territorio([g for g, _, _ in setores])
+    casas = MASTERS_SETORES_CASAS
+    linhas = []
+    for geom, (_, renda, densidade) in zip(geoms, setores, strict=True):
+        for parte in cobertura_1km._aneis(geom):
+            aneis = [[[round(x, casas), round(y, casas)] for x, y in anel] for anel in parte]
+            linhas.append([renda, densidade, aneis])
     return json.dumps({"setores": linhas}, ensure_ascii=False, separators=(",", ":"))
 
 
