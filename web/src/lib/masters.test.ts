@@ -12,6 +12,8 @@ import {
   escalaDaBarra,
   etiquetasDaUnidade,
   focoDoHexagono,
+  lerCoordenada,
+  masterQueAbreSozinho,
   metaDoAno,
   municipiosAVista,
   pct,
@@ -303,6 +305,7 @@ describe('tela Masters (DEC-089): textos', () => {
     expect(alunosCurto(730)).toBe('730')
     expect(alunosCurto(null)).toBe('—')
   })
+
   it('os setores do Censo carregam só para os municípios à vista, os de mais área primeiro', () => {
     const mun = (cod: string, caixa: [number, number, number, number]) =>
       ['DF', cod, cod, caixa] as [string, string, string, [number, number, number, number]]
@@ -314,5 +317,26 @@ describe('tela Masters (DEC-089): textos', () => {
     const vista: [[number, number], [number, number]] = [[-48.1, -16.0], [-47.9, -15.8]]
     expect(municipiosAVista(todos, vista).map((m) => m[1])).toEqual(['grande', 'pequeno'])
     expect(municipiosAVista(todos, vista, 1).map((m) => m[1])).toEqual(['grande'])
+  })
+
+  it('o master com login próprio abre direto no painel dele; os outros perfis, na lista', () => {
+    const m = (id: string) => ({ id }) as never
+    expect(masterQueAbreSozinho({ proprio: true, masters: [m('dfgo')] })).toBe('dfgo')
+    // Growth e Líderes (lista inteira) e servidor antigo (sem o campo): a lista.
+    expect(masterQueAbreSozinho({ proprio: false, masters: [m('dfgo')] })).toBeNull()
+    expect(masterQueAbreSozinho({ masters: [m('dfgo')] })).toBeNull()
+    // Login sem master (aviso) ou com mais de um (a lista dos dele).
+    expect(masterQueAbreSozinho({ proprio: true, masters: [] })).toBeNull()
+    expect(masterQueAbreSozinho({ proprio: true, masters: [m('a'), m('b')] })).toBeNull()
+    expect(masterQueAbreSozinho(null)).toBeNull()
+  })
+
+  it('a coordenada do card de estudo, com ponto ou vírgula decimal', () => {
+    expect(lerCoordenada('-15.79, -47.88')).toEqual({ lat: -15.79, lng: -47.88 })
+    expect(lerCoordenada('-15,79 -47,88')).toEqual({ lat: -15.79, lng: -47.88 })
+    expect(lerCoordenada(' -15.79;-47.88 ')).toEqual({ lat: -15.79, lng: -47.88 })
+    expect(lerCoordenada('Asa Sul')).toBeNull()
+    expect(lerCoordenada('-15.79')).toBeNull()
+    expect(lerCoordenada('95, 10')).toBeNull()
   })
 })

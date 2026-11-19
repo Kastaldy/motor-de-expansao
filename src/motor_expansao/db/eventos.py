@@ -42,6 +42,12 @@ from .postgres import conexao, transacao
 EVENTO_RELATORIO_GERADO = "relatorio.gerado"
 EVENTO_DOSSIE_BAIXADO = "dossie.baixado"
 
+#: Os gestos do master no Inicio do piloto (emenda 2 da DEC-089, 19/11/2026). O master pede um
+#: imovel numa regiao; e o estudo de um ponto FORA do territorio dele fica registrado para o
+#: Growth ("notificar a growth, ainda nao sei como", Juan): por ora, a linha na trilha.
+EVENTO_IMOVEL_SOLICITADO = "imovel.solicitado"
+EVENTO_ESTUDO_FORA_DA_AREA = "estudo.fora_da_area"
+
 #: Os dois gestos da §2.4 que sobem para `eventos`. Os outros cinco ficam so' na trilha de 90
 #: dias: marcar visita e' DECISAO DE NEGOCIO sobre um imovel, abrir uma aba nao e'.
 EVENTO_VISITA_MARCADA = "imovel.visita_marcada"
@@ -102,6 +108,12 @@ VALUES (%s, %s, NULL, NULL, %s)
 # nome mentir sobre o que a instrucao grava, e as duas podem divergir amanha (o dossie nao tem
 # `report_id` -- ele nao e' gerado pelo motor, vem pronto do coletor).
 SQL_REGISTRAR_DOSSIE = """
+INSERT INTO eventos (id_usuario, tipo, entidade, entidade_id, metadados)
+VALUES (%s, %s, NULL, NULL, %s)
+"""
+
+# Os gestos do master no Inicio (emenda 2 da DEC-089): mesma forma, constante propria.
+SQL_REGISTRAR_GESTO_DO_MASTER = """
 INSERT INTO eventos (id_usuario, tipo, entidade, entidade_id, metadados)
 VALUES (%s, %s, NULL, NULL, %s)
 """
@@ -228,6 +240,38 @@ def registrar_relatorio(
             (autor, EVENTO_RELATORIO_GERADO, Jsonb(metadados)),
         )
     return identificador
+
+
+def registrar_imovel_solicitado(*, autor: int | None, masters: list[str], regiao: str) -> None:
+    """Grava `imovel.solicitado`: o master pede um imovel numa regiao (texto dele, ate' 300
+    caracteres), com os masters do login (`masters`, ids da config; vazio para quem ve todos)."""
+    from psycopg.types.json import Jsonb  # import tardio: so' quem escreve paga
+
+    metadados: dict[str, Any] = {"masters": list(masters), "regiao": regiao, "origem": "web"}
+    with transacao(id_usuario=autor) as con:
+        con.execute(
+            SQL_REGISTRAR_GESTO_DO_MASTER, (autor, EVENTO_IMOVEL_SOLICITADO, Jsonb(metadados))
+        )
+
+
+def registrar_estudo_fora_da_area(
+    *, autor: int | None, masters: list[str], lat: float, lng: float, report_id: str | None
+) -> None:
+    """Grava `estudo.fora_da_area`: o master gerou o estudo de um ponto fora do territorio dele (o
+    PDF sai com o aviso). `report_id` liga a linha ao `relatorio.gerado` do mesmo PDF."""
+    from psycopg.types.json import Jsonb  # import tardio: so' quem escreve paga
+
+    metadados: dict[str, Any] = {
+        "masters": list(masters),
+        "lat": round(float(lat), 6),
+        "lng": round(float(lng), 6),
+        "report_id": report_id,
+        "origem": "web",
+    }
+    with transacao(id_usuario=autor) as con:
+        con.execute(
+            SQL_REGISTRAR_GESTO_DO_MASTER, (autor, EVENTO_ESTUDO_FORA_DA_AREA, Jsonb(metadados))
+        )
 
 
 def registrar_dossie_baixado(*, autor: int | None, imovel_id: str, origem: str = "web") -> None:

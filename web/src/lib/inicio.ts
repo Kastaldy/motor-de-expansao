@@ -32,22 +32,35 @@ export type ModoInicio =
   | 'panorama'
   | 'recorte'
   | 'unidade'
+  // Trilha do MASTER (emenda 2 da DEC-089): so' para o master com login proprio
+  | 'imovel'
+  | 'masters'
+  | 'estudo'
 
 /** As duas perguntas que a entrada sabe fazer. */
-export type TrilhaInicio = 'expansao' | 'operacoes'
+export type TrilhaInicio = 'expansao' | 'operacoes' | 'master'
 
 /**
  * Telas que um card pode abrir hoje. E' um SUBCONJUNTO do `Tela` do `App.tsx`, e nao um
  * import dele de proposito: este modulo precisa continuar carregavel pelo vitest sem
  * arrastar React, deck.gl e o app inteiro para dentro do teste.
  */
-export type DestinoInicio = 'mapa' | 'ponto' | 'oportunidades' | 'executiva'
+export type DestinoInicio = 'mapa' | 'ponto' | 'oportunidades' | 'executiva' | 'masters'
 
 /**
  * Chave da ilustracao do card. Mora AQUI, e nao no `Artes.tsx` que a desenha, para o
  * teste do menu poder afirmar que todo card tem arte sem importar React.
  */
-export type ArteInicio = 'brasil' | 'estado' | 'ponto' | 'painel' | 'rede' | 'ficha'
+export type ArteInicio =
+  | 'brasil'
+  | 'estado'
+  | 'ponto'
+  | 'painel'
+  | 'rede'
+  | 'ficha'
+  | 'imovel'
+  | 'meupainel'
+  | 'estudo'
 
 /**
  * SEGUNDO PASSO que um card faz ANTES de navegar (2026-09-22).
@@ -67,7 +80,7 @@ export type ArteInicio = 'brasil' | 'estado' | 'ponto' | 'painel' | 'rede' | 'fi
  * BRASIL ("do Brasil ao municipio") — estado e municipio sao filtros DENTRO da tela, e
  * pedir um recorte antes contradiria o card.
  */
-export type SegundoPasso = 'recorte' | 'unidade' | 'uf' | 'endereco' | null
+export type SegundoPasso = 'recorte' | 'unidade' | 'uf' | 'endereco' | 'imovel' | 'estudo' | null
 
 /** Por qual eixo a carteira pode ser recortada na entrada. */
 export type DimensaoRecorte = 'uf' | 'master' | 'consultor' | 'franqueado'
@@ -258,10 +271,51 @@ export const MODOS: readonly ModoDefinicao[] = Object.freeze([
     passoAlvo: null,
     segundoPasso: 'unidade',
   }),
+
+  /* ---------------- Trilha: do MASTER (emenda 2 da DEC-089, 19/11/2026) ----------------
+     Juan: "na visão do master, na aba inicial, crie uma nova (igual o acompanhar a rede): à
+     esquerda solicitar imóvel, no meio Masters (que vai para a aba da esquerda) e à direita a
+     solicitação de estudo, com as coordenadas, sem levar para o mapa". So' aparece para quem
+     ve o proprio painel (`masters_proprio` no `/api/me`). Os dois passos FAZEM o gesto no
+     proprio card (pedido gravado; PDF baixado) e nao navegam: o `destino` e' a aba que os
+     libera, a tela Masters. */
+  Object.freeze({
+    id: 'imovel',
+    trilha: 'master',
+    eyebrow: 'Imóvel',
+    titulo: 'Solicitar um imóvel',
+    linha: 'Diga em que região você gostaria de um imóvel.',
+    arte: 'imovel',
+    destino: 'masters',
+    passoAlvo: null,
+    segundoPasso: 'imovel',
+  }),
+  Object.freeze({
+    id: 'masters',
+    trilha: 'master',
+    eyebrow: 'Meu painel',
+    titulo: 'Masters',
+    linha: 'O crescimento, o mapa, onde abrir e a meta do seu território.',
+    arte: 'meupainel',
+    destino: 'masters',
+    passoAlvo: null,
+    segundoPasso: null,
+  }),
+  Object.freeze({
+    id: 'estudo',
+    trilha: 'master',
+    eyebrow: 'Coordenada',
+    titulo: 'Solicitar um estudo',
+    linha: 'Digite a coordenada e receba o estudo do ponto em PDF.',
+    arte: 'estudo',
+    destino: 'masters',
+    passoAlvo: null,
+    segundoPasso: 'estudo',
+  }),
 ])
 
 /** Ordem em que as trilhas aparecem na pilula. */
-export const ORDEM_TRILHAS: readonly TrilhaInicio[] = Object.freeze(['expansao', 'operacoes'])
+export const ORDEM_TRILHAS: readonly TrilhaInicio[] = Object.freeze(['expansao', 'operacoes', 'master'])
 
 export interface TrilhaDefinicao {
   id: TrilhaInicio
@@ -277,6 +331,11 @@ export const TRILHAS: Readonly<Record<TrilhaInicio, TrilhaDefinicao>> = Object.f
     rotulo: 'Expandir a rede',
     subtitulo:
       'Escolha em que escala você quer olhar o território: do Brasil inteiro até um endereço.',
+  }),
+  master: Object.freeze({
+    id: 'master',
+    rotulo: 'Meu território',
+    subtitulo: 'Peça um imóvel, abra o painel do seu master ou gere o estudo de um ponto.',
   }),
   operacoes: Object.freeze({
     id: 'operacoes',
@@ -338,7 +397,11 @@ export function trilhasDisponiveis(modos: readonly ModoDefinicao[]): readonly Tr
  * sem card algum), devolve `null` e a tela mostra a explicacao em vez de cards.
  */
 export function trilhaInicial(modos: readonly ModoDefinicao[]): TrilhaInicio | null {
-  return trilhasDisponiveis(modos)[0] ?? null
+  const disponiveis = trilhasDisponiveis(modos)
+  // O master com login proprio abre no Inicio DELE (emenda 2 da DEC-089); a Executiva fica a um
+  // clique, na pilula.
+  if (disponiveis.includes('master')) return 'master'
+  return disponiveis[0] ?? null
 }
 
 /**

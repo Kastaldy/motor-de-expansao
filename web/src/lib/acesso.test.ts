@@ -78,8 +78,16 @@ describe('telaLiberada', () => {
 })
 
 describe('modosLiberados', () => {
-  it('sem controle devolve todos os cards das duas trilhas', () => {
-    expect(modosLiberados(null)).toEqual(MODOS)
+  it('sem controle devolve os cards das duas trilhas de sempre (a do master pede o /api/me)', () => {
+    expect(modosLiberados(null)).toEqual(MODOS.filter((m) => m.trilha !== 'master'))
+  })
+
+  it('a trilha do master so' + "'" + ' aparece para o master com login proprio (emenda 2 da DEC-089)', () => {
+    const abasDoMaster = new Set(['executiva', 'masters']) as Set<Aba>
+    const doMaster = modosLiberados(abasDoMaster, true).map((m) => m.id)
+    expect(doMaster).toEqual(['panorama', 'recorte', 'unidade', 'imovel', 'masters', 'estudo'])
+    // Growth e Líderes também têm a aba Masters, e o Início deles não ganha a trilha.
+    expect(modosLiberados(abasDoMaster, false).map((m) => m.id)).toEqual(['panorama', 'recorte', 'unidade'])
   })
 
   it('mapa + oportunidades + viabilidade = so a trilha de expansao (perfil do grupo 2)', () => {

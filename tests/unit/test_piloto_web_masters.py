@@ -772,3 +772,265 @@ def test_o_ponto_do_setor_e_o_centro_da_caixa_sem_arredondar(
         (-47.89, -15.79, 5500.0, 12345.7),
         (-47.79, -15.69, 3300.0, None),
     )
+
+
+# ---------------------------------------------------------------------------
+# O master com login próprio (027, emenda 2 da DEC-089; 19/11/2026, Juan: "os masters vão ter seus
+# próprios logins; quando clicarem em Masters, já abrir no nome dele")
+# ---------------------------------------------------------------------------
+
+
+def _login(monkeypatch: pytest.MonkeyPatch, nome: Any, permissoes: set[str]) -> None:
+    """Banco no comando, a identidade e o nome do usuário dublados."""
+    monkeypatch.setattr(acesso, "banco_no_comando", lambda: True)
+    _identidade(monkeypatch, permissoes)
+
+    def nome_do_usuario(_id: int) -> Any:
+        if isinstance(nome, Exception):
+            raise nome
+        return nome
+
+    monkeypatch.setattr(rbac, "nome_do_usuario", nome_do_usuario)
+
+
+def test_o_master_com_login_ve_so_o_proprio_painel(
+    masters: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _login(monkeypatch, "MASTER  um", {"masters.ver_proprio"})
+    lista = pilot.api_masters(remote_user="alguem")
+    assert [c["id"] for c in lista["masters"]] == ["rjsp"]
+    assert lista["proprio"] is True  # a tela abre direto nele
+    assert pilot.api_master("rjsp", remote_user="alguem")["id"] == "rjsp"
+    # O de outro master responde como um master que não existe (404, e não 403).
+    assert _status(lambda: pilot.api_master("sp03", remote_user="alguem")) == (
+        404,
+        "Master não encontrado.",
+    )
+
+
+def test_login_cujo_nome_nao_e_de_master_nao_ve_nenhum(
+    masters: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    for nome in ("Outra Pessoa", None):
+        _login(monkeypatch, nome, {"masters.ver_proprio"})
+        lista = pilot.api_masters(remote_user="alguem")
+        assert lista["masters"] == [] and lista["proprio"] is True
+        assert _status(lambda: pilot.api_master("rjsp", remote_user="alguem"))[0] == 404
+
+
+def test_growth_e_lideres_seguem_vendo_todos(
+    masters: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _login(monkeypatch, "Master Um", {"masters.ver"})
+    lista = pilot.api_masters(remote_user="alguem")
+    assert [c["id"] for c in lista["masters"]] == ["rjsp", "sp03"]
+    assert lista["proprio"] is False
+
+
+def test_banco_fora_ao_ler_o_nome_vira_503_e_nunca_todos(
+    masters: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from motor_expansao import db
+
+    _login(monkeypatch, db.BancoIndisponivel("fora"), {"masters.ver_proprio"})
+    assert _status(lambda: pilot.api_masters(remote_user="alguem"))[0] == 503
+
+
+@pytest.mark.parametrize(
+    "rota",
+    [
+        "api_master_mapa",
+        "api_master_mapa_camadas",
+        "api_master_recomendacao",
+        "api_master_crescimento",
+        "api_master_setores_pontos",
+    ],
+)
+def test_as_leituras_do_painel_barram_o_master_de_outro(
+    mapa: dict[str, Any], monkeypatch: pytest.MonkeyPatch, rota: str
+) -> None:
+    _login(monkeypatch, "Master Um", {"masters.ver_proprio"})
+    # A conta da recomendação tem os testes dela; aqui só importa quem chega até ela.
+    monkeypatch.setattr(pilot, "_bloco_recomendacao", lambda *_a, **_k: {})
+    funcao = getattr(pilot, rota)
+    assert _status(lambda: funcao("sp03", remote_user="alguem")) == (404, "Master não encontrado.")
+    funcao("rjsp", remote_user="alguem")  # o próprio passa
+
+
+def test_o_estudo_e_o_relatorio_barram_o_master_de_outro(
+    relatorio: list[dict[str, Any]], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _login(monkeypatch, "Master Um", {"masters.ver_proprio"})
+    outro = (404, "Master não encontrado.")
+    assert _status(lambda: asyncio.run(pilot.api_master_estudo("sp03", remote_user="x"))) == outro
+    assert (
+        _status(
+            lambda: asyncio.run(pilot.api_master_relatorio("sp03", regiao=None, remote_user="x"))
+        )
+        == outro
+    )
+    # O próprio gera o relatório (Juan: "sim, ele, os líderes e o growth").
+    r = asyncio.run(pilot.api_master_relatorio("rjsp", regiao="rj", remote_user="x"))
+    assert r.media_type == "application/pdf"
+    assert relatorio[-1]["master"] == "rjsp"
+
+
+def test_o_perfil_master_ve_a_aba_masters(monkeypatch: pytest.MonkeyPatch) -> None:
+    assert "masters.ver_proprio" in acesso.CAPACIDADES_SENSIVEIS
+    _identidade(monkeypatch, {"rede.ver_propria", "masters.ver_proprio"})
+    assert acesso.abas_do_usuario_por_banco("alguem") == frozenset({"executiva", "masters"})
+    # Só a capacidade da Executiva não dá a tela Masters.
+    _identidade(monkeypatch, {"rede.ver_propria"})
+    assert acesso.abas_do_usuario_por_banco("alguem") == frozenset({"executiva"})
+
+
+def test_a_migration_027_da_o_proprio_painel_so_ao_perfil_master() -> None:
+    sql = (_REPO / "src/motor_expansao/db/migracoes/027-permissao-masters-proprio.sql").read_text(
+        encoding="utf-8"
+    )
+    assert "('masters.ver_proprio'," in sql
+    concessoes = sql.split("INSERT INTO perfil_permissoes")[1]
+    assert "('master', 'masters.ver_proprio')" in concessoes
+    for fora in ("growth", "lideres", "consultoria", "expansao"):
+        assert f"('{fora}'," not in concessoes
+
+
+# ---------------------------------------------------------------------------
+# O Início do master (emenda 2 da DEC-089; 19/11/2026, Juan): o pedido de imóvel e o estudo de um
+# ponto por coordenadas, com o aviso "Estudo fora da sua área de atuação" fora do território.
+# ---------------------------------------------------------------------------
+
+
+def test_o_master_pede_um_imovel_numa_regiao(
+    masters: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from motor_expansao.db import eventos as db_eventos
+
+    _login(monkeypatch, "Master Um", {"masters.ver_proprio"})
+    gravados: list[dict[str, Any]] = []
+    monkeypatch.setattr(db_eventos, "registrar_imovel_solicitado", lambda **kw: gravados.append(kw))
+    r = pilot.api_master_solicitar_imovel(
+        pilot.PedidoDeImovelIn(regiao="  Asa Sul,   perto do   Parkshopping "), remote_user="x"
+    )
+    assert r == {"ok": True, "registrado": True}
+    assert gravados == [
+        {"autor": 1, "masters": ["rjsp"], "regiao": "Asa Sul, perto do Parkshopping"}
+    ]
+    # Região em branco não vira pedido.
+    vazio = (400, "Diga a região em que você gostaria de um imóvel.")
+    assert (
+        _status(
+            lambda: pilot.api_master_solicitar_imovel(
+                pilot.PedidoDeImovelIn(regiao="   "), remote_user="x"
+            )
+        )
+        == vazio
+    )
+
+
+def test_o_pedido_de_imovel_nao_cai_quando_a_trilha_falha(
+    masters: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from motor_expansao.db import eventos as db_eventos
+
+    _login(monkeypatch, "Master Um", {"masters.ver_proprio"})
+
+    def quebra(**_kw: Any) -> None:
+        raise RuntimeError("banco caiu no meio")
+
+    monkeypatch.setattr(db_eventos, "registrar_imovel_solicitado", quebra)
+    r = pilot.api_master_solicitar_imovel(pilot.PedidoDeImovelIn(regiao="Centro"), remote_user="x")
+    assert r == {"ok": True, "registrado": False}
+
+
+@pytest.fixture
+def estudo_do_ponto(mapa: dict[str, Any], monkeypatch: pytest.MonkeyPatch) -> dict[str, list[Any]]:
+    """O gerador do PDF e os registros dublados: aqui se confere a rota (área, aviso, trilha)."""
+    from motor_expansao.db import eventos as db_eventos
+
+    pdfs: list[dict[str, Any]] = []
+    fora: list[dict[str, Any]] = []
+
+    def gerar(lat: float, lng: float, *args: Any, **kw: Any) -> Any:
+        pdfs.append({"lat": lat, "lng": lng, **kw})
+        return pilot.Response(content=b"%PDF-estudo", media_type="application/pdf")
+
+    async def registrar(*_a: Any, **_k: Any) -> str:
+        return "rid-1"
+
+    monkeypatch.setattr(pilot, "_gerar_relatorio_pontual_pdf", gerar)
+    monkeypatch.setattr(pilot, "_registrar_relatorio_gerado_fora_do_loop", registrar)
+    monkeypatch.setattr(db_eventos, "registrar_estudo_fora_da_area", lambda **kw: fora.append(kw))
+    return {"pdfs": pdfs, "fora": fora}
+
+
+def _estudo_do_ponto(lat: float, lng: float) -> Any:
+    return asyncio.run(pilot.api_master_estudo_do_ponto(lat, lng, remote_user="x"))
+
+
+def test_estudo_dentro_do_territorio_sai_sem_aviso(
+    estudo_do_ponto: dict[str, list[Any]], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _login(monkeypatch, "Master Um", {"masters.ver_proprio"})
+    r = _estudo_do_ponto(-23.55, -46.63)  # São Paulo, do território do RJ/SP 01
+    assert r.body == b"%PDF-estudo"
+    (pdf,) = estudo_do_ponto["pdfs"]
+    assert pdf["so_estudo"] is True and pdf["aviso_fora_da_area"] is False
+    assert pdf["report_id"] == "rid-1"
+    assert estudo_do_ponto["fora"] == []
+    # Um terreno vazio dentro do território (Ribeirão Preto, sem gente) ainda é do território.
+    _estudo_do_ponto(-21.20, -47.80)
+    assert estudo_do_ponto["pdfs"][-1]["aviso_fora_da_area"] is False
+
+
+def test_estudo_fora_do_territorio_sai_com_o_aviso_e_fica_na_trilha(
+    estudo_do_ponto: dict[str, list[Any]], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _login(monkeypatch, "Master Um", {"masters.ver_proprio"})
+    _estudo_do_ponto(-19.90, -43.90)  # Belo Horizonte: fora do RJ/SP 01
+    assert estudo_do_ponto["pdfs"][-1]["aviso_fora_da_area"] is True
+    assert estudo_do_ponto["fora"] == [
+        {"autor": 1, "masters": ["rjsp"], "lat": -19.9, "lng": -43.9, "report_id": "rid-1"}
+    ]
+
+
+def test_growth_estuda_qualquer_ponto_sem_aviso(
+    estudo_do_ponto: dict[str, list[Any]], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _login(monkeypatch, "Fulano", {"masters.ver"})
+    _estudo_do_ponto(-19.90, -43.90)
+    assert estudo_do_ponto["pdfs"][-1]["aviso_fora_da_area"] is False
+    assert estudo_do_ponto["fora"] == []
+
+
+def test_estudo_fora_do_pais_e_recusado(
+    estudo_do_ponto: dict[str, list[Any]], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _login(monkeypatch, "Master Um", {"masters.ver_proprio"})
+    assert _status(lambda: _estudo_do_ponto(40.7, -74.0)) == (
+        400,
+        "Coordenada fora do país desta instância.",
+    )
+    assert estudo_do_ponto["pdfs"] == []
+
+
+@pytest.mark.parametrize("caminho", ["/api/masters/estudo", "/api/masters/solicitar-imovel"])
+def test_os_gestos_do_inicio_tem_o_gate_da_tela(
+    monkeypatch: pytest.MonkeyPatch, caminho: str
+) -> None:
+    assert acesso.capacidade_necessaria(caminho, "POST") == "masters.ver"
+    _identidade(monkeypatch, {"masters.ver_proprio"})
+    assert acesso.motivo_bloqueio_por_banco(caminho, "POST", "alguem") is None
+    _identidade(monkeypatch, {"rede.ver_propria"})
+    assert acesso.motivo_bloqueio_por_banco(caminho, "POST", "alguem") is not None
+
+
+def test_o_api_me_diz_quando_o_inicio_e_o_do_master(monkeypatch: pytest.MonkeyPatch) -> None:
+    """O Início do master (emenda 2 da DEC-089) só aparece com `masters_proprio`: o master com
+    login próprio o recebe; Growth e Líderes, que também têm a aba Masters, não."""
+    _login(monkeypatch, "Master Um", {"rede.ver_propria", "masters.ver_proprio"})
+    r = pilot.me(remote_user="alguem")
+    assert set(r["abas"]) == {"executiva", "masters"}
+    assert r["masters_proprio"] is True
+    _login(monkeypatch, "Fulano", {"masters.ver", "rede.ver"})
+    assert pilot.me(remote_user="alguem")["masters_proprio"] is False

@@ -392,6 +392,75 @@ function ArteFicha() {
   )
 }
 
+/* ---------------------------------------------------------------------------
+   Trilha do master (emenda 2 da DEC-089)
+   --------------------------------------------------------------------------- */
+
+/** Uma região tracejada com um prédio dentro e o pino — o card de pedir um imóvel. */
+function ArteImovel() {
+  return (
+    <Quadro>
+      <path
+        d="M52 98 L78 38 L150 30 L192 70 L176 120 L92 126 Z"
+        fill="var(--ac)"
+        fillOpacity={0.08}
+        stroke="var(--ac)"
+        strokeDasharray="4 4"
+      />
+      <rect x={100} y={62} width={40} height={50} rx={3} fill={CAIXA} stroke="var(--line-mid)" />
+      {[0, 1, 2].flatMap((linha) =>
+        [0, 1].map((coluna) => (
+          <rect
+            key={`${linha}-${coluna}`}
+            x={107 + coluna * 15}
+            y={70 + linha * 12}
+            width={9}
+            height={7}
+            rx={1}
+            fill="var(--ac)"
+            fillOpacity={0.55}
+          />
+        )),
+      )}
+      <path d="M150 58c-7-9-11-14-11-20a11 11 0 0122 0c0 6-4 11-11 20z" fill="var(--gr-rosa)" />
+      <circle cx={150} cy={38} r={4} fill="var(--ac-on)" />
+    </Quadro>
+  )
+}
+
+/** O painel do master: o nome, os números e a barra da meta — o card que leva à tela Masters. */
+function ArteMeuPainel() {
+  return (
+    <Quadro>
+      <rect x={40} y={22} width={160} height={108} rx={8} fill={CAIXA} stroke="var(--line-mid)" />
+      <circle cx={60} cy={42} r={8} fill="var(--ac)" fillOpacity={0.8} />
+      <rect x={74} y={37} width={70} height={6} rx={3} fill="var(--tx-sub)" fillOpacity={0.6} />
+      <rect x={74} y={46} width={44} height={4} rx={2} fill="var(--tx-sub)" fillOpacity={0.35} />
+      {[0, 1, 2].map((i) => (
+        <rect key={i} x={52 + i * 48} y={60} width={40} height={24} rx={4} fill={CAIXA_FUNDA} />
+      ))}
+      <rect x={52} y={98} width={136} height={8} rx={4} fill={CAIXA_FUNDA} />
+      <rect x={52} y={98} width={100} height={8} rx={4} fill="var(--gr-verde)" />
+      <rect x={160} y={92} width={2.5} height={20} fill="var(--gr-rosa)" />
+    </Quadro>
+  )
+}
+
+/** O estudo em PDF de um ponto: a folha com o pino e as linhas do texto. */
+function ArteEstudo() {
+  return (
+    <Quadro>
+      <path d="M84 18 h56 l20 20 v94 h-76 z" fill={CAIXA} stroke="var(--line-mid)" />
+      <path d="M140 18 v20 h20" fill="none" stroke="var(--line-mid)" />
+      <circle cx={122} cy={62} r={20} fill="var(--ac)" fillOpacity={0.1} stroke="var(--ac)" strokeDasharray="3 3" />
+      <path d="M122 70c-6-8-9-12-9-17a9 9 0 0118 0c0 5-3 9-9 17z" fill="var(--ac)" />
+      {[92, 102, 112].map((y, i) => (
+        <rect key={y} x={96} y={y} width={i === 2 ? 34 : 52} height={4} rx={2} fill="var(--tx-sub)" fillOpacity={0.45} />
+      ))}
+    </Quadro>
+  )
+}
+
 const ARTES: Record<ArteInicio, () => React.JSX.Element> = {
   brasil: ArteBrasil,
   estado: ArteEstado,
@@ -399,6 +468,9 @@ const ARTES: Record<ArteInicio, () => React.JSX.Element> = {
   painel: ArtePainel,
   rede: ArteRede,
   ficha: ArteFicha,
+  imovel: ArteImovel,
+  meupainel: ArteMeuPainel,
+  estudo: ArteEstudo,
 }
 
 /** Desenha a arte de um card. Chave desconhecida não desenha nada — o card continua

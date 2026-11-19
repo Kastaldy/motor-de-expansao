@@ -232,8 +232,16 @@ def test_as_rotas_de_relatorio_usam_os_rotulos_do_contrato() -> None:
         r'\s*formato="([^"]+)"',
         fonte,
     )
-    assert len(chamadas) == 5, f"esperava as cinco superficies, achei {chamadas}"
-    assert {r for r, _f in chamadas} == {"municipal", "pontual", "simulador", "comparacao", "master"}
+    # A sexta chamada e' o estudo do ponto pelo Inicio do master (emenda 2 da DEC-089): o mesmo
+    # rotulo `pontual`, que ja' esta' no contrato.
+    assert len(chamadas) == 6, f"esperava as seis chamadas, achei {chamadas}"
+    assert {r for r, _f in chamadas} == {
+        "municipal",
+        "pontual",
+        "simulador",
+        "comparacao",
+        "master",
+    }
     assert {f for _r, f in chamadas} == {"pdf", "xlsx", "zip"}
 
 
