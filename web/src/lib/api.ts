@@ -651,6 +651,27 @@ export const api = {
   masterCrescimento: (id: string) =>
     pedir<MasterCrescimento>(`/api/masters/${encodeURIComponent(id)}/crescimento`, {}, 60_000),
 
+  /** O Início do master (emenda 2 da DEC-089): pedir um imóvel numa região. */
+  masterSolicitarImovel: (regiao: string) =>
+    pedir<{ ok: boolean; registrado: boolean }>(
+      '/api/masters/solicitar-imovel',
+      { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ regiao }) },
+      30_000,
+    ),
+
+  /** O Início do master: o Estudo pontual (PDF) de uma coordenada, sem passar pelo mapa. Fora do
+   *  território do master, o PDF sai com o aviso "Estudo fora da sua área de atuação". */
+  masterEstudoDoPonto: (lat: number, lng: number) =>
+    pedirArquivo(
+      `/api/masters/estudo?lat=${encodeURIComponent(lat)}&lng=${encodeURIComponent(lng)}`,
+      { method: 'POST' },
+      'estudo_do_ponto.pdf',
+      {
+        falha: 'Falha ao gerar o estudo do ponto',
+        timeout: 'O estudo do ponto demorou demais para ficar pronto; tente de novo.',
+      },
+    ),
+
   /** O território do master no mapa do painel (BLK-MASTERS-04): hexágonos por região e Ultra. */
   masterMapa: (id: string) =>
     pedir<MasterMapa>(`/api/masters/${encodeURIComponent(id)}/mapa`, {}, 60_000),

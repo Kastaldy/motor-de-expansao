@@ -550,3 +550,16 @@ export function corDoCartao(cor: string): string {
   }
   return cores[cor] ?? 'var(--ac)'
 }
+
+/** A coordenada digitada no card "Solicitar estudo": dois números, latitude e longitude, com
+ *  ponto ou vírgula decimal ("-15.79, -47.88", "-15,79 -47,88", "-15.79;-47.88"). `null` se não
+ *  houver dois números válidos (quem confere se cai no país é o servidor). */
+export function lerCoordenada(texto: string): { lat: number; lng: number } | null {
+  const m = texto.trim().match(/^(-?\d+(?:[.,]\d+)?)\s*[,;\s]\s*(-?\d+(?:[.,]\d+)?)$/)
+  if (!m) return null
+  const lat = Number(m[1].replace(',', '.'))
+  const lng = Number(m[2].replace(',', '.'))
+  if (!Number.isFinite(lat) || !Number.isFinite(lng)) return null
+  if (Math.abs(lat) > 90 || Math.abs(lng) > 180) return null
+  return { lat, lng }
+}

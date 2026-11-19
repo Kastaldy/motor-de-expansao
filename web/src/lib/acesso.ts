@@ -108,10 +108,15 @@ export function telaLiberada(tela: TelaControlada, abas: Set<Aba> | null): boole
   return abas.has(ABA_DA_TELA[tela])
 }
 
-/** Cards do Início que este usuário pode ver (cada card leva a uma tela). */
-export function modosLiberados(abas: Set<Aba> | null): readonly ModoDefinicao[] {
-  if (abas === null) return MODOS
-  return MODOS.filter((m) => telaLiberada(m.destino, abas))
+/** Cards do Início que este usuário pode ver (cada card leva a uma tela). Os da trilha do
+ *  master só para o master com login próprio (`masters_proprio` do `/api/me`, emenda 2 da
+ *  DEC-089): Growth e Líderes também têm a aba Masters, e o Início deles não muda. */
+export function modosLiberados(abas: Set<Aba> | null, mastersProprio = false): readonly ModoDefinicao[] {
+  const daTrilhaDoMaster = (m: ModoDefinicao) => m.trilha === 'master'
+  if (abas === null) return MODOS.filter((m) => !daTrilhaDoMaster(m))
+  return MODOS.filter(
+    (m) => telaLiberada(m.destino, abas) && (!daTrilhaDoMaster(m) || mastersProprio),
+  )
 }
 
 /**

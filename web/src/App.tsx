@@ -131,6 +131,8 @@ export default function App() {
    * espelhando o fail-open do backend — que é quem barra de verdade, rota a rota.
    */
   const [abas, setAbas] = useState<Set<Aba> | null>(null)
+  // O master com login próprio tem o Início dele (emenda 2 da DEC-089).
+  const [mastersProprio, setMastersProprio] = useState(false)
   useEffect(() => {
     /* `vivo` corta as novas tentativas se o App desmontar no meio da espera — o StrictMode
        do dev monta, desmonta e monta de novo, e a resposta tardia da primeira montagem não
@@ -156,6 +158,7 @@ export default function App() {
         definirAlcances(r.alcances)
         const s = abasDoPayload(r)
         setAbas(s)
+        setMastersProprio(r.masters_proprio === true)
         setEstadoSenha(estadoDaSenhaDoPayload(r))
         // Se o usuário abriu numa tela que não pode ver (estado antigo, deep state),
         // leva para o lugar certo em vez de deixar a tela vazia atrás de 403s.
@@ -732,7 +735,7 @@ export default function App() {
 
       <main style={{ flex: 1, position: 'relative', minWidth: 0 }}>
         {tela === 'inicio' ? (
-          <InicioScreen onEscolher={escolherModo} modos={modosLiberados(abas)} />
+          <InicioScreen onEscolher={escolherModo} modos={modosLiberados(abas, mastersProprio)} />
         ) : tela === 'mapa' || tela === 'ponto' ? (
           /* UM RAMO SÓ para as duas entradas do mapa (decisão do dono, 2026-10-14).
 

@@ -838,13 +838,41 @@ ROTAS_DOS_MASTERS_PROPRIOS: tuple[re.Pattern[str], ...] = (
 )
 
 
+#: Os dois POST do Inicio do master (19/11/2026): pedir um imovel numa regiao e gerar o estudo de
+#: um ponto. Escrevem so' a trilha (`eventos`) e o PDF; nada de cadastro nem de painel.
+ROTAS_POST_DOS_MASTERS_PROPRIOS: tuple[re.Pattern[str], ...] = (
+    re.compile(r"/api/masters/solicitar-imovel"),
+    re.compile(r"/api/masters/estudo"),
+)
+
+
 def rota_dos_masters_proprios(path: str, metodo: str) -> bool:
     """`True` = esta rota+metodo esta' no alcance de `masters.ver_proprio` (allowlist fechada)."""
     if not isinstance(path, str) or not isinstance(metodo, str):
         return False
-    if metodo.upper() != "GET":
+    rotas = {
+        "GET": ROTAS_DOS_MASTERS_PROPRIOS,
+        "POST": ROTAS_POST_DOS_MASTERS_PROPRIOS,
+    }.get(metodo.upper(), ())
+    return any(padrao.fullmatch(path) for padrao in rotas)
+
+
+def ve_so_o_proprio_master(usuario: object) -> bool:
+    """A pessoa ve SO' o proprio painel na tela Masters (`masters.ver_proprio` sem `masters.ver`)?
+    O `/api/me` manda isso para a SPA mostrar o Inicio do master (emenda 2 da DEC-089). Qualquer
+    falha vira `False`: o Inicio de sempre, nunca o de master por engano -- e o gate continua
+    decidindo o que cada um alcanca."""
+    try:
+        from motor_expansao.db import rbac
+
+        quem = rbac.identidade(normalizar_usuario(usuario))
+    except Exception:  # noqa: BLE001 — so' informa a tela; quem barra e' o gate
         return False
-    return any(padrao.fullmatch(path) for padrao in ROTAS_DOS_MASTERS_PROPRIOS)
+    return (
+        quem is not None
+        and quem.pode(CAPACIDADE_MASTERS_PROPRIO)
+        and not quem.pode("masters.ver")
+    )
 
 
 def rota_da_rede_propria(path: str, metodo: str) -> bool:

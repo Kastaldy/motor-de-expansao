@@ -1,8 +1,9 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 
 import Select from '../Select'
-import { api } from '../../lib/api'
+import { api, ApiError, baixar } from '../../lib/api'
 import { filtrarUnidades } from '../../lib/exec'
+import { lerCoordenada } from '../../lib/masters'
 import {
   DIMENSOES_RECORTE,
   type DimensaoRecorte,
@@ -443,6 +444,138 @@ export function PassoUnidade({ onEscolher }: { onEscolher: (e: EntradaInicio) =>
           ))}
         </ul>
       )}
+    </div>
+  )
+}
+
+/* ---------------------------------------------------------------------------
+   Os passos do Início do master (emenda 2 da DEC-089, 19/11/2026). Ao contrário dos
+   outros, não navegam: o gesto acontece no próprio card. "Solicitar imóvel" grava o
+   pedido (a região, por ora; Juan: "ele fala a região que ele gostaria de solicitar um
+   imóvel, por enquanto é isso") e "Solicitar estudo" baixa o Estudo pontual da
+   coordenada, sem passar pelo mapa (fora da área dele, o PDF sai com o aviso).
+   --------------------------------------------------------------------------- */
+
+const BOTAO_DO_PASSO = (ativo: boolean): React.CSSProperties => ({
+  width: LARGURA_SELETOR,
+  height: 36,
+  border: 0,
+  borderRadius: 'var(--r-md)',
+  background: ativo ? 'var(--ac)' : 'var(--surf-raised)',
+  color: ativo ? 'var(--ac-on)' : 'var(--tx-off)',
+  font: '600 13px/1 var(--f-ui)',
+  cursor: ativo ? 'pointer' : 'default',
+})
+
+export function PassoImovel() {
+  const [texto, setTexto] = useState('')
+  const [estado, setEstado] = useState<'editando' | 'enviando' | 'enviado' | 'erro'>('editando')
+  const [erro, setErro] = useState<string | null>(null)
+  const campo = useRef<HTMLTextAreaElement>(null)
+
+  useEffect(() => {
+    campo.current?.focus()
+  }, [])
+
+  const enviar = async () => {
+    if (!texto.trim() || estado === 'enviando') return
+    setEstado('enviando')
+    setErro(null)
+    try {
+      await api.masterSolicitarImovel(texto.trim())
+      setEstado('enviado')
+    } catch (e) {
+      setErro(e instanceof ApiError ? e.message : 'Não foi possível enviar o pedido.')
+      setEstado('erro')
+    }
+  }
+
+  if (estado === 'enviado') {
+    return (
+      <div style={PAINEL}>
+        <div style={MIOLO}>
+          <Aviso>Pedido enviado. A expansão vai procurar imóveis em: {texto.trim()}</Aviso>
+          <button type="button" onClick={() => { setTexto(''); setEstado('editando') }} style={BOTAO_DO_PASSO(true)}>
+            Pedir outra região
+          </button>
+        </div>
+      </div>
+    )
+  }
+  return (
+    <div style={PAINEL}>
+      <div style={MIOLO}>
+        <textarea
+          ref={campo}
+          value={texto}
+          maxLength={300}
+          rows={3}
+          onChange={(e) => setTexto(e.target.value)}
+          placeholder="Ex.: Asa Sul, perto do Parkshopping"
+          aria-label="Região em que você gostaria de um imóvel"
+          style={{ width: LARGURA_SELETOR, boxSizing: 'border-box', resize: 'none', font: '400 13px/1.4 var(--f-ui)' }}
+        />
+        <button type="button" onClick={enviar} disabled={!texto.trim() || estado === 'enviando'} style={BOTAO_DO_PASSO(Boolean(texto.trim()))}>
+          {estado === 'enviando' ? 'Enviando…' : 'Enviar pedido'}
+        </button>
+        {erro && <Aviso>{erro}</Aviso>}
+      </div>
+    </div>
+  )
+}
+
+export function PassoEstudo() {
+  const [texto, setTexto] = useState('')
+  const [estado, setEstado] = useState<'editando' | 'gerando' | 'pronto' | 'erro'>('editando')
+  const [erro, setErro] = useState<string | null>(null)
+  const campo = useRef<HTMLInputElement>(null)
+  const coordenada = lerCoordenada(texto)
+
+  useEffect(() => {
+    campo.current?.focus()
+  }, [])
+
+  const gerar = async () => {
+    if (!coordenada || estado === 'gerando') return
+    setEstado('gerando')
+    setErro(null)
+    try {
+      const { blob, filename } = await api.masterEstudoDoPonto(coordenada.lat, coordenada.lng)
+      baixar(blob, filename)
+      setEstado('pronto')
+    } catch (e) {
+      setErro(e instanceof ApiError ? e.message : 'Não foi possível gerar o estudo.')
+      setEstado('erro')
+    }
+  }
+
+  return (
+    <div style={PAINEL}>
+      <div style={MIOLO}>
+        <input
+          ref={campo}
+          value={texto}
+          onChange={(e) => {
+            setTexto(e.target.value)
+            if (estado !== 'gerando') setEstado('editando')
+          }}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter') gerar()
+          }}
+          placeholder="Latitude, longitude (ex.: -15.79, -47.88)"
+          aria-label="Coordenada do ponto: latitude e longitude"
+          style={{ width: LARGURA_SELETOR, boxSizing: 'border-box' }}
+        />
+        <button type="button" onClick={gerar} disabled={!coordenada || estado === 'gerando'} style={BOTAO_DO_PASSO(Boolean(coordenada))}>
+          {estado === 'gerando' ? 'Gerando o estudo…' : 'Gerar o estudo'}
+        </button>
+        {estado === 'gerando' && <Aviso>O PDF fica pronto em até um minuto.</Aviso>}
+        {estado === 'pronto' && (
+          <Aviso>Estudo baixado. Se o ponto estiver fora da sua área, o PDF sai com o aviso.</Aviso>
+        )}
+        {texto.trim() && !coordenada && <Aviso>Digite a latitude e a longitude, separadas por vírgula.</Aviso>}
+        {erro && <Aviso>{erro}</Aviso>}
+      </div>
     </div>
   )
 }

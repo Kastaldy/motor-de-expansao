@@ -138,6 +138,9 @@ ALCANCE_DO_MASTER_NA_TELA_MASTERS = frozenset(
         ("GET", "/api/masters/x/crescimento"),
         ("GET", "/api/masters/x/estudo"),
         ("GET", "/api/masters/relatorio/x"),
+        # O Início do master (19/11/2026): o pedido de imóvel e o estudo de um ponto.
+        ("POST", "/api/masters/solicitar-imovel"),
+        ("POST", "/api/masters/estudo"),
     }
 )
 

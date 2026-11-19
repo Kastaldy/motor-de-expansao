@@ -12,6 +12,7 @@ import {
   escalaDaBarra,
   etiquetasDaUnidade,
   focoDoHexagono,
+  lerCoordenada,
   masterQueAbreSozinho,
   metaDoAno,
   municipiosAVista,
@@ -328,5 +329,14 @@ describe('tela Masters (DEC-089): textos', () => {
     expect(masterQueAbreSozinho({ proprio: true, masters: [] })).toBeNull()
     expect(masterQueAbreSozinho({ proprio: true, masters: [m('a'), m('b')] })).toBeNull()
     expect(masterQueAbreSozinho(null)).toBeNull()
+  })
+
+  it('a coordenada do card de estudo, com ponto ou vírgula decimal', () => {
+    expect(lerCoordenada('-15.79, -47.88')).toEqual({ lat: -15.79, lng: -47.88 })
+    expect(lerCoordenada('-15,79 -47,88')).toEqual({ lat: -15.79, lng: -47.88 })
+    expect(lerCoordenada(' -15.79;-47.88 ')).toEqual({ lat: -15.79, lng: -47.88 })
+    expect(lerCoordenada('Asa Sul')).toBeNull()
+    expect(lerCoordenada('-15.79')).toBeNull()
+    expect(lerCoordenada('95, 10')).toBeNull()
   })
 })

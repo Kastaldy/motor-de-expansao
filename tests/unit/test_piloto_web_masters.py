@@ -893,3 +893,144 @@ def test_a_migration_027_da_o_proprio_painel_so_ao_perfil_master() -> None:
     assert "('master', 'masters.ver_proprio')" in concessoes
     for fora in ("growth", "lideres", "consultoria", "expansao"):
         assert f"('{fora}'," not in concessoes
+
+
+# ---------------------------------------------------------------------------
+# O Início do master (emenda 2 da DEC-089; 19/11/2026, Juan): o pedido de imóvel e o estudo de um
+# ponto por coordenadas, com o aviso "Estudo fora da sua área de atuação" fora do território.
+# ---------------------------------------------------------------------------
+
+
+def test_o_master_pede_um_imovel_numa_regiao(
+    masters: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from motor_expansao.db import eventos as db_eventos
+
+    _login(monkeypatch, "Master Um", {"masters.ver_proprio"})
+    gravados: list[dict[str, Any]] = []
+    monkeypatch.setattr(db_eventos, "registrar_imovel_solicitado", lambda **kw: gravados.append(kw))
+    r = pilot.api_master_solicitar_imovel(
+        pilot.PedidoDeImovelIn(regiao="  Asa Sul,   perto do   Parkshopping "), remote_user="x"
+    )
+    assert r == {"ok": True, "registrado": True}
+    assert gravados == [
+        {"autor": 1, "masters": ["rjsp"], "regiao": "Asa Sul, perto do Parkshopping"}
+    ]
+    # Região em branco não vira pedido.
+    vazio = (400, "Diga a região em que você gostaria de um imóvel.")
+    assert (
+        _status(
+            lambda: pilot.api_master_solicitar_imovel(
+                pilot.PedidoDeImovelIn(regiao="   "), remote_user="x"
+            )
+        )
+        == vazio
+    )
+
+
+def test_o_pedido_de_imovel_nao_cai_quando_a_trilha_falha(
+    masters: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from motor_expansao.db import eventos as db_eventos
+
+    _login(monkeypatch, "Master Um", {"masters.ver_proprio"})
+
+    def quebra(**_kw: Any) -> None:
+        raise RuntimeError("banco caiu no meio")
+
+    monkeypatch.setattr(db_eventos, "registrar_imovel_solicitado", quebra)
+    r = pilot.api_master_solicitar_imovel(pilot.PedidoDeImovelIn(regiao="Centro"), remote_user="x")
+    assert r == {"ok": True, "registrado": False}
+
+
+@pytest.fixture
+def estudo_do_ponto(mapa: dict[str, Any], monkeypatch: pytest.MonkeyPatch) -> dict[str, list[Any]]:
+    """O gerador do PDF e os registros dublados: aqui se confere a rota (área, aviso, trilha)."""
+    from motor_expansao.db import eventos as db_eventos
+
+    pdfs: list[dict[str, Any]] = []
+    fora: list[dict[str, Any]] = []
+
+    def gerar(lat: float, lng: float, *args: Any, **kw: Any) -> Any:
+        pdfs.append({"lat": lat, "lng": lng, **kw})
+        return pilot.Response(content=b"%PDF-estudo", media_type="application/pdf")
+
+    async def registrar(*_a: Any, **_k: Any) -> str:
+        return "rid-1"
+
+    monkeypatch.setattr(pilot, "_gerar_relatorio_pontual_pdf", gerar)
+    monkeypatch.setattr(pilot, "_registrar_relatorio_gerado_fora_do_loop", registrar)
+    monkeypatch.setattr(db_eventos, "registrar_estudo_fora_da_area", lambda **kw: fora.append(kw))
+    return {"pdfs": pdfs, "fora": fora}
+
+
+def _estudo_do_ponto(lat: float, lng: float) -> Any:
+    return asyncio.run(pilot.api_master_estudo_do_ponto(lat, lng, remote_user="x"))
+
+
+def test_estudo_dentro_do_territorio_sai_sem_aviso(
+    estudo_do_ponto: dict[str, list[Any]], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _login(monkeypatch, "Master Um", {"masters.ver_proprio"})
+    r = _estudo_do_ponto(-23.55, -46.63)  # São Paulo, do território do RJ/SP 01
+    assert r.body == b"%PDF-estudo"
+    (pdf,) = estudo_do_ponto["pdfs"]
+    assert pdf["so_estudo"] is True and pdf["aviso_fora_da_area"] is False
+    assert pdf["report_id"] == "rid-1"
+    assert estudo_do_ponto["fora"] == []
+    # Um terreno vazio dentro do território (Ribeirão Preto, sem gente) ainda é do território.
+    _estudo_do_ponto(-21.20, -47.80)
+    assert estudo_do_ponto["pdfs"][-1]["aviso_fora_da_area"] is False
+
+
+def test_estudo_fora_do_territorio_sai_com_o_aviso_e_fica_na_trilha(
+    estudo_do_ponto: dict[str, list[Any]], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _login(monkeypatch, "Master Um", {"masters.ver_proprio"})
+    _estudo_do_ponto(-19.90, -43.90)  # Belo Horizonte: fora do RJ/SP 01
+    assert estudo_do_ponto["pdfs"][-1]["aviso_fora_da_area"] is True
+    assert estudo_do_ponto["fora"] == [
+        {"autor": 1, "masters": ["rjsp"], "lat": -19.9, "lng": -43.9, "report_id": "rid-1"}
+    ]
+
+
+def test_growth_estuda_qualquer_ponto_sem_aviso(
+    estudo_do_ponto: dict[str, list[Any]], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _login(monkeypatch, "Fulano", {"masters.ver"})
+    _estudo_do_ponto(-19.90, -43.90)
+    assert estudo_do_ponto["pdfs"][-1]["aviso_fora_da_area"] is False
+    assert estudo_do_ponto["fora"] == []
+
+
+def test_estudo_fora_do_pais_e_recusado(
+    estudo_do_ponto: dict[str, list[Any]], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _login(monkeypatch, "Master Um", {"masters.ver_proprio"})
+    assert _status(lambda: _estudo_do_ponto(40.7, -74.0)) == (
+        400,
+        "Coordenada fora do país desta instância.",
+    )
+    assert estudo_do_ponto["pdfs"] == []
+
+
+@pytest.mark.parametrize("caminho", ["/api/masters/estudo", "/api/masters/solicitar-imovel"])
+def test_os_gestos_do_inicio_tem_o_gate_da_tela(
+    monkeypatch: pytest.MonkeyPatch, caminho: str
+) -> None:
+    assert acesso.capacidade_necessaria(caminho, "POST") == "masters.ver"
+    _identidade(monkeypatch, {"masters.ver_proprio"})
+    assert acesso.motivo_bloqueio_por_banco(caminho, "POST", "alguem") is None
+    _identidade(monkeypatch, {"rede.ver_propria"})
+    assert acesso.motivo_bloqueio_por_banco(caminho, "POST", "alguem") is not None
+
+
+def test_o_api_me_diz_quando_o_inicio_e_o_do_master(monkeypatch: pytest.MonkeyPatch) -> None:
+    """O Início do master (emenda 2 da DEC-089) só aparece com `masters_proprio`: o master com
+    login próprio o recebe; Growth e Líderes, que também têm a aba Masters, não."""
+    _login(monkeypatch, "Master Um", {"rede.ver_propria", "masters.ver_proprio"})
+    r = pilot.me(remote_user="alguem")
+    assert set(r["abas"]) == {"executiva", "masters"}
+    assert r["masters_proprio"] is True
+    _login(monkeypatch, "Fulano", {"masters.ver", "rede.ver"})
+    assert pilot.me(remote_user="alguem")["masters_proprio"] is False

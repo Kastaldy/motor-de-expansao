@@ -59,7 +59,9 @@ LNG_C = -46.63
 
 
 def _to_wgs_geometry(local_geom):
-    transformer = Transformer.from_crs(_local_metric_crs(LAT_C, LNG_C), CRS_ORIGEM_CENSO, always_xy=True)
+    transformer = Transformer.from_crs(
+        _local_metric_crs(LAT_C, LNG_C), CRS_ORIGEM_CENSO, always_xy=True
+    )
     return transform(transformer.transform, local_geom)
 
 
@@ -90,12 +92,23 @@ def _sector_record(cod_setor: str, local_geom, *, pop: float, renda: float, scor
 def _sample_result():
     setores = pd.DataFrame(
         [
-            _sector_record("355030801000001", box(-700, -700, 0, 700), pop=800, renda=2100, score=64),
-            _sector_record("355030801000002", box(0, -700, 700, 700), pop=1400, renda=2600, score=86),
+            _sector_record(
+                "355030801000001", box(-700, -700, 0, 700), pop=800, renda=2100, score=64
+            ),
+            _sector_record(
+                "355030801000002", box(0, -700, 700, 700), pop=1400, renda=2600, score=86
+            ),
         ]
     )
     competitors = pd.DataFrame(
-        [{"nome_unidade": "Smart Fit Teste", "lat": LAT_C, "lng": LNG_C + 0.004, "rede": "smart_fit"}]
+        [
+            {
+                "nome_unidade": "Smart Fit Teste",
+                "lat": LAT_C,
+                "lng": LNG_C + 0.004,
+                "rede": "smart_fit",
+            }
+        ]
     )
     ultra = pd.DataFrame([{"nome_unidade": "Ultra Teste", "lat": LAT_C + 0.003, "lng": LNG_C}])
     result = analisar_ponto_censitario_setores(
@@ -320,9 +333,17 @@ def test_cor_por_meta_verde_vermelho_neutro():
     # domicilios_total_raio / _META_DOMICILIOS_TOTAL_RAIO (3000) -- campo NOVO.
     # Mesma razao do bloco de populacao: derivar da meta em vez de fixar 3.500/3.000/2.999,
     # que foram escolhidos contra a meta de 1,5 km (DEC-021 reescalou para 1.333).
-    assert _cor_por_meta(_META_DOMICILIOS_TOTAL_RAIO * 1.17, _META_DOMICILIOS_TOTAL_RAIO) == _CARD_VERDE_RGB
-    assert _cor_por_meta(_META_DOMICILIOS_TOTAL_RAIO, _META_DOMICILIOS_TOTAL_RAIO) == _CARD_VERDE_RGB  # inclusiva
-    assert _cor_por_meta(_META_DOMICILIOS_TOTAL_RAIO - 1, _META_DOMICILIOS_TOTAL_RAIO) == _CARD_VERMELHO_RGB
+    assert (
+        _cor_por_meta(_META_DOMICILIOS_TOTAL_RAIO * 1.17, _META_DOMICILIOS_TOTAL_RAIO)
+        == _CARD_VERDE_RGB
+    )
+    assert (
+        _cor_por_meta(_META_DOMICILIOS_TOTAL_RAIO, _META_DOMICILIOS_TOTAL_RAIO) == _CARD_VERDE_RGB
+    )  # inclusiva
+    assert (
+        _cor_por_meta(_META_DOMICILIOS_TOTAL_RAIO - 1, _META_DOMICILIOS_TOTAL_RAIO)
+        == _CARD_VERMELHO_RGB
+    )
     assert _cor_por_meta(None, _META_DOMICILIOS_TOTAL_RAIO) == _CARD_NEUTRO_RGB
     assert _cor_por_meta(float("nan"), _META_DOMICILIOS_TOTAL_RAIO) == _CARD_NEUTRO_RGB
 
@@ -337,7 +358,9 @@ def test_renda_media_domiciliar_fica_verde_a_partir_de_4000():
     assert _META_RENDA_DOMICILIAR_TOTAL_RAIO == 4_000.0  # a meta pedida no gate
     assert _cor_por_meta(4_000, _META_RENDA_DOMICILIAR_TOTAL_RAIO) == _CARD_VERDE_RGB  # inclusiva
     assert _cor_por_meta(3_999, _META_RENDA_DOMICILIAR_TOTAL_RAIO) == _CARD_VERMELHO_RGB
-    assert _cor_por_meta(5_000, _META_RENDA_DOMICILIAR_TOTAL_RAIO) == _CARD_VERDE_RGB  # era vermelho
+    assert (
+        _cor_por_meta(5_000, _META_RENDA_DOMICILIAR_TOTAL_RAIO) == _CARD_VERDE_RGB
+    )  # era vermelho
     assert _cor_por_meta(None, _META_RENDA_DOMICILIAR_TOTAL_RAIO) == _CARD_NEUTRO_RGB
     assert _cor_por_meta(float("nan"), _META_RENDA_DOMICILIAR_TOTAL_RAIO) == _CARD_NEUTRO_RGB
 
@@ -570,8 +593,12 @@ def test_pdf_concorrentes_contagem_total_e_mais_n_quando_excede_10():
     """
     setores = pd.DataFrame(
         [
-            _sector_record("355030801000001", box(-700, -700, 0, 700), pop=800, renda=2100, score=64),
-            _sector_record("355030801000002", box(0, -700, 700, 700), pop=1400, renda=2600, score=86),
+            _sector_record(
+                "355030801000001", box(-700, -700, 0, 700), pop=800, renda=2100, score=64
+            ),
+            _sector_record(
+                "355030801000002", box(0, -700, 700, 700), pop=1400, renda=2600, score=86
+            ),
         ]
     )
     # 12 concorrentes + 1 Ultra = 13 redes (>10) bem dentro do raio de 1.0 km.
@@ -591,8 +618,14 @@ def test_pdf_concorrentes_contagem_total_e_mais_n_quando_excede_10():
         LAT_C, LNG_C, setores, competitors_df=competitors, ultra_df=ultra
     )
     mapas = render_mapas_censitarios_combinados(
-        LAT_C, LNG_C, setores, competitors_df=competitors, ultra_df=ultra,
-        width=720, height=520, basemap=False,
+        LAT_C,
+        LNG_C,
+        setores,
+        competitors_df=competitors,
+        ultra_df=ultra,
+        width=720,
+        height=520,
+        basemap=False,
     )
 
     pdf_bytes = gerar_pdf_relatorio_pontual_censitario(result, mapas, residual=_RESIDUAL_OK)
@@ -771,7 +804,9 @@ def test_downloads_os_dois_ramos_de_template_produzem_o_mesmo_pdf():
 # ---------------------------------------------------------------------------
 
 
-def _boxes_overlap(a: tuple[float, float, float, float], b: tuple[float, float, float, float]) -> bool:
+def _boxes_overlap(
+    a: tuple[float, float, float, float], b: tuple[float, float, float, float]
+) -> bool:
     """True se dois bounding boxes (x, y, w, h) tem interseccao de area positiva."""
     ax, ay, aw, ah = a
     bx, by, bw, bh = b
@@ -1058,9 +1093,7 @@ def test_grid_de_mapas_aceita_2x1_e_1x1_e_mantem_o_default_2x2():
     assert len(_map_grid_cells(58.0, 518.0, 20.0, 10.0)) == 4
     assert len(_map_grid_cells_packed(1000.0 / 760.0, top=58.0, bottom=518.0, gap=10.0)) == 4
 
-    duas = _map_grid_cells_packed(
-        1000.0 / 760.0, top=58.0, bottom=518.0, gap=10.0, cols=2, rows=1
-    )
+    duas = _map_grid_cells_packed(1000.0 / 760.0, top=58.0, bottom=518.0, gap=10.0, cols=2, rows=1)
     assert len(duas) == 2
     (x0, y0, w0, h0), (x1, y1, w1, h1) = duas
     assert x0 + w0 <= x1 + 1e-6  # lado a lado, sem sobrepor
@@ -1070,9 +1103,7 @@ def test_grid_de_mapas_aceita_2x1_e_1x1_e_mantem_o_default_2x2():
     # 1x1: uma celula so, sem o clamp de `max_total_w` -> preenche os 460 pt de
     # altura util (top=58 .. bottom=518) sem deixar vao branco, e nao transborda o `bottom`.
     assert len(_map_grid_cells(58.0, 518.0, 20.0, 10.0, cols=1, rows=1)) == 1
-    uma = _map_grid_cells_packed(
-        1280.0 / 760.0, top=58.0, bottom=518.0, gap=10.0, cols=1, rows=1
-    )
+    uma = _map_grid_cells_packed(1280.0 / 760.0, top=58.0, bottom=518.0, gap=10.0, cols=1, rows=1)
     assert len(uma) == 1
     assert abs(uma[0][3] - 460.0) < 1e-6
     assert uma[0][1] + uma[0][3] <= 518.0 + 1e-6
@@ -1152,7 +1183,13 @@ def test_pdf_nao_contem_a_sigla_nd_em_lugar_nenhum(tmp_path):
     positivo. `result` minimo de proposito -> as metricas caem no caminho "sem dado", que e
     exatamente o cenario onde a sigla aparecia.
     """
-    result = {"lat": -23.55, "lng": -46.63, "nome_municipio": "SAO PAULO", "uf": "SP", "raio_km": 1.5}
+    result = {
+        "lat": -23.55,
+        "lng": -46.63,
+        "nome_municipio": "SAO PAULO",
+        "uf": "SP",
+        "raio_km": 1.5,
+    }
     pdf = gerar_pdf_relatorio_pontual_classico(result, None, ultra_dir=tmp_path)
 
     assert b"n/d" not in pdf, (
@@ -1169,7 +1206,13 @@ def test_cards_de_renda_sem_dado_nao_imprimem_o_cifrao(tmp_path):
     e o formatador devolve `TEXTO_SEM_DADO` quando falta o dado: o PDF saia com
     "R$ Não disponível". Mesmo `result` minimo do teste acima, que cai no caminho "sem dado".
     """
-    result = {"lat": -23.55, "lng": -46.63, "nome_municipio": "SAO PAULO", "uf": "SP", "raio_km": 1.5}
+    result = {
+        "lat": -23.55,
+        "lng": -46.63,
+        "nome_municipio": "SAO PAULO",
+        "uf": "SP",
+        "raio_km": 1.5,
+    }
     pdf = gerar_pdf_relatorio_pontual_classico(result, None, ultra_dir=tmp_path)
 
     # O card quebra o texto em duas linhas ("R$ Não" / "disponível"), então a busca é pelo
@@ -1224,7 +1267,9 @@ def _texto_do_pdf(pdf_bytes: bytes) -> str:
     return texto.replace("\\\\", "\\").replace("\\(", "(").replace("\\)", ")")
 
 
-def _pdf_do_ponto(tmp_path, *, rotulo: str, origem_centroide_hex: bool) -> bytes:
+def _pdf_do_ponto(
+    tmp_path, *, rotulo: str, origem_centroide_hex: bool, aviso_fora_da_area: bool = False
+) -> bytes:
     """PDF do fluxo pedido, SEM imagens embutidas.
 
     `mapas=None` + `ultra_dir` vazio pelo mesmo motivo do teste da sigla "n/d" e do de
@@ -1239,6 +1284,7 @@ def _pdf_do_ponto(tmp_path, *, rotulo: str, origem_centroide_hex: bool) -> bytes
         residual=_RESIDUAL_OK,
         rotulo=rotulo,
         origem_centroide_hex=origem_centroide_hex,
+        aviso_fora_da_area=aviso_fora_da_area,
         ultra_dir=tmp_path,
     )
 
@@ -1256,6 +1302,23 @@ def test_pdf_avisa_quando_o_estudo_saiu_do_centroide_do_hexagono(tmp_path):
     # O aviso NAO pode comer o rotulo: os dois convivem no PDF (foi o sintoma inverso da
     # regressao -- ora sumia o aviso, ora sumia um pedaco do endereco).
     assert _NOME_IMOVEL_LONGO in texto
+
+
+def test_pdf_avisa_o_estudo_fora_da_area_do_master(tmp_path):
+    """Emenda 2 da DEC-089 (Juan, 19/11/2026): o estudo que o master pede fora do território dele
+    sai com o aviso, na capa e na Realização, sem tirar o rótulo do lugar."""
+    texto = _texto_do_pdf(
+        _pdf_do_ponto(
+            tmp_path, rotulo=_NOME_IMOVEL_LONGO, origem_centroide_hex=False, aviso_fora_da_area=True
+        )
+    ).lower()
+    assert texto.count("estudo fora da sua") >= 2
+    assert _NOME_IMOVEL_LONGO.lower() in texto
+    # Sem o parâmetro (todo o resto do motor), nenhum aviso de área.
+    sem = _texto_do_pdf(
+        _pdf_do_ponto(tmp_path, rotulo=_NOME_IMOVEL_LONGO, origem_centroide_hex=False)
+    ).lower()
+    assert "estudo fora da sua" not in sem
 
 
 def test_pdf_de_coordenada_exata_nao_avisa_centroide(tmp_path):
@@ -1595,9 +1658,7 @@ def test_capa_rasterizada_tem_contraste_sob_cada_pixel_do_aviso(tmp_path):
     )
 
     # Cor de fundo predominante sob o aviso = turquesa da marca. Medido: 100% dos pixels.
-    perto_do_turquesa = float(
-        (np.abs(fundo - np.array(ULTRA_TURQUESA)).sum(axis=1) < 30).mean()
-    )
+    perto_do_turquesa = float((np.abs(fundo - np.array(ULTRA_TURQUESA)).sum(axis=1) < 30).mean())
     assert perto_do_turquesa > 0.9, (
         f"so {perto_do_turquesa:.1%} do fundo sob o aviso e o turquesa {ULTRA_TURQUESA}; "
         "o aviso saiu da area chapada da capa"
@@ -1618,4 +1679,3 @@ def test_capa_rasterizada_tem_contraste_sob_cada_pixel_do_aviso(tmp_path):
     assert branco_antigo > 0.10, (  # medido: 16,8%
         "o controle parou de acusar branco na posicao antiga -- a medicao acima virou vacua"
     )
-

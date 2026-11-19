@@ -3871,6 +3871,13 @@ _AVISO_ORIGEM_CENTROIDE_HEX = (
     "Estudo a partir do centroide do hexágono - não de um endereço exato."
 )
 
+# Aviso de AREA, impresso quando o chamador passa `aviso_fora_da_area=True` (hoje: o estudo que o
+# master pede pelo Inicio do piloto com uma coordenada fora do territorio do contrato dele; emenda
+# 2 da DEC-089, Juan em 19/11/2026: "se for fora da area, no PDF gerar um aviso 'estudo fora da
+# sua area de atuacao'"). Mesmo desenho do aviso de origem: string FIXA de produto, parametro
+# explicito, capa e Realizacao. Latin-1 puro.
+_AVISO_FORA_DA_AREA = "Estudo fora da sua área de atuação."
+
 
 def _cor_por_meta(valor: Any, meta: float) -> tuple[int, int, int]:
     """Cor de fundo do card: verde se valor >= meta, vermelho se < meta, neutro quando sem dado.
@@ -4579,6 +4586,7 @@ def _classico_cover_page(
     rotulo: str | None = None,
     now: datetime | None = None,
     origem_centroide_hex: bool = False,
+    aviso_fora_da_area: bool = False,
     contexto: _RecortePdf | None = None,
 ) -> None:
     """Capa classica: texto por baseline, todo na coluna limpa da arte (x>=460, y 300-450).
@@ -4616,9 +4624,16 @@ def _classico_cover_page(
     # logo branco: ilegivel e riscando a marca. Aqui a caixa e' turquesa chapado medido.
     # Largura: 314,1 pt a 10 pt contra 462 pt uteis (base_x=478 ate a margem direita) -> 147,9
     # pt de folga em UMA linha; a string e' texto de produto, fixa, entao a folga nao varia.
-    if origem_centroide_hex:
+    # O de AREA vence o de origem na mesma linha (o estudo do master e' sempre de coordenada, nunca
+    # do centroide); os dois juntos so' sairiam por um chamador novo, e a Realizacao mostra ambos.
+    aviso_da_capa = (
+        _AVISO_FORA_DA_AREA
+        if aviso_fora_da_area
+        else (_AVISO_ORIGEM_CENTROIDE_HEX if origem_centroide_hex else None)
+    )
+    if aviso_da_capa:
         pdf.set_font("Helvetica", "", _CAPA_AVISO_FONT_PT)
-        pdf.text(base_x, _CAPA_AVISO_Y, _ascii(_AVISO_ORIGEM_CENTROIDE_HEX))
+        pdf.text(base_x, _CAPA_AVISO_Y, _ascii(aviso_da_capa))
 
     # Endereco ACIMA (baseline y=430), subtitulo ABAIXO (baseline y=455, acima da linha y=461,4).
     # O endereco e' TEXTO LIVRE do operador e precisa caber nos `largura_util` pt ate a margem
@@ -5049,6 +5064,7 @@ def _classico_credit_page(
     rotulo: str | None = None,
     now: datetime | None = None,
     origem_centroide_hex: bool = False,
+    aviso_fora_da_area: bool = False,
     contexto: _RecortePdf | None = None,
 ) -> None:
     """Realizacao/Credito: fundo turquesa solido + credito/metodo + aviso de dados
@@ -5126,10 +5142,18 @@ def _classico_credit_page(
     # de proposito: capa e Realizacao sao as duas paginas que quem recebe o PDF olha inteiro,
     # e o aviso nao pode depender de uma unica linha. Largura medida: ~293 pt a 10 pt na
     # celula de 880 pt — uma linha, sem risco de estouro (string fixa do modulo).
-    if origem_centroide_hex:
+    avisos = [
+        a
+        for a, ligado in (
+            (_AVISO_FORA_DA_AREA, aviso_fora_da_area),
+            (_AVISO_ORIGEM_CENTROIDE_HEX, origem_centroide_hex),
+        )
+        if ligado
+    ]
+    for i, aviso in enumerate(avisos):
         pdf.set_font("Helvetica", "", 10)
-        pdf.set_xy(40, 408)
-        pdf.cell(_PAGE_W - 80, 14, _ascii(_AVISO_ORIGEM_CENTROIDE_HEX), align="C")
+        pdf.set_xy(40, 408 + 16 * i)
+        pdf.cell(_PAGE_W - 80, 14, _ascii(aviso), align="C")
 
     pdf.set_font("Helvetica", "", 9)
     pdf.set_xy(40, _PAGE_H - 40)
@@ -5153,6 +5177,7 @@ def gerar_pdf_relatorio_pontual_classico(
     foto_satelite: bytes | None = None,
     foto_satelite_grande: bool = False,
     origem_centroide_hex: bool = False,
+    aviso_fora_da_area: bool = False,
     conclusao_so_estudo: bool = False,
     aviso_rodape: str | None = None,
     praca: PracaDoPonto | None = None,
@@ -5263,7 +5288,13 @@ def gerar_pdf_relatorio_pontual_classico(
         pdf.set_subject(f"report_id {report_id}")
         pdf.set_keywords(f"report_id={report_id}")
     _classico_cover_page(
-        pdf, result, assets, rotulo=rotulo, now=now, origem_centroide_hex=origem_centroide_hex,
+        pdf,
+        result,
+        assets,
+        rotulo=rotulo,
+        now=now,
+        origem_centroide_hex=origem_centroide_hex,
+        aviso_fora_da_area=aviso_fora_da_area,
         **kw_ctx,
     )
     # Imovel: FOTOS primeiro, DEPOIS a vista aerea (item Felipe 2026-07-23) — cada uma em
@@ -5360,7 +5391,13 @@ def gerar_pdf_relatorio_pontual_classico(
         if viabilidade:
             paginas_financeiras.extend(range(antes + 1, pdf.pages_count + 1))
     _classico_credit_page(
-        pdf, result, assets, rotulo=rotulo, now=now, origem_centroide_hex=origem_centroide_hex,
+        pdf,
+        result,
+        assets,
+        rotulo=rotulo,
+        now=now,
+        origem_centroide_hex=origem_centroide_hex,
+        aviso_fora_da_area=aviso_fora_da_area,
         **kw_ctx,
     )
 

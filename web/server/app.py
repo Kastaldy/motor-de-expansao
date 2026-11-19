@@ -5280,6 +5280,10 @@ def me(
         "abas": sorted(abas),
         "perfil": _perfil_do_cliente(),
     }
+    # O master com login próprio (emenda 2 da DEC-089) tem um Início próprio: a SPA só o mostra
+    # com esta chave. Só existe com o banco no comando (sem ele não há perfil `master`).
+    if acesso.banco_no_comando() and "masters" in abas:
+        resposta["masters_proprio"] = acesso.ve_so_o_proprio_master(remote_user)
     # AUSENTE em vez de nula, pelo mesmo motivo da `senha` abaixo: no Brasil (perfil sem
     # aviso) a resposta nao muda um byte, e a SPA trata a chave como opcional.
     aviso_viabilidade = _aviso_de_viabilidade_para_a_tela()
@@ -15528,6 +15532,7 @@ def _gerar_relatorio_pontual_pdf(
     so_estudo: bool = False,
     excluir_ultra_proxima: bool = False,
     recorte: _RecorteDoPdf | None = None,
+    aviso_fora_da_area: bool = False,
 ) -> Response:
     """Corpo SINCRONO do Relatorio Pontual — roda no threadpool, nunca no event loop.
 
@@ -15792,6 +15797,7 @@ def _gerar_relatorio_pontual_pdf(
         foto_satelite=foto_satelite,
         # Marcador EXPLICITO de origem (parametro proprio, nunca embutido no `rotulo`).
         origem_centroide_hex=origem_centroide_hex,
+        aviso_fora_da_area=aviso_fora_da_area,
         # Bloco C+ (decisao 0.7): se o perfil declara o aviso de viabilidade com "pdf"
         # em `onde`, o `texto_rodape` e carimbado em todas as paginas de resultado
         # financeiro. No Brasil (`avisos` = {}) isto e None e o PDF nao muda um byte.
@@ -16769,6 +16775,131 @@ def _masters_exigir_do_pedido(master_id: str, remote_user: str | None) -> None:
     permitidos = _masters_do_pedido(remote_user)
     if permitidos is not None and master_id not in permitidos:
         raise HTTPException(404, "Master não encontrado.")
+
+
+def _masters_registrar(
+    remote_user: str | None, registrar: Callable[..., None], descricao: str, **dados: Any
+) -> bool:
+    """Grava um gesto do master na trilha (`eventos`), e NUNCA derruba a resposta: mesma politica
+    do `_registrar_dossie_baixado` (sem banco configurado, a ausencia do evento e' o comportamento
+    declarado do deploy; com o banco falhando, o gesto segue e a falha vai ao log como erro).
+    `True` = gravou."""
+    from motor_expansao.db import BancoNaoConfigurado
+
+    try:
+        from motor_expansao.db import rbac
+
+        quem = rbac.identidade(acesso.login_da_requisicao(remote_user))
+        registrar(autor=quem.id_usuario if quem is not None else None, **dados)
+        return True
+    except BancoNaoConfigurado:
+        _LOG_D17.debug("D17: deploy sem banco — %s sem evento", descricao)
+        return False
+    except Exception:  # noqa: BLE001 — a trilha nunca derruba o gesto
+        _LOG_D17.exception("D17: %s ficou SEM evento no banco", descricao)
+        return False
+
+
+def _masters_ponto_fora_da_area(permitidos: frozenset[str] | None, lat: float, lng: float) -> bool:
+    """O ponto cai FORA do território de todos os masters do login? (quem vê todos os masters,
+    Growth e Líderes, não tem área própria: nunca está fora). O hexágono res-7 do ponto contra os
+    hexágonos das regiões do master (todos, e não só os povoados: um terreno vazio dentro do
+    território ainda é do território)."""
+    if permitidos is None:
+        return False
+    import h3
+
+    hex_do_ponto = str(h3.latlng_to_cell(lat, lng, 7))
+    fontes = _masters_assinatura_do_mapa()
+    return not any(
+        hex_do_ponto in set(_masters_mercado(mid, fontes)["hex_id"].astype(str))
+        for mid in sorted(permitidos)
+    )
+
+
+class PedidoDeImovelIn(BaseModel):
+    """O pedido de imóvel do master (19/11/2026, Juan: "ele fala a região que ele gostaria de
+    solicitar um imóvel; por enquanto é isso")."""
+
+    regiao: str = Field(min_length=1, max_length=300)
+
+
+@app.post("/api/masters/solicitar-imovel")
+def api_master_solicitar_imovel(
+    pedido: PedidoDeImovelIn,
+    remote_user: str | None = Header(default=None, alias="Remote-User"),
+) -> dict[str, Any]:
+    """O master pede um imóvel numa região: a linha `imovel.solicitado` na trilha, com a região e o
+    master do login, para o Growth ver. Nada além disso por ora."""
+    regiao = " ".join(pedido.regiao.split())
+    if not regiao:
+        raise HTTPException(400, "Diga a região em que você gostaria de um imóvel.")
+    _masters_exigir()
+    permitidos = _masters_do_pedido(remote_user)
+    from motor_expansao.db import eventos as db_eventos
+
+    registrado = _masters_registrar(
+        remote_user,
+        db_eventos.registrar_imovel_solicitado,
+        "pedido de imóvel do master",
+        masters=sorted(permitidos or []),
+        regiao=regiao,
+    )
+    return {"ok": True, "registrado": registrado}
+
+
+@app.post("/api/masters/estudo")
+async def api_master_estudo_do_ponto(
+    lat: float,
+    lng: float,
+    remote_user: str | None = Header(default=None, alias="Remote-User"),
+) -> Response:
+    """O estudo de um ponto pedido pelo Início do master (19/11/2026, Juan: "ele pode colocar as
+    coordenadas e vai ser gerado o estudo, mas sem levar para o mapa"): o Estudo pontual (o PDF
+    exclusivamente demográfico, `so_estudo`), direto, a partir da coordenada. Pode ser fora da
+    área dele; nesse caso o PDF sai com o aviso "Estudo fora da sua área de atuação" e a trilha
+    ganha `estudo.fora_da_area`, para o Growth ("notificar a growth, ainda não sei como")."""
+    if not PERFIL.bbox.contem(lat, lng):
+        raise HTTPException(400, "Coordenada fora do país desta instância.")
+    _masters_exigir()
+    permitidos = await run_in_threadpool(_masters_do_pedido, remote_user)
+    fora = await run_in_threadpool(_masters_ponto_fora_da_area, permitidos, lat, lng)
+    report_id = await _registrar_relatorio_gerado_fora_do_loop(
+        remote_user, relatorio="pontual", formato="pdf"
+    )
+    if fora:
+        from motor_expansao.db import eventos as db_eventos
+
+        await run_in_threadpool(
+            functools.partial(
+                _masters_registrar,
+                remote_user,
+                db_eventos.registrar_estudo_fora_da_area,
+                "estudo fora da área do master",
+                masters=sorted(permitidos or []),
+                lat=lat,
+                lng=lng,
+                report_id=report_id,
+            )
+        )
+    solicitante = acesso.login_da_requisicao(remote_user)
+    async with _PDF_SEMAFORO:
+        return await run_in_threadpool(
+            functools.partial(
+                _gerar_relatorio_pontual_pdf,
+                lat,
+                lng,
+                None,
+                solicitante,
+                None,
+                None,
+                None,
+                [],
+                report_id=report_id,
+                so_estudo=True,
+                aviso_fora_da_area=fora,
+            )
+        )
 
 
 @app.get("/api/masters")

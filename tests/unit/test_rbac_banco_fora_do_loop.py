@@ -314,7 +314,9 @@ def test_erro_de_programacao_e_integridade_continuam_visiveis(
 
 #: Falhas que PROVAM que o servidor saiu do alcance (conexao perdida, servidor saindo) --
 #: e as que nao provam: o servidor RESPONDEU, com erro, numa conexao viva.
-ERROS_COM_PROVA = [p for p in ERROS_OPERACIONAIS if p.id in {"conexao_caiu", "pg_terminate_backend"}]
+ERROS_COM_PROVA = [
+    p for p in ERROS_OPERACIONAIS if p.id in {"conexao_caiu", "pg_terminate_backend"}
+]
 ERROS_SEM_PROVA = [p for p in ERROS_OPERACIONAIS if p.id in {"statement_timeout", "lock_timeout"}]
 
 
@@ -823,10 +825,11 @@ def test_nenhuma_async_do_app_vai_ao_banco_direto() -> None:
         and (achadas := _chamadas_diretas(no))
     }
     assert violacoes == {}
-    # E as cinco rotas de relatorio de fato usam o despachante (nao sumiram do mapa): as quatro
-    # de antes e a do relatorio do master (BLK-MASTERS-04, emenda 1 da DEC-089).
+    # E as seis rotas de relatorio de fato usam o despachante (nao sumiram do mapa): as quatro
+    # de antes, a do relatorio do master (BLK-MASTERS-04, emenda 1 da DEC-089) e a do estudo de
+    # um ponto pelo Inicio do master (emenda 2 da DEC-089).
     fonte = (_SERVER / "app.py").read_text(encoding="utf-8")
-    assert fonte.count("await _registrar_relatorio_gerado_fora_do_loop(") == 5
+    assert fonte.count("await _registrar_relatorio_gerado_fora_do_loop(") == 6
 
 
 def test_os_tetos_sao_positivos_e_chegam_literais_na_conexao(
@@ -1333,9 +1336,7 @@ def test_evidencia_de_queda_vem_do_banco_e_some_com_o_pool(monkeypatch: pytest.M
 
 
 @pytest.mark.parametrize("abrir", ["leitura", "escrita"])
-def test_evidencia_dura_ate_o_banco_responder(
-    monkeypatch: pytest.MonkeyPatch, abrir: str
-) -> None:
+def test_evidencia_dura_ate_o_banco_responder(monkeypatch: pytest.MonkeyPatch, abrir: str) -> None:
     """ESTADO, nao janela: sem trafego, a evidencia nao envelhece -- a primeira rajada depois
     de um silencio, com o banco ainda fora, tem de cair na degradacao e nao no 503 (medido em
     `docker stop` com a janela de 10 s). Ela so' some quando um uso termina BEM."""
@@ -1555,20 +1556,14 @@ ERROS_DE_RECURSO_LOCAL = [
         ),
         id="emfile_mensagem",
     ),
-    pytest.param(
-        _com_causa("connection failed", OSError(errno.EMFILE, "x")), id="emfile_errno"
-    ),
-    pytest.param(
-        _com_causa("connection failed", OSError(errno.ENFILE, "x")), id="enfile_errno"
-    ),
+    pytest.param(_com_causa("connection failed", OSError(errno.EMFILE, "x")), id="emfile_errno"),
+    pytest.param(_com_causa("connection failed", OSError(errno.ENFILE, "x")), id="enfile_errno"),
     pytest.param(psycopg.OperationalError("out of memory"), id="enomem_libpq"),
     pytest.param(
         psycopg.OperationalError("could not receive data: Cannot allocate memory"),
         id="enomem_mensagem",
     ),
-    pytest.param(
-        _com_causa("connection failed", OSError(errno.ENOMEM, "x")), id="enomem_errno"
-    ),
+    pytest.param(_com_causa("connection failed", OSError(errno.ENOMEM, "x")), id="enomem_errno"),
     pytest.param(
         psycopg.OperationalError("could not send data: No buffer space available"),
         id="enobufs_mensagem",
@@ -1579,7 +1574,9 @@ ERROS_DE_RECURSO_LOCAL = [
     ),
     pytest.param(
         # So' casa SEM o acento: trava a normalizacao contra a mensagem traduzida.
-        psycopg.OperationalError("could not receive data: N\u00e3o foi poss\u00edvel alocar mem\u00f3ria"),
+        psycopg.OperationalError(
+            "could not receive data: N\u00e3o foi poss\u00edvel alocar mem\u00f3ria"
+        ),
         id="enomem_pt_br",
     ),
     pytest.param(
