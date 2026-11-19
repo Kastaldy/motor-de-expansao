@@ -26,6 +26,13 @@ import app as pilot  # noqa: E402
 
 from motor_expansao.dashboard import movimentacao_concorrencia as mov  # noqa: E402
 from motor_expansao.dashboard import saldo_rede  # noqa: E402
+from tests.unit.test_movimentacao_semanal import (  # noqa: E402
+    DATAS,
+    SEMANAS,
+    _estaveis,
+    _gravar,
+    _linha,
+)
 from tests.unit.test_piloto_web_rede import rede  # noqa: E402,F401  (fixture)
 
 
@@ -153,3 +160,62 @@ def test_rota_com_domingo_duplicado_e_linha_cortada(rede: Path) -> None:  # noqa
     assert m["contagem"]["linhas_sem_data"] == 1
     assert m["contagem"]["recusadas"] == [{"execucao": "2026-11-01", "motivo": "duplicada", "queda_total_pct": None}]
     assert m["contagem"]["execucao_mais_recente"] == "2026-11-01"
+
+
+# ---------------------------------------------------------------------------
+# Série semanal de concorrentes (emenda 1 da DEC-064)
+# ---------------------------------------------------------------------------
+
+def _serie_semanal(staging: Path, semanas: list[str] = SEMANAS) -> None:
+    linhas = _estaveis("pratique", 4, semanas) + _estaveis("independente", 150, semanas, fonte="wellhub")
+    linhas += [_linha(s, "nova", "pratique", "Pratique Nova", 0.001) for s in semanas[2:]]
+    linhas += [_linha(s, "longe", "pratique", "Pratique Longe", 0.5) for s in semanas[2:]]
+    # Estúdio boutique (DEC-056) não é concorrência, nem na série.
+    linhas += [_linha(s, f"vel-{k}", "velocity", f"Velocity {k}", 1 + 0.02 * k) for s in semanas for k in range(2)]
+    linhas += [_linha(s, "vel-nova", "velocity", "Velocity Nova", 0.002) for s in semanas[2:]]
+    _gravar(staging, linhas)
+
+
+def test_card_le_a_serie_semanal_e_guarda_o_pacote_como_historico(rede: Path) -> None:  # noqa: F811
+    _pacote(pilot.STAGING_DIR)
+    _historico(pilot.STAGING_DIR, _semanas("2026-10-25", "2026-11-01"))
+    _serie_semanal(pilot.STAGING_DIR)
+
+    m = pilot.rede_inteligencia_recorte()["movimentacao"]
+    assert m["semanal"]["disponivel"] is True
+    assert (m["semanal"]["de"], m["semanal"]["ate"]) == (DATAS["2026-38"], DATAS["2026-42"])
+    linhas = {r["rede"]: r for r in m["redes"]}
+    assert linhas["pratique"]["semanal"] == {"aberturas": 2, "fechamentos": 0, "saldo": 2, "em_breve": 0}
+    assert linhas["pratique"]["aberturas"] == 1, "o histórico de setembro segue no card"
+    assert "velocity" not in linhas and "velocity" not in m["semanal"]["redes_observadas"]
+
+
+def test_card_rele_a_serie_quando_chega_o_domingo_sem_restart(rede: Path) -> None:  # noqa: F811
+    _historico(pilot.STAGING_DIR, _semanas("2026-10-25", "2026-11-01"))
+    _serie_semanal(pilot.STAGING_DIR, SEMANAS[:4])
+    assert pilot._rede_movimentacao_redes()["semanal"]["ate"] == DATAS["2026-41"]
+    _serie_semanal(pilot.STAGING_DIR, SEMANAS)
+    assert pilot._rede_movimentacao_redes()["semanal"]["ate"] == DATAS["2026-42"]
+
+
+def test_ficha_lista_a_serie_a_2km_e_mantem_o_historico(rede: Path, monkeypatch) -> None:  # noqa: F811
+    _pacote(pilot.STAGING_DIR)
+    _serie_semanal(pilot.STAGING_DIR)
+    pontos = pd.DataFrame([{"unidade_id": "U1", "lat": -23.0, "lng": -46.0}])
+    monkeypatch.setattr(pilot, "_rede_pontos", lambda: pontos)
+
+    mov_ficha = pilot._rede_movimentacao_unidade("U1")
+    semanal = mov_ficha["semanal"]
+    assert semanal["disponivel"] is True and (semanal["de"], semanal["ate"]) == (DATAS["2026-38"], DATAS["2026-42"])
+    assert [(e["tipo"], e["nome"]) for e in semanal["eventos"]] == [("abertura", "Pratique Nova")]
+    assert semanal["contagem"]["abertura"] == 1
+    assert [e["nome"] for e in mov_ficha["eventos"]] == ["Pratique X"], "o pacote segue como histórico"
+    assert set(mov_ficha["logos"]) == {"pratique"}
+
+
+def test_ficha_sem_pacote_ainda_mostra_a_serie(rede: Path, monkeypatch) -> None:  # noqa: F811
+    _serie_semanal(pilot.STAGING_DIR)
+    monkeypatch.setattr(pilot, "_rede_pontos", lambda: pd.DataFrame([{"unidade_id": "U1", "lat": -23.0, "lng": -46.0}]))
+    mov_ficha = pilot._rede_movimentacao_unidade("U1")
+    assert mov_ficha["disponivel"] is False and mov_ficha["semanal"]["disponivel"] is True
+    assert mov_ficha["semanal"]["contagem"]["abertura"] == 1

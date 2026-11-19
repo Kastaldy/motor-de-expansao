@@ -7,6 +7,7 @@ import {
   AVISO_NACIONAL,
   avisosDaContagem,
   celulaCadastro,
+  celulaSemanal,
   celulaVariacao,
   comArtigo,
   diaMes,
@@ -15,14 +16,27 @@ import {
   janela,
   janelaDoCadastro,
   legendaDoEntorno,
+  legendaSemanal,
   motivoSemCadastro,
+  movimentoDaLinha,
   rodapeCrescimento,
+  rodapeSemanal,
+  rotuloBotaoHistorico,
+  rotuloBotaoSemanal,
   rotuloCadastro,
   rotuloContagem,
+  rotuloSemanal,
+  temSemanal,
   temVariacao,
   textoJanela,
 } from './crescimento-concorrencia'
-import type { RedeContagemSemanal, RedeCrescimento, RedeCrescimentoRede, RedeMovimentoPeriodo } from './types'
+import type {
+  RedeContagemSemanal,
+  RedeCrescimento,
+  RedeCrescimentoRede,
+  RedeMovimentoPeriodo,
+  RedeMovimentoSemanal,
+} from './types'
 
 // Datas de propósito DIFERENTES das do pacote real (02/08 a 06/09, Wellhub 31/08 a 12/09): se
 // alguma voltar a ser escrita à mão no código, o teste mostra o texto com a data errada.
@@ -337,6 +351,99 @@ describe('ficha da unidade', () => {
     expect(legendaDoEntorno(PERIODOS)).toBe('Fotos do cadastro até 13/09 e do Wellhub até 20/09.')
     expect(legendaDoEntorno([])).toBe('')
   })
+  it('a legenda da série diz a janela tirada do dado', () => {
+    expect(legendaSemanal({ de: '2026-09-27', ate: '2026-11-22' })).toBe(
+      'Coleta semanal de 27/09 a 22/11, acumulada: abertura é unidade nova no site da rede; fechamento, a que saiu e não voltou por duas coletas.',
+    )
+    expect(legendaSemanal(undefined)).toBe('')
+  })
+})
+
+// --------------------------------------------------------------------------- //
+// Série semanal (emenda 1 da DEC-064): o padrão do card; o pacote vira histórico
+// --------------------------------------------------------------------------- //
+// Datas de propósito DIFERENTES das reais (20/09 a 15/11): data escrita à mão no código aparece aqui.
+const SEMANAL: RedeMovimentoSemanal = {
+  disponivel: true,
+  de: '2026-09-27',
+  ate: '2026-11-22',
+  semanas: 9,
+  agregador_de: '2026-09-26',
+  agregador_ate: '2026-11-21',
+  agregadores: [],
+  redes_observadas: ['selfit'],
+  pendentes: { unidades: 3, wellhub: 10 },
+  recalibracoes: [
+    { rede: 'evoque', de: '2026-10-04', ate: '2026-10-11', trocas: 48, unidades: 48 },
+    { rede: 'redfit', de: '2026-10-11', ate: '2026-10-18', trocas: 21, unidades: 24 },
+  ],
+  cobertura_redes: [{ rede: 'selfit', de: '2026-10-11', ate: '2026-10-18', entradas: 17, unidades: 232 }],
+  cobertura_agregador: [
+    { de: '2026-10-10', ate: '2026-10-17', sentido: 'entradas', n: 369, base: 22767 },
+    { de: '2026-10-31', ate: '2026-11-07', sentido: 'entradas', n: 730, base: 23082 },
+  ],
+}
+
+describe('série semanal', () => {
+  it('é o padrão quando vem no payload, com os rótulos tirados do dado', () => {
+    expect(temSemanal(card({ semanal: SEMANAL }))).toBe(true)
+    expect(temSemanal(card())).toBe(false)
+    expect(temSemanal(card({ semanal: { disponivel: false } }))).toBe(false)
+    expect(rotuloBotaoSemanal(card({ semanal: SEMANAL }))).toBe('Desde 27/09')
+    expect(rotuloBotaoHistorico(card())).toBe('Histórico de 09/08 a 13/09')
+    expect(rotuloSemanal(card({ semanal: SEMANAL }))).toBe('Movimento de 27/09 a 22/11')
+  })
+
+  it('célula: "—" quando a série não enxerga a rede, zero quando enxerga e ela não mexeu', () => {
+    const nada = { aberturas: 0, fechamentos: 0, saldo: 0, em_breve: 0 }
+    expect(celulaSemanal(linha({ semanal: null }), 'aberturas')).toEqual({
+      tipo: 'sem_leitura',
+      valor: 0,
+      titulo: 'A coleta semanal não enxerga esta rede.',
+    })
+    expect(celulaSemanal(linha({ semanal: nada }), 'saldo').tipo).toBe('zero')
+    expect(celulaSemanal(linha({ semanal: { ...nada, aberturas: 4, saldo: 4 } }), 'aberturas')).toEqual({ tipo: 'numero', valor: 4 })
+  })
+
+  it('a tabela ordena pelo modo escolhido', () => {
+    const r = linha({
+      aberturas: 5,
+      aberturas_conferidas: 2,
+      fechamentos: 1,
+      fechamentos_conferidos: 1,
+      semanal: { aberturas: 7, fechamentos: 2, saldo: 5, em_breve: 1 },
+    })
+    expect(movimentoDaLinha(r, 'semanal', false)).toEqual({ aberturas: 7, fechamentos: 2, saldo: 5, em_breve: 1 })
+    expect(movimentoDaLinha(r, 'historico', false)).toEqual({ aberturas: 2, fechamentos: 1, saldo: 1, em_breve: 0 })
+    expect(movimentoDaLinha(r, 'historico', true)).toEqual({ aberturas: 5, fechamentos: 1, saldo: 4, em_breve: 0 })
+    expect(movimentoDaLinha(linha({ semanal: null }), 'semanal', false).aberturas).toBe(0)
+  })
+
+  it('o rodapé diz a janela, as regras e o que ficou fora da conta', () => {
+    const t = rodapeSemanal(card({ semanal: SEMANAL }))
+    expect(t).toContain('Mercado mapeado: 4.436 unidades em 98 redes')
+    expect(t).toContain('coleta semanal dos sites das redes, acumulada de 27/09 a 22/11 (9 coletas)')
+    expect(t).toContain('Abertura é unidade que aparece pela primeira vez; fechamento, a que sai e não volta por duas coletas seguidas.')
+    expect(t).toContain('3 saídas aguardam a segunda coleta para contar como fechamento.')
+    expect(t).toContain('refez o cadastro de uma rede de uma vez (Evoque e Redfit)')
+    expect(t).toContain('Também ficam fora as unidades que o coletor passou a achar de uma vez numa rede, que não são aberturas (Selfit).')
+    expect(t).toContain('Wellhub: as entradas de 17/10 e 07/11 ficam fora')
+    expect(t).toContain('Estúdios boutique ficam fora (DEC-056).')
+    for (const literal of ['20/09', '15/11', '02/08', '06/09']) expect(t).not.toContain(literal)
+    const um = rodapeSemanal(
+      card({ semanal: { ...SEMANAL, pendentes: { unidades: 1 }, recalibracoes: [], cobertura_redes: [], cobertura_agregador: [] } }),
+    )
+    expect(um).toContain('1 saída aguarda a segunda coleta')
+    expect(um).not.toContain('refez o cadastro')
+    expect(um).not.toContain('Wellhub: as entradas')
+  })
+
+  it('sem o pacote mas com a série, o card não diz que mostra só a contagem', () => {
+    const semPacote = (semanal?: RedeMovimentoSemanal) =>
+      avisosDaContagem(card({ tem_cadastro: false, semanal }), HOJE).map((a) => a.texto).join(' ')
+    expect(semPacote(SEMANAL)).not.toContain('o card mostra só a contagem semanal')
+    expect(semPacote()).toContain('o card mostra só a contagem semanal')
+  })
 })
 
 // --------------------------------------------------------------------------- //
@@ -384,8 +491,15 @@ describe('o card na tela', () => {
     expect(fonteCard).toContain('<th scope="row"')
   })
 
+  it('o modo semanal usa as funções da série, e o histórico as do pacote', () => {
+    for (const uso of ['rotuloSemanal(m)', 'celulaSemanal(r, coluna)', 'rodapeSemanal(m)', 'rotuloBotaoSemanal(m)', 'rotuloBotaoHistorico(m)', 'movimentoDaLinha(r, modo, comCautela)']) {
+      expect(fonteCard).toContain(uso)
+    }
+  })
+
   it('a ficha tira as datas da movimentação do dado', () => {
-    expect(ficha).toContain('legendaDoEntorno(mov.periodos)')
+    expect(ficha).toContain('legendaDoEntorno(mov?.periodos)')
+    expect(ficha).toContain('legendaSemanal(semanal ?? undefined)')
     expect(ficha).not.toContain('Foto não validada (28/05 a 02/08)')
   })
 })

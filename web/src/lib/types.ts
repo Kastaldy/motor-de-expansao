@@ -1928,13 +1928,14 @@ export interface RedeInteligencia {
   notas: string[]
 }
 
-/** Movimentação da concorrência (pacote garimpado da VPS, 15/09). `cautela` = foto não validada. */
+/** Movimentação da concorrência. `semanal` = série semanal do coletor (emenda 1 da DEC-064);
+ *  `alta`/`cautela` = pacote garimpado da VPS em 15/09 (histórico), com `cautela` = foto não validada. */
 export type RedeMovimentoTipo = 'abertura' | 'inauguracao' | 'em_breve' | 'fechamento' | 'entrou_agregador' | 'saiu_agregador'
 export type RedeMovimentoContagem = Record<RedeMovimentoTipo, number>
 export interface RedeMovimentoEvento {
   fonte: 'cadastro' | 'em_breve' | 'wellhub'
   tipo: RedeMovimentoTipo
-  confianca: 'alta' | 'cautela'
+  confianca: 'alta' | 'cautela' | 'semanal'
   rede: string | null
   nome: string | null
   distancia_m: number
@@ -1961,6 +1962,36 @@ export interface RedeCrescimento {
   /** soma da variação entre as redes presentes nas duas contagens; `null` sem duas contagens */
   variacao_total?: number | null
   agregadores: RedeCrescimentoAgregador[]
+  /** aberturas e fechamentos pela série semanal do coletor, acumulados desde o início da série */
+  semanal?: RedeMovimentoSemanal
+}
+/** A série semanal no card: janela, agregador e o que as regras tiraram da conta. */
+export interface RedeMovimentoSemanal {
+  disponivel: boolean
+  /** data da primeira e da última coleta da janela (cadastro das redes) */
+  de?: string | null
+  ate?: string | null
+  semanas?: number
+  agregador_de?: string | null
+  agregador_ate?: string | null
+  agregadores?: RedeCrescimentoAgregador[]
+  /** redes que a série enxerga: nelas, zero é "não mexeu"; fora delas a célula é "—" */
+  redes_observadas?: string[]
+  /** fechamentos ainda sem a segunda semana de ausência, por fonte */
+  pendentes?: Record<string, number>
+  /** rede que trocou de chave em massa numa semana (coletor recalibrou): a semana dela fica fora */
+  recalibracoes?: { rede: string; de: string; ate: string; trocas: number; unidades: number }[]
+  /** rede que ganhou muitas unidades de uma vez (coletor passou a achar mais): as entradas ficam fora */
+  cobertura_redes?: { rede: string; de: string; ate: string; entradas: number; unidades: number }[]
+  /** semana em que o Wellhub ganhou (ou perdeu) mais de 1% das academias de uma vez */
+  cobertura_agregador?: { de: string; ate: string; sentido: 'entradas' | 'saidas'; n: number; base: number }[]
+}
+/** As colunas da série numa linha do card; `null` = a série não enxerga a rede. */
+export interface RedeCrescimentoSemanal {
+  aberturas: number
+  fechamentos: number
+  saldo: number
+  em_breve: number
 }
 /** Laudo da contagem semanal, julgada POR REDE contra a última contagem boa de cada uma. */
 export interface RedeContagemSemanal {
@@ -2032,6 +2063,8 @@ export interface RedeCrescimentoRede {
   lido?: number | null
   /** a linha não tem leitura de aberturas e fechamentos: as colunas do cadastro mostram "—" */
   sem_cadastro?: 'teto_coletor' | 'fora_da_cobertura' | null
+  /** as mesmas colunas pela série semanal; `null` = a série não enxerga a rede ("—") */
+  semanal?: RedeCrescimentoSemanal | null
 }
 export interface RedeCrescimentoAgregador {
   agregador: string
@@ -2232,12 +2265,23 @@ export interface RedeUnidadeInteligencia {
   planos: RedePlanosEntorno
   planos_wellhub?: RedePlanosEntorno
   movimentacao?: {
+    /** o pacote de setembro (histórico) está presente */
     disponivel: boolean
     sem_coordenada?: boolean
     periodos: RedeMovimentoPeriodo[]
     contagem: RedeMovimentoContagem
     eventos: RedeMovimentoEvento[]
+    /** logos das redes das duas listas (série e histórico) */
     logos?: Record<string, string | null>
+    /** o que a série semanal viu a até 2 km, acumulado desde o início da série */
+    semanal?: {
+      disponivel: boolean
+      de?: string | null
+      ate?: string | null
+      semanas?: number
+      eventos: RedeMovimentoEvento[]
+      contagem: RedeMovimentoContagem
+    }
   }
   unidade_id: string
   competencia: string | null
