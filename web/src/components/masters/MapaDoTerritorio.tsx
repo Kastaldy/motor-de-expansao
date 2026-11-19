@@ -125,7 +125,8 @@ export default function MapaDoTerritorio({
     if (!deSetores || !mapa || !vista) return
     const largura = caixa.current?.clientWidth || 900
     const vp = new WebMercatorViewport({ width: largura, height: ALTURA, ...vista })
-    const [[o, s], [l, n]] = vp.getBounds() as unknown as [[number, number], [number, number]]
+    // deck.gl 9: `getBounds()` devolve a caixa PLANA [oeste, sul, leste, norte].
+    const [o, s, l, n] = vp.getBounds()
     for (const [uf, cod] of municipiosAVista(mapa.municipios, [[o, s], [l, n]])) {
       const chave = `${uf}-${cod}`
       if (setores.has(chave)) continue
