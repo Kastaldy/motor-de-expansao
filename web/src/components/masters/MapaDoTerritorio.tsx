@@ -11,7 +11,7 @@ import { corDaFaixaDoServidor } from '../../lib/colors'
 import { tracoComHalo } from '../../lib/contorno-halo'
 import { num, renda } from '../../lib/format'
 import type { CamadaDoMapa, FocoNoMapa, MasterCamadas, MasterMapa, SetorDoTerritorio } from '../../lib/masters'
-import { caixaDoContorno, rgbDeHex, vistaDoTerritorio } from '../../lib/masters'
+import { caixaDoContorno, vistaDoTerritorio } from '../../lib/masters'
 import type { Tema } from '../../lib/tema'
 
 /* ---------------------------------------------------------------------------
@@ -20,8 +20,9 @@ import type { Tema } from '../../lib/tema'
    18/11/2026, Juan: "deixe uma parte do relatório nessa aba, o mapa, assim como
    está na carteira, com a área e a opção de ligar a renda e a densidade".
    19/11/2026: o território só DEMARCADO ("não precisa deixar a área colorida, só
-   deixe ela demarcada igual fica no motor"): o contorno de cada região, com a cor
-   dela e o halo do motor (`tracoComHalo`); e as camadas são os mapas do relatório
+   deixe ela demarcada igual fica no motor"): o contorno de cada região, em BRANCO
+   sobre o halo escuro do motor (`tracoComHalo`; 19/11/2026, Juan: "mostre o limite do
+   território em branco"); e as camadas são os mapas do relatório
    (renda, densidade, espaço livre e concorrentes), uma por vez. Renda e densidade
    são SEMPRE do Censo ("deixe o padrão sempre censitário"): os polígonos dos setores
    do território inteiro, como na ficha da carteira, em QUALQUER zoom (19/11/2026,
@@ -46,6 +47,13 @@ const CAMADAS: { chave: CamadaDoMapa; rotulo: string; legenda: string; indice: 0
 ]
 
 const ALTURA = 480
+/** O limite do território, em branco (19/11/2026, Juan). */
+const BRANCO = [255, 255, 255] as const
+
+/** "A", "A e B", "A, B e C". */
+function listaDeNomes(nomes: string[]): string {
+  return nomes.length > 1 ? `${nomes.slice(0, -1).join(', ')} e ${nomes[nomes.length - 1]}` : (nomes[0] ?? '')
+}
 
 type Vista = { longitude: number; latitude: number; zoom: number; pitch: number; bearing: number }
 type Dica = { titulo: string; linhas: string[]; x: number; y: number }
@@ -198,18 +206,19 @@ export default function MapaDoTerritorio({
       }
     }
 
-    // O território DEMARCADO: o contorno de cada região, com a cor dela por cima do halo do motor.
+    // O território DEMARCADO: o limite de cada região em branco, por cima do halo escuro do motor
+    // (no tema claro, o halo é o que separa o branco do fundo).
     const aneis = mapa.contornos.flatMap((c) =>
       c.poligonos.flatMap((pol) => pol.map((anel) => ({ anel, regiao: c.regiao }))),
     )
-    const traco = (regiao: number) => tracoComHalo(tema, rgbDeHex(mapa.regioes[regiao]?.cor ?? '#00A79D'), 2.5)
+    const traco = tracoComHalo(tema, BRANCO, 2.5)
     arr.push(
       new PathLayer<(typeof aneis)[number]>({
         id: 'contorno-halo',
         data: aneis,
         getPath: (d) => d.anel,
-        getColor: (d) => traco(d.regiao).halo.cor,
-        getWidth: (d) => traco(d.regiao).halo.largura,
+        getColor: traco.halo.cor,
+        getWidth: traco.halo.largura,
         widthUnits: 'pixels',
         jointRounded: true,
         updateTriggers: { getColor: [tema] },
@@ -218,8 +227,8 @@ export default function MapaDoTerritorio({
         id: 'contorno',
         data: aneis,
         getPath: (d) => d.anel,
-        getColor: (d) => traco(d.regiao).traco.cor,
-        getWidth: (d) => traco(d.regiao).traco.largura,
+        getColor: traco.traco.cor,
+        getWidth: traco.traco.largura,
         widthUnits: 'pixels',
         jointRounded: true,
         updateTriggers: { getColor: [tema] },
@@ -405,12 +414,19 @@ export default function MapaDoTerritorio({
               ) : null
             ) : (
               <>
-                {mapa.regioes.map((r) => (
-                  <div key={r.id} style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                    <span style={{ width: 14, height: 0, borderTop: `3px solid ${r.cor}` }} />
-                    {r.nome}
-                  </div>
-                ))}
+                <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                  {/* O branco com o contorno escuro, como no mapa (no tema claro, o branco sozinho some). */}
+                  <span
+                    style={{
+                      width: 14,
+                      height: 3,
+                      background: '#fff',
+                      boxShadow: '0 0 0 1px rgba(8, 11, 16, 0.85)',
+                      borderRadius: 1,
+                    }}
+                  />
+                  Limite do território: {listaDeNomes(mapa.regioes.map((r) => r.nome))}
+                </div>
                 {mapa.icone_ultra && mapa.ultra.length > 0 && (
                   <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
                     <img src={mapa.icone_ultra} alt="" width={12} height={12} style={{ borderRadius: 2 }} />
