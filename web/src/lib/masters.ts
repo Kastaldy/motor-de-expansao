@@ -51,8 +51,19 @@ export interface FontesMasters {
 
 export interface MastersPayload {
   masters: MasterCard[]
+  /** `true` = quem pede só vê o PRÓPRIO painel (o master com login, emenda 2 da DEC-089): a
+   *  lista já vem recortada no servidor. Ausente em servidor antigo = `false`. */
+  proprio?: boolean
   hoje: string
   fontes: FontesMasters
+}
+
+/** O master que a tela abre sozinha: o do login, quando a pessoa só vê o próprio painel e ele é
+ *  um só (19/11/2026, Juan: "quando eles clicarem em Masters, já abrir no nome dele"). Fora
+ *  disso (Growth e Líderes, ou um login com mais de um master), a lista. */
+export function masterQueAbreSozinho(lista: Pick<MastersPayload, 'masters' | 'proprio'> | null): string | null {
+  if (!lista?.proprio || lista.masters.length !== 1) return null
+  return lista.masters[0].id
 }
 
 export interface TrimestreMeta {

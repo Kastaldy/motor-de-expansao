@@ -772,3 +772,124 @@ def test_o_ponto_do_setor_e_o_centro_da_caixa_sem_arredondar(
         (-47.89, -15.79, 5500.0, 12345.7),
         (-47.79, -15.69, 3300.0, None),
     )
+
+
+# ---------------------------------------------------------------------------
+# O master com login próprio (027, emenda 2 da DEC-089; 19/11/2026, Juan: "os masters vão ter seus
+# próprios logins; quando clicarem em Masters, já abrir no nome dele")
+# ---------------------------------------------------------------------------
+
+
+def _login(monkeypatch: pytest.MonkeyPatch, nome: Any, permissoes: set[str]) -> None:
+    """Banco no comando, a identidade e o nome do usuário dublados."""
+    monkeypatch.setattr(acesso, "banco_no_comando", lambda: True)
+    _identidade(monkeypatch, permissoes)
+
+    def nome_do_usuario(_id: int) -> Any:
+        if isinstance(nome, Exception):
+            raise nome
+        return nome
+
+    monkeypatch.setattr(rbac, "nome_do_usuario", nome_do_usuario)
+
+
+def test_o_master_com_login_ve_so_o_proprio_painel(
+    masters: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _login(monkeypatch, "MASTER  um", {"masters.ver_proprio"})
+    lista = pilot.api_masters(remote_user="alguem")
+    assert [c["id"] for c in lista["masters"]] == ["rjsp"]
+    assert lista["proprio"] is True  # a tela abre direto nele
+    assert pilot.api_master("rjsp", remote_user="alguem")["id"] == "rjsp"
+    # O de outro master responde como um master que não existe (404, e não 403).
+    assert _status(lambda: pilot.api_master("sp03", remote_user="alguem")) == (
+        404,
+        "Master não encontrado.",
+    )
+
+
+def test_login_cujo_nome_nao_e_de_master_nao_ve_nenhum(
+    masters: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    for nome in ("Outra Pessoa", None):
+        _login(monkeypatch, nome, {"masters.ver_proprio"})
+        lista = pilot.api_masters(remote_user="alguem")
+        assert lista["masters"] == [] and lista["proprio"] is True
+        assert _status(lambda: pilot.api_master("rjsp", remote_user="alguem"))[0] == 404
+
+
+def test_growth_e_lideres_seguem_vendo_todos(
+    masters: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _login(monkeypatch, "Master Um", {"masters.ver"})
+    lista = pilot.api_masters(remote_user="alguem")
+    assert [c["id"] for c in lista["masters"]] == ["rjsp", "sp03"]
+    assert lista["proprio"] is False
+
+
+def test_banco_fora_ao_ler_o_nome_vira_503_e_nunca_todos(
+    masters: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from motor_expansao import db
+
+    _login(monkeypatch, db.BancoIndisponivel("fora"), {"masters.ver_proprio"})
+    assert _status(lambda: pilot.api_masters(remote_user="alguem"))[0] == 503
+
+
+@pytest.mark.parametrize(
+    "rota",
+    [
+        "api_master_mapa",
+        "api_master_mapa_camadas",
+        "api_master_recomendacao",
+        "api_master_crescimento",
+        "api_master_setores_pontos",
+    ],
+)
+def test_as_leituras_do_painel_barram_o_master_de_outro(
+    mapa: dict[str, Any], monkeypatch: pytest.MonkeyPatch, rota: str
+) -> None:
+    _login(monkeypatch, "Master Um", {"masters.ver_proprio"})
+    # A conta da recomendação tem os testes dela; aqui só importa quem chega até ela.
+    monkeypatch.setattr(pilot, "_bloco_recomendacao", lambda *_a, **_k: {})
+    funcao = getattr(pilot, rota)
+    assert _status(lambda: funcao("sp03", remote_user="alguem")) == (404, "Master não encontrado.")
+    funcao("rjsp", remote_user="alguem")  # o próprio passa
+
+
+def test_o_estudo_e_o_relatorio_barram_o_master_de_outro(
+    relatorio: list[dict[str, Any]], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _login(monkeypatch, "Master Um", {"masters.ver_proprio"})
+    outro = (404, "Master não encontrado.")
+    assert _status(lambda: asyncio.run(pilot.api_master_estudo("sp03", remote_user="x"))) == outro
+    assert (
+        _status(
+            lambda: asyncio.run(pilot.api_master_relatorio("sp03", regiao=None, remote_user="x"))
+        )
+        == outro
+    )
+    # O próprio gera o relatório (Juan: "sim, ele, os líderes e o growth").
+    r = asyncio.run(pilot.api_master_relatorio("rjsp", regiao="rj", remote_user="x"))
+    assert r.media_type == "application/pdf"
+    assert relatorio[-1]["master"] == "rjsp"
+
+
+def test_o_perfil_master_ve_a_aba_masters(monkeypatch: pytest.MonkeyPatch) -> None:
+    assert "masters.ver_proprio" in acesso.CAPACIDADES_SENSIVEIS
+    _identidade(monkeypatch, {"rede.ver_propria", "masters.ver_proprio"})
+    assert acesso.abas_do_usuario_por_banco("alguem") == frozenset({"executiva", "masters"})
+    # Só a capacidade da Executiva não dá a tela Masters.
+    _identidade(monkeypatch, {"rede.ver_propria"})
+    assert acesso.abas_do_usuario_por_banco("alguem") == frozenset({"executiva"})
+
+
+def test_a_migration_027_da_o_proprio_painel_so_ao_perfil_master() -> None:
+    sql = (_REPO / "src/motor_expansao/db/migracoes/027-permissao-masters-proprio.sql").read_text(
+        encoding="utf-8"
+    )
+    assert "('masters.ver_proprio'," in sql
+    concessoes = sql.split("INSERT INTO perfil_permissoes")[1]
+    assert "('master', 'masters.ver_proprio')" in concessoes
+    for fora in ("growth", "lideres", "consultoria", "expansao"):
+        assert f"('{fora}'," not in concessoes

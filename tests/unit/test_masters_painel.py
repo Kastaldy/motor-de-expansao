@@ -237,3 +237,23 @@ def test_fases() -> None:
         "sem status",
     ]
     assert meses_ate(pd.Timestamp("2026-01-31"), HOJE) == 0
+
+
+def test_o_login_abre_o_painel_do_master_de_mesmo_nome() -> None:
+    """Emenda 2 da DEC-089 (Juan, 19/11/2026): "cada login tem o nome do usuário, ele bate com o
+    nome do master e ele tem acesso só ao painel dele". Sem acento, sem caixa e sem pontuação."""
+    from motor_expansao.masters.painel import master_e_da_pessoa, nomes_do_titular
+
+    assert master_e_da_pessoa("Fulano de Tal", "fulano  de tal")
+    assert master_e_da_pessoa("Sérgio E. C. Martins", "Sergio E C Martins")
+    assert not master_e_da_pessoa("Fulano de Tal", "Fulano")  # nome inteiro, não um pedaço
+    assert not master_e_da_pessoa("Fulano de Tal", "Beltrano de Tal")
+    # Titular composto: cada pessoa (e a empresa) abre o painel do master.
+    composto = "Empresa Exemplo (Fulano da Silva + Beltrano da Silva)"
+    assert nomes_do_titular(composto) >= {"empresa exemplo", "fulano da silva", "beltrano da silva"}
+    assert master_e_da_pessoa(composto, "Beltrano da Silva")
+    assert master_e_da_pessoa("Ciclano Souza / Exemplo Master Ltda", "Ciclano Souza")
+    # Falha fechada: nome vazio ou ausente nunca abre nada.
+    for vazio in ("", "   ", None):
+        assert not master_e_da_pessoa("Fulano de Tal", vazio)
+    assert not master_e_da_pessoa("", "")

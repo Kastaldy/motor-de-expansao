@@ -190,6 +190,13 @@
       "documento": "026-permissao-masters.md",
       "sha256_bloco": "c49c952bbd89cd3939beb531ed5ddc92df1a17b2b7993b5202884d5bf72d09d5",
       "sha256_arquivo": "f90e3ed1da987aaf6344d1252e2beed2ff024152d349095d1badb271c14d1b59"
+    },
+    {
+      "versao": "027",
+      "arquivo": "027-permissao-masters-proprio.sql",
+      "documento": "027-permissao-masters-proprio.md",
+      "sha256_bloco": "2e83d976b235baba9e0eebdb9f8fbecb5e06d1fdc59b2fd84ee0cc5fee76278b",
+      "sha256_arquivo": "580965909aff8e46353c97527c671f47fb539361e4732f9f0e7d3269ba67339c"
     }
   ]
 }

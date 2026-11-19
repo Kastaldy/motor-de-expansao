@@ -22,6 +22,7 @@ o contrato manda contar (`conta_tambem`), como o relatório em PDF.
 from __future__ import annotations
 
 import math
+import re
 from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass
 from typing import Any
@@ -35,6 +36,7 @@ from motor_expansao.masters.meta import (
     meta_do_ano,
     ordem_da_fase,
 )
+from motor_expansao.masters.territorios import normalizar
 
 Chave = Callable[[object], str]
 
@@ -108,6 +110,24 @@ def _texto(v: Any) -> str | None:
         return None
     t = str(v).strip()
     return t or None
+
+
+def nomes_do_titular(nome_master: Any) -> frozenset[str]:
+    """As chaves de nome que abrem o painel deste master: o nome inteiro e, num titular composto,
+    cada parte separada por "/", "+" ou parênteses ("GEMPRO (Fulano + Beltrano)" abre para
+    "GEMPRO", "Fulano" e "Beltrano"). Chave = `territorios.normalizar` (sem acento, sem caixa,
+    pontuação vira espaço). Vazias saem."""
+    bruto = str(nome_master or "")
+    partes = [bruto, *re.split(r"[/+()]", bruto)]
+    return frozenset(c for c in (normalizar(p) for p in partes) if c)
+
+
+def master_e_da_pessoa(nome_master: Any, nome_pessoa: Any) -> bool:
+    """O login cujo nome é este abre o painel deste master? (emenda 2 da DEC-089, Juan em
+    19/11/2026: "cada login tem o nome do usuário, ele bate com o nome do master e ele tem acesso
+    só ao painel dele"). Nome vazio nunca abre nada (falha fechada)."""
+    chave = normalizar(nome_pessoa or "")
+    return bool(chave) and chave in nomes_do_titular(nome_master)
 
 
 def _ids_das_regioes(c: Any) -> list[str | None]:

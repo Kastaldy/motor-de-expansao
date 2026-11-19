@@ -19,6 +19,7 @@ import { api, ApiError, baixar } from '../lib/api'
 import {
   dataBr,
   escalaDaBarra,
+  masterQueAbreSozinho,
   metaDoAno,
   pct,
   rotuloDaBarra,
@@ -487,7 +488,8 @@ function PainelMaster({
 }: {
   p: MasterPainel
   tema: Tema
-  onVoltar: () => void
+  /** Ausente = o master com login próprio: a tela abriu direto nele e não há lista para voltar. */
+  onVoltar?: () => void
 }) {
   const m = p.meta
   const contrato = textoContrato(m)
@@ -497,11 +499,13 @@ function PainelMaster({
   const [foco, setFoco] = useState<FocoNoMapa | null>(null)
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
-      <div>
-        <Botao variante="ghost" onClick={onVoltar} style={{ padding: '7px 11px' }}>
-          ← Todos os masters
-        </Botao>
-      </div>
+      {onVoltar && (
+        <div>
+          <Botao variante="ghost" onClick={onVoltar} style={{ padding: '7px 11px' }}>
+            ← Todos os masters
+          </Botao>
+        </div>
+      )}
       <div
         style={{
           display: 'flex',
@@ -676,7 +680,13 @@ export default function MastersScreen({ onInicio, tema }: { onInicio: () => void
     let vivo = true
     api
       .masters()
-      .then((r) => vivo && setLista(r))
+      .then((r) => {
+        if (!vivo) return
+        setLista(r)
+        // O master com login próprio abre direto no painel dele (emenda 2 da DEC-089).
+        const unico = masterQueAbreSozinho(r)
+        if (unico) setAberto(unico)
+      })
       .catch((e: ApiError) => vivo && setErro(e.message))
       .finally(() => vivo && setCarregando(false))
     return () => {
@@ -699,6 +709,8 @@ export default function MastersScreen({ onInicio, tema }: { onInicio: () => void
   }, [aberto])
 
   const fontes = painel?.fontes ?? lista?.fontes
+  // Sem lista para voltar quando a tela abriu sozinha no master do login.
+  const voltar = masterQueAbreSozinho(lista) ? undefined : () => setAberto(null)
   return (
     <div
       style={{
@@ -746,13 +758,15 @@ export default function MastersScreen({ onInicio, tema }: { onInicio: () => void
               titulo="Não foi possível abrir o painel"
               corpo={erroPainel}
               acao={
-                <Botao variante="ghost" onClick={() => setAberto(null)}>
-                  ← Todos os masters
-                </Botao>
+                voltar && (
+                  <Botao variante="ghost" onClick={voltar}>
+                    ← Todos os masters
+                  </Botao>
+                )
               }
             />
           ) : painel ? (
-            <PainelMaster p={painel} tema={tema} onVoltar={() => setAberto(null)} />
+            <PainelMaster p={painel} tema={tema} onVoltar={voltar} />
           ) : (
             <div style={{ display: 'flex', justifyContent: 'center', padding: 40 }}>
               <Spinner tamanho={18} />
@@ -776,6 +790,12 @@ export default function MastersScreen({ onInicio, tema }: { onInicio: () => void
               ))}
             </div>
           </>
+        ) : lista?.proprio ? (
+          // O master com login próprio cujo nome não bate com o de nenhum master da planilha.
+          <Aviso
+            titulo="Nenhum painel de master no seu usuário"
+            corpo="O nome do seu login não bate com o de nenhum master da planilha. Fale com o Growth para conferir o nome do seu usuário."
+          />
         ) : (
           <Aviso titulo="Nenhum master" corpo="A planilha ingerida não tem nenhum master." />
         )}

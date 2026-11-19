@@ -765,6 +765,10 @@ CAPACIDADES_SENSIVEIS = frozenset(
         "rede.ver_propria",
         # 026 (DEC-089): contratos e metas dos masters, da planilha confidencial.
         "masters.ver",
+        # 027 (emenda 2 da DEC-089): o proprio painel do master na tela Masters. Hoje nenhuma rota
+        # exige ESTA chave direto (o gate a aceita no lugar de `masters.ver`, ja' sensivel); ela
+        # esta' aqui, como a `rede.ver_propria`, para nascer fechada no fail-closed.
+        "masters.ver_proprio",
     }
 )
 
@@ -802,6 +806,45 @@ ROTAS_DA_REDE_PROPRIA: tuple[re.Pattern[str], ...] = (
     re.compile(rf"/api/rede/unidade/{_ID_DA_UNIDADE}/inteligencia"),
     re.compile(rf"/api/rede/unidade/{_ID_DA_UNIDADE}/setores"),
 )
+
+
+#: A capacidade do master na tela Masters (migration 027, emenda 2 da DEC-089, 19/11/2026): o
+#: master com login proprio abre a tela e ve SO' o proprio painel. Outra chave, e nao a
+#: `rede.ver_propria` (escolha do Juan: Executiva e Masters concedidas cada uma por si). O gate so'
+#: a aceita no lugar de `masters.ver` nas rotas de `rota_dos_masters_proprios`; o recorte em si e'
+#: da ROTA (`_masters_do_pedido`, no `app.py`), que devolve 404 ao master de outro.
+CAPACIDADE_MASTERS_PROPRIO = "masters.ver_proprio"
+
+#: Segmento do id de master na config (`dfgo`, `camargo`): sem barra nem ponto.
+_ID_DO_MASTER = r"[^/.]+"
+
+#: As rotas de `/api/masters` que `masters.ver_proprio` alcanca: as leituras da tela e o PDF do
+#: relatorio (o master gera o proprio, Juan em 19/11/2026). ALLOWLIST FECHADA, com `fullmatch`,
+#: como a da rede: rota nova de `/api/masters` nasce FORA do master ate' entrar aqui -- e o contrato
+#: `tests/contracts/test_master_so_alcanca_a_executiva.py` falha se o conjunto mudar. Toda rota
+#: desta lista tem de aplicar o recorte (`_masters_do_pedido`); uma sem ele entrega os contratos
+#: de todos os masters.
+ROTAS_DOS_MASTERS_PROPRIOS: tuple[re.Pattern[str], ...] = (
+    re.compile(r"/api/masters"),
+    re.compile(rf"/api/masters/{_ID_DO_MASTER}"),
+    re.compile(rf"/api/masters/{_ID_DO_MASTER}/mapa"),
+    re.compile(rf"/api/masters/{_ID_DO_MASTER}/mapa/camadas"),
+    re.compile(rf"/api/masters/{_ID_DO_MASTER}/setores-pontos"),
+    re.compile(rf"/api/masters/{_ID_DO_MASTER}/setores/{_ID_DO_MASTER}/{_ID_DO_MASTER}"),
+    re.compile(rf"/api/masters/{_ID_DO_MASTER}/recomendacao"),
+    re.compile(rf"/api/masters/{_ID_DO_MASTER}/crescimento"),
+    re.compile(rf"/api/masters/{_ID_DO_MASTER}/estudo"),
+    re.compile(rf"/api/masters/relatorio/{_ID_DO_MASTER}"),
+)
+
+
+def rota_dos_masters_proprios(path: str, metodo: str) -> bool:
+    """`True` = esta rota+metodo esta' no alcance de `masters.ver_proprio` (allowlist fechada)."""
+    if not isinstance(path, str) or not isinstance(metodo, str):
+        return False
+    if metodo.upper() != "GET":
+        return False
+    return any(padrao.fullmatch(path) for padrao in ROTAS_DOS_MASTERS_PROPRIOS)
 
 
 def rota_da_rede_propria(path: str, metodo: str) -> bool:
@@ -963,6 +1006,14 @@ def motivo_bloqueio_por_banco(path: str, metodo: str, usuario: object) -> str | 
         and rota_da_rede_propria(path, metodo)
     ):
         return None
+    # O master na tela Masters (027, emenda 2 da DEC-089): sem `masters.ver`, mas com
+    # `masters.ver_proprio`, passa SO' nas leituras da allowlist -- e a rota recorta o master dele.
+    if (
+        necessaria == "masters.ver"
+        and quem.pode(CAPACIDADE_MASTERS_PROPRIO)
+        and rota_dos_masters_proprios(path, metodo)
+    ):
+        return None
     return "Seu usuário não tem acesso a esta área do piloto. Fale com o Felipe."
 
 
@@ -996,6 +1047,8 @@ CAPACIDADE_QUE_SUSTENTA_A_ABA: dict[str, str] = {
 #: teste que o trava pede a MESMA forma -- uma capacidade por aba.
 CAPACIDADES_ALTERNATIVAS_DA_ABA: dict[str, frozenset[str]] = {
     "executiva": frozenset({CAPACIDADE_REDE_PROPRIA}),
+    # 027 (emenda 2 da DEC-089): o master ve a aba Masters, recortada ao proprio painel.
+    "masters": frozenset({CAPACIDADE_MASTERS_PROPRIO}),
 }
 
 

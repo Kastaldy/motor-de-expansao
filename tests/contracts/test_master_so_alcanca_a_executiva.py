@@ -116,3 +116,69 @@ def test_as_leituras_do_master_tambem_respeitam_o_gate_de_pais(_master: str) -> 
     """A allowlist nao cria superficie: as seis rotas seguem exigindo a `executiva` da instancia."""
     for _metodo, caminho in ALCANCE_DO_MASTER:
         assert acesso.superficie_necessaria(caminho) == frozenset({"executiva"}), caminho
+
+
+# ---------------------------------------------------------------------------
+# A tela Masters (027, emenda 2 da DEC-089, 19/11/2026): o master com login próprio abre o PRÓPRIO
+# painel. Mesma trava, para a outra allowlist (`acesso.ROTAS_DOS_MASTERS_PROPRIOS`): o conjunto do
+# que passa é EXATAMENTE as leituras da Executiva e as do painel do master. Cada rota de masters
+# recorta o master pedido (`_masters_do_pedido`), com teste próprio do lado do `app.py`.
+# ---------------------------------------------------------------------------
+
+#: As leituras da tela Masters que o master alcança (as do próprio painel e o PDF do relatório).
+ALCANCE_DO_MASTER_NA_TELA_MASTERS = frozenset(
+    {
+        ("GET", "/api/masters"),
+        ("GET", "/api/masters/x"),
+        ("GET", "/api/masters/x/mapa"),
+        ("GET", "/api/masters/x/mapa/camadas"),
+        ("GET", "/api/masters/x/setores-pontos"),
+        ("GET", "/api/masters/x/setores/x/x"),
+        ("GET", "/api/masters/x/recomendacao"),
+        ("GET", "/api/masters/x/crescimento"),
+        ("GET", "/api/masters/x/estudo"),
+        ("GET", "/api/masters/relatorio/x"),
+    }
+)
+
+
+@pytest.fixture
+def _master_com_a_tela(monkeypatch: pytest.MonkeyPatch, _master: str) -> str:
+    """O master da 025 + 027: `rede.ver_propria` e `masters.ver_proprio`."""
+
+    def falsa(_remote_user: object) -> rbac.Identidade:
+        return rbac.Identidade(
+            id_usuario=99,
+            login=_master,
+            perfil="master",
+            permissoes=frozenset(
+                {acesso.CAPACIDADE_REDE_PROPRIA, acesso.CAPACIDADE_MASTERS_PROPRIO}
+            ),
+            paises=frozenset({"BR"}),
+        )
+
+    monkeypatch.setattr(rbac, "identidade", falsa)
+    return _master
+
+
+def test_o_alcance_na_tela_masters_esta_registrado() -> None:
+    faltando = sorted(ALCANCE_DO_MASTER_NA_TELA_MASTERS - set(_rotas_protegidas()))
+    assert not faltando, f"rotas da tela Masters que o app nao registra mais: {faltando}"
+
+
+def test_o_master_com_login_proprio_so_passa_no_proprio_painel(_master_com_a_tela: str) -> None:
+    passaram = {
+        (m, c)
+        for m, c in _rotas_protegidas()
+        if not _negada(
+            c, _master_com_a_tela, acesso.motivo_bloqueio_por_banco(c, m, _master_com_a_tela)
+        )
+    }
+    esperado = ALCANCE_DO_MASTER | ALCANCE_DO_MASTER_NA_TELA_MASTERS
+    a_mais = sorted(passaram - esperado)
+    a_menos = sorted(esperado - passaram)
+    assert not a_mais, (
+        f"rotas que atendem o master SEM estar no alcance decidido: {a_mais}. Se e' de proposito, "
+        "a rota tem de aplicar o recorte e entrar na allowlist do `acesso.py` e aqui."
+    )
+    assert not a_menos, f"o master perdeu leituras: {a_menos}"

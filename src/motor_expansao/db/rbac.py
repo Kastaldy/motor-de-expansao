@@ -177,3 +177,29 @@ def masters_do_usuario(id_usuario: int) -> frozenset[str]:
     with conexao() as con:
         linhas = con.execute(SQL_MASTERS_DO_USUARIO, (id_usuario,)).fetchall()
     return frozenset(linha[0] for linha in linhas if linha[0] is not None)
+
+
+# O nome de exibicao da pessoa (`usuarios.nome_usuario`): o recorte da tela Masters (027, emenda 2
+# da DEC-089) casa esse nome com o do master da planilha. CONSULTA PROPRIA pelas mesmas razoes da
+# de cima: so' as rotas de `/api/masters` de quem tem `masters.ver_proprio` pagam a ida ao banco,
+# e o `SQL_IDENTIDADE` de toda requisicao fica intocado. `u.ativo` pelo mesmo motivo: desativada
+# entre as duas consultas, a pessoa sai sem nome e o recorte, vazio.
+SQL_NOME_DO_USUARIO = """
+SELECT u.nome_usuario
+FROM usuarios u
+WHERE u.id_usuario = %s AND u.ativo
+"""
+
+
+def nome_do_usuario(id_usuario: int) -> str | None:
+    """O `nome_usuario` desta pessoa, ou None (desativada, ou sem linha).
+
+    None e' resposta legitima e quem chama a trata como "nenhum master" -- nunca como "todos".
+    Mesma politica de erro de `masters_do_usuario`: banco fora levanta, e o chamador decide.
+    """
+    if isinstance(id_usuario, bool) or not isinstance(id_usuario, int):
+        raise TypeError(f"id_usuario tem de ser int, nao {type(id_usuario).__name__}")
+
+    with conexao() as con:
+        linha = con.execute(SQL_NOME_DO_USUARIO, (id_usuario,)).fetchone()
+    return None if linha is None or linha[0] is None else str(linha[0])
