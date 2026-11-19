@@ -467,6 +467,7 @@ function CadastroDaUnidade({
     consultor: 'Consultor da franqueadora',
     consultor_2: 'Consultor do master',
     master_franquia: 'Master franquia',
+    franqueado: 'Franqueado',
   }
   const mudou = ficha.cadastro.campos_editaveis.some(
     (c) => (valores[c] ?? '') !== (ficha.cadastro.valores[c] ?? ''),
@@ -479,7 +480,11 @@ function CadastroDaUnidade({
       const r = await api.redeCadastroAtribuir(ficha.unidade.id, ficha.cadastro.versao, valores)
       onAtualizar({
         ...ficha,
-        unidade: { ...ficha.unidade, consultor: r.valores.consultor || null },
+        unidade: {
+          ...ficha.unidade,
+          consultor: r.valores.consultor || null,
+          franqueado: r.valores.franqueado || null,
+        },
         cadastro: { ...ficha.cadastro, versao: r.versao, valores: r.valores },
       })
       setMensagem('Atribuição salva.')
@@ -530,7 +535,7 @@ function CadastroDaUnidade({
       </div>
       <div style={{ marginTop: 10, font: '400 10.5px/1.5 var(--f-ui)', color: 'var(--tx-muted)' }}>
         Fica registrado quem alterou o quê e quando. Os demais campos do cadastro (cidade,
-        franqueado, modalidades) vêm da planilha do time e ainda não são editáveis aqui.
+        modalidades) vêm da planilha do time e ainda não são editáveis aqui.
       </div>
     </Glass>
   )

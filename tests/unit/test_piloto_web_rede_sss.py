@@ -173,22 +173,43 @@ def _por_id(payload: dict) -> dict[str, dict]:
 
 
 def test_unidade_em_rampa_no_ano_base_fica_fora_do_sss(rede_maturacao: Path) -> None:
-    """Julho/2026 contra julho/2025: entram VELHA, EXATA e SEM DATA.
+    """O número grande soma os meses do GRÁFICO, cada um com a sua base (emenda 1 da DEC-088).
 
-    Sem a regra, RAMPA (20k -> 120k) e ZERADA (0 -> 60k) entravam e o recorte "crescia"
-    +68,8%: (242 + 120 + 60) / (230 + 20 + 0). Com ela, (110 + 60 + 72) / (100 + 50 + 80).
+    O gráfico de julho/2026 tem jun/25, jul/25, jun/26 e jul/26; só os dois de 2026 têm ano
+    anterior. Junho/2026 (corte da maturação em 01/03/2025): entram VELHA e SEM DATA.
+    Julho/2026 (corte em 01/04/2025): entra também EXATA. RAMPA e ZERADA nunca entram.
+    (110 + 72) + (110 + 60 + 72) contra (100 + 80) + (100 + 50 + 80): +3,4%.
+
+    Sem a regra da DEC-088, RAMPA (20k -> 120k) e ZERADA (0 -> 60k) entravam e o recorte
+    "crescia" dezenas de pontos.
     """
     sss = pilot._rede_carteira_payload(mes="2026-07")["sss"]
     assert sss["disponivel"] is True
-    assert sss["metricas"]["faturamento"]["var_pct"] == pytest.approx(5.2)
-    assert sss["unidades"] == 3
+    assert sss["metricas"]["faturamento"]["atual"] == pytest.approx(424_000.0)
+    assert sss["metricas"]["faturamento"]["ano_anterior"] == pytest.approx(410_000.0)
+    assert sss["metricas"]["faturamento"]["var_pct"] == pytest.approx(3.4)
+    assert sss["janela"] == {
+        "inicio": "2025-06",
+        "fim": "2026-07",
+        "base_inicio": "2024-06",
+        "base_fim": "2025-07",
+    }
+    assert sss["competencia_base"] == "Jun/2024 a Jul/2025"
+    # Quem entrou em pelo menos um mês, e a menor e a maior base mensal.
+    assert (sss["unidades"], sss["unidades_min"], sss["unidades_max"]) == (3, 2, 3)
     assert sss["unidades_recorte"] == 6
+    # As contas de quem ficou fora são do ÚLTIMO mês da janela.
+    assert sss["mes_final"] == "2026-07"
+    assert sss["unidades_mes_final"] == 3
     assert sss["unidades_fora"] == 1  # NOVA
     assert sss["unidades_rampa"] == 2  # RAMPA (maturação) e ZERADA (base zero)
     assert sss["unidades_base_zero"] == 1
     assert sss["maturacao_min_meses"] == 3
     # A conta fecha com o recorte: ninguém some nem é contado duas vezes.
-    assert sss["unidades"] + sss["unidades_fora"] + sss["unidades_rampa"] == sss["unidades_recorte"]
+    assert (
+        sss["unidades_mes_final"] + sss["unidades_fora"] + sss["unidades_rampa"]
+        == sss["unidades_recorte"]
+    )
 
 
 def test_contas_fecham_com_o_recorte_em_qualquer_filtro(rede_maturacao: Path) -> None:
@@ -197,7 +218,8 @@ def test_contas_fecham_com_o_recorte_em_qualquer_filtro(rede_maturacao: Path) ->
         ({"consultor": "JAILSON"}, (2, 0, 1)),  # EXATA e SEM DATA entram; ZERADA base zero
     ):
         sss = pilot._rede_carteira_payload(mes="2026-07", **filtro)["sss"]
-        assert (sss["unidades"], sss["unidades_fora"], sss["unidades_rampa"]) == esperado, filtro
+        contas = (sss["unidades_mes_final"], sss["unidades_fora"], sss["unidades_rampa"])
+        assert contas == esperado, filtro
         assert sss["unidades_recorte"] == sum(esperado)
 
 
@@ -209,6 +231,12 @@ def test_base_pequena_mostra_o_numero_sem_aviso(rede_maturacao: Path) -> None:
     assert "base_pequena_min" not in sss
 
 
+def _tabela_de_julho(linhas: list[dict[str, object]]) -> pd.DataFrame:
+    """A tabela do SSS (`_rede_sss_tabela`) de uma janela de um mês só: julho/2026."""
+    base = rede_metricas.preparar_base(pd.DataFrame(linhas))
+    return pilot._rede_sss_tabela(rede_metricas.fechamento_mensal(base), ["2026-07"])
+
+
 def test_sss_de_uma_loja_so_e_medido() -> None:
     """Direto no `_rede_sss`: com UMA unidade madura na base, o SSS sai normalmente."""
     nomes = [f"LOJA {letra}" for letra in "ABCDE"]
@@ -218,14 +246,10 @@ def test_sss_de_uma_loja_so_e_medido() -> None:
             linhas += mes_sintetico(
                 nome, ano, 7, inauguracao="01/01/2020", cumulativas={"faturamento": valor}
             )
-    base = rede_metricas.preparar_base(pd.DataFrame(linhas))
-    atual = rede_metricas.fechamento_periodo(
-        base, pd.Timestamp("2026-07-01"), pd.Timestamp("2026-07-31")
-    )
-    ano_anterior = rede_metricas.fechamento_periodo(
-        base, pd.Timestamp("2025-07-01"), pd.Timestamp("2025-07-31")
-    )
-    uma = pilot._rede_sss(atual, ano_anterior, list(atual["unidade_id"])[:1])
+    tabela = _tabela_de_julho(linhas)
+    ids = sorted(tabela["unidade_id"].unique())
+    assert len(ids) == 5
+    uma = pilot._rede_sss(tabela, ["2026-07"], ids[:1])
     assert uma["disponivel"] is True
     assert uma["unidades"] == 1
     assert uma["metricas"]["faturamento"]["var_pct"] == pytest.approx(10.0)
@@ -259,13 +283,15 @@ def test_pre_venda_antes_da_inauguracao_nao_vira_unidade_madura() -> None:
     assert base_por_id.loc["pre-venda-sp", "inauguracao"] == pd.Timestamp("2025-08-15")
     assert bool(base_por_id.loc["pre-venda-sp", "operacao_periodo_cheio"]) is False
 
-    sss = pilot._rede_sss(atual, ano_anterior, list(atual["unidade_id"]))
+    # O SSS sai do fechamento MENSAL (emenda 1 da DEC-088), e a defesa vale lá também.
+    tabela = _tabela_de_julho(linhas)
+    sss = pilot._rede_sss(tabela, ["2026-07"], list(atual["unidade_id"]))
     assert sss["unidades"] == 1
     assert sss["metricas"]["faturamento"]["var_pct"] == pytest.approx(10.0)
     # Não existia (abriu depois do início do ano-base): é "fora", não "rampa".
     assert sss["unidades_fora"] == 1
     assert sss["unidades_rampa"] == 0
-    por_unidade = pilot._rede_sss_por_unidade(atual, ano_anterior)
+    por_unidade = pilot._rede_sss_por_unidade(tabela, ["2026-07"])
     assert por_unidade["pre-venda-sp"]["motivo"] == "sem_ano_anterior"
     assert por_unidade["pre-venda-sp"]["var_pct"] is None
 
@@ -291,7 +317,15 @@ def test_sss_por_unidade_marca_o_motivo_de_quem_fica_fora(rede_maturacao: Path) 
     for entra in ("velha-sp", "exata-sp", "sem-data-sp"):
         assert unidades[entra]["sss"]["motivo"] is None, entra
         assert unidades[entra]["sss"]["var_pct"] is not None, entra
+        assert unidades[entra]["sss"]["meses_janela"] == 4, entra
+    # EXATA só entra em julho/2026 (em junho ainda era rampa): soma UM mês, 60k contra 50k.
+    assert unidades["exata-sp"]["sss"]["meses"] == 1
     assert unidades["exata-sp"]["sss"]["var_pct"] == pytest.approx(20.0)
+    # VELHA entra nos dois meses com ano anterior: (110 + 110) contra (100 + 100).
+    assert unidades["velha-sp"]["sss"]["meses"] == 2
+    assert unidades["velha-sp"]["sss"]["faturamento"] == pytest.approx(220_000.0)
+    assert unidades["velha-sp"]["sss"]["var_pct"] == pytest.approx(10.0)
+    assert unidades["rampa-sp"]["sss"]["meses"] == 0
 
 
 def test_sss_por_unidade_soma_o_agregado_com_a_regra_nova(rede_maturacao: Path) -> None:
@@ -319,31 +353,59 @@ def test_serie_mede_a_maturacao_no_ano_base_de_cada_mes(rede_maturacao: Path) ->
     tamanho = dict(zip(serie["meses"], serie["unidades"], strict=True))
 
     assert tamanho["2026-07"] == 3
-    assert por_mes["2026-07"] == pytest.approx(5.2)  # igual ao SSS do recorte
+    assert por_mes["2026-07"] == pytest.approx(5.2)  # (110 + 60 + 72) / (100 + 50 + 80)
     assert tamanho["2026-06"] == 2  # só VELHA e SEM DATA
     assert por_mes["2026-06"] == pytest.approx(1.1)  # (110 + 72) / (100 + 80)
+    # Sem ano anterior na série, a barra fica vazia, e não zero.
+    assert por_mes["2025-06"] is None
+    assert tamanho["2025-06"] == 0
 
 
 # ---------------------------------------------------------------------------
-# Janela livre
+# O número grande é a soma das barras (emenda 1 da DEC-088)
 # ---------------------------------------------------------------------------
 
 
-def test_janela_livre_mede_a_maturacao_no_inicio_do_periodo_base(rede_maturacao: Path) -> None:
-    """01/06 a 31/07/2026 contra 01/06 a 31/07/2025: o corte é 01/03/2025.
+def test_numero_grande_e_a_soma_das_barras_e_so_depende_do_mes_final(
+    rede_maturacao: Path,
+) -> None:
+    """Felipe, 18/11/2026: "precisamos mostrar no big number o que está aparecendo no gráfico".
 
-    EXATA (01/04/2025) fica fora. Se a regra medisse no FIM do ano-base (31/07/2025 menos
-    3 meses = 30/04) ou pelo `meses_operacao` do fim da janela (3 meses em julho), ela
-    entraria — é exatamente o furo das janelas longas.
+    O número soma as barras, então qualquer período que termine em julho/2026 mostra o
+    MESMO SSS: o mês inteiro, dois meses e um recorte solto de dez dias. Antes, 01/06 a
+    31/07 comparava o bloco com a base FIXA (só VELHA e SEM DATA, +1,1%), enquanto as
+    barras mostravam EXATA entrando em julho.
     """
-    payload = pilot._rede_carteira_payload(inicio="2026-06-01", fim="2026-07-31")
-    sss = payload["sss"]
-    assert sss["unidades"] == 2  # VELHA e SEM DATA
-    assert sss["unidades_rampa"] == 3  # EXATA, RAMPA e ZERADA
-    assert sss["unidades_fora"] == 1  # NOVA
-    # (220 + 144) / (200 + 160)
-    assert sss["metricas"]["faturamento"]["var_pct"] == pytest.approx(1.1)
-    assert _por_id(payload)["exata-sp"]["sss"]["motivo"] == "em_rampa"
+    por_mes = pilot._rede_carteira_payload(mes="2026-07")
+    for argumentos in (
+        {"inicio": "2026-06-01", "fim": "2026-07-31"},
+        {"inicio": "2026-07-10", "fim": "2026-07-20"},
+    ):
+        outro = pilot._rede_carteira_payload(**argumentos)
+        assert outro["sss"] == por_mes["sss"], argumentos
+        exata, de_novo = _por_id(outro)["exata-sp"]["sss"], _por_id(por_mes)["exata-sp"]["sss"]
+        assert exata == de_novo, argumentos
+
+    # A soma das barras, refeita à mão: (182 + 242) / (180 + 230).
+    assert por_mes["sss"]["metricas"]["faturamento"]["var_pct"] == pytest.approx(
+        round(100 * (424 - 410) / 410, 1)
+    )
+
+
+def test_receitas_somam_os_meses_e_alunos_sao_a_foto_do_ultimo_mes(rede_maturacao: Path) -> None:
+    """Receita é FLUXO e soma os meses; alunos e recorrentes são ESTOQUE.
+
+    Somados em dois meses, os 1.000 recorrentes de cada unidade virariam 2.000: a foto é a
+    do último mês da janela que tem base, julho/2026, com as três unidades que entram nele.
+    """
+    sss = pilot._rede_carteira_payload(mes="2026-07")["sss"]
+    assert sss["mes_foto"] == "2026-07"
+    receita = sss["metricas"]["faturamento_sem_agregador"]
+    assert receita["atual"] == pytest.approx(424_000.0)
+    assert receita["ano_anterior"] == pytest.approx(410_000.0)
+    recorrentes = sss["metricas"]["pagantes"]
+    assert recorrentes["atual"] == pytest.approx(3_000.0)
+    assert recorrentes["ano_anterior"] == pytest.approx(3_000.0)
 
 
 # ---------------------------------------------------------------------------
@@ -352,14 +414,17 @@ def test_janela_livre_mede_a_maturacao_no_inicio_do_periodo_base(rede_maturacao:
 
 
 def test_pdf_separa_a_rampa_de_quem_nao_existia(rede_maturacao: Path) -> None:
+    """O PDF diz os meses do número, a faixa da base e quem ficou fora no último mês."""
     linhas = rede_export.linhas_do_sss(pilot._rede_carteira_payload(mes="2026-07")["sss"])
-    assert linhas[0].startswith("Mesma base ano a ano (SSS): 3 de 6 unidades")
-    assert "com 3 meses ou mais de operação no ano-base" in linhas[0]
-    assert linhas[1] == (
-        "Fora da conta: 1 não existia há um ano (ou não operou o período inteiro), "
-        "1 estava nos 3 primeiros meses de operação no ano-base (rampa de abertura) "
-        "e 1 sem faturamento no ano-base."
-    )
+    assert linhas == [
+        "Mesma base ano a ano (SSS), Jun/2025 a Jul/2026: faturamento +3,4% contra os mesmos "
+        "meses um ano antes, com 2 a 3 das 6 unidades do recorte por mês.",
+        "Cada mês compara só quem operou o mês inteiro nos dois anos e já tinha 3 meses ou "
+        "mais de operação no início do mês-base.",
+        "Fora da conta em Jul/2026: 1 não existia há um ano (ou não operou o mês inteiro), "
+        "1 estava na rampa de abertura (menos de 3 meses de operação no ano-base) e 1 sem "
+        "faturamento no ano-base.",
+    ]
 
 
 def test_pdf_de_payload_antigo_sai_como_antes() -> None:
@@ -391,11 +456,34 @@ def test_linhas_do_sss_cabem_no_pdf_no_pior_caso() -> None:
         "maturacao_min_meses": 3,
         "metricas": {"faturamento": {"var_pct": -12.3}},
     }
+    # A forma da emenda 1 da DEC-088: janela do gráfico, faixa da base e o último mês.
+    pior_na_janela = {
+        **pior,
+        "competencia_base": "Out/2024 a Out/2025",
+        "janela": {
+            "inicio": "2025-10",
+            "fim": "2026-10",
+            "base_inicio": "2024-10",
+            "base_fim": "2025-10",
+        },
+        "unidades": 100,
+        "unidades_min": 100,
+        "unidades_max": 400,
+        "unidades_recorte": 400,
+        "mes_final": "2026-10",
+        "unidades_mes_final": 100,
+        "unidades_fora": 288,
+        "unidades_rampa": 12,
+        "unidades_base_zero": 2,
+        "metricas": {"faturamento": {"var_pct": -112.3}},
+    }
     pdf = UltraPDF()
     pdf.set_font("Helvetica", "", 9)
-    for linha in rede_export.linhas_do_sss(pior):
-        assert linha.encode("latin-1", "replace").decode("latin-1") == linha, linha
-        assert pdf.get_string_width(ascii_seguro(linha)) <= PAGINA_LARGURA - 72, linha
+    for caso in (pior, pior_na_janela):
+        for linha in rede_export.linhas_do_sss(caso):
+            assert linha.encode("latin-1", "replace").decode("latin-1") == linha, linha
+            assert pdf.get_string_width(ascii_seguro(linha)) <= PAGINA_LARGURA - 72, linha
+    assert len(rede_export.linhas_do_sss(pior_na_janela)) == 3
 
 
 def test_pdf_da_carteira_sai_valido_com_a_regra_nova(rede_maturacao: Path) -> None:

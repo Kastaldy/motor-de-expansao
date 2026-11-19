@@ -66,7 +66,21 @@ def test_campo_fora_da_lista_branca_e_rejeitado(base: Path) -> None:
     with pytest.raises(rcad.CampoNaoEditavel):
         rcad.atribuir("botafogo-rj", {"consultor": "X", "inauguracao": "01/01/2000"}, base=base)
     assert rcad.ler_cadastro(base).versao == 1, "nada pode ter sido gravado"
-    assert set(rcad.CAMPOS_EDITAVEIS) == {"consultor", "consultor_2", "master_franquia"}
+    assert set(rcad.CAMPOS_EDITAVEIS) == {
+        "consultor", "consultor_2", "master_franquia", "franqueado",
+    }
+
+
+def test_franqueado_e_editavel_e_auditado(base: Path) -> None:
+    """Troca de dono pela tela (18/11/2026): grava, sobe a versao e deixa rastro."""
+    novo = rcad.atribuir(
+        "botafogo-rj", {"franqueado": "  Fernando /  Franklin "}, autor="growth", base=base
+    )
+    assert novo.versao == 2
+    assert rcad.ler_cadastro(base).de("botafogo-rj")["franqueado"] == "Fernando / Franklin"
+    assert rcad.valores_distintos(rcad.ler_cadastro(base), "franqueado") == ["Fernando / Franklin"]
+    ultima = json.loads((base / rcad.ARQUIVO_LOG).read_text(encoding="utf-8").splitlines()[-1])
+    assert (ultima["campo"], ultima["para"]) == ("franqueado", "Fernando / Franklin")
 
 
 def test_concorrencia_otimista(base: Path) -> None:

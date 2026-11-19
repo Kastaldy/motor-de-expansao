@@ -192,10 +192,10 @@ export function PassoEndereco({ onEscolher }: { onEscolher: (e: EntradaInicio) =
 }
 
 /* ---------------------------------------------------------------------------
-   Operações · recortar a rede (estado, master ou consultor)
+   Operações · recortar a rede (estado, master, consultor ou franqueado)
    --------------------------------------------------------------------------- */
 
-/** As três listas do vocabulário, na ordem dos chips. */
+/** As quatro listas do vocabulário, na ordem dos chips. */
 function opcoesDaDimensao(filtros: RedeFiltros | null, dim: DimensaoRecorte): string[] {
   if (!filtros) return []
   if (dim === 'uf') return filtros.ufs
@@ -208,13 +208,16 @@ function opcoesDaDimensao(filtros: RedeFiltros | null, dim: DimensaoRecorte): st
      unidades de quem". Consequência prática: sem o cadastro montado, estes dois eixos
      ficam VAZIOS enquanto o de estado funciona — ver `avisoDoEixo`. */
   if (dim === 'master') return filtros.masters
+  // `franqueado` também vem do cadastro e é a lista do seletor do cabeçalho da Executiva.
+  // `?? []`: servidor de antes do filtro não manda a chave, e o chip fica desabilitado.
+  if (dim === 'franqueado') return filtros.franqueados ?? []
   return filtros.consultores
 }
 
 /** Por que este eixo está vazio — a diferença importa para quem lê. */
 function avisoDoEixo(filtros: RedeFiltros, dim: DimensaoRecorte): string {
   if (dim === 'uf') return 'A base não tem estado nesta competência.'
-  const eixo = dim === 'master' ? 'master' : 'consultor'
+  const eixo = dim
   // `disponivel: false` = o volume do cadastro não está montado nesta instância. É o
   // caso do ambiente de desenvolvimento sem `MOTOR_CADASTRO_DIR`, e dizer "a base não
   // tem master" ali culparia a competência por uma configuração de deploy.
@@ -245,7 +248,9 @@ export function PassoRecorte({ onEscolher }: { onEscolher: (e: EntradaInicio) =>
 
   return (
     <div style={PAINEL}>
-      <div style={{ display: 'flex', gap: 6 }} role="group" aria-label="Recortar por">
+      {/* `flexWrap`: com o quarto eixo (Franqueado, 18/11/2026) os chips podem não caber
+          numa linha num card estreito; quebrar é melhor que cortar o rótulo. */}
+      <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }} role="group" aria-label="Recortar por">
         {DIMENSOES_RECORTE.map((d) => {
           const vazio = filtros !== null && opcoesDaDimensao(filtros, d.id).length === 0
           const ativo = d.id === dimensao
@@ -261,7 +266,9 @@ export function PassoRecorte({ onEscolher }: { onEscolher: (e: EntradaInicio) =>
               title={vazio && filtros ? avisoDoEixo(filtros, d.id) : undefined}
               onClick={() => setDimensao(d.id)}
               style={{
-                flex: 1,
+                flex: '1 1 auto',
+                padding: '0 10px',
+                whiteSpace: 'nowrap',
                 height: 32,
                 border: `1px solid ${ativo ? 'var(--ops)' : 'var(--line)'}`,
                 borderRadius: 999,

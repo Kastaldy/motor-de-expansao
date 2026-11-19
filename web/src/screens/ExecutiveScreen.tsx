@@ -32,12 +32,14 @@ import {
   COR_SEVERIDADE,
   METRICAS_EM_PONTOS,
   ORDEM_SEVERIDADE,
+  baseMensalDoSss,
   chaveDaQuery,
   corComAlfa,
   creditoDaFonte,
   destaquesDoRecorte,
   filtrarUnidades,
   formatarMetrica,
+  janelaDoSss,
   lerDelta,
   linhaDaRede,
   narrativaDoRecorte,
@@ -176,6 +178,7 @@ export default function ExecutiveScreen({
   const [uf, setUf] = useState('')
   const [master, setMaster] = useState('')
   const [consultor, setConsultor] = useState('')
+  const [franqueado, setFranqueado] = useState('')
   const [coorte, setCoorte] = useState('')
   const [severidades, setSeveridades] = useState<RedeSeveridade[]>([])
   const [busca, setBusca] = useState('')
@@ -217,10 +220,11 @@ export default function ExecutiveScreen({
       uf: uf || undefined,
       master: master || undefined,
       consultor: consultor || undefined,
+      franqueado: franqueado || undefined,
       coorte: coorte || undefined,
       severidade: severidades.length ? severidades.join(',') : undefined,
     }),
-    [periodo, uf, master, consultor, coorte, severidades],
+    [periodo, uf, master, consultor, franqueado, coorte, severidades],
   )
 
   /* O recorte que os PEDIDOS usam, separado do que os seletores mostram (17/11/2026).
@@ -378,6 +382,7 @@ export default function ExecutiveScreen({
     if (entrada.tipo === 'unidade') abrirFichaPorId(entrada.id)
     else if (entrada.dimensao === 'uf') setUf(entrada.valor)
     else if (entrada.dimensao === 'master') setMaster(entrada.valor)
+    else if (entrada.dimensao === 'franqueado') setFranqueado(entrada.valor)
     else setConsultor(entrada.valor)
     onEntradaAplicada?.()
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -398,7 +403,9 @@ export default function ExecutiveScreen({
     setDirecao(chave === 'churn_pct' || chave === 'nome' ? 'asc' : 'desc')
   }
 
-  const temRecorte = Boolean(uf || master || consultor || coorte || busca || severidades.length)
+  const temRecorte = Boolean(
+    uf || master || consultor || franqueado || coorte || busca || severidades.length,
+  )
 
   /* Sujeito das frases do panorama. A busca NÃO entra: ela é filtro de tabela, feito no
      cliente, e os painéis descrevem o recorte que o SERVIDOR somou. Dizer "MARISE" numa
@@ -406,9 +413,9 @@ export default function ExecutiveScreen({
      busca ativa, uma linha logo abaixo avisa que ela não alcança os painéis. */
   const rotuloRecorte = useMemo(() => {
     const rotuloCoorte = coorte ? filtros?.coortes.find((c) => c.chave === coorte)?.rotulo : null
-    const partes = [consultor, master, uf, rotuloCoorte].filter(Boolean) as string[]
+    const partes = [franqueado, consultor, master, uf, rotuloCoorte].filter(Boolean) as string[]
     return partes.length ? partes.join(' · ') : 'a rede'
-  }, [consultor, master, uf, coorte, filtros])
+  }, [franqueado, consultor, master, uf, coorte, filtros])
 
   const narrativa = useMemo(
     () => (carteira ? narrativaDoRecorte(carteira, rotuloRecorte) : []),
@@ -427,11 +434,15 @@ export default function ExecutiveScreen({
     (carteira?.sss.unidades_rampa ?? 0) - (carteira?.sss.unidades_base_zero ?? 0),
     0,
   )
+  // A janela do SSS, que é a do gráfico (emenda 1 da DEC-088): "de Out/2025 a Out/2026".
+  // `null` em payload anterior à emenda, e os textos voltam aos de antes.
+  const janelaSss = janelaDoSss(carteira?.sss)
 
   function limparRecorte() {
     setUf('')
     setMaster('')
     setConsultor('')
+    setFranqueado('')
     setCoorte('')
     setSeveridades([])
     setBusca('')
@@ -695,6 +706,18 @@ export default function ExecutiveScreen({
             options={[
               { value: TODOS, label: 'Todos' },
               ...(filtros?.masters ?? []).map((m) => ({ value: m, label: m })),
+            ]}
+          />
+        </Filtro>
+        <Filtro rotulo="Franqueado">
+          <Select
+            label="Franqueado"
+            value={franqueado || TODOS}
+            onChange={(v) => setFranqueado(v === TODOS ? '' : v)}
+            maxWidth={148}
+            options={[
+              { value: TODOS, label: 'Todos' },
+              ...(filtros?.franqueados ?? []).map((f) => ({ value: f, label: f })),
             ]}
           />
         </Filtro>
@@ -1091,14 +1114,33 @@ export default function ExecutiveScreen({
                   <Glass style={{ flexShrink: 0, padding: '14px 16px' }}>
                     <Rotulo>Mesma base, ano a ano (SSS)</Rotulo>
                     <div style={{ font: '400 10.5px/1.5 var(--f-ui)', color: 'var(--tx-muted)', marginBottom: 10 }}>
-                      {carteira.sss.unidades}{' '}
-                      {carteira.sss.unidades === 1 ? 'unidade presente' : 'unidades presentes'} nos dois períodos
-                      {carteira.sss.maturacao_min_meses
-                        ? `, com ${carteira.sss.maturacao_min_meses} meses ou mais de operação no ano-base`
-                        : ''}
-                      {emRampaSss > 0
-                        ? ` (${emRampaSss} em rampa no ano-base ${emRampaSss === 1 ? 'fica' : 'ficam'} fora)`
-                        : ''}
+                      {janelaSss ? (
+                        // Emenda 1 da DEC-088: o SSS é o dos meses do gráfico, com a base
+                        // mudando de um mês para o outro; quem está em rampa é contado no
+                        // último mês da janela.
+                        <>
+                          {`${janelaSss.charAt(0).toUpperCase()}${janelaSss.slice(1)}, `}
+                          {baseMensalDoSss(carteira.sss)}{' '}
+                          {(carteira.sss.unidades_max ?? carteira.sss.unidades) === 1 ? 'unidade' : 'unidades'} por mês
+                          {carteira.sss.maturacao_min_meses
+                            ? `, com ${carteira.sss.maturacao_min_meses} meses ou mais de operação no ano-base`
+                            : ''}
+                          {emRampaSss > 0 && carteira.sss.mes_final
+                            ? ` (em ${rotuloMesCompetencia(carteira.sss.mes_final)}, ${emRampaSss} em rampa ${emRampaSss === 1 ? 'fica' : 'ficam'} fora)`
+                            : ''}
+                        </>
+                      ) : (
+                        <>
+                          {carteira.sss.unidades}{' '}
+                          {carteira.sss.unidades === 1 ? 'unidade presente' : 'unidades presentes'} nos dois períodos
+                          {carteira.sss.maturacao_min_meses
+                            ? `, com ${carteira.sss.maturacao_min_meses} meses ou mais de operação no ano-base`
+                            : ''}
+                          {emRampaSss > 0
+                            ? ` (${emRampaSss} em rampa no ano-base ${emRampaSss === 1 ? 'fica' : 'ficam'} fora)`
+                            : ''}
+                        </>
+                      )}
                       . Comparar total contra total infla o crescimento numa rede que abre lojas.
                     </div>
                     {(['faturamento', 'ativos'] as const).map((chave) => {
@@ -1107,7 +1149,9 @@ export default function ExecutiveScreen({
                       return (
                         <div key={chave} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginTop: 6 }}>
                           <span style={{ font: '400 11.5px/1 var(--f-ui)', color: 'var(--tx-label)' }}>
-                            {chave === 'faturamento' ? 'Faturamento' : 'Alunos ativos'}
+                            {chave === 'faturamento'
+                              ? 'Faturamento'
+                              : `Alunos ativos${janelaSss && carteira.sss.mes_foto ? ` em ${rotuloMesCompetencia(carteira.sss.mes_foto)}` : ''}`}
                           </span>
                           <span className="num" style={{ font: '600 12px/1 var(--f-num)', color: 'var(--tx-strong)' }}>
                             {chave === 'faturamento' ? brlCurto(m.atual) : num(m.atual)}{' '}
@@ -1223,6 +1267,7 @@ export default function ExecutiveScreen({
                   onExpandir={setDestaquesAbertos}
                   onUnidade={abrirFicha}
                   maturacaoMeses={carteira.sss.maturacao_min_meses}
+                  janelaSss={janelaSss}
                 />
               </div>
               <div style={{ ...TRILHO_PAINEL, display: 'grid' }}>

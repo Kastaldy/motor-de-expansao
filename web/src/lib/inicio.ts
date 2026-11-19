@@ -70,7 +70,7 @@ export type ArteInicio =
  * vez de cair na tela vazia que pede a resposta.
  *
  * Vale nas DUAS trilhas:
- *   `recorte`  -> por que eixo cortar a carteira (estado, master ou consultor)
+ *   `recorte`  -> por que eixo cortar a carteira (estado, master, consultor ou franqueado)
  *   `unidade`  -> qual unidade abrir a ficha
  *   `uf`       -> qual estado o mapa territorial abre (era a `Landing` do mapa)
  *   `endereco` -> que ponto analisar (era a caixa de colar do modo de ponto)
@@ -83,7 +83,7 @@ export type ArteInicio =
 export type SegundoPasso = 'recorte' | 'unidade' | 'uf' | 'endereco' | 'imovel' | 'estudo' | null
 
 /** Por qual eixo a carteira pode ser recortada na entrada. */
-export type DimensaoRecorte = 'uf' | 'master' | 'consultor'
+export type DimensaoRecorte = 'uf' | 'master' | 'consultor' | 'franqueado'
 
 export interface DimensaoDefinicao {
   id: DimensaoRecorte
@@ -98,6 +98,8 @@ export const DIMENSOES_RECORTE: readonly DimensaoDefinicao[] = Object.freeze([
   Object.freeze({ id: 'uf', rotulo: 'Estado', convite: 'Escolha o estado' }),
   Object.freeze({ id: 'master', rotulo: 'Master', convite: 'Escolha o master' }),
   Object.freeze({ id: 'consultor', rotulo: 'Consultor', convite: 'Escolha o consultor' }),
+  // Dono da unidade (cadastro `franqueado`), o mesmo filtro do cabeçalho da Executiva.
+  Object.freeze({ id: 'franqueado', rotulo: 'Franqueado', convite: 'Escolha o franqueado' }),
 ])
 
 export function dimensaoPorId(id: string): DimensaoDefinicao | null {
