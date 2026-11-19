@@ -545,7 +545,7 @@ def test_mapa_fica_em_cache_ate_uma_fonte_mudar(
 ) -> None:
     lidos: list[tuple[str, str]] = []
 
-    def setores(uf: str, cod: str) -> list[list[Any]]:
+    def setores(uf: str, cod: str) -> list[tuple[Any, Any, Any]]:
         lidos.append((uf, cod))
         return []
 
@@ -699,25 +699,37 @@ def test_renda_e_densidade_sao_os_setores_do_territorio_inteiro_em_qualquer_zoom
 ) -> None:
     """19/11/2026, Juan: "deixe a densidade e a renda (quando ativadas) aparecendo sem limite de
     zoom". Os POLÍGONOS dos setores de todos os municípios do território, numa resposta só
-    (antes, de longe, ia um ponto por setor, e os polígonos só no zoom de cidade)."""
-    anel = [[[-43.2, -22.9], [-43.1, -22.9], [-43.1, -22.8], [-43.2, -22.9]]]
+    (antes, de longe, ia um ponto por setor, e os polígonos só no zoom de cidade): uma linha
+    `[renda, densidade, anéis]` por peça, com o buraco do setor e as coordenadas em 5 casas."""
+    from shapely.geometry import Polygon, box
+
+    furado = Polygon(
+        [(-46.7, -23.6), (-46.6, -23.6), (-46.6, -23.5), (-46.7, -23.5)],
+        holes=[[(-46.68, -23.58), (-46.62, -23.58), (-46.62, -23.52), (-46.68, -23.52)]],
+    )
     por_municipio = {
-        ("RJ", "3304557"): [[9000.0, 12000.0, anel]],
-        ("SP", "3550308"): [[6101.0, 8123.5, anel], [None, 900.0, anel]],
+        ("RJ", "3304557"): [(box(-43.2, -22.9, -43.1, -22.8), 9000.0, 12000.0)],
+        ("SP", "3550308"): [
+            (furado, 6101.0, 8123.5),
+            (box(-46.6, -23.6, -46.5000012, -23.5), None, 900.0),
+        ],
     }
     lidos: list[tuple[str, str]] = []
 
-    def setores(uf: str, cod: str) -> list[list[Any]]:
+    def setores(uf: str, cod: str) -> list[tuple[Any, Any, Any]]:
         lidos.append((uf, cod))
         return por_municipio.get((uf, cod), [])
 
     monkeypatch.setattr(pilot, "_setores_do_municipio_no_territorio", setores)
     d = _json(pilot.api_master_setores("rjsp"))
-    assert d["setores"] == [
-        [9000.0, 12000.0, anel],
-        [6101.0, 8123.5, anel],
-        [None, 900.0, anel],
+    assert [(renda, densidade) for renda, densidade, _ in d["setores"]] == [
+        (9000.0, 12000.0),
+        (6101.0, 8123.5),
+        (None, 900.0),
     ]
+    assert [len(aneis) for _, _, aneis in d["setores"]] == [1, 2, 1]  # o buraco fica
+    coords = [c for _, _, aneis in d["setores"] for a in aneis for p in a for c in p]
+    assert all(c == round(c, 5) for c in coords)
     # Os quatro municípios do território, e só eles: BH (de outro estado) não é lido.
     assert sorted(lidos) == [
         ("RJ", "3304557"),
@@ -730,58 +742,75 @@ def test_renda_e_densidade_sao_os_setores_do_territorio_inteiro_em_qualquer_zoom
     assert _status(lambda: pilot.api_master_setores("zeta")) == (404, "Master não encontrado.")
 
 
-def test_o_setor_do_territorio_simplifica_pelo_tamanho(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """O território inteiro numa resposta só pede simplificar pelo TAMANHO do setor (medido no
-    DF/GO: 1,33 milhão de vértices com 11 m em todos): o mesmo dente de 55 m fica no setor urbano
-    pequeno e sai do rural grande. Renda e densidade são as do mapa de calor do município, o buraco
-    do setor fica, as coordenadas saem em 5 casas e o setor sem geometria fica de fora."""
+def test_os_setores_do_territorio_seguem_encaixados_depois_de_simplificar() -> None:
+    """Simplificar setor a setor abria frestas entre vizinhos (prévia de 19/11/2026; no DF/GO,
+    36.688 buracos na união dos setores). Como COBERTURA, a borda comum sai igual nos dois: o
+    rio entre dois setores rurais grandes some dos dois de uma vez, o dente de 22 m do setor
+    urbano pequeno fica, e a divisa do rural com o urbano não se mexe."""
+    import shapely
     from shapely.geometry import Polygon
 
-    # Urbano: 220 m de lado (simplifica a 11 m); o dente de 0,0005 grau (55 m) fica.
-    urbano = Polygon(
+    # Dois rurais de 11 km de lado; a divisa entre eles faz uma curva de 5 m (some na 2ª passada).
+    rural_a = Polygon(
+        [(-48.0, -16.0), (-47.9, -16.0), (-47.89995, -15.95), (-47.9, -15.9), (-48.0, -15.9)]
+    )
+    rural_b = Polygon(
         [
-            (-47.9, -15.8),
-            (-47.899, -15.7995),
-            (-47.8981234, -15.8),
-            (-47.8981234, -15.798),
-            (-47.9, -15.798),
+            (-47.9, -16.0),
+            (-47.8, -16.0),
+            (-47.8, -15.951),
+            (-47.8, -15.949),
+            (-47.8, -15.9),
+            (-47.9, -15.9),
+            (-47.89995, -15.95),
         ]
     )
-    # Rural: 22 km de lado (simplifica a 220 m); o mesmo dente sai, e o buraco fica.
-    rural = Polygon(
-        [(-48.0, -16.0), (-47.9, -15.9995), (-47.8, -16.0), (-47.8, -15.8), (-48.0, -15.8)],
-        holes=[[(-47.95, -15.95), (-47.85, -15.95), (-47.85, -15.85), (-47.95, -15.85)]],
+    # Urbano de 220 m encostado no rural B, com um dente de 22 m na borda de cima (fica).
+    urbano = Polygon(
+        [(-47.8, -15.951), (-47.798, -15.951), (-47.798, -15.949), (-47.799, -15.9492), (-47.8, -15.949)]
     )  # fmt: skip
+    antes = [rural_a, rural_b, urbano]
+    assert shapely.coverage_is_valid(antes)
+    depois = pilot._simplificar_cobertura_do_territorio(antes)
+    assert shapely.coverage_is_valid(depois)
+    uniao = shapely.union_all(depois)
+    assert uniao.geom_type == "Polygon" and not list(uniao.interiors)  # nenhuma fresta
+    assert uniao.area == pytest.approx(sum(g.area for g in depois))  # nem sobreposição
+    assert shapely.get_num_coordinates(depois[0]) == 5  # A sem a curva: o retângulo
+    assert shapely.get_num_coordinates(depois[2]) == 6  # o urbano com o dente
+    # A divisa do rural B com o urbano segue nos mesmos pontos.
+    assert {(-47.8, -15.951), (-47.8, -15.949)} <= set(depois[1].exterior.coords)
+    assert len(pilot._simplificar_cobertura_do_territorio([])) == 0
+
+
+def test_os_setores_do_municipio_trazem_a_renda_e_a_densidade_do_mapa_de_calor(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A renda e a densidade de cada setor são as do mapa de calor do município, e o setor sem
+    geometria fica de fora."""
+    from shapely.geometry import box
+
     pasta = tmp_path / "geo" / "uf=DF" / "cod_municipio=5300108"
     pasta.mkdir(parents=True)
     pd.DataFrame(
         {
             "cod_setor": ["530010805000001", "530010805000002", "530010805000003"],
-            "geometry_wkb": [urbano.wkb, rural.wkb, None],
+            "geometry_wkb": [box(-47.9, -15.8, -47.89, -15.79).wkb, box(-48, -16, -47.9, -15.9).wkb, None],
             "densidade_pop_setor_hab_km2": [12345.67, 3.04, 10.0],
             "renda_responsavel_media_setor_2022": [5000.0, 3000.0, 1000.0],
         }
-    ).to_parquet(pasta / "part-000.parquet")
+    ).to_parquet(pasta / "part-000.parquet")  # fmt: skip
     monkeypatch.setattr(pilot, "CENSO_GEO_DIR", tmp_path / "geo")
     monkeypatch.setattr(
         pilot._renda_setor,
         "renda_domiciliar_da_linha",
         lambda r, uf, cod: r["renda_responsavel_media_setor_2022"] * 1.1,
     )
-    linhas = pilot._setores_do_municipio_no_territorio("DF", "5300108")
-    assert [(renda, densidade) for renda, densidade, _ in linhas] == [
+    setores = pilot._setores_do_municipio_no_territorio("DF", "5300108")
+    assert [(renda, densidade) for _, renda, densidade in setores] == [
         (5500.0, 12345.7),
         (3300.0, 3.0),
     ]
-    (externo_urbano,) = linhas[0][2]
-    externo_rural, buraco = linhas[1][2]
-    assert len(externo_urbano) == 6  # os 5 vértices (com o dente) e o fechamento
-    assert len(externo_rural) == 5  # o quadrado, sem o dente
-    assert len(buraco) == 5
-    coords = [c for _, _, aneis in linhas for a in aneis for p in a for c in p]
-    assert all(c == round(c, 5) for c in coords)
     assert pilot._setores_do_municipio_no_territorio("DF", "9999999") == []
 
 
