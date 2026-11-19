@@ -406,3 +406,17 @@ export function densidadeSetorToColor(valor: number | null | undefined, alpha = 
 export function rendaSetorToColor(valor: number | null | undefined, alpha = 150): RGBA | null {
   return faixaAbsolutaToColor(valor, RENDA_DOMICILIAR_SETOR_BANDS, alpha)
 }
+
+/** Cor de um valor pelas faixas que o SERVIDOR manda (`_faixas_camada`, a régua do núcleo): as
+ *  camadas de renda e densidade da ficha da carteira e do mapa do território do master. Sem
+ *  leitura = cinza translúcido, nunca a faixa mais baixa. */
+export function corDaFaixaDoServidor(
+  valor: number | null,
+  faixas: readonly { ate: number | null; cor: readonly number[] }[],
+  alpha = 150,
+): RGBA {
+  if (valor === null) return [120, 120, 140, 50]
+  const faixa = faixas.find((f) => f.ate === null || valor <= f.ate) ?? faixas[faixas.length - 1]
+  const [r, g, b] = faixa.cor
+  return [r, g, b, alpha]
+}

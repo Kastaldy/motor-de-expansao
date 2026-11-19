@@ -131,9 +131,10 @@ WHERE e.tipo = 'relatorio.gerado' AND e.criado_em_evento >= now() - interval '30
 ORDER BY e.criado_em_evento DESC;
 ```
 
-- `relatorio` ∈ {`municipal`, `pontual`, `simulador`, `comparacao`}; `formato` ∈ {`pdf`, `xlsx`}.
+- `relatorio` ∈ {`municipal`, `pontual`, `simulador`, `comparacao`, `master`}; `formato` ∈ {`pdf`, `xlsx`, `zip`}
+  (`zip` = relatório do master com duas ou mais áreas, um PDF por área; BLK-MASTERS-04).
 - O `report_id` (UUID) também é **carimbado no próprio PDF** — permite rastrear um PDF vazado de
-  volta ao evento e à pessoa.
+  volta ao evento e à pessoa. Exceção: o relatório do `master` ainda não carimba (emenda 1 da DEC-089).
 
 **Rastrear um PDF específico pelo `report_id` impresso nele:**
 

@@ -1,23 +1,35 @@
 import { describe, expect, it } from 'vitest'
 
 import {
+  TOP_INICIAL,
+  alunosCurto,
   barrasPorAno,
   barrasPorFase,
   barrasPorPrevisao,
+  caixaDoContorno,
+  corDoCartao,
   dataBr,
   escalaDaBarra,
   etiquetasDaUnidade,
+  focoDoHexagono,
   metaDoAno,
+  municipiosAVista,
   pct,
+  recorteDoTop,
   rotuloDaBarra,
+  rgbDeHex,
   rotuloUnidade,
+  temMaisQueOTop,
   textoAnoDaMeta,
   textoContrato,
   textoPrazo,
+  textoDoRelatorio,
   textoProgressoDaMeta,
   topoDoGrafico,
+  vistaDoTerritorio,
   type TrimestreMeta,
 } from './masters'
+import type { RecomendacaoTop10 } from './types'
 
 const tri = (acumulado: number, novas: number, extra: Partial<TrimestreMeta> = {}) => ({
   trimestre: 1,
@@ -106,6 +118,18 @@ describe('tela Masters (DEC-089): textos', () => {
     expect(textoProgressoDaMeta(metaDoAno('x', 2026, 3, 4)!)).toBe(
       '75% da meta · falta 1 abertura',
     )
+  })
+
+  it('o botão único do relatório: um PDF por área num .zip, ou o PDF do master', () => {
+    const r = (id: string, nome: string) => ({ id, nome, tipo: 'Exclusividade' })
+    expect(textoDoRelatorio([r('df', 'Distrito Federal'), r('go', 'Goiás')])).toBe(
+      'um PDF por área (Distrito Federal e Goiás), num arquivo .zip',
+    )
+    expect(textoDoRelatorio([r('a', 'ABCD'), r('l', 'Litoral'), r('v', 'Vale')])).toBe(
+      'um PDF por área (ABCD, Litoral e Vale), num arquivo .zip',
+    )
+    expect(textoDoRelatorio([r('sp', 'São Paulo')])).toBe('PDF do master')
+    expect(textoDoRelatorio([])).toBe('PDF do master')
   })
 
   it('a escala da barra vai de 0 à meta (ou às aberturas, quando passaram) e marca a meta', () => {
@@ -198,5 +222,97 @@ describe('tela Masters (DEC-089): textos', () => {
         operacao_de: null,
       }),
     ).toEqual(['sem data no Growth', 'fora da meta (meta: outra atribuição)'])
+  })
+  it('o mapa do território: a cor da região e a vista que enquadra o território', () => {
+    expect(rgbDeHex('#00A79D')).toEqual([0, 167, 157])
+    expect(rgbDeHex('#C23C8E')).toEqual([194, 60, 142])
+    // DF/GO (o Goiás inteiro): centro no meio da caixa e um zoom de estado.
+    const v = vistaDoTerritorio([-53.2, -19.5, -45.9, -12.4], 1200, 480)
+    expect(v.longitude).toBeCloseTo(-49.55, 2)
+    expect(v.latitude).toBeGreaterThan(-16.1)
+    expect(v.latitude).toBeLessThan(-15.8)
+    expect(v.zoom).toBeGreaterThan(5)
+    expect(v.zoom).toBeLessThan(6.5)
+    // Caixa mais estreita, zoom menor; território de um ponto só não passa do zoom 12.
+    expect(vistaDoTerritorio([-53.2, -19.5, -45.9, -12.4], 320, 480).zoom).toBeLessThan(v.zoom)
+    expect(vistaDoTerritorio([-47.9, -15.8, -47.9, -15.8], 1200, 480).zoom).toBe(12)
+    // O zoom num bairro clicado nos Top 5 vai até 14 (Guará, no DF: uns 6 km de lado).
+    const bairro = vistaDoTerritorio([-48.0, -15.85, -47.95, -15.8], 1200, 480, 40, 14)
+    expect(bairro.zoom).toBeGreaterThan(12)
+    expect(bairro.zoom).toBeLessThanOrEqual(14)
+    expect(vistaDoTerritorio([-47.9, -15.8, -47.9, -15.8], 1200, 480, 40, 14).zoom).toBe(14)
+  })
+  it('a cor de cada cartão de "onde expandir" segue a chave do relatório', () => {
+    expect(corDoCartao('magenta')).toBe('var(--gr-rosa)')
+    expect(corDoCartao('turquesa')).toBe('var(--ac)')
+    expect(corDoCartao('laranja')).toBe('var(--gr-coral)')
+    expect(corDoCartao('roxo')).toBe('var(--gr-azul)')
+    expect(corDoCartao('desconhecida')).toBe('var(--ac)')
+  })
+  it('a região clicada: o contorno do hexágono e a caixa dele, para o zoom e o limite no mapa', () => {
+    const f = focoDoHexagono('87a8c2092ffffff', 'Guará (Brasília)')
+    expect(f.nome).toBe('Guará (Brasília)')
+    expect(f.hexId).toBe('87a8c2092ffffff')
+    expect(f.contorno).toHaveLength(6)
+    // [lng, lat]: no DF, lng ~ -48 e lat ~ -15,8.
+    for (const [lng, lat] of f.contorno) {
+      expect(lng).toBeLessThan(-46)
+      expect(lat).toBeGreaterThan(-17)
+      expect(lat).toBeLessThan(-14)
+    }
+    const [o, s, l, n] = caixaDoContorno(f.contorno)
+    expect(o).toBeLessThan(l)
+    expect(s).toBeLessThan(n)
+  })
+
+  it('o top 5 e o top 20 da régua do motor: mesma ordem do servidor, só menos vagas', () => {
+    const vaga = (seg: string, i: number, vazia = false) => ({
+      segmento: seg,
+      posicao: i,
+      vazia,
+      hex_id: vazia ? null : `${seg}-${i}`,
+    })
+    const seg = (nome: string, cheias: number) => ({
+      segmento: nome,
+      vagas: Array.from({ length: 20 }, (_, i) => vaga(nome, i + 1, i >= cheias)),
+    })
+    const bloco = {
+      regra: { vagas_por_segmento: 20 },
+      mata_virgem: seg('mata_virgem', 12),
+      premium: seg('premium', 3),
+    } as unknown as RecomendacaoTop10
+    const top5 = recorteDoTop(bloco, TOP_INICIAL)
+    expect(top5.regra.vagas_por_segmento).toBe(5)
+    expect(top5.mata_virgem.vagas.map((v) => v.hex_id)).toEqual([1, 2, 3, 4, 5].map((i) => `mata_virgem-${i}`))
+    // No top 5 as vazias ficam (como em todo o motor): 3 Premium e 2 vagas sem candidato.
+    expect(top5.premium.vagas).toHaveLength(5)
+    // Aberto: as 12 Mata Virgem e só a 1ª vazia, que diz o motivo; o Premium não ganha 17 vazias.
+    const top20 = recorteDoTop(bloco, 20)
+    expect(top20.mata_virgem.vagas).toHaveLength(13)
+    expect(top20.mata_virgem.vagas[12].vazia).toBe(true)
+    expect(top20.premium.vagas).toHaveLength(5)
+    // O botão "ver top 20" só aparece quando há mais regiões que o top 5.
+    expect(temMaisQueOTop(bloco)).toBe(true)
+    const pouco = { ...bloco, mata_virgem: seg('mata_virgem', 4) } as unknown as RecomendacaoTop10
+    expect(temMaisQueOTop(pouco)).toBe(false)
+  })
+
+  it('alunos em número curto, para a linha de crescimento', () => {
+    expect(alunosCurto(2_812_345)).toBe('2,8 mi')
+    expect(alunosCurto(846_210)).toBe('846 mil')
+    expect(alunosCurto(730)).toBe('730')
+    expect(alunosCurto(null)).toBe('—')
+  })
+  it('os setores do Censo carregam só para os municípios à vista, os de mais área primeiro', () => {
+    const mun = (cod: string, caixa: [number, number, number, number]) =>
+      ['DF', cod, cod, caixa] as [string, string, string, [number, number, number, number]]
+    const todos = [
+      mun('fora', [-50, -20, -49.5, -19.5]),
+      mun('pequeno', [-48.0, -15.9, -47.95, -15.85]),
+      mun('grande', [-48.3, -16.1, -47.5, -15.5]),
+    ]
+    const vista: [[number, number], [number, number]] = [[-48.1, -16.0], [-47.9, -15.8]]
+    expect(municipiosAVista(todos, vista).map((m) => m[1])).toEqual(['grande', 'pequeno'])
+    expect(municipiosAVista(todos, vista, 1).map((m) => m[1])).toEqual(['grande'])
   })
 })
