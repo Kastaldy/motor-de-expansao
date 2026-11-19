@@ -129,6 +129,9 @@ export interface MasterPainel {
   assinados: FaseAssinada[]
   hoje: string
   fontes: FontesMasters
+  /** O botão do relatório entrega um PDF por área num .zip (`false` = o PDF do master inteiro,
+   *  como o DF/GO: 19/11/2026, Juan). Ausente (servidor antigo): duas ou mais áreas. */
+  relatorio_por_area?: boolean
 }
 
 /** `2026-03-01` -> `01/03/2026`; vazio -> `—`. */
@@ -191,12 +194,16 @@ export function rotuloDaBarra(t: TrimestreMeta): string {
    desse master; no caso de masters que têm duas ou mais áreas, entregar as áreas que ele tem") ---- */
 
 /** O que o botão ÚNICO do relatório entrega (18/11/2026, Juan: "deixe apenas um botão só"): com
- *  duas ou mais áreas, um PDF por área num .zip; senão, o PDF do master. */
-export function textoDoRelatorio(regioes: MasterPainel['regioes']): string {
+ *  duas ou mais áreas, um PDF por área num .zip; senão, o PDF do master. O servidor diz qual
+ *  (`relatorio_por_area`): o DF/GO, com duas áreas, recebe um PDF só com as duas (19/11/2026). */
+export function textoDoRelatorio(
+  regioes: MasterPainel['regioes'],
+  porArea: boolean = regioes.length >= 2,
+): string {
   const nomes = regioes.map((r) => r.nome)
-  if (nomes.length < 2) return 'PDF do master'
-  const lista = `${nomes.slice(0, -1).join(', ')} e ${nomes[nomes.length - 1]}`
-  return `um PDF por área (${lista}), num arquivo .zip`
+  const lista = nomes.length > 1 ? `${nomes.slice(0, -1).join(', ')} e ${nomes[nomes.length - 1]}` : ''
+  if (porArea && nomes.length >= 2) return `um PDF por área (${lista}), num arquivo .zip`
+  return nomes.length >= 2 ? `um PDF só, com ${lista}` : 'PDF do master'
 }
 
 /* ---- A barra da meta do ano (18/11/2026, Juan: "uma barra que vai até 100%, quanto % eles

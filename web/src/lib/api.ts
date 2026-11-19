@@ -674,7 +674,7 @@ export const api = {
     pedir<MasterCamadas>(`/api/masters/${encodeURIComponent(id)}/mapa/camadas`, {}, 120_000),
 
   /** O relatório do master (BLK-MASTERS-04), gerado no servidor: com duas ou mais áreas, um PDF
-   *  por área num .zip; senão, o PDF. Com `regiao`, o PDF daquela área. 404 diz o que falta no
+   *  por área num .zip (menos no DF/GO, um PDF só); senão, o PDF. Com `regiao`, o PDF daquela área. 404 diz o que falta no
    *  servidor (painel de unidades, config dos territórios). */
   relatorioMaster: (id: string, regiao?: string | null) =>
     pedirArquivo(
