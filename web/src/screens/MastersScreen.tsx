@@ -359,7 +359,8 @@ function BarraEmUnidades({ md }: { md: MetaDoAno }) {
 }
 
 /** O botão ÚNICO do relatório (BLK-MASTERS-04; 18/11/2026, Juan: "maior, do lado direito, e
- *  apenas um botão só"). Com duas ou mais áreas, o servidor manda um PDF por área num .zip. */
+ *  apenas um botão só"). Com duas ou mais áreas, o servidor manda um PDF por área num .zip,
+ *  menos no DF/GO, que recebe as duas áreas num PDF só (`relatorio_por_area`). */
 function BotaoDoRelatorio({ p }: { p: MasterPainel }) {
   const [gerando, setGerando] = useState(false)
   const [erro, setErro] = useState<string | null>(null)
@@ -399,7 +400,9 @@ function BotaoDoRelatorio({ p }: { p: MasterPainel }) {
         }}
       >
         {gerando && <Spinner tamanho={12} />}
-        {gerando ? 'Gerando no servidor; pode levar até um minuto por área.' : textoDoRelatorio(p.regioes)}
+        {gerando
+          ? 'Gerando no servidor; pode levar até um minuto por área.'
+          : textoDoRelatorio(p.regioes, p.relatorio_por_area)}
       </div>
       {erro && (
         <div

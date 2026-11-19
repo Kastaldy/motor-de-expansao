@@ -399,6 +399,22 @@ def test_botao_unico_entrega_um_pdf_por_area_num_zip(relatorio: list[dict[str, A
     assert relatorio[-1]["regiao"] is None
 
 
+def test_o_master_do_relatorio_unico_recebe_um_pdf_so_com_todas_as_areas(
+    relatorio: list[dict[str, Any]], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """19/11/2026, Juan: "df pode deixar Goiás e DF tudo no mesmo relatório". O master da lista
+    recebe o PDF do master inteiro (sem área), mesmo com duas áreas; o painel avisa a tela."""
+    assert pilot.MASTERS_RELATORIO_UNICO == frozenset({"dfgo"})
+    assert pilot.api_master("rjsp")["relatorio_por_area"] is True
+    monkeypatch.setattr(pilot, "MASTERS_RELATORIO_UNICO", frozenset({"rjsp"}))
+    r = _pedir("rjsp")
+    assert r.media_type == "application/pdf" and r.body == b"%PDF-falso"
+    assert [c["regiao"] for c in relatorio] == [None]
+    assert pilot.api_master("rjsp")["relatorio_por_area"] is False
+    # Uma área só nunca é "por área".
+    assert pilot.api_master("sp03")["relatorio_por_area"] is False
+
+
 # ---------------------------------------------------------------------------
 # O mapa do território no painel (BLK-MASTERS-04; 18/11/2026, Juan: "o mapa, assim como está na
 # carteira, com a área e a opção de ligar a renda e a densidade")

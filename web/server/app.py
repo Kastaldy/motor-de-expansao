@@ -16817,7 +16817,15 @@ def api_master(master_id: str) -> dict[str, Any]:
     )
     if painel is None:
         raise HTTPException(404, "Master não encontrado.")
-    return {**painel, "hoje": hoje.strftime("%Y-%m-%d"), "fontes": _masters_fontes(manifesto)}
+    return {
+        **painel,
+        "hoje": hoje.strftime("%Y-%m-%d"),
+        "fontes": _masters_fontes(manifesto),
+        # O que o botão do relatório entrega, para o texto embaixo dele dizer a verdade.
+        "relatorio_por_area": _masters_relatorio_por_area(
+            master_id, _masters_n_areas_do_relatorio(master_id, len(painel["regioes"]))
+        ),
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -16828,8 +16836,32 @@ def api_master(master_id: str) -> dict[str, Any]:
 # ---------------------------------------------------------------------------
 
 MASTERS_TERRITORIOS = STAGING_DIR / masters_ingestao.ARQ_TERRITORIOS
+#: Masters cujo relatório sai num PDF ÚNICO com todas as áreas, mesmo tendo duas ou mais (19/11/2026,
+#: Juan: "df pode deixar Goiás e DF tudo no mesmo relatório"; só o DF/GO, os outros seguem com um
+#: PDF por área num .zip). O id é o da config dos territórios.
+MASTERS_RELATORIO_UNICO = frozenset({"dfgo"})
 UNI_DIM_PARQUET = STAGING_DIR / "dim_unidade.parquet"
 UNI_FATO_PARQUET = STAGING_DIR / "fato_unidade_mes.parquet"
+
+
+def _masters_n_areas_do_relatorio(master_id: str, n_do_painel: int) -> int:
+    """Quantas áreas o relatório do master vê: as da config dos territórios, a mesma da rota do
+    PDF; sem a config (ou sem o master nela), as do painel."""
+    from motor_expansao.masters.territorios import carregar_territorios
+
+    if not MASTERS_TERRITORIOS.exists():
+        return n_do_painel
+    try:
+        master = carregar_territorios(MASTERS_TERRITORIOS).get(master_id)
+    except Exception:  # noqa: BLE001 — config ilegível não derruba o painel; a rota do PDF diz o que falta
+        return n_do_painel
+    return len(master.regioes) if master is not None else n_do_painel
+
+
+def _masters_relatorio_por_area(master_id: str, n_areas: int) -> bool:
+    """O botão do relatório entrega um PDF por área num .zip? Sim com duas ou mais áreas, menos
+    nos masters de `MASTERS_RELATORIO_UNICO`, que recebem o PDF do master inteiro."""
+    return n_areas >= 2 and master_id not in MASTERS_RELATORIO_UNICO
 
 
 def _masters_faltando_para_o_relatorio() -> list[str]:
@@ -16918,7 +16950,8 @@ async def api_master_relatorio(
 ) -> Response:
     """O relatório do master. Sem `regiao` (o botão único da tela): master com duas ou mais áreas
     recebe um .zip com um PDF por área (18/11/2026, Juan: "entregar as áreas que ele tem", com um
-    botão só); com uma área ou nenhuma, o PDF. Com `regiao`, o PDF daquela área. Mesmo gate da tela
+    botão só), menos os de `MASTERS_RELATORIO_UNICO` (o DF/GO), que recebem o PDF do master inteiro;
+    com uma área ou nenhuma, o PDF. Com `regiao`, o PDF daquela área. Mesmo gate da tela
     (`masters.ver`), o mesmo teto de PDFs ao mesmo tempo e o evento `relatorio.gerado` (D17)."""
     _masters_exigir()
     faltando = _masters_faltando_para_o_relatorio()
@@ -16933,7 +16966,7 @@ async def api_master_relatorio(
         raise HTTPException(404, "Master não encontrado.")
     if regiao is not None and regiao not in {r.id for r in master.regioes}:
         raise HTTPException(404, "Área não encontrada para este master.")
-    por_area = regiao is None and len(master.regioes) >= 2
+    por_area = regiao is None and _masters_relatorio_por_area(master.id, len(master.regioes))
     await _registrar_relatorio_gerado_fora_do_loop(
         remote_user, relatorio="master", formato="zip" if por_area else "pdf"
     )

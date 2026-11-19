@@ -130,6 +130,11 @@ describe('tela Masters (DEC-089): textos', () => {
     )
     expect(textoDoRelatorio([r('sp', 'São Paulo')])).toBe('PDF do master')
     expect(textoDoRelatorio([])).toBe('PDF do master')
+    // O DF/GO (19/11/2026, Juan): as duas áreas num PDF só, quando o servidor diz.
+    expect(textoDoRelatorio([r('df', 'Distrito Federal'), r('go', 'Goiás')], false)).toBe(
+      'um PDF só, com Distrito Federal e Goiás',
+    )
+    expect(textoDoRelatorio([r('sp', 'São Paulo')], false)).toBe('PDF do master')
   })
 
   it('a escala da barra vai de 0 à meta (ou às aberturas, quando passaram) e marca a meta', () => {
