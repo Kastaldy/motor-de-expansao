@@ -519,20 +519,16 @@ def test_mapa_mostra_o_territorio_por_regiao_com_a_cor_do_pdf(mapa: dict[str, An
     assert [c["regiao"] for c in _json(pilot.api_master_mapa("sp03"))["contornos"]] == [0]
 
 
-def test_camadas_usam_a_renda_e_a_densidade_do_mapa_do_motor(mapa: dict[str, Any]) -> None:
+def test_camadas_por_hexagono_sao_espaco_livre_e_concorrentes(mapa: dict[str, Any]) -> None:
     d = _json(pilot.api_master_mapa_camadas("rjsp"))
     assert d["disponivel"] is True
-    # [hex, renda, densidade, espaço livre, concorrentes]: os mapas do relatório. A renda a reais e
-    # a densidade a uma casa; sem leitura vai None (cinza na tela). O hexágono sem gente não
-    # entra, e a UF sem partição (RJ) fica sem renda nem densidade, sem derrubar o resto.
+    # [hex, espaço livre, concorrentes]: os mapas do relatório que ele desenha por hexágono. O
+    # hexágono sem gente não entra. Renda e densidade são sempre do Censo (19/11/2026, Juan:
+    # "deixe o padrão sempre censitário"), e não leem mais a partição da UF.
     assert sorted(d["hexes"]) == sorted(
-        [
-            [RIO, None, None, 600.0, 2.0],
-            [SAMPA, 6100.0, 8123.5, 1000.0, 5.0],
-            [INTERIOR, None, 310.0, 500.0, 0.0],
-        ]
+        [[RIO, 600.0, 2.0], [SAMPA, 1000.0, 5.0], [INTERIOR, 500.0, 0.0]]
     )
-    assert sorted(mapa["lidas"]) == ["RJ", "SP"]
+    assert mapa["lidas"] == []
     # As faixas são as do núcleo e as do relatório; concorrentes começa em "nenhuma".
     from motor_expansao.dashboard import constants as C
     from motor_expansao.masters.relatorio_pdf import CONC_1KM_BANDS
@@ -544,14 +540,23 @@ def test_camadas_usam_a_renda_e_a_densidade_do_mapa_do_motor(mapa: dict[str, Any
     assert d["faixas"]["concorrentes"][1:] == pilot._faixas_camada(CONC_1KM_BANDS)
 
 
-def test_mapa_fica_em_cache_ate_uma_fonte_mudar(mapa: dict[str, Any]) -> None:
-    pilot.api_master_mapa_camadas("rjsp")
-    pilot.api_master_mapa_camadas("rjsp")
-    assert len(mapa["lidas"]) == 2  # RJ e SP, uma vez
+def test_mapa_fica_em_cache_ate_uma_fonte_mudar(
+    mapa: dict[str, Any], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    lidos: list[tuple[str, str]] = []
+
+    def pontos(uf: str, cod: str) -> tuple[tuple[Any, ...], ...]:
+        lidos.append((uf, cod))
+        return ()
+
+    monkeypatch.setattr(pilot, "_setores_pontos", pontos)
+    pilot.api_master_setores_pontos("rjsp")
+    pilot.api_master_setores_pontos("rjsp")
+    assert len(lidos) == 4  # os quatro municípios do território, uma vez
     m = pilot.MERCADO_PARQUET
     os.utime(m, ns=(m.stat().st_atime_ns, m.stat().st_mtime_ns + 10**9))
-    pilot.api_master_mapa_camadas("rjsp")
-    assert len(mapa["lidas"]) == 4
+    pilot.api_master_setores_pontos("rjsp")
+    assert len(lidos) == 8
 
 
 def test_mapa_responde_404_dizendo_o_que_falta(mapa: dict[str, Any]) -> None:
@@ -712,3 +717,58 @@ def test_setores_do_censo_so_dos_municipios_do_territorio(
     # E o master de uma área não lê os setores da outra.
     assert _status(lambda: pilot.api_master_setores("sp03", "RJ", "3304557"))[0] == 404
     assert pedidos == [("SP", "3550308")]
+
+
+def test_renda_e_densidade_sao_sempre_do_censo_um_ponto_por_setor(
+    mapa: dict[str, Any], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """19/11/2026, Juan: "deixe o padrão sempre censitário". De longe, um ponto por setor do
+    território inteiro (os mapas de calor do relatório); de perto, os polígonos."""
+    por_municipio = {
+        ("RJ", "3304557"): ((-43.2, -22.9, 9000.0, 12000.0),),
+        ("SP", "3550308"): ((-46.63, -23.55, 6100.0, 8123.5), (-46.6, -23.5, None, 900.0)),
+    }
+    monkeypatch.setattr(pilot, "_setores_pontos", lambda uf, cod: por_municipio.get((uf, cod), ()))
+    d = _json(pilot.api_master_setores_pontos("rjsp"))
+    assert d["setores"] == [
+        [-43.2, -22.9, 9000.0, 12000.0],
+        [-46.63, -23.55, 6100.0, 8123.5],
+        [-46.6, -23.5, None, 900.0],
+    ]
+    # O master de uma área só lê os setores da dele.
+    assert len(_json(pilot.api_master_setores_pontos("sp03"))["setores"]) == 2
+
+
+def test_o_ponto_do_setor_e_o_centro_da_caixa_sem_arredondar(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """O centro de cada setor sai da caixa dele com a precisão da coordenada (um arredondamento a
+    inteiro punha todos os setores de Brasília no mesmo ponto), e a renda e a densidade são as
+    do mapa de calor do município."""
+    pasta = tmp_path / "geo" / "uf=DF" / "cod_municipio=5300108"
+    pasta.mkdir(parents=True)
+    pd.DataFrame(
+        {
+            "cod_setor": ["530010805000001", "530010805000002"],
+            "bbox_minx": [-47.90, -47.80],
+            "bbox_miny": [-15.80, -15.70],
+            "bbox_maxx": [-47.88, -47.78],
+            "bbox_maxy": [-15.78, -15.68],
+            "densidade_pop_setor_hab_km2": [12345.67, None],
+            "renda_responsavel_media_setor_2022": [5000.0, 3000.0],
+            "renda_per_capita_setor_2022": [2000.0, 1000.0],
+            "avg_moradores_domicilio_setor_2022": [2.5, 3.0],
+        }
+    ).to_parquet(pasta / "part-000.parquet")
+    monkeypatch.setattr(pilot, "CENSO_GEO_DIR", tmp_path / "geo")
+    monkeypatch.setattr(
+        pilot._renda_setor,
+        "renda_domiciliar_da_linha",
+        lambda r, uf, cod: r["renda_responsavel_media_setor_2022"] * 1.1,
+    )
+    pilot._setores_pontos.cache_clear()
+    pontos = pilot._setores_pontos("DF", "5300108")
+    assert pontos == (
+        (-47.89, -15.79, 5500.0, 12345.7),
+        (-47.79, -15.69, 3300.0, None),
+    )

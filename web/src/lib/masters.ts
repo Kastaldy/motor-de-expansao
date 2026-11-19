@@ -361,12 +361,18 @@ export interface MasterMapa {
 /** As camadas do mapa: os mapas do relatório (19/11/2026, Juan). */
 export type CamadaDoMapa = 'renda_domiciliar' | 'densidade' | 'espaco_livre' | 'concorrentes'
 
-/** `/api/masters/{id}/mapa/camadas`: `[hex_id, renda, densidade, espaço livre, concorrentes]`. */
+/** `/api/masters/{id}/mapa/camadas`: as faixas das quatro camadas e, por hexágono, as duas que o
+ *  relatório desenha por hexágono: `[hex_id, espaço livre, concorrentes]`. Renda e densidade são
+ *  sempre do Censo (19/11/2026, Juan: "deixe o padrão sempre censitário"). */
 export interface MasterCamadas {
   disponivel: boolean
-  hexes: [string, number | null, number | null, number | null, number | null][]
+  hexes: [string, number | null, number | null][]
   faixas: Record<CamadaDoMapa, { ate: number | null; rotulo: string; cor: number[] }[]>
 }
+
+/** Um setor do Censo como ponto (`/api/masters/{id}/setores-pontos`): `[lng, lat, renda
+ *  domiciliar, densidade]`. É a renda e a densidade de longe, como nos mapas de calor do relatório. */
+export type PontoDeSetor = [number, number, number | null, number | null]
 
 /** Um setor do Censo de `/api/masters/{id}/setores/{uf}/{cod}` (a leitura do mapa de calor). */
 export interface SetorDoMaster {
@@ -376,8 +382,9 @@ export interface SetorDoMaster {
   renda_domiciliar: number | null
 }
 
-/** De que zoom em diante renda e densidade passam do hexágono aos setores do Censo (a escala de
- *  cidade): de longe, um estado inteiro tem dezenas de milhares de setores e a tela travaria. */
+/** De que zoom em diante renda e densidade passam dos PONTOS aos POLÍGONOS dos setores do Censo
+ *  (a escala de cidade): de longe, um estado inteiro tem dezenas de milhares de setores, e os
+ *  polígonos de todos travariam a tela; um ponto por setor não. */
 export const ZOOM_SETORES = 11
 /** Quantos municípios à vista têm os setores carregados de uma vez. */
 export const MAX_MUNICIPIOS_COM_SETORES = 6

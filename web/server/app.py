@@ -17001,32 +17001,20 @@ def _masters_mapa(master_id: str, fontes: tuple[tuple[str, int], ...]) -> str:
 
 @functools.lru_cache(maxsize=8)
 def _masters_camadas(master_id: str, fontes: tuple[tuple[str, int], ...]) -> str:
-    """As camadas do mapa (JSON), os mapas do relatório por hexágono (19/11/2026, Juan: "renda,
-    densidade e todos os mapas que geram no relatório"): `[hex_id, renda, densidade, espaço livre,
-    concorrentes]`, com as faixas de cor do núcleo. Renda e densidade são as do Mapa do motor
-    (`_renda_domiciliar_hex` na partição da UF; `densidade_pop_setor_hab_km2`); espaço livre e
-    concorrentes, as do relatório (`oferta_efetiva_disponivel` e as academias que alcançam o
-    hexágono a 1 km). De perto, renda e densidade passam aos setores do Censo (`/setores`)."""
+    """As camadas do mapa (JSON), os mapas do relatório (19/11/2026, Juan: "renda, densidade e
+    todos os mapas que geram no relatório"), com as faixas de cor do núcleo para as quatro. Espaço
+    livre e concorrentes vão por hexágono, como no relatório: `[hex_id, espaço livre, concorrentes]`
+    (`oferta_efetiva_disponivel` e as academias que alcançam o hexágono a 1 km). Renda e densidade
+    são SEMPRE do Censo ("deixe o padrão sempre censitário"): um ponto por setor de longe
+    (`/setores-pontos`) e os polígonos de perto (`/setores/{uf}/{cod}`)."""
     from motor_expansao.dashboard import constants as _constants
     from motor_expansao.masters.relatorio_pdf import CONC_1KM_BANDS
 
-    master = _masters_master_do_mapa(master_id)
     m = _masters_mercado(master_id, fontes)
     m = m[pd.to_numeric(m["pop_hex_base"], errors="coerce") > 0]
-    ids = set(m["hex_id"].astype(str))
-    renda: dict[str, Any] = {}
-    densidade: dict[str, Any] = {}
-    for uf in sorted(master.ufs_envolvidas):
-        try:
-            df = carregar_uf(uf)
-        except HTTPException:
-            continue  # UF sem partição: renda e densidade ficam cinza (sem leitura)
-        for _, r in df[df["hex_id"].isin(ids)].iterrows():
-            renda[str(r["hex_id"])] = _num(_renda_domiciliar_hex(r), 0)
-            densidade[str(r["hex_id"])] = _num(r.get("densidade_pop_setor_hab_km2"), 1)
     conc = m["concorrentes_1km"] if "concorrentes_1km" in m else pd.Series(None, index=m.index)
     linhas = [
-        [h, renda.get(h), densidade.get(h), _num(livre, 0), _num(c, 0)]
+        [h, _num(livre, 0), _num(c, 0)]
         for h, livre, c in zip(
             m["hex_id"].astype(str), m["oferta_efetiva_disponivel"], conc, strict=True
         )
@@ -17177,6 +17165,77 @@ def api_master_mapa(master_id: str) -> Response:
     _masters_master_do_mapa(master_id)
     return Response(
         content=_masters_mapa(master_id, _masters_assinatura_do_mapa()),
+        media_type="application/json",
+    )
+
+
+#: O que os PONTOS dos setores leem da partição geo, sem a geometria: o centro (a caixa) e o que a
+#: renda domiciliar e a densidade do mapa de calor usam (`_setores_heatmap_features`).
+_COLUNAS_PONTO_DE_SETOR = [
+    "cod_setor",
+    "bbox_minx",
+    "bbox_miny",
+    "bbox_maxx",
+    "bbox_maxy",
+    "densidade_pop_setor_hab_km2",
+    "renda_responsavel_media_setor_2022",
+    "renda_per_capita_setor_2022",
+    "avg_moradores_domicilio_setor_2022",
+]
+
+
+@functools.lru_cache(maxsize=2048)
+def _setores_pontos(uf: str, cod_municipio: str) -> tuple[tuple[Any, ...], ...]:
+    """Um ponto por setor do município, no centro da caixa dele: `(lng, lat, renda domiciliar,
+    densidade)`, com a MESMA conta dos polígonos (`_setores_heatmap_features`), sem ler a
+    geometria. Município sem partição: nada."""
+    from motor_expansao.pipelines.materializar_setores_censitarios_geo import ler_particao_setores
+
+    try:
+        df = ler_particao_setores(
+            CENSO_GEO_DIR, uf=uf, cod_municipio=cod_municipio, columns=_COLUNAS_PONTO_DE_SETOR
+        )
+    except Exception:  # noqa: BLE001 — partição ausente ou ilegível não derruba o território
+        return ()
+    if df.empty:
+        return ()
+    _renda_staging_configurado()  # aponta os insumos da renda para o STAGING_DIR (1x)
+    pontos = []
+    for r in df.to_dict("records"):
+        caixa = [_numf(r.get(c)) for c in ("bbox_minx", "bbox_miny", "bbox_maxx", "bbox_maxy")]
+        if any(v is None for v in caixa):
+            continue
+        oeste, sul, leste, norte = caixa  # type: ignore[misc]
+        lng, lat = (oeste + leste) / 2, (sul + norte) / 2
+        pontos.append(
+            (
+                round(lng, 5),
+                round(lat, 5),
+                _num(_renda_setor.renda_domiciliar_da_linha(r, uf, cod_municipio), 0),
+                _num(r.get("densidade_pop_setor_hab_km2"), 1),
+            )
+        )
+    return tuple(pontos)
+
+
+@functools.lru_cache(maxsize=4)
+def _masters_setores_pontos(master_id: str, fontes: tuple[tuple[str, int], ...]) -> str:
+    """Os pontos dos setores de TODOS os municípios do território (JSON): a renda e a densidade
+    "sempre censitárias" de longe, como nos mapas de calor do relatório (um ponto por setor)."""
+    territorio = json.loads(_masters_mapa(master_id, fontes))
+    pontos = [
+        list(p) for uf, cod, *_ in territorio["municipios"] for p in _setores_pontos(uf, cod)
+    ]
+    return json.dumps({"setores": pontos}, ensure_ascii=False)
+
+
+@app.get("/api/masters/{master_id}/setores-pontos")
+def api_master_setores_pontos(master_id: str) -> Response:
+    """Os setores do Censo do território inteiro como pontos `[lng, lat, renda, densidade]`: a
+    renda e a densidade do mapa de longe (de perto, os polígonos de `/setores/{uf}/{cod}`)."""
+    _masters_master_do_mapa(master_id)
+    return Response(
+        content=_masters_setores_pontos(master_id, _masters_assinatura_do_mapa()),
         media_type="application/json",
     )
 

@@ -1,7 +1,7 @@
 import type { Layer } from '@deck.gl/core'
 import { WebMercatorViewport } from '@deck.gl/core'
 import { H3HexagonLayer } from '@deck.gl/geo-layers'
-import { IconLayer, PathLayer, PolygonLayer } from '@deck.gl/layers'
+import { IconLayer, PathLayer, PolygonLayer, ScatterplotLayer } from '@deck.gl/layers'
 import DeckGL from '@deck.gl/react'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { Map } from 'react-map-gl/maplibre'
@@ -11,7 +11,7 @@ import { api, ApiError } from '../../lib/api'
 import { corDaFaixaDoServidor } from '../../lib/colors'
 import { tracoComHalo } from '../../lib/contorno-halo'
 import { num, renda } from '../../lib/format'
-import type { CamadaDoMapa, FocoNoMapa, MasterCamadas, MasterMapa, SetorDoMaster } from '../../lib/masters'
+import type { CamadaDoMapa, FocoNoMapa, MasterCamadas, MasterMapa, PontoDeSetor, SetorDoMaster } from '../../lib/masters'
 import { ZOOM_SETORES, caixaDoContorno, municipiosAVista, rgbDeHex, vistaDoTerritorio } from '../../lib/masters'
 import type { Tema } from '../../lib/tema'
 
@@ -24,9 +24,11 @@ import type { Tema } from '../../lib/tema'
    deixe ela demarcada igual fica no motor"): o contorno de cada região, com a cor
    dela e o halo do motor (`tracoComHalo`); e as camadas são os mapas do relatório
    (renda, densidade, espaço livre e concorrentes), uma por vez. Renda e densidade
-   são "o censitário": de perto (zoom de cidade), os SETORES do Censo dos municípios
-   à vista, como na ficha da carteira; de longe, por hexágono (um estado inteiro tem
-   dezenas de milhares de setores). Camada visual, READ-ONLY.
+   são SEMPRE do Censo ("deixe o padrão sempre censitário"): de perto (zoom de cidade),
+   os polígonos dos setores dos municípios à vista, como na ficha da carteira; de
+   longe, um ponto por setor, como nos mapas de calor do relatório (os polígonos de
+   um estado inteiro travariam a tela). Espaço livre e concorrentes por hexágono,
+   como no relatório. Camada visual, READ-ONLY.
    --------------------------------------------------------------------------- */
 
 const BASEMAP = {
@@ -34,11 +36,13 @@ const BASEMAP = {
   claro: 'https://basemaps.cartocdn.com/gl/positron-gl-style/style.json',
 } as const
 
-const CAMADAS: { chave: CamadaDoMapa; rotulo: string; legenda: string; indice: 1 | 2 | 3 | 4; censo: boolean }[] = [
-  { chave: 'renda_domiciliar', rotulo: 'Renda domiciliar', legenda: 'Renda domiciliar (por domicílio)', indice: 1, censo: true },
-  { chave: 'densidade', rotulo: 'Densidade demográfica', legenda: 'Densidade (hab/km²)', indice: 2, censo: true },
-  { chave: 'espaco_livre', rotulo: 'Espaço livre', legenda: 'Espaço livre (alunos por hexágono)', indice: 3, censo: false },
-  { chave: 'concorrentes', rotulo: 'Academias concorrentes', legenda: 'Academias que alcançam o hexágono (1 km)', indice: 4, censo: false },
+/** `indice`: a posição do valor na linha (ponto do setor `[lng, lat, renda, densidade]` nas do
+ *  Censo; hexágono `[hex, espaço livre, concorrentes]` nas outras). */
+const CAMADAS: { chave: CamadaDoMapa; rotulo: string; legenda: string; indice: 1 | 2 | 3; censo: boolean }[] = [
+  { chave: 'renda_domiciliar', rotulo: 'Renda domiciliar', legenda: 'Renda domiciliar (por domicílio)', indice: 2, censo: true },
+  { chave: 'densidade', rotulo: 'Densidade demográfica', legenda: 'Densidade (hab/km²)', indice: 3, censo: true },
+  { chave: 'espaco_livre', rotulo: 'Espaço livre', legenda: 'Espaço livre (alunos por hexágono)', indice: 1, censo: false },
+  { chave: 'concorrentes', rotulo: 'Academias concorrentes', legenda: 'Academias que alcançam o hexágono (1 km)', indice: 2, censo: false },
 ]
 
 const ALTURA = 480
@@ -77,6 +81,9 @@ export default function MapaDoTerritorio({
   const [camadas, setCamadas] = useState<MasterCamadas | null>(null)
   const [carregandoCamadas, setCarregandoCamadas] = useState(false)
   const [erroCamadas, setErroCamadas] = useState<string | null>(null)
+  // Um ponto por setor do território inteiro: a renda e a densidade de longe.
+  const [pontos, setPontos] = useState<PontoDeSetor[] | null>(null)
+  const [carregandoPontos, setCarregandoPontos] = useState(false)
   // Setores do Censo por município (`uf-cod`), carregados ao aproximar; `null` = pedido em curso.
   const [setores, setSetores] = useState<globalThis.Map<string, SetorDoMaster[] | null>>(() => new globalThis.Map())
   const [dica, setDica] = useState<Dica | null>(null)
@@ -95,6 +102,7 @@ export default function MapaDoTerritorio({
     setCamadas(null)
     setErroCamadas(null)
     setSetores(new globalThis.Map())
+    setPontos(null)
     api
       .masterMapa(masterId)
       .then((m) => {
@@ -141,6 +149,15 @@ export default function MapaDoTerritorio({
   function alternarCamada(chave: CamadaDoMapa) {
     const proxima = camada === chave ? null : chave
     setCamada(proxima)
+    if (proxima && CAMADAS.find((c) => c.chave === proxima)?.censo && !pontos && !carregandoPontos) {
+      setCarregandoPontos(true)
+      setErroCamadas(null) // um erro antigo não fica na tela depois de uma nova tentativa
+      api
+        .masterSetoresPontos(masterId)
+        .then((r) => setPontos(r.setores))
+        .catch((e: ApiError) => setErroCamadas(e.message))
+        .finally(() => setCarregandoPontos(false))
+    }
     if (proxima && !camadas && !carregandoCamadas) {
       setCarregandoCamadas(true)
       setErroCamadas(null)
@@ -160,7 +177,32 @@ export default function MapaDoTerritorio({
     const faixas = def && camadas ? camadas.faixas[def.chave] : null
 
     if (def && faixas && camadas) {
-      if (deSetores) {
+      if (def.censo && !deSetores) {
+        // De longe: um ponto por setor, colorido pela faixa (os mapas de calor do relatório).
+        const raio = vista && vista.zoom >= 9 ? 3 : 2
+        arr.push(
+          new ScatterplotLayer<PontoDeSetor>({
+            id: 'setores-pontos',
+            data: pontos ?? [],
+            getPosition: (d) => [d[0], d[1]],
+            getRadius: raio,
+            radiusUnits: 'pixels',
+            filled: true,
+            stroked: false,
+            pickable: true,
+            getFillColor: (d) => corDaFaixaDoServidor(d[def.indice] ?? null, faixas, 210),
+            updateTriggers: { getFillColor: [def.chave], getRadius: [raio] },
+            onHover: (info) => {
+              const d = info.object as PontoDeSetor | undefined
+              setDica(
+                d
+                  ? { titulo: 'Setor do Censo', linhas: [`${def.rotulo}: ${textoDoValor(def.chave, d[def.indice])}`], x: info.x, y: info.y }
+                  : null,
+              )
+            },
+          }),
+        )
+      } else if (deSetores) {
         const lista = [...setores.values()].flatMap((v) => v ?? [])
         const campo = def.chave as 'renda_domiciliar' | 'densidade'
         arr.push(
@@ -194,11 +236,11 @@ export default function MapaDoTerritorio({
             stroked: false,
             extruded: false,
             pickable: true,
-            getFillColor: (d) => corDaFaixaDoServidor(d[def.indice] ?? null, faixas, 170),
+            getFillColor: (d) => corDaFaixaDoServidor(d[def.indice as 1 | 2] ?? null, faixas, 170),
             updateTriggers: { getFillColor: [def.chave] },
             onHover: (info) => {
               const d = info.object as LinhaHex | undefined
-              setDica(d ? { titulo: def.rotulo, linhas: [textoDoValor(def.chave, d[def.indice])], x: info.x, y: info.y } : null)
+              setDica(d ? { titulo: def.rotulo, linhas: [textoDoValor(def.chave, d[def.indice as 1 | 2])], x: info.x, y: info.y } : null)
             },
           }),
         )
@@ -268,7 +310,7 @@ export default function MapaDoTerritorio({
       )
     }
     return arr
-  }, [mapa, def, camadas, deSetores, setores, tema, foco])
+  }, [mapa, def, camadas, deSetores, setores, pontos, vista, tema, foco])
 
   const faixasDaLegenda = def && camadas?.disponivel ? camadas.faixas[def.chave] : null
 
@@ -391,7 +433,7 @@ export default function MapaDoTerritorio({
                 <>
                   <div style={{ font: '600 10px/1.4 var(--f-ui)', color: 'var(--tx-label)', marginBottom: 3 }}>
                     {def.legenda}
-                    {def.censo && (deSetores ? ' · setores do Censo' : ' · por hexágono (aproxime para os setores)')}
+                    {def.censo && (deSetores ? ' · setores do Censo' : ' · setores do Censo (um ponto por setor; aproxime para os limites)')}
                   </div>
                   {faixasDaLegenda.map((f) => (
                     <div key={f.rotulo} style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
@@ -405,7 +447,9 @@ export default function MapaDoTerritorio({
                     <span style={{ width: 10, height: 10, borderRadius: 2, background: 'rgb(120,120,140)', opacity: 0.4 }} />
                     sem leitura
                   </div>
-                  {deSetores && carregandoSetores && <div style={{ marginTop: 3 }}>Carregando os setores do Censo…</div>}
+                  {def.censo && (carregandoPontos || (deSetores && carregandoSetores)) && (
+                    <div style={{ marginTop: 3 }}>Carregando os setores do Censo…</div>
+                  )}
                 </>
               ) : null
             ) : (

@@ -8,6 +8,7 @@ import type {
   MasterMapa,
   MasterPainel,
   MastersPayload,
+  PontoDeSetor,
   SetorDoMaster,
 } from './masters'
 import type {
@@ -633,6 +634,10 @@ export const api = {
       {},
       120_000,
     ),
+
+  /** Os setores do Censo do território inteiro como pontos (renda e densidade de longe). */
+  masterSetoresPontos: (id: string) =>
+    pedir<{ setores: PontoDeSetor[] }>(`/api/masters/${encodeURIComponent(id)}/setores-pontos`, {}, 180_000),
 
   /** Os setores do Censo de um município do território (renda e densidade), ao aproximar. */
   masterSetores: (id: string, uf: string, cod: string) =>
