@@ -161,6 +161,16 @@
   --ops-text: #f9a8d4;
   --ops-on: #2c0a1a;
 
+  /* --- Trilha do MASTER ("Meu território", emenda 2 da DEC-089) ---------------
+     Laranja (19/11/2026, Juan: "a aba 'Meu território' está na cor rosa; mude para
+     laranja"): era o --ops emprestado, e o master lia como mais uma pergunta de
+     operações. A matiz é a do laranja Ultra (#EF7F1F), a mesma do --gr-coral.
+     Mesmo papel e mesmas regras do --ops: só na ENTRADA (pílula e cards do Início).
+     --mst-on sobre --mst: 7,9:1. */
+  --mst: #f9965a;
+  --mst-text: #f9965a;
+  --mst-on: #2a1405;
+
   /* --- Identidade das 4 camadas do funil (--l1..--l4) -----------------------
      Uma matiz por camada, EXCLUSIVA do chrome de navegacao: eyebrow "Camada N de
      4", bloco do funil, bolinha/contador do stepper, borda do rotulo de rank e o
@@ -661,6 +671,14 @@
   --ops: #c23c8e;       /* mesma cor da marca — a trilha de operacoes e a secundaria magenta */
   --ops-text: #a81b6b;
   --ops-on: #ffffff;
+
+  /* --- Trilha do MASTER (ver o :root) ---------------------------------------
+     O laranja do --gr-coral claro (3:1 como preenchimento) e o texto no par de texto
+     dele (5,4:1 sobre branco). Branco sobre o laranja dá só 3,5:1, então o texto
+     SOBRE o laranja cheio é o escuro: 5,0:1. */
+  --mst: #d16f1b;
+  --mst-text: #9c5a1e;
+  --mst-on: #2a1405;
 
   /* --- Identidade das camadas do funil (--l1..--l5) -------------------------
      Mesma regra do resto do bloco: a MATIZ e' preservada e a luminancia desce ate'

@@ -285,6 +285,15 @@ const ICONE_TRILHA: Record<TrilhaInicio, React.JSX.Element> = {
   ),
 }
 
+/** A cor de cada trilha, na pílula (`cheia`, `sobre`) e nos cards dela (`acento`, `borda`):
+ *  turquesa na expansão, rosa nas operações e laranja no master (19/11/2026, Juan: "a aba
+ *  'Meu território' está na cor rosa; mude para laranja"). */
+const COR_DA_TRILHA: Record<TrilhaInicio, { cheia: string; sobre: string; acento: string; borda: string }> = {
+  expansao: { cheia: 'var(--ac)', sobre: 'var(--ac-on)', acento: 'var(--ac-text)', borda: 'var(--ac-a30)' },
+  operacoes: { cheia: 'var(--ops)', sobre: 'var(--ops-on)', acento: 'var(--ops-text)', borda: 'var(--ops)' },
+  master: { cheia: 'var(--mst)', sobre: 'var(--mst-on)', acento: 'var(--mst-text)', borda: 'var(--mst)' },
+}
+
 function BotaoTrilha({
   trilha,
   ativa,
@@ -294,8 +303,7 @@ function BotaoTrilha({
   ativa: boolean
   onEscolher: () => void
 }) {
-  const cheia = trilha === 'expansao' ? 'var(--ac)' : 'var(--ops)'
-  const sobre = trilha === 'expansao' ? 'var(--ac-on)' : 'var(--ops-on)'
+  const { cheia, sobre } = COR_DA_TRILHA[trilha]
   return (
     <button
       type="button"
@@ -365,8 +373,7 @@ function CardModo({
   ufs: readonly string[]
 }) {
   const [aberto, setAberto] = useState(false)
-  const acento = modo.trilha === 'expansao' ? 'var(--ac-text)' : 'var(--ops-text)'
-  const borda = modo.trilha === 'expansao' ? 'var(--ac-a30)' : 'var(--ops)'
+  const { acento, borda } = COR_DA_TRILHA[modo.trilha]
   const temPasso = modo.segundoPasso !== null
 
   /* Esc fecha o passo aberto — o mesmo gesto que fecha a ficha da unidade na Visão
