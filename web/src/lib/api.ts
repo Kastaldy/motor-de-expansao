@@ -8,8 +8,7 @@ import type {
   MasterMapa,
   MasterPainel,
   MastersPayload,
-  PontoDeSetor,
-  SetorDoMaster,
+  SetorDoTerritorio,
 } from './masters'
 import type {
   AcaoImobiliaria,
@@ -635,17 +634,10 @@ export const api = {
       120_000,
     ),
 
-  /** Os setores do Censo do território inteiro como pontos (renda e densidade de longe). */
-  masterSetoresPontos: (id: string) =>
-    pedir<{ setores: PontoDeSetor[] }>(`/api/masters/${encodeURIComponent(id)}/setores-pontos`, {}, 180_000),
-
-  /** Os setores do Censo de um município do território (renda e densidade), ao aproximar. */
-  masterSetores: (id: string, uf: string, cod: string) =>
-    pedir<{ setores: SetorDoMaster[] }>(
-      `/api/masters/${encodeURIComponent(id)}/setores/${encodeURIComponent(uf)}/${encodeURIComponent(cod)}`,
-      {},
-      60_000,
-    ),
+  /** Os setores do Censo do território inteiro (renda e densidade em qualquer zoom). A primeira
+   *  leitura do território é lenta; depois vem do cache. */
+  masterSetores: (id: string) =>
+    pedir<{ setores: SetorDoTerritorio[] }>(`/api/masters/${encodeURIComponent(id)}/setores`, {}, 180_000),
 
   /** Quanto o master pode crescer no território: mercado, atendido, espaço livre e academias. */
   masterCrescimento: (id: string) =>

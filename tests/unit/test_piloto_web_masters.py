@@ -545,17 +545,17 @@ def test_mapa_fica_em_cache_ate_uma_fonte_mudar(
 ) -> None:
     lidos: list[tuple[str, str]] = []
 
-    def pontos(uf: str, cod: str) -> tuple[tuple[Any, ...], ...]:
+    def setores(uf: str, cod: str) -> list[list[Any]]:
         lidos.append((uf, cod))
-        return ()
+        return []
 
-    monkeypatch.setattr(pilot, "_setores_pontos", pontos)
-    pilot.api_master_setores_pontos("rjsp")
-    pilot.api_master_setores_pontos("rjsp")
+    monkeypatch.setattr(pilot, "_setores_do_municipio_no_territorio", setores)
+    pilot.api_master_setores("rjsp")
+    pilot.api_master_setores("rjsp")
     assert len(lidos) == 4  # os quatro municípios do território, uma vez
     m = pilot.MERCADO_PARQUET
     os.utime(m, ns=(m.stat().st_atime_ns, m.stat().st_mtime_ns + 10**9))
-    pilot.api_master_setores_pontos("rjsp")
+    pilot.api_master_setores("rjsp")
     assert len(lidos) == 8
 
 
@@ -694,70 +694,74 @@ def test_recomendacao_e_crescimento_tem_o_gate_da_tela(
     assert acesso.motivo_bloqueio_por_banco(caminho, "GET", "alguem") is not None
 
 
-def test_setores_do_censo_so_dos_municipios_do_territorio(
+def test_renda_e_densidade_sao_os_setores_do_territorio_inteiro_em_qualquer_zoom(
     mapa: dict[str, Any], monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """De perto, renda e densidade passam aos setores do Censo (19/11/2026, Juan: "o censitário"),
-    um município por vez, pela mesma leitura do mapa de calor do município."""
-    pedidos: list[tuple[str, str]] = []
-
-    def setores(uf: str, cod: str) -> list[dict[str, Any]]:
-        pedidos.append((uf, cod))
-        return [{"setor": "1", "anel": [[0, 0]], "densidade": 10.0, "renda_domiciliar": 5000.0}]
-
-    monkeypatch.setattr(pilot, "_setores_heatmap_features", setores)
-    d = _json(pilot.api_master_setores("rjsp", "sp", "3550308"))
-    assert d["setores"][0]["renda_domiciliar"] == 5000.0
-    assert pedidos == [("SP", "3550308")]
-    # Município fora do território (BH, de outro estado): 404, sem ler nada.
-    assert _status(lambda: pilot.api_master_setores("rjsp", "MG", "3106200")) == (
-        404,
-        "Município fora do território do master.",
-    )
-    # E o master de uma área não lê os setores da outra.
-    assert _status(lambda: pilot.api_master_setores("sp03", "RJ", "3304557"))[0] == 404
-    assert pedidos == [("SP", "3550308")]
-
-
-def test_renda_e_densidade_sao_sempre_do_censo_um_ponto_por_setor(
-    mapa: dict[str, Any], monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """19/11/2026, Juan: "deixe o padrão sempre censitário". De longe, um ponto por setor do
-    território inteiro (os mapas de calor do relatório); de perto, os polígonos."""
+    """19/11/2026, Juan: "deixe a densidade e a renda (quando ativadas) aparecendo sem limite de
+    zoom". Os POLÍGONOS dos setores de todos os municípios do território, numa resposta só
+    (antes, de longe, ia um ponto por setor, e os polígonos só no zoom de cidade)."""
+    anel = [[[-43.2, -22.9], [-43.1, -22.9], [-43.1, -22.8], [-43.2, -22.9]]]
     por_municipio = {
-        ("RJ", "3304557"): ((-43.2, -22.9, 9000.0, 12000.0),),
-        ("SP", "3550308"): ((-46.63, -23.55, 6100.0, 8123.5), (-46.6, -23.5, None, 900.0)),
+        ("RJ", "3304557"): [[9000.0, 12000.0, anel]],
+        ("SP", "3550308"): [[6101.0, 8123.5, anel], [None, 900.0, anel]],
     }
-    monkeypatch.setattr(pilot, "_setores_pontos", lambda uf, cod: por_municipio.get((uf, cod), ()))
-    d = _json(pilot.api_master_setores_pontos("rjsp"))
+    lidos: list[tuple[str, str]] = []
+
+    def setores(uf: str, cod: str) -> list[list[Any]]:
+        lidos.append((uf, cod))
+        return por_municipio.get((uf, cod), [])
+
+    monkeypatch.setattr(pilot, "_setores_do_municipio_no_territorio", setores)
+    d = _json(pilot.api_master_setores("rjsp"))
     assert d["setores"] == [
-        [-43.2, -22.9, 9000.0, 12000.0],
-        [-46.63, -23.55, 6100.0, 8123.5],
-        [-46.6, -23.5, None, 900.0],
+        [9000.0, 12000.0, anel],
+        [6101.0, 8123.5, anel],
+        [None, 900.0, anel],
+    ]
+    # Os quatro municípios do território, e só eles: BH (de outro estado) não é lido.
+    assert sorted(lidos) == [
+        ("RJ", "3304557"),
+        ("SP", "3509502"),
+        ("SP", "3543402"),
+        ("SP", "3550308"),
     ]
     # O master de uma área só lê os setores da dele.
-    assert len(_json(pilot.api_master_setores_pontos("sp03"))["setores"]) == 2
+    assert len(_json(pilot.api_master_setores("sp03"))["setores"]) == 2
+    assert _status(lambda: pilot.api_master_setores("zeta")) == (404, "Master não encontrado.")
 
 
-def test_o_ponto_do_setor_e_o_centro_da_caixa_sem_arredondar(
+def test_o_setor_do_territorio_simplifica_pelo_tamanho(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """O centro de cada setor sai da caixa dele com a precisão da coordenada (um arredondamento a
-    inteiro punha todos os setores de Brasília no mesmo ponto), e a renda e a densidade são as
-    do mapa de calor do município."""
+    """O território inteiro numa resposta só pede simplificar pelo TAMANHO do setor (medido no
+    DF/GO: 1,33 milhão de vértices com 11 m em todos): o mesmo dente de 55 m fica no setor urbano
+    pequeno e sai do rural grande. Renda e densidade são as do mapa de calor do município, o buraco
+    do setor fica, as coordenadas saem em 5 casas e o setor sem geometria fica de fora."""
+    from shapely.geometry import Polygon
+
+    # Urbano: 220 m de lado (simplifica a 11 m); o dente de 0,0005 grau (55 m) fica.
+    urbano = Polygon(
+        [
+            (-47.9, -15.8),
+            (-47.899, -15.7995),
+            (-47.8981234, -15.8),
+            (-47.8981234, -15.798),
+            (-47.9, -15.798),
+        ]
+    )
+    # Rural: 22 km de lado (simplifica a 220 m); o mesmo dente sai, e o buraco fica.
+    rural = Polygon(
+        [(-48.0, -16.0), (-47.9, -15.9995), (-47.8, -16.0), (-47.8, -15.8), (-48.0, -15.8)],
+        holes=[[(-47.95, -15.95), (-47.85, -15.95), (-47.85, -15.85), (-47.95, -15.85)]],
+    )  # fmt: skip
     pasta = tmp_path / "geo" / "uf=DF" / "cod_municipio=5300108"
     pasta.mkdir(parents=True)
     pd.DataFrame(
         {
-            "cod_setor": ["530010805000001", "530010805000002"],
-            "bbox_minx": [-47.90, -47.80],
-            "bbox_miny": [-15.80, -15.70],
-            "bbox_maxx": [-47.88, -47.78],
-            "bbox_maxy": [-15.78, -15.68],
-            "densidade_pop_setor_hab_km2": [12345.67, None],
-            "renda_responsavel_media_setor_2022": [5000.0, 3000.0],
-            "renda_per_capita_setor_2022": [2000.0, 1000.0],
-            "avg_moradores_domicilio_setor_2022": [2.5, 3.0],
+            "cod_setor": ["530010805000001", "530010805000002", "530010805000003"],
+            "geometry_wkb": [urbano.wkb, rural.wkb, None],
+            "densidade_pop_setor_hab_km2": [12345.67, 3.04, 10.0],
+            "renda_responsavel_media_setor_2022": [5000.0, 3000.0, 1000.0],
         }
     ).to_parquet(pasta / "part-000.parquet")
     monkeypatch.setattr(pilot, "CENSO_GEO_DIR", tmp_path / "geo")
@@ -766,9 +770,16 @@ def test_o_ponto_do_setor_e_o_centro_da_caixa_sem_arredondar(
         "renda_domiciliar_da_linha",
         lambda r, uf, cod: r["renda_responsavel_media_setor_2022"] * 1.1,
     )
-    pilot._setores_pontos.cache_clear()
-    pontos = pilot._setores_pontos("DF", "5300108")
-    assert pontos == (
-        (-47.89, -15.79, 5500.0, 12345.7),
-        (-47.79, -15.69, 3300.0, None),
-    )
+    linhas = pilot._setores_do_municipio_no_territorio("DF", "5300108")
+    assert [(renda, densidade) for renda, densidade, _ in linhas] == [
+        (5500.0, 12345.7),
+        (3300.0, 3.0),
+    ]
+    (externo_urbano,) = linhas[0][2]
+    externo_rural, buraco = linhas[1][2]
+    assert len(externo_urbano) == 6  # os 5 vértices (com o dente) e o fechamento
+    assert len(externo_rural) == 5  # o quadrado, sem o dente
+    assert len(buraco) == 5
+    coords = [c for _, _, aneis in linhas for a in aneis for p in a for c in p]
+    assert all(c == round(c, 5) for c in coords)
+    assert pilot._setores_do_municipio_no_territorio("DF", "9999999") == []
