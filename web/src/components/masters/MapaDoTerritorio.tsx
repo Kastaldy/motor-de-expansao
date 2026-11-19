@@ -1,6 +1,6 @@
 import type { Layer } from '@deck.gl/core'
 import { H3HexagonLayer } from '@deck.gl/geo-layers'
-import { IconLayer } from '@deck.gl/layers'
+import { IconLayer, PolygonLayer } from '@deck.gl/layers'
 import DeckGL from '@deck.gl/react'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { Map } from 'react-map-gl/maplibre'
@@ -9,8 +9,8 @@ import 'maplibre-gl/dist/maplibre-gl.css'
 import { api, ApiError } from '../../lib/api'
 import { corDaFaixaDoServidor } from '../../lib/colors'
 import { num, renda } from '../../lib/format'
-import type { MasterCamadas, MasterMapa } from '../../lib/masters'
-import { rgbDeHex, vistaDoTerritorio } from '../../lib/masters'
+import type { FocoNoMapa, MasterCamadas, MasterMapa } from '../../lib/masters'
+import { caixaDoContorno, rgbDeHex, vistaDoTerritorio } from '../../lib/masters'
 import type { Tema } from '../../lib/tema'
 
 /* ---------------------------------------------------------------------------
@@ -44,7 +44,18 @@ const ALTURA = 480
 type Vista = { longitude: number; latitude: number; zoom: number; pitch: number; bearing: number }
 type Dica = { titulo: string; linhas: string[]; x: number; y: number }
 
-export default function MapaDoTerritorio({ masterId, tema }: { masterId: string; tema: Tema }) {
+export default function MapaDoTerritorio({
+  masterId,
+  tema,
+  foco = null,
+  onSairDoFoco,
+}: {
+  masterId: string
+  tema: Tema
+  /** A região clicada na lista de onde abrir (18/11/2026, Juan: "ao clicar, dá zoom no mapa"). */
+  foco?: FocoNoMapa | null
+  onSairDoFoco?: () => void
+}) {
   const caixa = useRef<HTMLDivElement>(null)
   const [mapa, setMapa] = useState<MasterMapa | null>(null)
   const [erro, setErro] = useState<string | null>(null)
@@ -81,6 +92,15 @@ export default function MapaDoTerritorio({ masterId, tema }: { masterId: string;
       vivo = false
     }
   }, [masterId])
+
+  // Região clicada na lista: aproxima nela e traz o mapa para a vista (ele fica acima da lista).
+  useEffect(() => {
+    if (!foco || !mapa) return
+    const largura = caixa.current?.clientWidth || 900
+    const bbox = caixaDoContorno(foco.contorno)
+    setVista({ ...vistaDoTerritorio(bbox, largura, ALTURA, 60, 13.5), pitch: 0, bearing: 0 })
+    caixa.current?.scrollIntoView({ behavior: 'smooth', block: 'center' })
+  }, [foco, mapa])
 
   function alternarCamada(chave: Camada) {
     const proxima = camada === chave ? null : chave
@@ -156,8 +176,24 @@ export default function MapaDoTerritorio({ masterId, tema }: { masterId: string;
         }),
       )
     }
+    if (foco) {
+      // O limite da região (o hexágono recomendado), em rosa: "como se fosse o raio" (Juan).
+      arr.push(
+        new PolygonLayer<FocoNoMapa>({
+          id: 'regiao-em-foco',
+          data: [foco],
+          getPolygon: (d) => d.contorno,
+          filled: true,
+          stroked: true,
+          getFillColor: [194, 60, 142, 45],
+          getLineColor: [194, 60, 142, 255],
+          lineWidthUnits: 'pixels',
+          getLineWidth: 3,
+        }),
+      )
+    }
     return arr
-  }, [mapa, camada, camadas, valores])
+  }, [mapa, camada, camadas, valores, foco])
 
   const faixasDaLegenda = camada && camadas?.disponivel ? camadas.faixas[camada] : null
 
@@ -217,7 +253,10 @@ export default function MapaDoTerritorio({ masterId, tema }: { masterId: string;
               type="button"
               title="Enquadrar o território"
               aria-label="Enquadrar o território"
-              onClick={() => enquadrar(mapa)}
+              onClick={() => {
+                enquadrar(mapa)
+                onSairDoFoco?.()
+              }}
               style={botao}
             >
               ⌖
@@ -309,6 +348,47 @@ export default function MapaDoTerritorio({ masterId, tema }: { masterId: string;
               </>
             )}
           </div>
+
+          {foco && (
+            <div
+              style={{
+                position: 'absolute',
+                left: 10,
+                top: 10,
+                zIndex: 21,
+                display: 'flex',
+                alignItems: 'center',
+                gap: 10,
+                padding: '7px 10px',
+                borderRadius: 'var(--r-sm)',
+                background: 'var(--surf-panel)',
+                border: '1px solid var(--gr-rosa)',
+                backdropFilter: 'blur(10px)',
+                font: '600 11.5px/1.3 var(--f-ui)',
+                color: 'var(--tx-max)',
+              }}
+            >
+              <span>Região: {foco.nome}</span>
+              <button
+                type="button"
+                onClick={() => {
+                  enquadrar(mapa)
+                  onSairDoFoco?.()
+                }}
+                style={{
+                  border: 'none',
+                  background: 'transparent',
+                  color: 'var(--ac-text)',
+                  font: '600 11px/1 var(--f-ui)',
+                  cursor: 'pointer',
+                  padding: 0,
+                  textDecoration: 'underline',
+                }}
+              >
+                ver o território inteiro
+              </button>
+            </div>
+          )}
 
           {dica && (
             <div

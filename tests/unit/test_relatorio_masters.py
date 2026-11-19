@@ -1351,3 +1351,25 @@ def test_pdf_do_master_em_memoria_sem_gravar_nada(masters, monkeypatch, tmp_path
     assert nome == "relatorio_master_lit_2026T4.pdf"
     assert recebido["planilha"][0] is inaug and recebido["masters"] == ["lit"]
     assert list(tmp_path.iterdir()) == []  # nada gravado
+
+
+def test_top5_bairros_e_a_regra_do_slide_e_da_tela() -> None:
+    """Os Top 5 do slide e o cartão "Alta renda" da Análise de Oportunidade (que a tela do master
+    também mostra) saem da mesma função: só bairros sem Ultra; por população, a ordem dos
+    bairros; por renda, só os de `POP_MIN_BAIRRO` habitantes ou mais."""
+    from motor_expansao.masters.relatorio_pdf import top5_bairros
+
+    b = pd.DataFrame(
+        {
+            "localidade": ["A", "B", "C", "D", "E", "F", "G"],
+            "populacao": [90_000, 80_000, 70_000, 60_000, 50_000, 40_000, 3_000],
+            "renda_dom": [2_000.0, 9_000.0, 4_000.0, 7_000.0, 3_000.0, 8_000.0, 50_000.0],
+            "ocupado": [False, True, False, False, False, False, False],
+        }
+    )
+    assert list(top5_bairros(b, "populacao")["localidade"]) == ["A", "C", "D", "E", "F"]
+    # G (3 mil habitantes) não entra por renda; B tem Ultra.
+    assert list(top5_bairros(b, "renda")["localidade"]) == ["F", "D", "C", "E", "A"]
+    # Master sem região: sem bairros, sem quebrar (a tela pede a análise; o PDF nem chega lá).
+    assert top5_bairros(pd.DataFrame(), "renda").empty
+    assert top5_bairros(pd.DataFrame(), "populacao").empty

@@ -436,6 +436,11 @@ def mapa(masters: Path, monkeypatch: pytest.MonkeyPatch) -> dict[str, list[str]]
             "lng": [-43.20, -46.63, -47.06, -47.80, -43.9],
             # Hexágono sem gente fica fora, como no mapa do relatório em PDF.
             "pop_hex_base": [9000.0, 12000.0, 3000.0, 0.0, 5000.0],
+            # O mercado de cada hexágono (alunos): potencial, consumo de redes e Ultra, livre.
+            "sam_fitness_potencial": [1000.0, 2000.0, 600.0, 0.0, 900.0],
+            "oferta_consumida_mercado_estimada": [300.0, 900.0, 100.0, 0.0, 100.0],
+            "oferta_consumida_ultra_estimada": [100.0, 100.0, 0.0, 0.0, 0.0],
+            "oferta_efetiva_disponivel": [600.0, 1000.0, 500.0, 0.0, 800.0],
             "outra_coluna": [1, 2, 3, 4, 5],
         }
     ).to_parquet(mercado)
@@ -538,5 +543,123 @@ def test_mapa_responde_404_dizendo_o_que_falta(mapa: dict[str, Any]) -> None:
 def test_mapa_tem_o_gate_da_tela(monkeypatch: pytest.MonkeyPatch, caminho: str) -> None:
     assert acesso.capacidade_necessaria(caminho, "GET") == "masters.ver"
     assert acesso.abas_necessarias(caminho) == frozenset({"masters"})
+    _identidade(monkeypatch, {"rede.ver"})
+    assert acesso.motivo_bloqueio_por_banco(caminho, "GET", "alguem") is not None
+
+
+# ---------------------------------------------------------------------------
+# O "Onde expandir" da aba Expansão (BLK-MASTERS-04; 18/11/2026, Juan: "a recomendação, igual
+# está no relatório, para onde expandir")
+# ---------------------------------------------------------------------------
+
+ESTUDO_FALSO = {
+    "analise": [{"cor": "magenta", "titulo": "Ocupação do mercado", "texto": "..."}],
+}
+
+
+@pytest.fixture
+def estudo(relatorio: list[dict[str, Any]], monkeypatch: pytest.MonkeyPatch) -> list[str]:
+    """O piloto com o que o relatório pede e o estudo trocado por um falso (as regras dele são as
+    do PDF e têm os testes de lá); aqui se confere a rota."""
+    from motor_expansao.masters import gerar as G
+
+    chamadas: list[str] = []
+
+    def falso(e: Any, master: Any, gerado_em: Any, planilha: Any = None) -> dict[str, Any]:
+        chamadas.append(master.id)
+        assert planilha is not None  # a planilha chega remontada da ingestão, nunca a crua
+        return ESTUDO_FALSO
+
+    monkeypatch.setattr(G, "estudo_do_master", falso)
+    return chamadas
+
+
+def _estudo(master_id: str) -> Any:
+    return asyncio.run(pilot.api_master_estudo(master_id))
+
+
+def test_estudo_da_aba_expansao_vem_do_gerador_do_relatorio(estudo: list[str]) -> None:
+    assert _json(_estudo("rjsp")) == ESTUDO_FALSO
+    _estudo("rjsp")
+    assert estudo == ["rjsp"]  # em cache até uma fonte mudar
+    m = pilot.MERCADO_PARQUET
+    os.utime(m, ns=(m.stat().st_atime_ns, m.stat().st_mtime_ns + 10**9))
+    _estudo("rjsp")
+    assert estudo == ["rjsp", "rjsp"]
+
+
+def test_estudo_responde_404_dizendo_o_que_falta(estudo: list[str]) -> None:
+    assert _status(lambda: _estudo("zeta")) == (404, "Master não encontrado.")
+    pilot.UNI_DIM_PARQUET.unlink()
+    status, detalhe = _status(lambda: _estudo("rjsp"))
+    assert status == 404 and "dim_unidade.parquet" in detalhe
+    assert estudo == []
+
+
+def test_estudo_tem_o_gate_da_tela(monkeypatch: pytest.MonkeyPatch) -> None:
+    caminho = "/api/masters/rjsp/estudo"
+    assert acesso.capacidade_necessaria(caminho, "GET") == "masters.ver"
+    _identidade(monkeypatch, {"rede.ver"})
+    assert acesso.motivo_bloqueio_por_banco(caminho, "GET", "alguem") is not None
+
+
+# ---------------------------------------------------------------------------
+# Top 5 pela régua do motor e o crescimento (18/11/2026, Juan: "no top 5, mudar para o padrão do
+# motor, que é Mata Virgem e Premium, e embaixo a opção de mostrar o top 20"; "a primeira linha,
+# troque por quanto ele pode crescer na região, mostrando o residual, espaços para academias")
+# ---------------------------------------------------------------------------
+
+
+def test_recomendacao_e_a_do_motor_no_territorio_com_20_vagas(
+    mapa: dict[str, Any], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    chamadas: list[dict[str, Any]] = []
+
+    def bloco(df: pd.DataFrame, recorte: Any, *, regra: Any) -> dict[str, Any]:
+        chamadas.append({"hexes": sorted(df["hex_id"]), "recorte": recorte, "regra": regra})
+        return {"mata_virgem": {"vagas": []}, "premium": {"vagas": []}}
+
+    monkeypatch.setattr(pilot, "_bloco_recomendacao", bloco)
+    d = _json(pilot.api_master_recomendacao("rjsp"))
+    assert d == {"recomendacao": {"mata_virgem": {"vagas": []}, "premium": {"vagas": []}}}
+    (c,) = chamadas
+    # Só os hexágonos do território (a UF sem partição, RJ, fica fora; o sem gente também).
+    assert c["hexes"] == sorted([SAMPA, INTERIOR])
+    # A régua vigente do país, só com 20 vagas por segmento (a tela mostra 5 e abre as 20).
+    vigente = pilot._regra_recomendacao()
+    assert c["regra"].vagas_por_segmento == 20
+    assert c["regra"].versao == vigente.versao and c["regra"].premium == vigente.premium
+    # O território atravessa UFs: vai como recorte "brasil" já filtrado (a régua não usa o nível).
+    assert c["recorte"].nivel == "brasil" and "RJ/SP 01" in c["recorte"].nome
+    pilot.api_master_recomendacao("rjsp")
+    assert len(chamadas) == 1  # em cache até uma fonte mudar
+
+
+def test_crescimento_soma_o_mercado_do_territorio_por_regiao(mapa: dict[str, Any]) -> None:
+    d = _json(pilot.api_master_crescimento("rjsp"))
+    assert d["capacidade_por_academia"] == 2500.0
+    # Só os hexágonos das UFs do master (o de MG fica fora); RJ e SP por região.
+    assert d["total"] == {
+        "mercado_alunos": 3600.0,
+        "atendido_alunos": 1500.0,
+        "pct_atendido": round(1500 / 3600, 4),
+        "espaco_livre_alunos": 2100.0,
+        "academias_que_cabem": 0,
+    }
+    por_regiao = {r["id"]: r for r in d["regioes"]}
+    assert por_regiao["rj"]["espaco_livre_alunos"] == 600.0
+    assert por_regiao["sp"]["espaco_livre_alunos"] == 1500.0
+    assert por_regiao["sp"]["pct_atendido"] == round(
+        1100 / 2600, 4
+    )  # 900 + 100 de redes, 100 Ultra
+
+
+@pytest.mark.parametrize(
+    "caminho", ["/api/masters/rjsp/recomendacao", "/api/masters/rjsp/crescimento"]
+)
+def test_recomendacao_e_crescimento_tem_o_gate_da_tela(
+    monkeypatch: pytest.MonkeyPatch, caminho: str
+) -> None:
+    assert acesso.capacidade_necessaria(caminho, "GET") == "masters.ver"
     _identidade(monkeypatch, {"rede.ver"})
     assert acesso.motivo_bloqueio_por_banco(caminho, "GET", "alguem") is not None

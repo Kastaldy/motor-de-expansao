@@ -1026,20 +1026,29 @@ def _card_top(
         yy = max(yy + 36, pdf.get_y() + 8)
 
 
+def top5_bairros(bairros: pd.DataFrame, por: str) -> pd.DataFrame:
+    """Os 5 bairros SEM Ultra do slide "Top 5": por população (a ordem de `area.bairros`) ou por
+    renda domiciliar, entre os de `POP_MIN_BAIRRO` habitantes ou mais. Uma regra só para o slide e
+    para o cartão "Alta renda" da Análise de Oportunidade, que a tela do master também mostra. Sem
+    bairros (master sem região, ou sem a malha do Censo), nada, sem quebrar."""
+    if bairros.empty:
+        return bairros
+    disp = bairros[~bairros["ocupado"]]
+    if por == "populacao":
+        return disp.head(5)
+    return (
+        disp[disp["populacao"] >= POP_MIN_BAIRRO].sort_values("renda_dom", ascending=False).head(5)
+    )
+
+
 def _pagina_top5(
     pdf: _UltraPDF, d: DadosRelatorio, assets: dict[str, bytes | None], por: str
 ) -> None:
-    disp = d.bairros[~d.bairros["ocupado"]]
     if por == "populacao":
         titulo, cor = "Top 5 bairros sem Ultra - maior população", TURQUESA
-        top = disp.head(5)
     else:
         titulo, cor = "Top 5 bairros sem Ultra - maior renda", MAGENTA
-        top = (
-            disp[disp["populacao"] >= POP_MIN_BAIRRO]
-            .sort_values("renda_dom", ascending=False)
-            .head(5)
-        )
+    top = top5_bairros(d.bairros, por)
     y = _pagina(pdf, assets, f"Estudo de Área - {titulo}", d, cor=cor)
     if top.empty:
         _nota(pdf, y, "Sem bairros sem Ultra com dados neste território.")
@@ -1259,9 +1268,18 @@ def _texto_ocupacao(d: DadosRelatorio, ocupado: float, n_ultra: int, n_meus: int
     return texto
 
 
-def _pagina_analise(pdf: _UltraPDF, d: DadosRelatorio, assets: dict[str, bytes | None]) -> None:
-    """Análise de oportunidade: os quatro cartões do fim do estudo do RJ."""
-    y = _pagina(pdf, assets, "Análise de Oportunidade", d)
+#: Cor de cada cartão da Análise de Oportunidade, por chave (a tela do master usa a mesma chave).
+CORES_ANALISE: dict[str, tuple[int, int, int]] = {
+    "magenta": MAGENTA,
+    "turquesa": TURQUESA,
+    "laranja": LARANJA,
+    "roxo": ROXO,
+}
+
+
+def cartoes_da_analise(d: DadosRelatorio) -> list[tuple[str, str, str]]:
+    """(cor, título, texto) dos cartões da Análise de Oportunidade: o "onde expandir" do fim do
+    estudo do RJ. A aba Expansão da tela do master mostra os mesmos (BLK-MASTERS-04)."""
     b = d.bairros
     disp = b[~b["ocupado"]] if len(b) else b
     n_ultra = len(d.ultra_pontos)
@@ -1273,9 +1291,9 @@ def _pagina_analise(pdf: _UltraPDF, d: DadosRelatorio, assets: dict[str, bytes |
         else float("nan")
     )
     nome = d.master.nome_exibicao
-    cards: list[tuple[tuple[int, int, int], str, str]] = [
+    cards: list[tuple[str, str, str]] = [
         (
-            MAGENTA,
+            "magenta",
             "Ocupação do mercado",
             _texto_ocupacao(d, ocupado, n_ultra, n_meus),
         ),
@@ -1284,7 +1302,7 @@ def _pagina_analise(pdf: _UltraPDF, d: DadosRelatorio, assets: dict[str, bytes |
         r1 = d.regioes.iloc[0]
         cards.append(
             (
-                TURQUESA,
+                "turquesa",
                 "Potencial total",
                 f"{fmt_int(d.regioes['espaco_livre_alunos'].sum() / 1e3)} mil alunos de espaço livre nas "
                 f"{len(d.regioes)} regiões de {nome}; a maior parte em {r1['regiao_nome']} "
@@ -1295,26 +1313,33 @@ def _pagina_analise(pdf: _UltraPDF, d: DadosRelatorio, assets: dict[str, bytes |
         top = disp.iloc[0]
         cards.append(
             (
-                LARANJA,
+                "laranja",
                 "Maior bairro sem Ultra",
                 f"{top['localidade']} ({top['nome_municipio']}) lidera com {fmt_int(top['populacao'])} habitantes, "
                 "o bairro mais populoso do território ainda sem unidade Ultra.",
             )
         )
-        ricos = (
-            disp[disp["populacao"] >= POP_MIN_BAIRRO]
-            .sort_values("renda_dom", ascending=False)
-            .head(3)
-        )
+        ricos = top5_bairros(b, "renda").head(3)
         if len(ricos):
             lista = ", ".join(
                 f"{r.localidade} ({fmt_renda(r.renda_dom)})" for r in ricos.itertuples()
             )
             cards.append(
-                (ROXO, "Alta renda", f"{lista} são os bairros sem Ultra de maior renda domiciliar.")
+                (
+                    "roxo",
+                    "Alta renda",
+                    f"{lista} são os bairros sem Ultra de maior renda domiciliar.",
+                )
             )
+    return cards
+
+
+def _pagina_analise(pdf: _UltraPDF, d: DadosRelatorio, assets: dict[str, bytes | None]) -> None:
+    """Análise de oportunidade: os quatro cartões do fim do estudo do RJ."""
+    y = _pagina(pdf, assets, "Análise de Oportunidade", d)
     cw, ch, gap = (W - 2 * MARGEM - 24) / 2, 190.0, 24.0
-    for i, (cor, titulo, texto) in enumerate(cards):
+    for i, (chave, titulo, texto) in enumerate(cartoes_da_analise(d)):
+        cor = CORES_ANALISE[chave]
         x = MARGEM + (i % 2) * (cw + gap)
         yy = y + 8 + (i // 2) * (ch + 18)
         pdf.set_fill_color(*BRANCO)

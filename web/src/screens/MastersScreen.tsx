@@ -1,7 +1,10 @@
-import { useEffect, useState, type ReactNode } from 'react'
+import { useEffect, useRef, useState } from 'react'
 
 import BotaoInicio from '../components/BotaoInicio'
+import CrescimentoDoTerritorio from '../components/masters/CrescimentoDoTerritorio'
+import EstudoDoTerritorio from '../components/masters/EstudoDoTerritorio'
 import MapaDoTerritorio from '../components/masters/MapaDoTerritorio'
+import RecomendacaoDoTerritorio from '../components/masters/RecomendacaoDoTerritorio'
 import {
   Aviso,
   BarraMeta,
@@ -14,16 +17,11 @@ import {
 } from '../components/primitives'
 import { api, ApiError, baixar } from '../lib/api'
 import {
-  barrasPorAno,
-  barrasPorFase,
-  barrasPorPrevisao,
   dataBr,
   escalaDaBarra,
-  etiquetasDaUnidade,
   metaDoAno,
   pct,
   rotuloDaBarra,
-  rotuloUnidade,
   textoAnoDaMeta,
   textoContrato,
   textoPrazo,
@@ -31,7 +29,7 @@ import {
   textoProgressoDaMeta,
   topoDoGrafico,
   type MetaDoAno,
-  type Barra,
+  type FocoNoMapa,
   type FontesMasters,
   type MasterCard,
   type MasterPainel,
@@ -148,6 +146,25 @@ function CardMaster({
   )
 }
 
+/** O gráfico da meta na largura da coluna em que está: mede a coluna e desenha com essa largura,
+ *  para a altura não crescer junto (com o viewBox fixo, uma coluna larga o deixava enorme). */
+function GraficoMetaNaLargura(props: Omit<Parameters<typeof GraficoMeta>[0], 'larguraTotal'>) {
+  const ref = useRef<HTMLDivElement>(null)
+  const [largura, setLargura] = useState(0)
+  useEffect(() => {
+    const el = ref.current
+    if (!el || typeof ResizeObserver === 'undefined') return
+    const ro = new ResizeObserver((e) => setLargura(e[0].contentRect.width))
+    ro.observe(el)
+    return () => ro.disconnect()
+  }, [])
+  return (
+    <div ref={ref}>
+      <GraficoMeta {...props} larguraTotal={largura > 0 ? Math.max(360, Math.round(largura)) : 440} />
+    </div>
+  )
+}
+
 /** Meta do ano por trimestre: barras do acumulado, trimestre atual tracejado, futuros em
  *  cinza e a linha da meta do ano quando ela existe. */
 function GraficoMeta({
@@ -155,13 +172,17 @@ function GraficoMeta({
   porAno,
   simulada = false,
   hoje,
+  larguraTotal = 440,
 }: {
   trimestres: TrimestreMeta[]
   porAno: number | null
   simulada?: boolean
   hoje: string
+  /** Largura do desenho em px: a da coluna (`GraficoMetaNaLargura`), para a meta ocupar o cartão
+   *  sem a altura crescer junto (18/11/2026, Juan: "o lado direito está vazio, pode expandir"). */
+  larguraTotal?: number
 }) {
-  const L = 440
+  const L = larguraTotal
   const A = 210
   const base = 168
   const alto = 128
@@ -271,104 +292,6 @@ function GraficoMeta({
         )
       })}
     </svg>
-  )
-}
-
-/** Barras horizontais de um grupo: rótulo à esquerda (cabe "Buscando Imóvel"), a barra e a
- *  contagem no fim dela. Uma série só, então sem legenda: o título do cartão a nomeia. */
-function BarrasDoGrupo({
-  barras,
-  cor,
-  descricao,
-}: {
-  barras: Barra[]
-  cor: string
-  descricao: string
-}) {
-  const L = 340
-  const rot = 108
-  const linha = 24
-  const A = barras.length * linha + 4
-  const maior = Math.max(1, ...barras.map((b) => b.n))
-  const util = L - rot - 34
-  return (
-    <svg
-      viewBox={`0 0 ${L} ${A}`}
-      role="img"
-      aria-label={`${descricao}: ${barras.map((b) => `${b.rotulo} ${b.n}`).join('; ')}`}
-      style={{ width: '100%', height: 'auto', display: 'block' }}
-    >
-      {barras.map((b, i) => {
-        const y = i * linha + 2
-        const w = (b.n / maior) * util
-        return (
-          <g key={b.rotulo}>
-            <text
-              x={rot - 8}
-              y={y + linha / 2 + 4}
-              textAnchor="end"
-              style={{
-                font: `${b.destaque ? 700 : 500} 11.5px var(--f-ui)`,
-                fill: b.destaque ? 'var(--tx-max)' : 'var(--tx-label)',
-              }}
-            >
-              {b.rotulo}
-            </text>
-            <rect
-              x={rot}
-              y={y + 5}
-              width={Math.max(w, b.n > 0 ? 3 : 0)}
-              height={linha - 10}
-              rx={3}
-              fill={cor}
-              opacity={b.destaque || barras.every((x) => !x.destaque) ? 0.9 : 0.45}
-            />
-            <text
-              x={rot + Math.max(w, b.n > 0 ? 3 : 0) + 6}
-              y={y + linha / 2 + 4}
-              className="num"
-              style={{ font: '700 11.5px var(--f-num)', fill: 'var(--tx-max)' }}
-            >
-              {b.n}
-            </text>
-          </g>
-        )
-      })}
-    </svg>
-  )
-}
-
-function CartaoGrafico({
-  titulo,
-  sub,
-  cor,
-  barras,
-  vazio,
-}: {
-  titulo: string
-  sub?: string
-  cor: string
-  barras: Barra[]
-  vazio: string
-}) {
-  return (
-    <Glass style={{ padding: '14px 16px', minWidth: 0 }}>
-      <Eyebrow cor={cor} dot>
-        {titulo}
-      </Eyebrow>
-      {sub && (
-        <div style={{ font: '400 11px/1.4 var(--f-ui)', color: 'var(--tx-sub)', marginTop: 4 }}>
-          {sub}
-        </div>
-      )}
-      <div style={{ marginTop: 10 }}>
-        {barras.length ? (
-          <BarrasDoGrupo barras={barras} cor={cor} descricao={titulo} />
-        ) : (
-          <div style={{ font: '400 12px/1.4 var(--f-ui)', color: 'var(--tx-sub)' }}>{vazio}</div>
-        )}
-      </div>
-    </Glass>
   )
 }
 
@@ -557,148 +480,21 @@ function BarraDaMetaDoAno({ md, ano }: { md: MetaDoAno | null; ano: number }) {
   )
 }
 
-function Lista({
-  titulo,
-  n,
-  vazio,
-  children,
-}: {
-  titulo: string
-  n: number
-  vazio: string
-  children: ReactNode
-}) {
-  return (
-    <Glass style={{ padding: '14px 16px', minWidth: 0 }}>
-      <Eyebrow dot>
-        {titulo} ({n})
-      </Eyebrow>
-      {/* Altura limitada, com rolagem por dentro: a lista do DF/GO tem 33 unidades e empurrava
-          os gráficos do fim do painel para longe. */}
-      <div
-        style={{
-          marginTop: 10,
-          display: 'flex',
-          flexDirection: 'column',
-          gap: 8,
-          maxHeight: 420,
-          overflowY: 'auto',
-          paddingRight: 4,
-        }}
-      >
-        {n === 0 ? (
-          <div style={{ font: '400 12px/1.4 var(--f-ui)', color: 'var(--tx-sub)' }}>{vazio}</div>
-        ) : (
-          children
-        )}
-      </div>
-    </Glass>
-  )
-}
-
-function Linha({
-  nome,
-  direita,
-  etiquetas = [],
-}: {
-  nome: string
-  direita?: string
-  etiquetas?: string[]
-}) {
-  return (
-    <div style={{ borderBottom: '1px solid var(--line)', paddingBottom: 7 }}>
-      <div style={{ display: 'flex', gap: 8, alignItems: 'baseline' }}>
-        <div style={{ font: '500 12.5px/1.3 var(--f-ui)', color: 'var(--tx-max)', flex: 1 }}>
-          {nome}
-        </div>
-        {direita && (
-          <div
-            className="num"
-            style={{ font: '400 11.5px/1 var(--f-num)', color: 'var(--tx-sub)', whiteSpace: 'nowrap' }}
-          >
-            {direita}
-          </div>
-        )}
-      </div>
-      {etiquetas.length > 0 && (
-        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 5, marginTop: 5 }}>
-          {etiquetas.map((e) => (
-            <Chip key={e} tom={e.startsWith('sem data') ? 'amber' : 'gray'}>
-              {e}
-            </Chip>
-          ))}
-        </div>
-      )}
-    </div>
-  )
-}
-
-type VisaoDoMaster = 'expansao' | 'unidades'
-
-const VISOES: { chave: VisaoDoMaster; rotulo: string; sub: string }[] = [
-  { chave: 'expansao', rotulo: 'Expansão', sub: 'meta, território, inaugurações e contratos' },
-  { chave: 'unidades', rotulo: 'Unidades', sub: 'as unidades em operação' },
-]
-
-/** Os dois seletores do painel (18/11/2026, Juan: "dentro da aba do master, dois seletores que
- *  mudem o que mostra na página, um para expansão e outro para unidades"). */
-function SeletorDaVisao({
-  valor,
-  onTrocar,
-}: {
-  valor: VisaoDoMaster
-  onTrocar: (v: VisaoDoMaster) => void
-}) {
-  return (
-    <div role="group" aria-label="O que mostrar do master" style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-      {VISOES.map((v) => {
-        const ativo = v.chave === valor
-        return (
-          <button
-            key={v.chave}
-            type="button"
-            aria-pressed={ativo}
-            onClick={() => onTrocar(v.chave)}
-            style={{
-              minWidth: 200,
-              padding: '10px 16px',
-              textAlign: 'left',
-              borderRadius: 'var(--r-md)',
-              border: `1.5px solid ${ativo ? 'var(--ac)' : 'var(--line-soft)'}`,
-              background: ativo ? 'var(--ac-a16)' : 'var(--surf-card)',
-              color: ativo ? 'var(--ac-text)' : 'var(--tx-soft)',
-              cursor: 'pointer',
-            }}
-          >
-            <div style={{ font: '700 14px/1.2 var(--f-ui)' }}>{v.rotulo}</div>
-            <div style={{ font: '400 11px/1.3 var(--f-ui)', color: 'var(--tx-sub)', marginTop: 3 }}>
-              {v.sub}
-            </div>
-          </button>
-        )
-      })}
-    </div>
-  )
-}
-
 function PainelMaster({
   p,
   tema,
-  visao,
-  onVisao,
   onVoltar,
 }: {
   p: MasterPainel
   tema: Tema
-  visao: VisaoDoMaster
-  onVisao: (v: VisaoDoMaster) => void
   onVoltar: () => void
 }) {
   const m = p.meta
   const contrato = textoContrato(m)
   const nAssinados = p.assinados.reduce((s, f) => s + f.unidades.length, 0)
-  const porAno = barrasPorAno(p.em_operacao, m.ano)
   const md = metaDoAno(p.id, m.ano, m.n_ano, m.por_ano, SIMULAR_META_SEM_DADO)
+  // A região clicada na lista de onde abrir: o mapa aproxima nela e desenha o limite dela.
+  const [foco, setFoco] = useState<FocoNoMapa | null>(null)
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
       <div>
@@ -747,207 +543,123 @@ function PainelMaster({
         <BotaoDoRelatorio p={p} />
       </div>
 
-      <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap' }}>
-        <Kpi label="Em operação" valor={String(p.resumo.em_operacao)} />
-        <Kpi label="Em inauguração" valor={String(p.resumo.em_inauguracao)} />
-        <Kpi label="Contratos assinados" valor={String(nAssinados)} />
-        <Kpi
-          label={`Abertas em ${m.ano}`}
-          valor={textoAnoDaMeta(m)}
-          sub={
-            md
-              ? `${pct(md.pct)} da meta do ano${md.simulada ? ' (simulada)' : ''}`
-              : 'meta do ano não informada'
-          }
-        />
-      </div>
-
-      {/* Dois seletores que trocam o que a página mostra (18/11/2026, Juan): a expansão do
-          master (meta, território, inaugurações e contratos) ou as unidades dele em operação. */}
-      <SeletorDaVisao valor={visao} onTrocar={onVisao} />
-
-      {visao === 'unidades' ? (
-        // Unidades: as em operação, com as aberturas por ano ao lado.
-        <div
-          style={{
-            display: 'grid',
-            gridTemplateColumns: 'repeat(auto-fit, minmax(320px, 1fr))',
-            gap: 12,
-            alignItems: 'start',
-          }}
-        >
-          <Lista titulo="Em operação" n={p.em_operacao.length} vazio="Nenhuma unidade em operação.">
-            {p.em_operacao.map((u) => (
-              <Linha
-                key={`${u.unidade}-${u.uf}`}
-                nome={rotuloUnidade(u.unidade, u.uf)}
-                direita={u.inauguracao ? `desde ${dataBr(u.inauguracao)}` : undefined}
-                etiquetas={etiquetasDaUnidade(u)}
-              />
-            ))}
-          </Lista>
-          <CartaoGrafico
-            titulo="Em operação: aberturas por ano"
-            sub={
-              porAno.semData
-                ? `${porAno.semData} sem data no Growth, fora do gráfico`
-                : `${m.ano} em destaque`
-            }
-            cor="var(--ac)"
-            barras={porAno.barras}
-            vazio="Sem data de inauguração no Growth para estas unidades."
-          />
-        </div>
+      {/* A primeira linha (18/11/2026, Juan): quanto o master pode crescer no território. Sem
+          região no contrato não há território para medir, e ficam as contagens. */}
+      {p.regioes.length > 0 ? (
+        <CrescimentoDoTerritorio masterId={p.id} />
       ) : (
-        // Expansão: a meta, o território, as inaugurações e os contratos assinados.
-        <>
-        {/* A meta em destaque, com o mesmo rosado do slide de metas do relatório; a barra até
-            100% fica embaixo do gráfico por trimestre (18/11/2026, Juan). */}
-        <Glass
-          style={{
-            padding: '16px 18px',
-            border: '1.5px solid var(--gr-rosa)',
-            background: 'color-mix(in srgb, var(--gr-rosa) 7%, var(--surf-card))',
-          }}
-        >
-          <div style={{ display: 'flex', gap: 24, flexWrap: 'wrap', alignItems: 'flex-start' }}>
-            <div style={{ flex: '0 1 320px', minWidth: 220 }}>
-              <Eyebrow cor="var(--gr-rosa)">Meta de aberturas de {m.ano}</Eyebrow>
-              <div
-                className="num"
-                style={{ font: '700 44px/1 var(--f-num)', color: 'var(--gr-rosa)', marginTop: 10 }}
-              >
-                {m.por_ano ? pct(m.pct_ano) : m.n_ano}
-              </div>
-              <div
-                style={{
-                  font: '400 12.5px/1.6 var(--f-ui)',
-                  color: 'var(--tx-sub)',
-                  marginTop: 8,
-                }}
-              >
-                <div>
-                  {m.por_ano
-                    ? `${m.n_ano} de ${m.por_ano} unidades abertas em ${m.ano}`
-                    : `unidades abertas em ${m.ano} que contam para a meta`}
-                </div>
-                <div>desde o início: {m.n_contam} contam para a meta</div>
-                {contrato && <div>meta do contrato: {contrato}</div>}
-                <div>prazo do contrato: {textoPrazo(m, p.hoje)}</div>
-                {m.sem_data.length > 0 && (
-                  <div>
-                    {m.sem_data.length === 1
-                      ? '1 sem data no Growth, fora da conta do ano'
-                      : `${m.sem_data.length} sem data no Growth, fora da conta do ano`}
-                  </div>
-                )}
-              </div>
-            </div>
-            {/* A "Meta de <ano>" com a barra em cima e o gráfico por trimestre embaixo, na mesma
-                largura (18/11/2026, Juan: "deixe a meta aparecendo acima do gráfico"). */}
-            <div style={{ flex: '2 1 360px', minWidth: 300, maxWidth: 600 }}>
-              <BarraDaMetaDoAno md={md} ano={m.ano} />
-              <div
-                style={{ font: '600 12.5px/1.3 var(--f-ui)', color: 'var(--tx-max)', marginTop: 22 }}
-              >
-                Unidades abertas em {m.ano} que contam para a meta, até o fim de cada trimestre
-              </div>
-              <div
-                style={{ font: '400 11px/1.4 var(--f-ui)', color: 'var(--tx-sub)', margin: '3px 0 8px' }}
-              >
-                em destaque, os trimestres com abertura (entre parênteses, quantas); zera a cada ano
-              </div>
-              <GraficoMeta
-                trimestres={m.trimestres}
-                porAno={md?.meta ?? null}
-                simulada={md?.simulada ?? false}
-                hoje={p.hoje}
-              />
-            </div>
-          </div>
-        </Glass>
+        <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap' }}>
+          <Kpi label="Em operação" valor={String(p.resumo.em_operacao)} />
+          <Kpi label="Em inauguração" valor={String(p.resumo.em_inauguracao)} />
+          <Kpi label="Contratos assinados" valor={String(nAssinados)} />
+          <Kpi
+            label={`Abertas em ${m.ano}`}
+            valor={textoAnoDaMeta(m)}
+            sub={
+              md
+                ? `${pct(md.pct)} da meta do ano${md.simulada ? ' (simulada)' : ''}`
+                : 'meta do ano não informada'
+            }
+          />
+        </div>
+      )}
 
-        {/* Uma parte do relatório na tela (18/11/2026, Juan): o território no mapa, como na
-            carteira, com renda e densidade para ligar. Sem região no contrato, não há o que mostrar. */}
-        {p.regioes.length > 0 && (
-          <Glass style={{ padding: '14px 16px', minWidth: 0 }}>
-            <Eyebrow>Território no mapa</Eyebrow>
-            <div
-              style={{ font: '400 11px/1.4 var(--f-ui)', color: 'var(--tx-sub)', margin: '3px 0 10px' }}
-            >
-              as regiões do contrato e as unidades Ultra nelas; ligue a renda ou a densidade para ver o
-              território por dentro (as mesmas do Mapa do motor)
-            </div>
-            <MapaDoTerritorio masterId={p.id} tema={tema} />
-          </Glass>
-        )}
-
-        <div
-          style={{
-            display: 'grid',
-            gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))',
-            gap: 12,
-            alignItems: 'start',
-          }}
-        >
-          <Lista
-            titulo="Em inauguração"
-            n={p.em_inauguracao.length}
-            vazio="Nenhuma unidade com inauguração marcada nem em pré-venda."
+      {/* Primeiro o território (18/11/2026, Juan): o mapa, como na carteira, com renda e
+          densidade para ligar; embaixo, os Top 5 bairros e onde expandir, os do relatório.
+          Sem região no contrato, não há território para mostrar. */}
+      {p.regioes.length > 0 && (
+        <Glass style={{ padding: '14px 16px', minWidth: 0 }}>
+          <Eyebrow>Território no mapa</Eyebrow>
+          <div
+            style={{ font: '400 11px/1.4 var(--f-ui)', color: 'var(--tx-sub)', margin: '3px 0 10px' }}
           >
-            {p.em_inauguracao.map((u) => (
-              <Linha
-                key={`${u.unidade}-${u.uf}`}
-                nome={rotuloUnidade(u.unidade, u.uf)}
-                direita={u.previsao ? `abre ${dataBr(u.previsao)}` : (u.fase ?? undefined)}
-              />
-            ))}
-          </Lista>
-          <Lista titulo="Contratos assinados" n={nAssinados} vazio="Nenhum contrato assinado.">
-            {p.assinados.map((f) => (
-              <div key={f.fase} style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-                <div style={{ font: '600 11.5px/1 var(--f-ui)', color: 'var(--tx-label)' }}>
-                  {f.fase} ({f.unidades.length})
-                </div>
-                {f.unidades.map((u) => (
-                  <Linha
-                    key={`${f.fase}-${u.unidade}`}
-                    nome={u.unidade}
-                    direita={[u.cidade, u.uf].filter(Boolean).join(' / ') || undefined}
-                    etiquetas={u.dentro_territorio === false ? ['fora do território'] : []}
-                  />
-                ))}
-              </div>
-            ))}
-          </Lista>
-        </div>
-
-        {/* Um gráfico para cada grupo, no fim do painel (18/11/2026, Juan). */}
-        <div
-          style={{
-            display: 'grid',
-            gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))',
-            gap: 12,
-            alignItems: 'start',
-          }}
-        >
-          <CartaoGrafico
-            titulo="Em inauguração: por mês previsto"
-            sub="data de inauguração no Growth; pré-venda sem data por último"
-            cor="var(--gr-azul)"
-            barras={barrasPorPrevisao(p.em_inauguracao)}
-            vazio="Nenhuma unidade em inauguração."
+            as regiões do contrato e as unidades Ultra nelas; ligue a renda ou a densidade para ver o
+            território por dentro (as mesmas do Mapa do motor)
+          </div>
+          <MapaDoTerritorio
+            masterId={p.id}
+            tema={tema}
+            foco={foco}
+            onSairDoFoco={() => setFoco(null)}
           />
-          <CartaoGrafico
-            titulo="Contratos assinados: por fase"
-            sub="da fase mais perto de abrir à mais longe"
-            cor="var(--gr-verde)"
-            barras={barrasPorFase(p.assinados)}
-            vazio="Nenhum contrato assinado."
+        </Glass>
+      )}
+      {p.regioes.length > 0 && (
+        <>
+          <RecomendacaoDoTerritorio
+            masterId={p.id}
+            selecionado={foco?.hexId ?? null}
+            onFocar={setFoco}
           />
-        </div>
+          <EstudoDoTerritorio masterId={p.id} />
         </>
       )}
+
+      {/* A meta em destaque, com o mesmo rosado do slide de metas do relatório; a barra até
+          100% fica embaixo do gráfico por trimestre (18/11/2026, Juan). */}
+      <Glass
+        style={{
+          padding: '16px 18px',
+          border: '1.5px solid var(--gr-rosa)',
+          background: 'color-mix(in srgb, var(--gr-rosa) 7%, var(--surf-card))',
+        }}
+      >
+        <div style={{ display: 'flex', gap: 24, flexWrap: 'wrap', alignItems: 'flex-start' }}>
+          <div style={{ flex: '0 1 320px', minWidth: 220 }}>
+            <Eyebrow cor="var(--gr-rosa)">Meta de aberturas de {m.ano}</Eyebrow>
+            <div
+              className="num"
+              style={{ font: '700 44px/1 var(--f-num)', color: 'var(--gr-rosa)', marginTop: 10 }}
+            >
+              {m.por_ano ? pct(m.pct_ano) : m.n_ano}
+            </div>
+            <div
+              style={{
+                font: '400 12.5px/1.6 var(--f-ui)',
+                color: 'var(--tx-sub)',
+                marginTop: 8,
+              }}
+            >
+              <div>
+                {m.por_ano
+                  ? `${m.n_ano} de ${m.por_ano} unidades abertas em ${m.ano}`
+                  : `unidades abertas em ${m.ano} que contam para a meta`}
+              </div>
+              <div>desde o início: {m.n_contam} contam para a meta</div>
+              {contrato && <div>meta do contrato: {contrato}</div>}
+              <div>prazo do contrato: {textoPrazo(m, p.hoje)}</div>
+              {m.sem_data.length > 0 && (
+                <div>
+                  {m.sem_data.length === 1
+                    ? '1 sem data no Growth, fora da conta do ano'
+                    : `${m.sem_data.length} sem data no Growth, fora da conta do ano`}
+                </div>
+              )}
+            </div>
+          </div>
+          {/* A "Meta de <ano>" com a barra em cima e o gráfico por trimestre embaixo, na mesma
+              largura (18/11/2026, Juan: "deixe a meta aparecendo acima do gráfico"). */}
+          <div style={{ flex: '1 1 460px', minWidth: 300 }}>
+            <BarraDaMetaDoAno md={md} ano={m.ano} />
+            <div
+              style={{ font: '600 12.5px/1.3 var(--f-ui)', color: 'var(--tx-max)', marginTop: 22 }}
+            >
+              Unidades abertas em {m.ano} que contam para a meta, até o fim de cada trimestre
+            </div>
+            <div
+              style={{ font: '400 11px/1.4 var(--f-ui)', color: 'var(--tx-sub)', margin: '3px 0 8px' }}
+            >
+              em destaque, os trimestres com abertura (entre parênteses, quantas); zera a cada ano
+            </div>
+            <GraficoMetaNaLargura
+              trimestres={m.trimestres}
+              porAno={md?.meta ?? null}
+              simulada={md?.simulada ?? false}
+              hoje={p.hoje}
+            />
+          </div>
+        </div>
+      </Glass>
     </div>
   )
 }
@@ -959,7 +671,6 @@ export default function MastersScreen({ onInicio, tema }: { onInicio: () => void
   const [aberto, setAberto] = useState<string | null>(null)
   const [painel, setPainel] = useState<MasterPainel | null>(null)
   const [erroPainel, setErroPainel] = useState<string | null>(null)
-  const [visao, setVisao] = useState<VisaoDoMaster>('expansao')
 
   useEffect(() => {
     let vivo = true
@@ -1041,13 +752,7 @@ export default function MastersScreen({ onInicio, tema }: { onInicio: () => void
               }
             />
           ) : painel ? (
-            <PainelMaster
-              p={painel}
-              tema={tema}
-              visao={visao}
-              onVisao={setVisao}
-              onVoltar={() => setAberto(null)}
-            />
+            <PainelMaster p={painel} tema={tema} onVoltar={() => setAberto(null)} />
           ) : (
             <div style={{ display: 'flex', justifyContent: 'center', padding: 40 }}>
               <Spinner tamanho={18} />

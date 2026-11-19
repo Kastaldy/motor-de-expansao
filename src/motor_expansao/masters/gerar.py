@@ -17,7 +17,7 @@ from motor_expansao.masters import analise as A
 from motor_expansao.masters import area as AR
 from motor_expansao.masters import dados as D
 from motor_expansao.masters import funcionamento as F
-from motor_expansao.masters.relatorio_pdf import DadosRelatorio, gerar_pdf
+from motor_expansao.masters.relatorio_pdf import DadosRelatorio, cartoes_da_analise, gerar_pdf
 from motor_expansao.masters.territorios import Master, MetaAberturas, municipios_sem_match
 
 
@@ -335,6 +335,29 @@ def pdf_do_master(
     base = carregar_base(e, [master], planilha=planilha)
     d, _ = montar_dados(master, base, gerado_em, teste=teste, modelo=modelo, regiao_id=regiao_id)
     return gerar_pdf(d, modelo), nome_do_arquivo(d.master.id, gerado_em, modelo)
+
+
+def estudo_do_master(
+    e: Entradas,
+    master: Master,
+    gerado_em: pd.Timestamp,
+    planilha: tuple[pd.DataFrame, pd.DataFrame] | None = None,
+) -> dict:
+    """O "Onde expandir" da aba Expansão da tela do master (BLK-MASTERS-04; 18/11/2026, Juan: "a
+    recomendação, igual está no relatório, para onde expandir"): os cartões da Análise de
+    Oportunidade, pela MESMA função do PDF (`cartoes_da_analise`), do master inteiro."""
+    if e.staging_dir is not None:
+        from motor_expansao.renda import insumos
+
+        insumos.configurar_staging(e.staging_dir)  # uplift e moradores da renda exibida
+    base = carregar_base(e, [master], planilha=planilha)
+    d, _ = montar_dados(master, base, gerado_em, modelo="antigo")
+    return {
+        "analise": [
+            {"cor": cor, "titulo": titulo, "texto": texto}
+            for cor, titulo, texto in cartoes_da_analise(d)
+        ]
+    }
 
 
 def gerar(

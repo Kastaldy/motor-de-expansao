@@ -8,6 +8,11 @@
  * são do servidor (`motor_expansao.masters.painel`), e a tela recebe o resultado.
  */
 
+import { cellToBoundary } from 'h3-js'
+
+import { num } from './format'
+import type { RecomendacaoTop10, SegmentoTop10Payload } from './types'
+
 export interface MasterResumo {
   em_operacao: number
   em_inauguracao: number
@@ -361,13 +366,15 @@ export function rgbDeHex(cor: string): [number, number, number] {
   return [(n >> 16) & 255, (n >> 8) & 255, n & 255]
 }
 
-/** A vista que enquadra o território na caixa do mapa (Web Mercator do deck.gl: o mundo tem
- *  512 px no zoom 0). Fica entre o zoom 4 (o país) e o 12 (um bairro). */
+/** A vista que enquadra o território (ou um bairro dele) na caixa do mapa (Web Mercator do
+ *  deck.gl: o mundo tem 512 px no zoom 0). Fica entre o zoom 4 (o país) e `zoomMax` (12 para o
+ *  território; o zoom num bairro clicado vai até 14). */
 export function vistaDoTerritorio(
   bbox: [number, number, number, number],
   largura: number,
   altura: number,
   margem = 28,
+  zoomMax = 12,
 ): { longitude: number; latitude: number; zoom: number } {
   const [oeste, sul, leste, norte] = bbox
   const y = (lat: number) => Math.log(Math.tan(Math.PI / 4 + (lat * Math.PI) / 360))
@@ -380,5 +387,106 @@ export function vistaDoTerritorio(
     ),
   )
   const latitude = (Math.atan(Math.sinh((y(norte) + y(sul)) / 2)) * 180) / Math.PI
-  return { longitude: (oeste + leste) / 2, latitude, zoom: Math.min(12, Math.max(4, zoom)) }
+  return { longitude: (oeste + leste) / 2, latitude, zoom: Math.min(zoomMax, Math.max(4, zoom)) }
+}
+
+/* ---- O "Onde expandir" da aba Expansão (BLK-MASTERS-04; 18/11/2026, Juan: "a recomendação,
+   igual está no relatório, para onde expandir") ---- */
+
+/** `/api/masters/{id}/estudo`: os cartões da Análise de Oportunidade do PDF. */
+export interface MasterEstudo {
+  /** Os cartões de "onde expandir", com a chave da cor do relatório. */
+  analise: { cor: string; titulo: string; texto: string }[]
+}
+
+/** A região recomendada em foco no mapa do território (clicada na lista). */
+export interface FocoNoMapa {
+  nome: string
+  hexId: string
+  /** O contorno do hexágono, `[lng, lat]` (o limite da região, desenhado no mapa). */
+  contorno: [number, number][]
+}
+
+/** O foco de um hexágono recomendado: o contorno dele (h3), para o mapa aproximar e desenhar o
+ *  limite da região (18/11/2026, Juan: "precisa aparecer o limite da região, como se fosse o
+ *  raio, para facilitar"). */
+export function focoDoHexagono(hexId: string, nome: string): FocoNoMapa {
+  const contorno = cellToBoundary(hexId).map(([lat, lng]) => [lng, lat] as [number, number])
+  return { nome, hexId, contorno }
+}
+
+/** `[oeste, sul, leste, norte]` de um contorno `[lng, lat]`. */
+export function caixaDoContorno(contorno: [number, number][]): [number, number, number, number] {
+  const lngs = contorno.map((p) => p[0])
+  const lats = contorno.map((p) => p[1])
+  return [Math.min(...lngs), Math.min(...lats), Math.max(...lngs), Math.max(...lats)]
+}
+
+/** Quantas regiões por segmento a tela mostra antes do "ver top 20": as da régua vigente do país
+ *  (5 Mata Virgem + 5 Premium, DEC-077). O servidor manda 20 por segmento. */
+export const TOP_INICIAL = 5
+
+/** O bloco da recomendação com só as `n` primeiras vagas de cada segmento, na ordem do servidor
+ *  (nada é reordenado nem recalculado). Aberto (mais que o top inicial), as vagas VAZIAS depois do
+ *  top inicial saem, menos a primeira, que diz o motivo: 17 linhas "sem candidato" não informam nada. */
+export function recorteDoTop(b: RecomendacaoTop10, n: number): RecomendacaoTop10 {
+  const corta = (seg: SegmentoTop10Payload): SegmentoTop10Payload => {
+    let vagas = seg.vagas.slice(0, n)
+    if (n > TOP_INICIAL) {
+      // Aberto, nunca menos que o top inicial; depois dele, até a primeira vazia (que diz o motivo).
+      const primeiraVazia = vagas.findIndex((v) => v.vazia)
+      if (primeiraVazia >= 0) vagas = vagas.slice(0, Math.max(TOP_INICIAL, primeiraVazia + 1))
+    }
+    return { ...seg, vagas }
+  }
+  return {
+    ...b,
+    regra: { ...b.regra, vagas_por_segmento: Math.min(n, b.regra.vagas_por_segmento) },
+    mata_virgem: corta(b.mata_virgem),
+    premium: corta(b.premium),
+  }
+}
+
+/** Há o que abrir no "ver top 20": algum segmento tem mais regiões que o top inicial. */
+export function temMaisQueOTop(b: RecomendacaoTop10): boolean {
+  return [b.mata_virgem, b.premium].some((s) => s.vagas.filter((v) => !v.vazia).length > TOP_INICIAL)
+}
+
+/* ---- A primeira linha do painel: quanto o master pode crescer (18/11/2026, Juan: "troque por
+   quanto ele pode crescer na região, mostrando o residual, espaços para academias etc") ---- */
+
+export interface CrescimentoBloco {
+  mercado_alunos: number | null
+  atendido_alunos: number | null
+  pct_atendido: number | null
+  espaco_livre_alunos: number | null
+  academias_que_cabem: number
+}
+
+/** `/api/masters/{id}/crescimento`: a conta da página de regiões do relatório. */
+export interface MasterCrescimento {
+  capacidade_por_academia?: number
+  total: CrescimentoBloco | null
+  /** Na ordem do relatório: a de mais espaço livre primeiro. */
+  regioes: (CrescimentoBloco & { id: string; nome: string })[]
+}
+
+/** Alunos em número curto: "2,8 mi", "846 mil", "730". */
+export function alunosCurto(v: number | null): string {
+  if (v == null || !Number.isFinite(v)) return '—'
+  if (Math.abs(v) >= 1e6) return `${num(v / 1e6, 1)} mi`
+  if (Math.abs(v) >= 1e3) return `${num(v / 1e3)} mil`
+  return num(v)
+}
+
+/** A cor de cada cartão de "onde expandir", pela chave do relatório, nas cores do tema (sem roxo
+ *  no tema, o roxo do PDF vira o azul). */
+export function corDoCartao(cor: string): string {
+  const cores: Record<string, string> = {
+    magenta: 'var(--gr-rosa)',
+    turquesa: 'var(--ac)',
+    laranja: 'var(--gr-coral)',
+    roxo: 'var(--gr-azul)',
+  }
+  return cores[cor] ?? 'var(--ac)'
 }

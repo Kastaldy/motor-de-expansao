@@ -1,7 +1,14 @@
 /** Cliente do backend do piloto. Tudo passa pelo proxy /api do Vite. */
 
 import type { AluguelReferencia, TipoImovelAluguel } from './aluguel-referencia'
-import type { MasterCamadas, MasterMapa, MasterPainel, MastersPayload } from './masters'
+import type {
+  MasterCamadas,
+  MasterCrescimento,
+  MasterEstudo,
+  MasterMapa,
+  MasterPainel,
+  MastersPayload,
+} from './masters'
 import type {
   AcaoImobiliaria,
   AcessosFicha,
@@ -30,6 +37,7 @@ import type {
   PontoPayload,
   PontoResolvido,
   MunicipioDoPonto,
+  RecomendacaoTop10,
   RedeCarteira,
   RedeFicha,
   RedeFiltros,
@@ -609,6 +617,25 @@ export const api = {
   /** O painel de um master: as listas por status e a meta do ano por trimestre. */
   master: (id: string) =>
     pedir<MasterPainel>(`/api/masters/${encodeURIComponent(id)}`, {}, 30_000),
+
+  /** O "Onde expandir" da aba Expansão (BLK-MASTERS-04): a Análise de Oportunidade do
+   *  relatório. A primeira vez lê os setores do território inteiro no servidor (até ~30 s num
+   *  estado grande); depois vem do cache. */
+  masterEstudo: (id: string) =>
+    pedir<MasterEstudo>(`/api/masters/${encodeURIComponent(id)}/estudo`, {}, 180_000),
+
+  /** Onde abrir no território pela régua do motor (Mata Virgem e Premium, DEC-077), com 20
+   *  vagas por segmento; `recomendacao: null` = país sem régua. */
+  masterRecomendacao: (id: string) =>
+    pedir<{ recomendacao: RecomendacaoTop10 | null }>(
+      `/api/masters/${encodeURIComponent(id)}/recomendacao`,
+      {},
+      120_000,
+    ),
+
+  /** Quanto o master pode crescer no território: mercado, atendido, espaço livre e academias. */
+  masterCrescimento: (id: string) =>
+    pedir<MasterCrescimento>(`/api/masters/${encodeURIComponent(id)}/crescimento`, {}, 60_000),
 
   /** O território do master no mapa do painel (BLK-MASTERS-04): hexágonos por região e Ultra. */
   masterMapa: (id: string) =>
