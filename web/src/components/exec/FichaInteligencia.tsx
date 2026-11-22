@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import type { ReactNode } from 'react'
 
-import { legendaDoEntorno } from '../../lib/crescimento-concorrencia'
+import { diaMes, legendaDoEntorno, legendaSemanal } from '../../lib/crescimento-concorrencia'
 import { brl, num, pct, pctVar } from '../../lib/format'
 import type {
   RedeMapaConcorrente,
@@ -53,6 +53,8 @@ export default function FichaInteligencia({
   erro: string | null
 }) {
   const [metricaRampa, setMetricaRampa] = useState<MetricaRampa>('faturamento')
+  // A lista a 2 km mostra a série semanal; o pacote de setembro fica num botão (emenda 1 da DEC-064).
+  const [verHistorico, setVerHistorico] = useState(false)
 
   if (erro) {
     return (
@@ -76,9 +78,13 @@ export default function FichaInteligencia({
   const rampa = dados.rampa[metricaRampa]
   const posicao = dados.rampa.posicao
   const cn = dados.concorrencia_nova
-  /** Quantas academias "novas no agregador" a lista mostra antes de resumir em "+N". */
+  /** Quantas academias "novas no agregador" a lista de reserva mostra antes de resumir em "+N". */
   const MAX_NOVOS_AGREGADOR = 6
   const mov = dados.movimentacao
+  const semanal = mov?.semanal?.disponivel ? mov.semanal : null
+  const comHistorico = !!mov?.disponivel
+  // Série é o padrão; o histórico de setembro só com o botão (ou quando a série não está aqui).
+  const listaHistorico = comHistorico && (verHistorico || !semanal)
   // Nota média das concorrentes DIRETAS a 2 km: sem estúdios (DEC-056) e só quem tem nota.
   const notas = (dados.mapa?.concorrentes ?? []).filter((c) => !c.estudio && c.nota_wellhub !== null).map((c) => c.nota_wellhub as number)
   const notaMedia = { n: notas.length, media: notas.length ? notas.reduce((a, b) => a + b, 0) / notas.length : null }
@@ -215,27 +221,50 @@ export default function FichaInteligencia({
                       empurrava o quadro para baixo e ele ficava mais baixo que os de preço ao lado.
                       A contagem segue no título de cada grupo da lista. */}
                   <Quadro estica>
-                    {!mov?.disponivel ? (
+                    {/* Desde 19/11/2026 a lista vem da SÉRIE SEMANAL do coletor, acumulada desde o
+                        início dela (emenda 1 da DEC-064). O pacote de setembro, que não se atualiza,
+                        fica no botão "histórico". A antiga lista "no agregador desde" só aparece sem
+                        a série (ambiente sem a ponte): com ela, o grupo "Entraram no Wellhub" mostra
+                        as mesmas academias, já sem renomeação nem salto de cobertura do coletor. */}
+                    {!semanal && !comHistorico ? (
                       <Vazio>Histórico de movimentação ausente.</Vazio>
-                    ) : mov.eventos.length > 0 ? (
-                      <MovimentacaoEntorno eventos={mov.eventos} logos={mov.logos ?? {}} />
+                    ) : listaHistorico && mov ? (
+                      mov.eventos.length > 0 ? (
+                        <MovimentacaoEntorno eventos={mov.eventos} logos={mov.logos ?? {}} />
+                      ) : (
+                        <Vazio>Nenhuma movimentação registrada a 2 km.</Vazio>
+                      )
+                    ) : semanal && semanal.eventos.length > 0 ? (
+                      <MovimentacaoEntorno eventos={semanal.eventos} logos={mov?.logos ?? {}} />
                     ) : (
-                      <Vazio>Nenhuma movimentação registrada a 2 km.</Vazio>
+                      <Vazio>Nenhuma movimentação a 2 km desde {diaMes(semanal?.de)}.</Vazio>
                     )}
-                    {/* A lista acima é do pacote de setembro, que não se atualiza: a data vai junto, e
-                        fica ANTES da lista "no agregador desde", que vem da série semanal. */}
-                    {mov?.disponivel && legendaDoEntorno(mov.periodos) && (
+                    {(listaHistorico ? legendaDoEntorno(mov?.periodos) : legendaSemanal(semanal ?? undefined)) && (
                       <div style={{ marginTop: 6, font: '400 10.5px/1.5 var(--f-ui)', color: 'var(--tx-muted)' }}>
-                        {legendaDoEntorno(mov.periodos)}
+                        {listaHistorico ? legendaDoEntorno(mov?.periodos) : legendaSemanal(semanal ?? undefined)}
                       </div>
                     )}
-                    {cn.itens.length > 0 && (
+                    {semanal && comHistorico && (
+                      <button
+                        type="button"
+                        onClick={() => setVerHistorico(!verHistorico)}
+                        style={{
+                          marginTop: 6,
+                          padding: 0,
+                          border: 0,
+                          background: 'none',
+                          cursor: 'pointer',
+                          font: '500 10.5px/1.5 var(--f-ui)',
+                          color: 'var(--ac-text)',
+                          textAlign: 'left',
+                        }}
+                      >
+                        {verHistorico ? `Voltar para desde ${diaMes(semanal.de)}` : 'Ver o histórico de setembro'}
+                      </button>
+                    )}
+                    {!semanal && cn.itens.length > 0 && (
                       <div style={{ marginTop: 10, font: '400 11px/1.6 var(--f-ui)', color: 'var(--tx-narrative)' }}>
-                        {/* TETO de linhas: em 18/09 a série ainda não separava a estreia de cada
-                            fonte e esta lista saiu com 33 nomes, esticando a seção e deixando o
-                            card de preço ao lado com um vazio enorme (Felipe). A causa foi
-                            corrigida no backend; o teto garante que a lista nunca volte a mandar
-                            na altura do card. */}
+                        {/* TETO de linhas: a lista nunca manda na altura do card (Felipe, 18/09). */}
                         {cn.itens.slice(0, MAX_NOVOS_AGREGADOR).map((i, k) => (
                           <div key={k} style={{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
                             {i.nome ?? nomeRede(i.rede)} · {metros(i.distancia_m)} · no agregador desde {i.primeira_semana}
