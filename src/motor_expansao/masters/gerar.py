@@ -11,12 +11,14 @@ import json
 from dataclasses import dataclass, replace
 from pathlib import Path
 
+import numpy as np
 import pandas as pd
 
 from motor_expansao.masters import analise as A
 from motor_expansao.masters import area as AR
 from motor_expansao.masters import dados as D
 from motor_expansao.masters import funcionamento as F
+from motor_expansao.masters import mapa as MP
 from motor_expansao.masters.relatorio_pdf import DadosRelatorio, cartoes_da_analise, gerar_pdf
 from motor_expansao.masters.territorios import Master, MetaAberturas, municipios_sem_match
 
@@ -244,6 +246,32 @@ def _marcar_unidades_do_master(
     return pd.concat([out, pd.DataFrame(extras)], ignore_index=True) if extras else out
 
 
+def _regiao_dos_pontos(pontos: pd.DataFrame, m: pd.DataFrame) -> list:
+    """A área de cada unidade Ultra do mapa, para o mapa de cada área no relatório com duas ou
+    mais (19/11/2026, Juan: o DF/GO com um mapa para o DF e outro para Goiás): a do hexágono do
+    pino (`hex_id_res7`), a mesma regra que punha a unidade no relatório de cada área; a unidade do
+    master sem pino fica com a do hexágono do território mais perto dela."""
+    if pontos.empty or m.empty:
+        return [None] * len(pontos)
+    por_hex = dict(zip(m["hex_id"].astype(str), m["regiao_id"], strict=True))
+    lat = m["lat"].to_numpy(dtype=float)
+    lng = m["lng"].to_numpy(dtype=float)
+    reg = m["regiao_id"].to_numpy(dtype=object)
+    coslat = float(np.cos(np.radians(np.nanmean(lat))))
+    hexes = (
+        pontos["hex_id_res7"] if "hex_id_res7" in pontos else pd.Series(None, index=pontos.index)
+    )
+    out = []
+    for h, la, lo in zip(
+        hexes, pontos["lat"].astype(float), pontos["lng"].astype(float), strict=True
+    ):
+        r = por_hex.get(str(h)) if isinstance(h, str) else None
+        if r is None:
+            r = reg[int(np.nanargmin((lat - la) ** 2 + ((lng - lo) * coslat) ** 2))]
+        out.append(r)
+    return out
+
+
 def _estudo_de_area(master: Master, base: Base, unidades: pd.DataFrame) -> dict:
     """Municípios, bairros e as camadas dos mapas do território (`masters.area`)."""
     if not master.regioes:
@@ -277,12 +305,21 @@ def _estudo_de_area(master: Master, base: Base, unidades: pd.DataFrame) -> dict:
         if base.ultra is not None
         else pd.DataFrame(columns=["lat", "lng", "hex_id_res7"])
     )
-    up = ultra[ultra["hex_id_res7"].isin(set(m["hex_id"]))][["lat", "lng"]].reset_index(drop=True)
+    up = ultra[ultra["hex_id_res7"].isin(set(m["hex_id"]))][["lat", "lng", "hex_id_res7"]]
+    up = up.reset_index(drop=True)
     no_territorio = unidades[unidades["regiao_id"].notna()] if "regiao_id" in unidades else unidades
     up = _marcar_unidades_do_master(up, no_territorio)
+    up["regiao_id"] = _regiao_dos_pontos(up, m)
+    up = up.drop(columns="hex_id_res7")
     saida: dict = {
         "hexes": hexes[hexes["populacao"] > 0].reset_index(drop=True),
         "ultra_pontos": up,
+        # O contorno de cada área, da união de TODOS os hexágonos dela (os vazios também, senão
+        # o contorno sai cheio de buracos): o mapa do território só demarca a área (19/11/2026).
+        "contornos": {
+            str(rid): MP.contorno(list(g["hex_id"].astype(str)))
+            for rid, g in m.groupby("regiao_id")
+        },
     }
     if base.censo_geo_dir is None:
         return saida
@@ -298,6 +335,7 @@ def _estudo_de_area(master: Master, base: Base, unidades: pd.DataFrame) -> dict:
             "renda_dom": setores["renda_dom"],
             "domicilios": setores["domicilios_particulares_ocupados_setor_2022"],
             "densidade": setores["pop_total_setor_2022"] / area.where(area > 0),
+            "regiao_id": setores["regiao_id"],
         }
     )
     saida["visao"] = AR.visao_municipios(setores, base.mercado, master)

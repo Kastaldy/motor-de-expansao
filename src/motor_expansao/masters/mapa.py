@@ -61,6 +61,13 @@ def _poligonos(hex_ids: list[str]) -> list[list[list[list[float]]]]:
     ]
 
 
+def contorno(hex_ids: list[str]) -> list[list[list[list[float]]]]:
+    """O contorno da união dos hexágonos (`[[anel externo, buracos...], ...]`, anéis em
+    `[lng, lat]`): o do mapa da tela e o do mapa do território no PDF (19/11/2026, Juan: "deixe
+    apenas a demarcação da área")."""
+    return _poligonos(hex_ids)
+
+
 def territorio(mercado: pd.DataFrame, master: Master, ultra: pd.DataFrame | None) -> dict[str, Any]:
     """Regiões (id, nome, cor), o contorno de cada uma, os municípios (para os setores do Censo,
     que vêm por município ao aproximar), as unidades Ultra `[lat, lng, nome]` no território e o
