@@ -276,3 +276,57 @@ def test_banco_fora_nos_masters_levanta_e_nao_vira_vazio(monkeypatch: pytest.Mon
     monkeypatch.setattr(postgres, "_driver", lambda: explode)
     with pytest.raises(db.BancoIndisponivel):
         rbac.masters_do_usuario(42)
+
+
+# --------------------------------------------------------------------------------------
+# O nome da pessoa (emenda 2 da DEC-089): o recorte do master com login proprio casa o
+# `nome_usuario` com o nome do master na planilha. Achado medio da revisao automatica do #570:
+# a funcao so' aparecia dublada nos testes da rota, nunca contra a conexao.
+# --------------------------------------------------------------------------------------
+
+
+def test_nome_do_usuario_devolve_o_nome_gravado(monkeypatch: pytest.MonkeyPatch) -> None:
+    con = _instalar(monkeypatch, [("Dalmo Ribeiro",)])
+    assert rbac.nome_do_usuario(42) == "Dalmo Ribeiro"
+    sql, params = con.executados[-1]
+    assert sql == rbac.SQL_NOME_DO_USUARIO
+    assert params == (42,)
+
+
+@pytest.mark.parametrize("linhas", [[], [(None,)]])
+def test_sem_linha_ou_sem_nome_e_None_e_nao_erro(
+    monkeypatch: pytest.MonkeyPatch, linhas: list[tuple[Any, ...]]
+) -> None:
+    """None e' resposta legitima (pessoa desativada, ou sem nome): quem chama a trata como
+    "nenhum master", nunca como "todos"."""
+    _instalar(monkeypatch, linhas)
+    assert rbac.nome_do_usuario(42) is None
+
+
+def test_a_consulta_do_nome_filtra_por_ativo_e_e_read_only(monkeypatch: pytest.MonkeyPatch) -> None:
+    con = _instalar(monkeypatch, [("Dalmo Ribeiro",)])
+    rbac.nome_do_usuario(7)
+    assert con.executados[0][0] == postgres.SQL_SOMENTE_LEITURA
+    assert "u.ativo" in rbac.SQL_NOME_DO_USUARIO
+
+
+@pytest.mark.parametrize("ruim", [True, None, "7", 7.0])
+def test_id_que_nao_e_int_e_recusado_antes_do_banco_no_nome(
+    monkeypatch: pytest.MonkeyPatch, ruim: Any
+) -> None:
+    con = _instalar(monkeypatch, [("Dalmo Ribeiro",)])
+    with pytest.raises(TypeError):
+        rbac.nome_do_usuario(ruim)
+    assert con.executados == []
+
+
+def test_banco_fora_no_nome_levanta_e_nao_vira_None(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Mesma politica de `masters_do_usuario`: o chamador decide (503); None apagaria o incidente."""
+    monkeypatch.setenv(postgres.ENV_URL, "postgresql://fake/motor")
+
+    def explode(**_kwargs: Any) -> Any:
+        raise OSError("connection refused")
+
+    monkeypatch.setattr(postgres, "_driver", lambda: explode)
+    with pytest.raises(db.BancoIndisponivel):
+        rbac.nome_do_usuario(42)

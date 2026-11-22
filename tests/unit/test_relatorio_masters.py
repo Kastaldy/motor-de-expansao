@@ -63,6 +63,19 @@ def masters():
 # --------------------------------------------------------------------------- territórios
 
 
+def test_a_capacidade_da_unidade_e_a_regua_do_residual_do_motor():
+    """"Academias que cabem" no território do master usa a mesma régua do residual do motor
+    (achado médio da revisão automática do #568): se a oficial mudar, este teste falha antes de o
+    número do bloco de crescimento divergir em silêncio. A constante fica local em `analise` para
+    o relatório não importar o pipeline de mercado inteiro."""
+    from motor_expansao.dashboard.constants import CAPACIDADE_UNIDADE_ALUNOS as DA_TELA
+    from motor_expansao.pipelines.calcular_colunas_mercado import (
+        CAPACIDADE_DEFAULT_CONCORRENTE_ALUNOS as DO_RESIDUAL,
+    )
+
+    assert A.CAPACIDADE_UNIDADE_ALUNOS == DO_RESIDUAL == DA_TELA
+
+
 def test_normalizar_tira_acento_e_pontuacao():
     assert normalizar("São José dos Campos") == "sao jose dos campos"
     assert normalizar("Ponta da Praia - Canal 7 (Santos)") == "ponta da praia canal 7 santos"

@@ -282,6 +282,7 @@ com rastro, a tela de administração, e o manual não é o único.
 Os dois pedidos que o master faz pelo Início do piloto. Sem `entidade` (o pedido não tem alvo do
 modelo): o master vai em `metadados` (`masters`, os ids da config dos territórios), como o alvo da
 §3.1. São também os AVISOS do sino (DEC-090): o sino lê estes eventos, e não uma tabela própria.
+Nada de login, e-mail ou nome: o `id_usuario` do carimbo já identifica quem pediu.
 
 | `tipo` | `entidade` | `metadados` | grava? |
 |---|---|---|---|
