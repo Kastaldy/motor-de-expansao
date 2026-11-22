@@ -15,7 +15,7 @@ from motor_expansao.masters.gerar import (
     montar_dados,
 )
 from motor_expansao.masters.relatorio_pdf import _t, fmt_pct, fmt_reais, gerar_pdf
-from motor_expansao.masters.territorios import masters_de_dict, municipios_sem_match, normalizar
+from motor_expansao.masters.territorios import masters_de_dict, normalizar
 
 CONFIG = {
     "masters": [
@@ -64,7 +64,7 @@ def masters():
 
 
 def test_a_capacidade_da_unidade_e_a_regua_do_residual_do_motor():
-    """"Academias que cabem" no território do master usa a mesma régua do residual do motor
+    """A conta de "academias que cabem" no território do master usa a régua do residual do motor
     (achado médio da revisão automática do #568): se a oficial mudar, este teste falha antes de o
     número do bloco de crescimento divergir em silêncio. A constante fica local em `analise` para
     o relatório não importar o pipeline de mercado inteiro."""
@@ -76,39 +76,8 @@ def test_a_capacidade_da_unidade_e_a_regua_do_residual_do_motor():
     assert A.CAPACIDADE_UNIDADE_ALUNOS == DO_RESIDUAL == DA_TELA
 
 
-def test_normalizar_tira_acento_e_pontuacao():
-    assert normalizar("São José dos Campos") == "sao jose dos campos"
-    assert normalizar("Ponta da Praia - Canal 7 (Santos)") == "ponta da praia canal 7 santos"
-    assert normalizar("Santa Bárbara d'Oeste") == normalizar("Santa Barbara d Oeste")
-
-
-def test_regiao_por_uf_com_excecao_e_por_lista(masters):
-    go, lit = masters["go"], masters["lit"]
-    assert go.regiao_de("GO", "Goiânia").id == "go"
-    assert go.regiao_de("GO", "Formosa") is None
-    assert go.regiao_de("DF", "Brasília") is None
-    assert lit.regiao_de("SP", "SANTOS").id == "litoral"
-    assert lit.regiao_de("SP", "São Paulo") is None
-
-
-def test_pipeline_cita_municipio_entre_parenteses_sem_confundir_santo_andre(masters):
-    lit = masters["lit"]
-    assert lit.regiao_do_pipeline("Ponta da Praia - Canal 7 (Santos)", "SP").id == "litoral"
-    assert lit.regiao_do_pipeline("Planalto SBC (São Bernardo do Campo)", "SP").id == "abcd"
-    assert lit.regiao_do_pipeline("Santo André", "SP").id == "abcd"
-    assert lit.regiao_do_pipeline("Campinas", "SP") is None
-
-
-def test_municipio_da_config_que_nao_existe_na_base_vira_aviso(masters):
-    faltando = municipios_sem_match(
-        masters["lit"], {"SP": ["Santo André", "São Bernardo do Campo", "Santos"]}
-    )
-    assert faltando == [("litoral", "SP", "guaruja")]
-
-
-def test_master_duplicado_na_config_falha():
-    with pytest.raises(ValueError):
-        masters_de_dict({"masters": [CONFIG["masters"][0], CONFIG["masters"][0]]})
+# Os testes do casamento geográfico (normalizar, regiões, pipeline, municípios sem par, master
+# duplicado) moram em `tests/unit/test_masters_territorios.py`, junto do módulo (#567).
 
 
 # --------------------------------------------------------------------------- regiões
@@ -1430,3 +1399,83 @@ def test_top5_bairros_e_a_regra_do_slide_e_da_tela() -> None:
     # Master sem região: sem bairros, sem quebrar (a tela pede a análise; o PDF nem chega lá).
     assert top5_bairros(pd.DataFrame(), "renda").empty
     assert top5_bairros(pd.DataFrame(), "populacao").empty
+
+
+# --------------------------------------------------------------------------- revisão do #568
+# Achados médios da revisão automática de 22/11/2026: as contas que quebravam (ou mentiam) num
+# caso de borda.
+
+
+def test_o_efeito_com_a_rede_a_zero_e_NaN_e_nao_erro():
+    assert A._efeito(0.10, 0.0) == pytest.approx(0.10)
+    assert A._efeito(0.10, 0.10) == pytest.approx(0.0)
+    assert pd.isna(A._efeito(0.10, -1.0))  # antes: ZeroDivisionError e o relatório caía
+    assert pd.isna(A._efeito(0.10, float("nan")))
+
+
+def _master_com_prazo(prazo: str):
+    cfg = {
+        "masters": [
+            {
+                **CONFIG["masters"][0],
+                "meta_aberturas": {"quantidade": 4, "prazo": prazo},
+            }
+        ]
+    }
+    return masters_de_dict(cfg)["lit"]
+
+
+def test_sem_mes_pela_frente_o_ritmo_necessario_e_NaN_e_o_texto_diz_o_caso():
+    from motor_expansao.masters.relatorio_pdf import texto_do_ritmo
+
+    inaug = pd.DataFrame({"unidade": ["Boqueirão"], "meta": ["Litoral/ABC — TESTE"]})
+    pipe = pd.DataFrame({"master": [], "unidade": []})
+    m = _master_com_prazo("2027-03-11")
+    # Prazo neste mês: faltam 3 e nenhum mês pela frente.
+    r = A.progresso_meta(inaug, pipe, m, pd.Timestamp("2027-03-20"), aberturas_12m=6)
+    assert (r["faltam"], r["meses_ate_prazo"], r["prazo_vencido"]) == (3, 0, False)
+    assert pd.isna(r["ritmo_necessario_mes"])
+    assert texto_do_ritmo(r) == (
+        "Faltam 3 unidades e o prazo do contrato vence este mês. "
+        "Ritmo: 0,5 por mês nos últimos 12 meses."
+    )
+    # Prazo vencido.
+    r = A.progresso_meta(inaug, pipe, m, pd.Timestamp("2027-05-02"), aberturas_12m=6)
+    assert (r["meses_ate_prazo"], r["prazo_vencido"]) == (0, True)
+    assert "o prazo do contrato já venceu" in texto_do_ritmo(r)
+    # Com meses pela frente, o texto de sempre.
+    r = A.progresso_meta(inaug, pipe, m, pd.Timestamp("2026-11-16"), aberturas_12m=6)
+    assert r["ritmo_necessario_mes"] == pytest.approx(3 / 4)
+    assert texto_do_ritmo(r).startswith("Faltam 3 unidades em 4 meses: 0,8 por mês")
+
+
+def test_sem_prazo_o_texto_nao_fala_em_None_meses():
+    from motor_expansao.masters.relatorio_pdf import texto_do_ritmo
+
+    base = {"ritmo_atual_mes": 0.5, "meses_ate_prazo": None, "prazo_vencido": False}
+    assert texto_do_ritmo({**base, "faltam": 0}) == "Meta atingida."
+    texto = texto_do_ritmo({**base, "faltam": 2, "ritmo_necessario_mes": float("nan")})
+    assert texto == (
+        "Faltam 2 unidades, sem prazo informado no contrato. "
+        "Ritmo: 0,5 por mês nos últimos 12 meses."
+    )
+    assert "None" not in texto
+
+
+def test_o_terco_de_renda_aguenta_valores_repetidos():
+    from motor_expansao.masters import funcionamento as F
+
+    repetidos = pd.Series([1000.0] * 6 + [2000.0] * 3)
+    t = F._terco(repetidos)  # antes: ValueError "Bin edges must be unique"
+    assert sorted(t.value_counts().tolist()) == [3, 3, 3]
+    assert set(t[repetidos == 2000.0]) == {2}
+    unicos = pd.Series([5.0, 1.0, 9.0, 3.0, 7.0, 2.0])
+    assert F._terco(unicos).tolist() == pd.qcut(unicos, 3, labels=False).tolist()
+
+
+def test_a_razao_ignora_denominador_zero_em_vez_de_virar_inf():
+    from motor_expansao.masters import funcionamento as F
+
+    r = F._razao(pd.Series([10.0, 10.0, 10.0]), pd.Series([20.0, 0.0, float("nan")]))
+    assert r.iloc[0] == pytest.approx(0.5)
+    assert r.iloc[1:].isna().all()

@@ -1110,6 +1110,27 @@ def _pagina_top5(
     _nota(pdf, y + 330, nota)
 
 
+def texto_do_ritmo(mc: dict[str, Any]) -> str:
+    """A leitura à direita do bloco da meta. Sem prazo, ou com o prazo neste mês ou vencido, não há
+    "N por mês" a pedir: o texto diz o caso (achado da revisão automática do #568, que via "0,0 por
+    mês" e "em None meses")."""
+    meses = mc.get("meses_ate_prazo")
+    atual = f"{fmt_dec(mc['ritmo_atual_mes'])} por mês nos últimos 12 meses"
+    if mc["faltam"] == 0:
+        if meses is None:
+            return "Meta atingida."
+        return f"Meta atingida. Faltam {meses} meses para o prazo."
+    if meses is None:
+        return f"Faltam {mc['faltam']} unidades, sem prazo informado no contrato. Ritmo: {atual}."
+    if meses == 0:
+        quando = "já venceu" if mc.get("prazo_vencido") else "vence este mês"
+        return f"Faltam {mc['faltam']} unidades e o prazo do contrato {quando}. Ritmo: {atual}."
+    return (
+        f"Faltam {mc['faltam']} unidades em {meses} meses: {fmt_dec(mc['ritmo_necessario_mes'])} "
+        f"por mês, contra {atual}."
+    )
+
+
 def _bloco_meta(pdf: _UltraPDF, d: DadosRelatorio, y: float) -> float:
     """Meta do contrato: o % atingido, uma barra até a meta e o ritmo que falta. Devolve o y final."""
     mc = d.meta_contrato
@@ -1185,13 +1206,7 @@ def _bloco_meta(pdf: _UltraPDF, d: DadosRelatorio, y: float) -> float:
     # Leitura à direita.
     xr = x0 + larg + 20
     pdf.set_xy(xr, y + 18)
-    if mc["faltam"] == 0:
-        texto = f"Meta atingida. Faltam {mc['meses_ate_prazo']} meses para o prazo."
-    else:
-        texto = (
-            f"Faltam {mc['faltam']} unidades em {mc['meses_ate_prazo']} meses: {fmt_dec(mc['ritmo_necessario_mes'])} "
-            f"por mês, contra {fmt_dec(mc['ritmo_atual_mes'])} por mês nos últimos 12 meses."
-        )
+    texto = texto_do_ritmo(mc)
     pdf.set_font("Helvetica", "B", 11)
     pdf.set_text_color(*TURQUESA if mc["faltam"] == 0 else MAGENTA)
     pdf.multi_cell(W - MARGEM - xr - 12, 14, _t(texto), align="L")

@@ -1,6 +1,6 @@
 -- ARQUIVO GERADO -- nao editar a mao.
 -- Origem: banco-de-reservas/sql/027-permissao-masters-proprio.md (primeiro bloco ```sql).
--- sha256 do bloco extraido: 2e83d976b235baba9e0eebdb9f8fbecb5e06d1fdc59b2fd84ee0cc5fee76278b
+-- sha256 do bloco extraido: a2830535c9ad51cefec7c705c788ad85f32731f646780f8a96c2e0738475d738
 -- Regenerar: python scripts/extrair_migracoes.py --origem <.../banco-de-reservas/sql>
 --
 -- O `banco-de-reservas` e' a fonte da verdade do DESENHO (convencoes §7): mudanca de
@@ -12,7 +12,7 @@ BEGIN;
 -- A capacidade nova. Descricao com o mesmo cuidado das outras: ela vira ROTULO DE TELA, e a
 -- verificacao mede char_length/octet_length para pegar duplo-encoding (convencoes §5).
 INSERT INTO permissoes (chave, descricao_permissao) VALUES
-  ('masters.ver_proprio', 'Ver o proprio painel na tela Masters (o master do login)'); -- GET /api/masters/*
+  ('masters.ver_proprio', 'Ver o próprio painel na tela Masters (o master do login)'); -- GET /api/masters/*
 
 -- So' o perfil `master` (decisao de produto de 19/11/2026, emenda 2 da DEC-089). Escrito como
 -- consulta, e nao com id literal, pelo mesmo motivo da 012: `id_perfil`/`id_permissao` sao
