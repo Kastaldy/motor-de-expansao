@@ -649,3 +649,63 @@ def test_autor_nulo_e_permitido_na_viabilidade(con: FakeConexao) -> None:
     mod.registrar_viabilidade(autor=None, m2=1500.0, aluguel=20000.0, demanda=900.0)
     assert con.eventos[0][0] is None
     assert con.executados[0][0] == postgres.SQL_DEFINIR_AUTOR
+
+
+# --------------------------------------------------------------------------------------
+# Os gestos do master no Inicio (emenda 2 da DEC-089). Achado medio da revisao automatica do
+# #570: as duas funcoes so' apareciam dubladas nos testes da rota, nunca contra a conexao.
+# --------------------------------------------------------------------------------------
+
+
+def test_o_pedido_de_imovel_grava_o_tipo_o_master_e_a_regiao(con: FakeConexao) -> None:
+    mod.registrar_imovel_solicitado(autor=7, masters=["dfgo"], regiao="Asa Sul")
+    (autor, tipo, metadados) = con.eventos[0]
+    assert (autor, tipo) == (7, mod.EVENTO_IMOVEL_SOLICITADO)
+    assert mod.EVENTO_IMOVEL_SOLICITADO == "imovel.solicitado"
+    assert metadados.obj == {"masters": ["dfgo"], "regiao": "Asa Sul", "origem": "web"}
+    assert len(con.eventos) == 1
+
+
+def test_o_estudo_fora_da_area_grava_o_ponto_e_o_report_id(con: FakeConexao) -> None:
+    """A coordenada vai arredondada a 6 casas (~10 cm) e o `report_id` liga a linha ao
+    `relatorio.gerado` do mesmo PDF."""
+    mod.registrar_estudo_fora_da_area(
+        autor=7, masters=["dfgo"], lat=-23.55052012345, lng=-46.6333094321, report_id="r-1"
+    )
+    (autor, tipo, metadados) = con.eventos[0]
+    assert (autor, tipo) == (7, mod.EVENTO_ESTUDO_FORA_DA_AREA)
+    assert metadados.obj == {
+        "masters": ["dfgo"],
+        "lat": -23.55052,
+        "lng": -46.633309,
+        "report_id": "r-1",
+        "origem": "web",
+    }
+
+
+@pytest.mark.parametrize(
+    "gravar",
+    [
+        lambda: mod.registrar_imovel_solicitado(autor=7, masters=["dfgo"], regiao="Asa Sul"),
+        lambda: mod.registrar_estudo_fora_da_area(
+            autor=7, masters=["dfgo"], lat=-15.8, lng=-47.9, report_id=None
+        ),
+    ],
+    ids=["imovel", "estudo"],
+)
+def test_os_gestos_do_master_carimbam_o_autor_PRIMEIRO_e_nao_levam_PII(
+    con: FakeConexao, gravar: Any
+) -> None:
+    """O carimbo antes da escrita (D28), `entidade` nula (emenda ao D17) e nada de login, e-mail
+    ou nome em `metadados`: o `id_usuario` do carimbo ja' identifica quem pediu."""
+    gravar()
+    primeiro_sql, primeiro_params = con.executados[0]
+    assert "set_config" in primeiro_sql and primeiro_params == ("7",)
+    sql = [s for s, _ in con.executados if "INSERT INTO eventos" in s][0]
+    assert "NULL, NULL" in sql
+    assert not (set(con.eventos[0][2].obj) & {"login", "email", "usuario", "nome"})
+
+
+def test_autor_nulo_e_permitido_nos_gestos_do_master(con: FakeConexao) -> None:
+    mod.registrar_imovel_solicitado(autor=None, masters=[], regiao="Centro")
+    assert con.eventos[0][0] is None
