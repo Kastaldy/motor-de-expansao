@@ -38,7 +38,7 @@ BEGIN;
 -- A capacidade nova. Descricao com o mesmo cuidado das outras: ela vira ROTULO DE TELA, e a
 -- verificacao mede char_length/octet_length para pegar duplo-encoding (convencoes §5).
 INSERT INTO permissoes (chave, descricao_permissao) VALUES
-  ('masters.ver_proprio', 'Ver o proprio painel na tela Masters (o master do login)'); -- GET /api/masters/*
+  ('masters.ver_proprio', 'Ver o próprio painel na tela Masters (o master do login)'); -- GET /api/masters/*
 
 -- So' o perfil `master` (decisao de produto de 19/11/2026, emenda 2 da DEC-089). Escrito como
 -- consulta, e nao com id literal, pelo mesmo motivo da 012: `id_perfil`/`id_permissao` sao
