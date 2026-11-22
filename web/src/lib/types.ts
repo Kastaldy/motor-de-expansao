@@ -13,6 +13,9 @@ export interface MePayload {
   /** O master com login próprio (emenda 2 da DEC-089): vê só o próprio painel e tem o Início
    *  dele. Ausente sem banco ou para quem não tem a aba Masters. */
   masters_proprio?: boolean
+  /** Os avisos que chegam a esta pessoa (DEC-090): o sino da barra lateral só aparece com eles.
+   *  Ausente sem banco ou sem aviso nenhum. Quem valida e estreita é `avisosDoPayload`. */
+  avisos?: unknown
   /** Perfil do país da instância (Bloco A / DEC-047). `unknown` e opcional de
    *  propósito: um backend anterior ao bloco não manda o campo, e o front tem de
    *  continuar abrindo. Quem valida e estreita é `definirPerfil` em `lib/perfil.ts`,
@@ -2939,6 +2942,15 @@ export interface AdminUsuario {
   /** Masters franquia vinculados (emenda 1 da DEC-087), na grafia gravada. Só o perfil
    *  Master os tem. Opcional por defesa: deploy antigo sem o campo conta como nenhum. */
   masters?: string[]
+  /** Os avisos marcados para a pessoa (DEC-090), além dos que o perfil já dá: o que chega ao
+   *  sino dela. Opcional por defesa: deploy antigo sem o campo conta como nenhum. */
+  avisos?: string[]
+}
+
+/** Uma opção do campo "Avisos" da aba Acessos (DEC-090): o identificador e o rótulo de tela. */
+export interface AdminAviso {
+  id: string
+  rotulo: string
 }
 
 /** Opção do seletor de perfil. A ordem vem do backend e é a hierarquia da D22
@@ -2975,6 +2987,8 @@ export interface AdminUsuariosPayload {
   /** Os `master_franquia` do cadastro das unidades, ordenados: as opções do campo "Master
    *  franquia" do perfil Master (emenda 1 da DEC-087). Vazio sem cadastro no servidor. */
   masters_disponiveis?: string[]
+  /** Os avisos que a tela oferece marcar por pessoa (DEC-090), na ordem do sino. */
+  avisos_disponiveis?: AdminAviso[]
 }
 
 /** Resposta do PATCH. Cada bloco só vem se o campo correspondente foi enviado, e
@@ -2987,6 +3001,8 @@ export interface AdminAlteracao {
   /** Vem quando `masters` foi enviado OU quando a pessoa saiu do perfil Master (o servidor
    *  apaga o vínculo na mesma gravação). */
   masters?: { id_usuario: number; de: string[]; para: string[]; mudou: boolean }
+  /** Vem quando `avisos` foi enviado (DEC-090). */
+  avisos?: { id_usuario: number; de: string[]; para: string[]; mudou: boolean }
 }
 
 /** Corpo do POST de criação (D26). Sem campo de senha DE PROPÓSITO: quem nasce pela

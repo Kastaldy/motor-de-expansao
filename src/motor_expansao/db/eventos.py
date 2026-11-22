@@ -42,11 +42,13 @@ from .postgres import conexao, transacao
 EVENTO_RELATORIO_GERADO = "relatorio.gerado"
 EVENTO_DOSSIE_BAIXADO = "dossie.baixado"
 
-#: Os gestos do master no Inicio do piloto (emenda 2 da DEC-089, 19/11/2026). O master pede um
-#: imovel numa regiao; e o estudo de um ponto FORA do territorio dele fica registrado para o
-#: Growth ("notificar a growth, ainda nao sei como", Juan): por ora, a linha na trilha.
+#: Os gestos do master no Inicio do piloto (emenda 2 da DEC-089, 19/11/2026): pedir um imovel
+#: numa regiao e pedir o estudo de um ponto. Os dois viram AVISO no sino (DEC-090, 19/11/2026):
+#: o imovel para quem marca o aviso na aba Acessos, o estudo para o Growth -- com a hora, quem
+#: pediu e de onde. O estudo grava SEMPRE (dentro ou fora da area, `fora_da_area` em
+#: `metadados`); ate' a DEC-090 so' o de fora gravava, como `estudo.fora_da_area`.
 EVENTO_IMOVEL_SOLICITADO = "imovel.solicitado"
-EVENTO_ESTUDO_FORA_DA_AREA = "estudo.fora_da_area"
+EVENTO_ESTUDO_SOLICITADO = "estudo.solicitado"
 
 #: Os dois gestos da §2.4 que sobem para `eventos`. Os outros cinco ficam so' na trilha de 90
 #: dias: marcar visita e' DECISAO DE NEGOCIO sobre um imovel, abrir uma aba nao e'.
@@ -254,23 +256,35 @@ def registrar_imovel_solicitado(*, autor: int | None, masters: list[str], regiao
         )
 
 
-def registrar_estudo_fora_da_area(
-    *, autor: int | None, masters: list[str], lat: float, lng: float, report_id: str | None
+def registrar_estudo_solicitado(
+    *,
+    autor: int | None,
+    masters: list[str],
+    lat: float,
+    lng: float,
+    fora_da_area: bool,
+    lugar: str | None,
+    report_id: str | None,
 ) -> None:
-    """Grava `estudo.fora_da_area`: o master gerou o estudo de um ponto fora do territorio dele (o
-    PDF sai com o aviso). `report_id` liga a linha ao `relatorio.gerado` do mesmo PDF."""
+    """Grava `estudo.solicitado`: o master pediu o estudo de um ponto pelo Inicio (DEC-090). E' o
+    aviso do sino para o Growth: `lugar` e' o bairro e o municipio do ponto ("Ceilandia,
+    Brasilia/DF"; `None` quando o motor nao o nomeia), `fora_da_area` diz se o ponto saiu do
+    territorio dele (o PDF sai com o aviso), e `report_id` liga a linha ao `relatorio.gerado` do
+    mesmo PDF."""
     from psycopg.types.json import Jsonb  # import tardio: so' quem escreve paga
 
     metadados: dict[str, Any] = {
         "masters": list(masters),
         "lat": round(float(lat), 6),
         "lng": round(float(lng), 6),
+        "fora_da_area": bool(fora_da_area),
+        "lugar": lugar,
         "report_id": report_id,
         "origem": "web",
     }
     with transacao(id_usuario=autor) as con:
         con.execute(
-            SQL_REGISTRAR_GESTO_DO_MASTER, (autor, EVENTO_ESTUDO_FORA_DA_AREA, Jsonb(metadados))
+            SQL_REGISTRAR_GESTO_DO_MASTER, (autor, EVENTO_ESTUDO_SOLICITADO, Jsonb(metadados))
         )
 
 

@@ -5284,6 +5284,11 @@ def me(
     # com esta chave. Só existe com o banco no comando (sem ele não há perfil `master`).
     if acesso.banco_no_comando() and "masters" in abas:
         resposta["masters_proprio"] = acesso.ve_so_o_proprio_master(remote_user)
+    # DEC-090: os avisos que chegam a esta pessoa (o sino da barra lateral so' aparece com eles).
+    # AUSENTE sem banco ou sem aviso nenhum, como as chaves abaixo: a SPA trata como opcional.
+    quem_avisos = _avisos_de_quem_pede(remote_user)
+    if quem_avisos is not None and quem_avisos[1]:
+        resposta["avisos"] = list(quem_avisos[1])
     # AUSENTE em vez de nula, pelo mesmo motivo da `senha` abaixo: no Brasil (perfil sem
     # aviso) a resposta nao muda um byte, e a SPA trata a chave como opcional.
     aviso_viabilidade = _aviso_de_viabilidade_para_a_tela()
@@ -5313,6 +5318,97 @@ def me(
     if paises is not None:
         resposta["paises"] = paises
     return resposta
+
+
+# ---------------------------------------------------------------------------
+# Os avisos do piloto (DEC-090, migration 028): o sino dos pedidos dos masters
+# ---------------------------------------------------------------------------
+
+
+def _avisos_de_quem_pede(
+    remote_user: object, *, levantar: bool = False
+) -> tuple[int, tuple[str, ...]] | None:
+    """`(id_usuario, avisos que recebe)` de quem esta' logado, ou `None` sem banco ou sem
+    cadastro. `levantar=False` (o `/api/me`) engole a falha do banco com uma linha de log: o sino
+    some, e nada mais; `True` (as rotas do sino) a deixa subir, para virar 503."""
+    if not acesso.banco_no_comando():
+        return None
+    from motor_expansao.db import BancoNaoConfigurado, rbac
+    from motor_expansao.db import avisos as db_avisos
+
+    try:
+        quem = rbac.identidade(acesso.login_da_requisicao(remote_user))
+        if quem is None:
+            return None
+        return quem.id_usuario, db_avisos.avisos_que_recebe(quem.id_usuario, quem.permissoes)
+    except BancoNaoConfigurado:
+        return None
+    except Exception:
+        if levantar:
+            raise
+        _LOG_FALHA.warning("avisos: o banco nao respondeu; o sino fica fora desta resposta")
+        return None
+
+
+def _rotulos_dos_masters() -> dict[str, str]:
+    """`{id do master: nome de exibicao}` (o "DF/GO" do painel), para o aviso dizer de qual
+    master veio. Sem a config dos territorios, vazio: o aviso mostra o id."""
+    from motor_expansao.masters.territorios import carregar_territorios
+
+    try:
+        return {m.id: m.nome_exibicao for m in carregar_territorios(MASTERS_TERRITORIOS).values()}
+    except Exception:  # noqa: BLE001 — o rotulo e' enfeite do aviso, nunca o derruba
+        return {}
+
+
+class AvisosLidosIn(BaseModel):
+    """Ate' que aviso (o `id` do mais novo que estava no sino) a pessoa viu."""
+
+    ate: int = Field(ge=0)
+
+
+@app.get("/api/avisos")
+def api_avisos(
+    remote_user: str | None = Header(default=None, alias="Remote-User"),
+) -> dict[str, Any]:
+    """O sino de quem esta' logado (DEC-090): os avisos mais novos dos tipos que a pessoa recebe,
+    quantos ela ainda nao viu e, em cada um, de qual master veio. Sem aviso nenhum, a lista vazia.
+    Rota da propria pessoa, como o `/api/me`: nada de alvo como parametro."""
+    from motor_expansao.db import avisos as db_avisos
+
+    vazio: dict[str, Any] = {"avisos": [], "itens": [], "nao_lidos": 0, "ultimo_lido": 0}
+    try:
+        quem = _avisos_de_quem_pede(remote_user, levantar=True)
+        if quem is None or not quem[1]:
+            return vazio
+        id_usuario, avisos = quem
+        dados = db_avisos.listar(id_usuario, avisos)
+    except Exception as erro:  # noqa: BLE001 - o banco ocupado ou fora vira 503, nunca 500
+        _LOG_FALHA.warning("avisos: o sino nao respondeu (%s)", erro, exc_info=True)
+        raise HTTPException(503, "Avisos indisponíveis no momento.") from erro
+    rotulos = _rotulos_dos_masters()
+    for item in dados["itens"]:
+        ids = item["dados"].get("masters") or []
+        item["masters"] = [rotulos.get(str(m), str(m)) for m in ids]
+    return {"avisos": list(avisos), **dados}
+
+
+@app.post("/api/avisos/lidos")
+def api_avisos_lidos(
+    body: AvisosLidosIn, remote_user: str | None = Header(default=None, alias="Remote-User")
+) -> dict[str, Any]:
+    """A pessoa abriu o sino: os avisos ate' `ate` ficam lidos (o contador zera)."""
+    from motor_expansao.db import avisos as db_avisos
+
+    try:
+        quem = _avisos_de_quem_pede(remote_user, levantar=True)
+        if quem is None:
+            return {"ok": False}
+        db_avisos.marcar_lidos(quem[0], body.ate)
+    except Exception as erro:  # noqa: BLE001 - idem
+        _LOG_FALHA.warning("avisos: o lido ate' nao gravou (%s)", erro, exc_info=True)
+        raise HTTPException(503, "Avisos indisponíveis no momento.") from erro
+    return {"ok": True}
 
 
 def _estado_da_minha_senha(remote_user: object) -> dict[str, bool] | None:
@@ -5658,6 +5754,9 @@ class UsuarioAdminIn(BaseModel):
     #: Cada nome e' conferido contra o `master_franquia` do cadastro e gravado na grafia de la'.
     #: Perfil final `master` exige ao menos um; os outros perfis recusam qualquer um.
     masters: list[str] | None = None
+    #: Conjunto DESEJADO de avisos marcados para a pessoa (replace-all, DEC-090), alem dos que o
+    #: perfil ja' da'. None = nao mexe; lista vazia desmarca tudo; aviso desconhecido e' 422.
+    avisos: list[str] | None = None
 
 
 class UsuarioNovoIn(BaseModel):
@@ -5942,7 +6041,16 @@ def acessos_usuarios_listar(
         # cadastro da rede, na grafia de la'. Vazia sem cadastro montado -- e ai' o servidor
         # recusa qualquer nome, entao a tela nao oferece nada que seria negado.
         "masters_disponiveis": _masters_do_cadastro(),
+        # Os avisos que a tela oferece marcar por pessoa (DEC-090), com o rotulo de tela. A
+        # ordem e' a do sino; o identificador e' o que vai no PATCH.
+        "avisos_disponiveis": _avisos_disponiveis(),
     }
+
+
+def _avisos_disponiveis() -> list[dict[str, str]]:
+    from motor_expansao.db.avisos import AVISOS
+
+    return [{"id": aviso, "rotulo": rotulo} for aviso, (rotulo, _evento) in AVISOS.items()]
 
 
 @app.patch("/api/acessos/usuarios/{id_usuario}", include_in_schema=False)
@@ -5968,9 +6076,10 @@ def acessos_usuarios_alterar(
         and body.ativo is None
         and body.paises is None
         and body.masters is None
+        and body.avisos is None
     ):
         raise HTTPException(
-            422, "Informe `perfil`, `ativo`, `paises`, `masters`, ou uma combinação."
+            422, "Informe `perfil`, `ativo`, `paises`, `masters`, `avisos`, ou uma combinação."
         )
     if body.paises is not None:
         _recusar_pais_fora_do_catalogo(body.paises)
@@ -5979,6 +6088,8 @@ def acessos_usuarios_alterar(
     extra: dict[str, Any] = {}
     if body.masters is not None:
         extra["masters"] = _masters_na_grafia_do_cadastro(body.masters)
+    if body.avisos is not None:
+        extra["avisos"] = body.avisos
 
     eu = _identidade_do_admin(remote_user)
     try:
@@ -16889,6 +17000,33 @@ def _masters_ponto_fora_da_area(permitidos: frozenset[str] | None, lat: float, l
     )
 
 
+def _lugar_do_ponto(lat: float, lng: float) -> str | None:
+    """O bairro e o municipio de um ponto, para o aviso do estudo ("Ceilândia, Brasília/DF"): o
+    municipio pela malha municipal (`_carregar_malha`, a mesma do Relatorio Pontual) e o bairro
+    pelo nome que o motor da' ao hexagono do ponto (`_nome_do_hexagono`, o da ficha). So'
+    o municipio quando o hexagono nao tem nome; `None` fora da malha ou com qualquer falha -- o
+    lugar e' enfeite do aviso e nunca derruba o estudo."""
+    import h3
+
+    from motor_expansao.api.service import _carregar_malha
+    from motor_expansao.pipelines.materializar_setores_censitarios_geo import ler_particao_setores
+
+    try:
+        resolvido = _carregar_malha(str(IBGE_DIR)).resolver(lat, lng)
+        if resolvido is None:
+            return None
+        uf, cod = resolvido
+        setores = ler_particao_setores(
+            CENSO_GEO_DIR, uf=uf, cod_municipio=cod, columns=["nome_municipio"]
+        )
+        nomes = setores["nome_municipio"].dropna() if "nome_municipio" in setores else []
+        municipio = f"{nomes.iloc[0]}/{uf}" if len(nomes) else uf
+        bairro = _nome_do_hexagono(uf, cod, str(h3.latlng_to_cell(lat, lng, 7)))
+    except Exception:  # noqa: BLE001 — o lugar e' enfeite do aviso
+        return None
+    return f"{bairro}, {municipio}" if bairro and bairro != municipio.split("/")[0] else municipio
+
+
 class PedidoDeImovelIn(BaseModel):
     """O pedido de imóvel do master (19/11/2026, Juan: "ele fala a região que ele gostaria de
     solicitar um imóvel; por enquanto é isso")."""
@@ -16929,8 +17067,9 @@ async def api_master_estudo_do_ponto(
     """O estudo de um ponto pedido pelo Início do master (19/11/2026, Juan: "ele pode colocar as
     coordenadas e vai ser gerado o estudo, mas sem levar para o mapa"): o Estudo pontual (o PDF
     exclusivamente demográfico, `so_estudo`), direto, a partir da coordenada. Pode ser fora da
-    área dele; nesse caso o PDF sai com o aviso "Estudo fora da sua área de atuação" e a trilha
-    ganha `estudo.fora_da_area`, para o Growth ("notificar a growth, ainda não sei como")."""
+    área dele; nesse caso o PDF sai com o aviso "Estudo fora da sua área de atuação" na
+    Conclusão. Todo estudo grava `estudo.solicitado` (DEC-090), com o lugar e se é fora da área:
+    é o aviso do sino do Growth (a hora, quem pediu e de onde)."""
     if not PERFIL.bbox.contem(lat, lng):
         raise HTTPException(400, "Coordenada fora do país desta instância.")
     _masters_exigir()
@@ -16939,18 +17078,23 @@ async def api_master_estudo_do_ponto(
     report_id = await _registrar_relatorio_gerado_fora_do_loop(
         remote_user, relatorio="pontual", formato="pdf"
     )
-    if fora:
+    # O aviso do Growth (DEC-090) e' do pedido de MASTER: quem ve todos os masters (Growth,
+    # Lideres) nao tem area propria, e o estudo dele nao vira aviso para o proprio time.
+    if permitidos is not None:
         from motor_expansao.db import eventos as db_eventos
 
+        lugar = await run_in_threadpool(_lugar_do_ponto, lat, lng)
         await run_in_threadpool(
             functools.partial(
                 _masters_registrar,
                 remote_user,
-                db_eventos.registrar_estudo_fora_da_area,
-                "estudo fora da área do master",
-                masters=sorted(permitidos or []),
+                db_eventos.registrar_estudo_solicitado,
+                "estudo pedido pelo master",
+                masters=sorted(permitidos),
                 lat=lat,
                 lng=lng,
+                fora_da_area=fora,
+                lugar=lugar,
                 report_id=report_id,
             )
         )

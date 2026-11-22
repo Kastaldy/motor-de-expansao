@@ -219,6 +219,7 @@ O usuário digita premissas e recebe break-even — é decisão de análise, nã
 | `usuario.pais_atribuido` | `usuario` | id do alvo | `pais` | **sim** (Fase 2 do P4) |
 | `usuario.pais_removido` | `usuario` | id do alvo | `pais` | **sim** (Fase 2 do P4) |
 | `usuario.masters_alterados` | `usuario` | id do alvo | `antes`, `depois` (contagens) | **sim** (emenda 1 da DEC-087) |
+| `usuario.avisos_alterados` | `usuario` | id do alvo | `antes`, `depois` (os avisos marcados) | **sim** (DEC-090) |
 
 **Aqui são duas pessoas por linha, e elas não podem se confundir.** `id_usuario` é **quem fez** —
 chega por `app.id_usuario`, como em todo evento. `entidade_id` é **quem sofreu**. Foi para isso que a
@@ -275,6 +276,17 @@ na mesma transação, o que a coluna nega.
 `atualizado_em_usuario`, que não diz qual coluna mudou nem por quem, e nenhuma *trigger* supre o
 evento (a auditoria do D19 é sobre `perfil_permissoes`). Para o mesmo gesto existe um caminho
 com rastro, a tela de administração, e o manual não é o único.
+
+### 2.8 Gestos do master no Início (emenda 2 da DEC-089) — os avisos do sino (DEC-090)
+
+Os dois pedidos que o master faz pelo Início do piloto. Sem `entidade` (o pedido não tem alvo do
+modelo): o master vai em `metadados` (`masters`, os ids da config dos territórios), como o alvo da
+§3.1. São também os AVISOS do sino (DEC-090): o sino lê estes eventos, e não uma tabela própria.
+
+| `tipo` | `entidade` | `metadados` | grava? |
+|---|---|---|---|
+| `imovel.solicitado` | — | `masters`, `regiao` (o texto do master, até 300 caracteres), `origem` | **sim** (emenda 2 da DEC-089); vira o aviso de imóvel |
+| `estudo.solicitado` | — | `masters`, `lat`, `lng`, `fora_da_area`, `lugar` (bairro e município, ou nulo), `report_id`, `origem` | **sim** (DEC-090); vira o aviso de estudo do Growth. Substitui o `estudo.fora_da_area` da emenda 2, que só gravava o estudo de fora da área |
 
 ## 3. O que o esquema precisa acomodar
 

@@ -330,6 +330,12 @@ ROTAS_LIVRES = frozenset(
         # DESTINO); `/api/sso/entrar` e' PRE-sessao (o ticket E' a credencial).
         "/api/sso/ticket",
         "/api/sso/entrar",
+        # DEC-090: o sino. Livre do gate de ABA pela mesma razao do `/api/me`: a rota resolve a
+        # identidade de QUEM PEDE e devolve so' os avisos que chegam a ela (os do perfil e os
+        # marcados na aba Acessos); nao ha' alvo como parametro, entao nao ha' como ler o sino
+        # de outra pessoa. Quem nao recebe aviso nenhum recebe a lista vazia.
+        "/api/avisos",
+        "/api/avisos/lidos",
     }
 )
 

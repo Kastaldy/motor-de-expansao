@@ -139,6 +139,7 @@ type Pendente =
   | { tipo: 'definir-ativo'; id_usuario: number; ativo: boolean }
   | { tipo: 'editar-paises'; id_usuario: number; paises: string[] }
   | { tipo: 'editar-masters'; id_usuario: number; masters: string[] }
+  | { tipo: 'editar-avisos'; id_usuario: number; avisos: string[] }
   | { tipo: 'redefinir-senha'; id_usuario: number }
   | { tipo: 'exigir-troca'; id_usuario: number }
   | { tipo: 'criar' }
@@ -245,6 +246,11 @@ export default function PainelUsuarios() {
     id_usuario: number
     paises: string[]
   } | null>(null)
+  /** Linha em edição de avisos (DEC-090): as caixas marcadas, antes de confirmar. */
+  const [editandoAvisos, setEditandoAvisos] = useState<{
+    id_usuario: number
+    avisos: string[]
+  } | null>(null)
   /** Linha em edição de master franquia (emenda 1 da DEC-087). `virarMaster` = a pessoa
    *  escolheu o perfil Master no seletor e precisa escolher o master antes de confirmar;
    *  `foraDoCadastro` = nomes do vínculo de hoje que o cadastro não tem mais (saem ao salvar). */
@@ -274,6 +280,12 @@ export default function PainelUsuarios() {
     void carregar()
   }, [carregar])
 
+  /** O rótulo de tela de um aviso (DEC-090), pelas opções que o servidor manda. */
+  const rotuloDoAviso = useCallback(
+    (id: string) => dados?.avisos_disponiveis?.find((a) => a.id === id)?.rotulo ?? id,
+    [dados],
+  )
+
   /**
    * Aplica a mudança e RECARREGA do servidor.
    *
@@ -284,7 +296,13 @@ export default function PainelUsuarios() {
   const aplicar = useCallback(
     async (
       alvo: AdminUsuario,
-      mudanca: { perfil?: string; ativo?: boolean; paises?: string[]; masters?: string[] },
+      mudanca: {
+        perfil?: string
+        ativo?: boolean
+        paises?: string[]
+        masters?: string[]
+        avisos?: string[]
+      },
     ) => {
       setSalvando(alvo.id_usuario)
       setRecado(null)
@@ -296,14 +314,14 @@ export default function PainelUsuarios() {
         await carregar()
         // O recado sai da RESPOSTA (`recadoDaAlteracao`, com teste): `mudou: false` = já
         // estava assim, sucesso sem evento gravado, e a tela não pode chamar isso de alteração.
-        setRecado(recadoDaAlteracao(alvo.login, r, (p) => rotuloPerfil(p)))
+        setRecado(recadoDaAlteracao(alvo.login, r, (p) => rotuloPerfil(p), rotuloDoAviso))
       } catch (e) {
         setErro(mensagemDeErro(e, true))
       } finally {
         setSalvando(null)
       }
     },
-    [carregar],
+    [carregar, rotuloDoAviso],
   )
 
   /**
@@ -412,6 +430,8 @@ export default function PainelUsuarios() {
       await aplicar(linha, { paises: pendente.paises })
     } else if (pendente.tipo === 'editar-masters') {
       await aplicar(linha, { masters: pendente.masters })
+    } else if (pendente.tipo === 'editar-avisos') {
+      await aplicar(linha, { avisos: pendente.avisos })
     } else {
       await aplicarSenha(linha, pendente.tipo)
     }
@@ -462,6 +482,8 @@ export default function PainelUsuarios() {
   /* As opções do campo "Master franquia" (emenda 1 da DEC-087): os masters do cadastro das
      unidades. Ausente num deploy antigo, o campo diz que não há o que escolher. */
   const mastersDisponiveis = dados.masters_disponiveis ?? []
+  /* As opções do campo "Avisos" (DEC-090): o que pode chegar ao sino da pessoa. */
+  const avisosDisponiveis = dados.avisos_disponiveis ?? []
   const chavesDoCadastro = new Set(mastersDisponiveis.map(chaveMaster))
   const recadoCriado = criado ? recadoDaCriacao(criado.login, criado.loginProprio) : null
 
@@ -526,6 +548,14 @@ export default function PainelUsuarios() {
       }
     } else if (alvo && pendente.tipo === 'exigir-troca') {
       acao = { tipo: 'exigir-troca', nome: alvo.nome, login: alvo.login }
+    } else if (alvo && pendente.tipo === 'editar-avisos') {
+      acao = {
+        tipo: 'editar-avisos',
+        nome: alvo.nome,
+        login: alvo.login,
+        de: (alvo.avisos ?? []).map(rotuloDoAviso),
+        para: pendente.avisos.map(rotuloDoAviso),
+      }
     } else if (alvo && pendente.tipo === 'editar-paises') {
       const nome = (s: string) => paisesDisponiveis.find((p) => p.sigla === s)?.nome ?? s
       acao = {
@@ -887,7 +917,7 @@ export default function PainelUsuarios() {
         <table style={{ width: '100%', borderCollapse: 'collapse', minWidth: 880 }}>
           <thead>
             <tr>
-              {['Pessoa', 'Login', 'Perfil', 'Situação', 'Países', COLUNA_SENHA, ''].map((h) => (
+              {['Pessoa', 'Login', 'Perfil', 'Situação', 'Países', 'Avisos', COLUNA_SENHA, ''].map((h) => (
                 <th
                   key={h}
                   style={{
@@ -1178,6 +1208,70 @@ export default function PainelUsuarios() {
                       </div>
                     )}
                   </td>
+                  <td style={{ padding: '9px 10px' }}>
+                    {editandoAvisos?.id_usuario === u.id_usuario ? (
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+                          {avisosDisponiveis.map((a) => {
+                            const marcado = editandoAvisos.avisos.includes(a.id)
+                            return (
+                              <label
+                                key={a.id}
+                                style={{
+                                  display: 'flex',
+                                  gap: 5,
+                                  alignItems: 'center',
+                                  cursor: 'pointer',
+                                  font: '400 11px/1.3 var(--f-ui)',
+                                }}
+                              >
+                                <input
+                                  type="checkbox"
+                                  checked={marcado}
+                                  onChange={() =>
+                                    setEditandoAvisos({
+                                      id_usuario: u.id_usuario,
+                                      avisos: marcado
+                                        ? editandoAvisos.avisos.filter((x) => x !== a.id)
+                                        : [...editandoAvisos.avisos, a.id],
+                                    })
+                                  }
+                                />
+                                {a.rotulo}
+                              </label>
+                            )
+                          })}
+                        </div>
+                        <div style={{ display: 'flex', gap: 6 }}>
+                          <Botao
+                            onClick={() => {
+                              setPendente({
+                                tipo: 'editar-avisos',
+                                id_usuario: u.id_usuario,
+                                avisos: editandoAvisos.avisos,
+                              })
+                              setEditandoAvisos(null)
+                            }}
+                          >
+                            Salvar
+                          </Botao>
+                          <Botao variante="ghost" onClick={() => setEditandoAvisos(null)}>
+                            Cancelar
+                          </Botao>
+                        </div>
+                      </div>
+                    ) : (u.avisos ?? []).length === 0 ? (
+                      <span style={{ font: '400 11px/1.3 var(--f-ui)', color: 'var(--tx-muted)' }}>—</span>
+                    ) : (
+                      <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
+                        {(u.avisos ?? []).map((a) => (
+                          <Chip key={a} tom="gray">
+                            {rotuloDoAviso(a)}
+                          </Chip>
+                        ))}
+                      </div>
+                    )}
+                  </td>
                   <td style={{ padding: '9px 10px', whiteSpace: 'nowrap' }}>
                     {/* `senha_propria`, nunca hash: o payload não carrega `senha_hash`.
                         "inicial" é informação de operação — é quem ainda não saiu da
@@ -1286,6 +1380,22 @@ export default function PainelUsuarios() {
                           }
                         >
                           Editar países
+                        </Botao>
+                      )}
+                      {avisosDisponiveis.length > 0 && (
+                        <Botao
+                          variante="ghost"
+                          disabled={travado}
+                          title={
+                            souEu
+                              ? 'Você não pode alterar o seu próprio acesso por aqui.'
+                              : 'Os avisos que chegam ao sino da pessoa, além dos que o perfil já dá.'
+                          }
+                          onClick={() =>
+                            setEditandoAvisos({ id_usuario: u.id_usuario, avisos: [...(u.avisos ?? [])] })
+                          }
+                        >
+                          Editar avisos
                         </Botao>
                       )}
                       <Botao

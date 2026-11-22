@@ -5381,3 +5381,19 @@ Mercado, concorrentes, pinos Ultra e malha do Censo vêm dos arquivos que o moto
 | **Autonomia** | **manual (NÃO loop-safe)** — RBAC e dado confidencial. |
 
 **O que entrega.** O master franqueado com login próprio (perfil `master`, DEC-087) vê a aba Masters e, ao clicar, abre direto no PRÓPRIO painel, sem a lista dos outros e sem o "← Todos os masters"; gera o próprio relatório em PDF. O vínculo é o nome: o `nome_usuario` do login tem de bater com o nome do master na planilha (o titular, ou uma das pessoas de um titular composto). Capacidade `masters.ver_proprio` (migration 027), allowlist fechada no gate (`ROTAS_DOS_MASTERS_PROPRIOS`) e recorte em cada rota (`_masters_do_pedido`, 404 ao master de outro, falha fechada). E o **Início do master**, a trilha "Meu território": Solicitar um imóvel (a região, gravada como `imovel.solicitado`), Masters (leva à tela) e Solicitar um estudo (a coordenada vira o Estudo pontual em PDF, sem o mapa; fora do território, o PDF sai com o aviso "Estudo fora da sua área de atuação" num card amarelo na Conclusão, e a trilha ganha `estudo.fora_da_area`). Falta o canal de "notificar a Growth" (Juan: "ainda não sei como").
+### BLK-MASTERS-06 — Avisos no piloto: o sino dos pedidos dos masters (DEC-090)
+
+| Campo | Valor |
+|---|---|
+| **Criticidade** | **Crítica** — tabelas e capacidade novas no banco (migration 028), rotas novas e campo novo na aba Acessos. READ-ONLY sobre o M1. |
+| **Prioridade** | Alta — pedido do Juan em 19/11/2026. |
+| **Esteira** | PR próprio, empilhado no do BLK-MASTERS-05. |
+| **Quem** | Juan (código); Felipe (migration 028 e GRANT na VPS, e marcar o aviso de imóvel da Priscila na aba Acessos) |
+| **Status** | Aberto |
+| **Depende de** | BLK-MASTERS-05 |
+| **Autonomia** | **manual (NÃO loop-safe)** — banco e RBAC. |
+
+**O que entrega.** Um sino no rodapé da barra lateral, para quem recebe algum aviso, com o número de não lidos. Quando um master pede um estudo pelo Início, o aviso chega ao perfil Growth inteiro (capacidade `avisos.estudos_masters`): a hora, quem pediu, o master, o lugar (bairro e município) e a coordenada, e "Fora da área" quando for. Quando pede um imóvel, chega a quem tem o aviso marcado na aba Acessos (a Priscila): a hora, quem pediu, o master e a região. O aviso é o evento da trilha (`estudo.solicitado`, novo, e `imovel.solicitado`); a 028 cria só quem recebe (`usuario_avisos`) e até onde cada pessoa leu (`avisos_lidos`).
+
+**Na VPS, depois do merge.** (1) Aplicar a 028 (`aplicar --simular`, `aplicar`, `conferir`); (2) `GRANT SELECT, INSERT, UPDATE, DELETE ON usuario_avisos TO app;` e conferir `avisos_lidos` com `\dp` (o default privilege dá `SELECT`, `INSERT` e `UPDATE`); (3) `privilegios`; (4) na aba Acessos, "Editar avisos" na linha da Priscila e marcar "Imóvel pedido por um master".
+

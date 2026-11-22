@@ -380,6 +380,23 @@ describe('editar paises (DEC-081, Fase 2)', () => {
   })
 })
 
+describe('editar avisos (DEC-090)', () => {
+  it('mostra o de-para dos avisos e diz que eles chegam ao sino', () => {
+    const c = montarConfirmacao({
+      tipo: 'editar-avisos',
+      nome: 'Priscila',
+      login: 'priscila',
+      de: [],
+      para: ['Imóvel pedido por um master'],
+    })
+    expect(c.titulo).toBe('Avisos de Priscila')
+    expect(c.apoio.join(' ')).toContain('De (nenhum) para Imóvel pedido por um master.')
+    expect(c.apoio.join(' ')).toContain('sino')
+    expect(c.gravidade).toBe('media')
+    expect(c.loginParaDigitar).toBeNull()
+  })
+})
+
 describe('o perfil Master (DEC-087) e o vínculo com master franquia (emenda 1)', () => {
   it('Master é o menor: cabe em Consultoria, Líderes e Growth, e não em Expansão', () => {
     expect(relacaoEntrePerfis('master', 'consultoria')).toBe('sobe')

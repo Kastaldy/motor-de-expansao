@@ -121,6 +121,7 @@ export type AcaoAdmin =
   | { tipo: 'exigir-troca'; nome: string; login: string }
   | { tipo: 'editar-paises'; nome: string; login: string; de: string[]; para: string[] }
   | { tipo: 'editar-masters'; nome: string; login: string; de: string[]; para: string[] }
+  | { tipo: 'editar-avisos'; nome: string; login: string; de: string[]; para: string[] }
 
 /** A frase do recorte de quem é Master: o que ele passa a ver, com os nomes do vínculo. */
 function fraseDoRecorte(masters: string[]): string {
@@ -322,6 +323,22 @@ export function montarConfirmacao(
         'Concede ou retira o acesso aos sites de cada país. Fica registrado com o seu nome e a data.',
       ],
       rotuloConfirmar: `Salvar países de ${acao.nome}`,
+      gravidade: 'media',
+      loginParaDigitar: null,
+    }
+  }
+
+  if (acao.tipo === 'editar-avisos') {
+    return {
+      eyebrow: 'Mudar os avisos',
+      titulo: `Avisos de ${acao.nome}`,
+      apoio: [
+        `Login ${acao.login}.`,
+        `De ${acao.de.join(', ') || '(nenhum)'} para ${acao.para.join(', ') || '(nenhum)'}.`,
+        'Os avisos marcados chegam ao sino da barra lateral da pessoa, além dos que o perfil dela ' +
+          'já dá. Fica registrado com o seu nome e a data.',
+      ],
+      rotuloConfirmar: `Salvar avisos de ${acao.nome}`,
       gravidade: 'media',
       loginParaDigitar: null,
     }

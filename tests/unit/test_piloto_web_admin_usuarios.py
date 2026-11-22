@@ -1488,3 +1488,61 @@ def test_virar_master_pela_rota_grava_perfil_e_vinculo(
     assert con.com("INSERT INTO usuario_masters") == [(9, "Luana Ribeiro")]
     assert saida["perfil"]["para"] == "master"
     assert saida["masters"]["para"] == ["Luana Ribeiro"]
+
+
+# --------------------------------------------------------------------------------------
+# DEC-090: os avisos de cada pessoa (o sino), marcados na aba Acessos
+# --------------------------------------------------------------------------------------
+
+
+def test_a_listagem_oferece_os_avisos_e_traz_os_de_cada_um(monkeypatch: pytest.MonkeyPatch) -> None:
+    _identidade(monkeypatch, _Eu())
+    monkeypatch.setattr(
+        db_usuarios,
+        "listar",
+        lambda: [
+            db_usuarios.UsuarioAdmin(
+                13, "priscila", "Priscila", "p@u.com", "expansao", True, avisos=("imovel_master",)
+            ),
+            db_usuarios.UsuarioAdmin(7, "vinicius", "Vinícius", "v@u.com", "growth", True),
+        ],
+    )
+    monkeypatch.setattr(db_usuarios, "perfis", lambda: [])
+    saida = pilot_app.acessos_usuarios_listar(remote_user=ADMIN)
+    assert saida["avisos_disponiveis"] == [
+        {"id": "estudo_master", "rotulo": "Estudo pedido por um master"},
+        {"id": "imovel_master", "rotulo": "Imóvel pedido por um master"},
+    ]
+    assert [u["avisos"] for u in saida["usuarios"]] == [["imovel_master"], []]
+
+
+def test_patch_repassa_os_avisos_ao_banco(monkeypatch: pytest.MonkeyPatch) -> None:
+    """O conjunto desejado chega a `alterar_acesso` como `avisos` (replace-all), sozinho."""
+    _identidade(monkeypatch, _Eu())
+    visto: dict[str, Any] = {}
+
+    def _alterar(i: int, *, autor: int, **kw: Any) -> dict[str, Any]:
+        visto.update(kw)
+        return {"id_usuario": i, "avisos": {"de": [], "para": ["imovel_master"], "mudou": True}}
+
+    monkeypatch.setattr(db_usuarios, "alterar_acesso", _alterar)
+    pilot_app.acessos_usuarios_alterar(
+        13, pilot_app.UsuarioAdminIn(avisos=["imovel_master"]), remote_user=ADMIN
+    )
+    assert visto["avisos"] == ["imovel_master"]
+    assert "masters" not in visto
+
+
+def test_patch_com_aviso_desconhecido_e_422(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A recusa e' do `alterar_acesso` (ValueError), traduzida em 422 pela rota."""
+    _identidade(monkeypatch, _Eu())
+
+    def _alterar(i: int, *, autor: int, **kw: Any) -> dict[str, Any]:
+        raise ValueError("Aviso desconhecido: 'x'.")
+
+    monkeypatch.setattr(db_usuarios, "alterar_acesso", _alterar)
+    with pytest.raises(HTTPException) as erro:
+        pilot_app.acessos_usuarios_alterar(
+            13, pilot_app.UsuarioAdminIn(avisos=["x"]), remote_user=ADMIN
+        )
+    assert erro.value.status_code == 422

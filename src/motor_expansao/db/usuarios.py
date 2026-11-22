@@ -71,6 +71,9 @@ EVENTO_PAIS_REMOVIDO = "usuario.pais_removido"
 #: `metadados` (convencoes §5). Sobram as contagens `{"antes": n, "depois": n}`; quem audita
 #: le o estado atual em `usuario_masters`.
 EVENTO_MASTERS_ALTERADOS = "usuario.masters_alterados"
+#: Os avisos que a pessoa recebe mudaram (DEC-090, migration 028). Um evento por gesto, com o
+#: conjunto antes e depois: os identificadores (`estudo_master`, `imovel_master`) nao sao PII.
+EVENTO_AVISOS_ALTERADOS = "usuario.avisos_alterados"
 
 #: Valor de `entidade` para os eventos daqui (D24).
 ENTIDADE_USUARIO = "usuario"
@@ -125,7 +128,10 @@ SELECT u.id_usuario, u.login_usuario, u.nome_usuario, u.email,
                  FROM usuario_paises up WHERE up.id_usuario = u.id_usuario), ARRAY[]::text[]) AS paises,
        COALESCE((SELECT array_agg(um.master_franquia ORDER BY um.master_franquia)
                  FROM usuario_masters um WHERE um.id_usuario = u.id_usuario),
-                ARRAY[]::text[]) AS masters
+                ARRAY[]::text[]) AS masters,
+       COALESCE((SELECT array_agg(ua.aviso ORDER BY ua.aviso)
+                 FROM usuario_avisos ua WHERE ua.id_usuario = u.id_usuario),
+                ARRAY[]::text[]) AS avisos
 FROM usuarios u
 JOIN perfis p ON p.id_perfil = u.id_perfil
 ORDER BY u.ativo DESC, u.login_usuario
@@ -213,6 +219,20 @@ DELETE FROM usuario_masters WHERE id_usuario = %s AND master_franquia = %s
 
 SQL_MASTERS_DO_ALVO = """
 SELECT master_franquia FROM usuario_masters WHERE id_usuario = %s ORDER BY master_franquia
+"""
+
+# Os avisos que a pessoa recebe alem dos do perfil (028, DEC-090), no molde dos masters: INSERT
+# por aviso novo, DELETE por aviso que saiu, e a leitura do conjunto atual para o diff.
+SQL_CRIAR_AVISO = """
+INSERT INTO usuario_avisos (id_usuario, aviso) VALUES (%s, %s)
+"""
+
+SQL_REMOVER_AVISO = """
+DELETE FROM usuario_avisos WHERE id_usuario = %s AND aviso = %s
+"""
+
+SQL_AVISOS_DO_ALVO = """
+SELECT aviso FROM usuario_avisos WHERE id_usuario = %s ORDER BY aviso
 """
 
 #: Mesma regra do CHECK `chk_usuario_masters_nome` (025): de 2 a 120 caracteres, sem espaco nas
@@ -350,6 +370,9 @@ class UsuarioAdmin:
     #: Masters franquia vinculados (`usuario_masters`, emenda 1 da DEC-087), na grafia gravada.
     #: So' o perfil `master` os tem; para os outros, vazio.
     masters: tuple[str, ...] = ()
+    #: Os avisos marcados para a pessoa na aba Acessos (`usuario_avisos`, DEC-090), alem dos que o
+    #: perfil ja' da'.
+    avisos: tuple[str, ...] = ()
 
     def como_json(self) -> dict[str, Any]:
         return {
@@ -366,6 +389,7 @@ class UsuarioAdmin:
             "deve_trocar_senha": self.deve_trocar_senha,
             "paises": list(self.paises),
             "masters": list(self.masters),
+            "avisos": list(self.avisos),
         }
 
 
@@ -389,6 +413,7 @@ def listar() -> list[UsuarioAdmin]:
             deve_trocar_senha=bool(linha[9]),
             paises=tuple(linha[10] or ()),
             masters=tuple(linha[11] or ()),
+            avisos=tuple(linha[12] or ()),
         )
         for linha in linhas
     ]
@@ -639,6 +664,50 @@ def definir_ativo(id_alvo: int, ativo: bool, *, autor: int) -> dict[str, Any]:
     return resultado
 
 
+def _aplicar_avisos(
+    con: Any, id_alvo: int, avisos_desejados: list[str], *, autor: int
+) -> dict[str, Any]:
+    """O passo de ajustar os avisos de uma pessoa (replace-all), DENTRO de uma transacao aberta.
+
+    Mesma forma do `_aplicar_masters`: diff contra o conjunto atual, um INSERT por aviso novo e um
+    DELETE por aviso que saiu, "sem mudanca, sem evento", e UM evento por gesto
+    (`usuario.avisos_alterados`) com o conjunto antes e depois. Vazio e' aceito: e' assim que a
+    pessoa deixa de receber o que estava marcado."""
+    antes = {str(r[0]) for r in con.execute(SQL_AVISOS_DO_ALVO, (id_alvo,)).fetchall()}
+    adicionar = [a for a in avisos_desejados if a not in antes]
+    remover = sorted(antes - set(avisos_desejados))
+    de, para = sorted(antes), sorted(set(avisos_desejados))
+    if not adicionar and not remover:
+        return {"id_usuario": id_alvo, "de": de, "para": para, "mudou": False}
+    for aviso in remover:
+        con.execute(SQL_REMOVER_AVISO, (id_alvo, aviso))
+    for aviso in adicionar:
+        con.execute(SQL_CRIAR_AVISO, (id_alvo, aviso))
+    _registrar(
+        con,
+        autor=autor,
+        tipo=EVENTO_AVISOS_ALTERADOS,
+        id_alvo=id_alvo,
+        metadados={"antes": de, "depois": para},
+    )
+    return {"id_usuario": id_alvo, "de": de, "para": para, "mudou": True}
+
+
+def _normalizar_avisos(avisos: list[str]) -> list[str]:
+    """Os avisos pedidos, sem repetido e so' os que existem (`avisos.AVISOS`, o mesmo conjunto do
+    CHECK `chk_usuario_avisos_tipo`): aviso desconhecido e' recusado com mensagem, antes do banco."""
+    from .avisos import AVISOS
+
+    vistos: list[str] = []
+    for aviso in avisos:
+        chave = str(aviso).strip()
+        if chave not in AVISOS:
+            raise ValueError(f"Aviso desconhecido: {chave!r}.")
+        if chave not in vistos:
+            vistos.append(chave)
+    return vistos
+
+
 def alterar_acesso(
     id_alvo: int,
     *,
@@ -647,8 +716,10 @@ def alterar_acesso(
     ativo: bool | None = None,
     paises: list[str] | None = None,
     masters: list[str] | None = None,
+    avisos: list[str] | None = None,
 ) -> dict[str, Any]:
-    """Perfil, status, paises e/ou masters de UMA pessoa numa transacao SO', com um evento por mudanca.
+    """Perfil, status, paises, masters e/ou avisos de UMA pessoa numa transacao SO', com um evento por
+    mudanca.
 
     E' o que o `PATCH /api/acessos/usuarios/{id}` chama (#463, follow-up B). Ate' 24/10/2026 a
     rota chamava `alterar_perfil` e `definir_ativo` em sequencia -- DUAS transacoes. Se a
@@ -669,14 +740,20 @@ def alterar_acesso(
     e rodam ANTES de qualquer escrita; quem sai de master perde o vinculo nesta mesma transacao,
     e a resposta traz o bloco `masters` tambem nesse caso. Os nomes chegam ja' na grafia do
     cadastro: conferir que existem e' da rota, que conhece o cadastro.
+
+    `avisos` (DEC-090) e' o conjunto DESEJADO de avisos marcados para a pessoa (replace-all);
+    `None` = nao mexe. Independe do perfil: o que o perfil ja' da' nao entra aqui.
     """
-    if perfil is None and ativo is None and paises is None and masters is None:
-        raise ValueError("Informe `perfil`, `ativo`, `paises`, `masters`, ou uma combinação.")
+    if perfil is None and ativo is None and paises is None and masters is None and avisos is None:
+        raise ValueError(
+            "Informe `perfil`, `ativo`, `paises`, `masters`, `avisos`, ou uma combinação."
+        )
     _recusar_auto_alvo(id_alvo, autor)
     # Normaliza/valida FORA da transacao (recusa vazio cedo -- vazio e' o bug do P4); o
     # pertencimento ao catalogo (BR/AR) ja' foi conferido na rota.
     paises_norm = _normalizar_paises(paises) if paises is not None else None
     masters_norm = _normalizar_masters(masters) if masters is not None else None
+    avisos_norm = _normalizar_avisos(avisos) if avisos is not None else None
 
     resultado: dict[str, Any] = {"id_usuario": id_alvo}
     with transacao(id_usuario=autor) as con:
@@ -701,6 +778,8 @@ def alterar_acesso(
             )
         if plano_masters is not None:
             resultado["masters"] = _aplicar_masters(con, id_alvo, *plano_masters, autor=autor)
+        if avisos_norm is not None:
+            resultado["avisos"] = _aplicar_avisos(con, id_alvo, avisos_norm, autor=autor)
     return resultado
 
 

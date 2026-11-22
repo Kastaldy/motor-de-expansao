@@ -269,8 +269,10 @@ export function recadoDaAlteracao(
     status?: Mudanca & { ativo: boolean }
     paises?: Mudanca & { para: string[] }
     masters?: Mudanca & { para: string[] }
+    avisos?: Mudanca & { para: string[] }
   },
   rotulo: (perfil: string) => string,
+  rotuloDoAviso: (aviso: string) => string = (a) => a,
 ): string {
   const masters = r.masters?.mudou ? r.masters.para : null
   if (r.perfil?.mudou) {
@@ -286,6 +288,11 @@ export function recadoDaAlteracao(
     return masters.length
       ? `${login}: master franquia agora ${masters.join(', ')}.`
       : `${login}: vínculo com master franquia removido.`
+  }
+  if (r.avisos?.mudou) {
+    return r.avisos.para.length
+      ? `${login}: avisos agora ${r.avisos.para.map(rotuloDoAviso).join(', ')}.`
+      : `${login}: nenhum aviso marcado (ficam só os do perfil).`
   }
   return `${login} já estava assim — nada foi alterado.`
 }

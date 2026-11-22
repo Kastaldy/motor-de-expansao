@@ -1,6 +1,7 @@
 /** Cliente do backend do piloto. Tudo passa pelo proxy /api do Vite. */
 
 import type { AluguelReferencia, TipoImovelAluguel } from './aluguel-referencia'
+import type { SinoPayload } from './avisos'
 import type {
   MasterCamadas,
   MasterCrescimento,
@@ -643,6 +644,17 @@ export const api = {
   masterCrescimento: (id: string) =>
     pedir<MasterCrescimento>(`/api/masters/${encodeURIComponent(id)}/crescimento`, {}, 60_000),
 
+  /** O sino (DEC-090): os avisos de quem está logado, os mais novos primeiro. */
+  avisos: () => pedir<SinoPayload>('/api/avisos', {}, 15_000),
+
+  /** O sino foi aberto: os avisos até `ate` (o `id` do mais novo) ficam lidos. */
+  marcarAvisosLidos: (ate: number) =>
+    pedir<{ ok: boolean }>(
+      '/api/avisos/lidos',
+      { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ate }) },
+      10_000,
+    ),
+
   /** O Início do master (emenda 2 da DEC-089): pedir um imóvel numa região. */
   masterSolicitarImovel: (regiao: string) =>
     pedir<{ ok: boolean; registrado: boolean }>(
@@ -775,7 +787,13 @@ export const api = {
    */
   adminAlterarUsuario: (
     idUsuario: number,
-    mudanca: { perfil?: string; ativo?: boolean; paises?: string[]; masters?: string[] },
+    mudanca: {
+      perfil?: string
+      ativo?: boolean
+      paises?: string[]
+      masters?: string[]
+      avisos?: string[]
+    },
   ) =>
     pedir<AdminAlteracao>(
       `/api/acessos/usuarios/${idUsuario}`,

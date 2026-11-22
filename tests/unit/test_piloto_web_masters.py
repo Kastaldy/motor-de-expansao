@@ -997,11 +997,12 @@ def test_o_pedido_de_imovel_nao_cai_quando_a_trilha_falha(
 
 @pytest.fixture
 def estudo_do_ponto(mapa: dict[str, Any], monkeypatch: pytest.MonkeyPatch) -> dict[str, list[Any]]:
-    """O gerador do PDF e os registros dublados: aqui se confere a rota (área, aviso, trilha)."""
+    """O gerador do PDF e os registros dublados: aqui se confere a rota (área, aviso, trilha). O
+    lugar do ponto também é dublado (lê a malha municipal e o Censo, que têm os testes deles)."""
     from motor_expansao.db import eventos as db_eventos
 
     pdfs: list[dict[str, Any]] = []
-    fora: list[dict[str, Any]] = []
+    estudos: list[dict[str, Any]] = []
 
     def gerar(lat: float, lng: float, *args: Any, **kw: Any) -> Any:
         pdfs.append({"lat": lat, "lng": lng, **kw})
@@ -1012,8 +1013,9 @@ def estudo_do_ponto(mapa: dict[str, Any], monkeypatch: pytest.MonkeyPatch) -> di
 
     monkeypatch.setattr(pilot, "_gerar_relatorio_pontual_pdf", gerar)
     monkeypatch.setattr(pilot, "_registrar_relatorio_gerado_fora_do_loop", registrar)
-    monkeypatch.setattr(db_eventos, "registrar_estudo_fora_da_area", lambda **kw: fora.append(kw))
-    return {"pdfs": pdfs, "fora": fora}
+    monkeypatch.setattr(db_eventos, "registrar_estudo_solicitado", lambda **kw: estudos.append(kw))
+    monkeypatch.setattr(pilot, "_lugar_do_ponto", lambda lat, lng: f"Lugar {lat}, {lng}")
+    return {"pdfs": pdfs, "estudos": estudos}
 
 
 def _estudo_do_ponto(lat: float, lng: float) -> Any:
@@ -1029,7 +1031,18 @@ def test_estudo_dentro_do_territorio_sai_sem_aviso(
     (pdf,) = estudo_do_ponto["pdfs"]
     assert pdf["so_estudo"] is True and pdf["aviso_fora_da_area"] is False
     assert pdf["report_id"] == "rid-1"
-    assert estudo_do_ponto["fora"] == []
+    # Todo estudo do master vira o aviso do Growth (DEC-090), dentro da área também.
+    assert estudo_do_ponto["estudos"] == [
+        {
+            "autor": 1,
+            "masters": ["rjsp"],
+            "lat": -23.55,
+            "lng": -46.63,
+            "fora_da_area": False,
+            "lugar": "Lugar -23.55, -46.63",
+            "report_id": "rid-1",
+        }
+    ]
     # Um terreno vazio dentro do território (Ribeirão Preto, sem gente) ainda é do território.
     _estudo_do_ponto(-21.20, -47.80)
     assert estudo_do_ponto["pdfs"][-1]["aviso_fora_da_area"] is False
@@ -1041,8 +1054,16 @@ def test_estudo_fora_do_territorio_sai_com_o_aviso_e_fica_na_trilha(
     _login(monkeypatch, "Master Um", {"masters.ver_proprio"})
     _estudo_do_ponto(-19.90, -43.90)  # Belo Horizonte: fora do RJ/SP 01
     assert estudo_do_ponto["pdfs"][-1]["aviso_fora_da_area"] is True
-    assert estudo_do_ponto["fora"] == [
-        {"autor": 1, "masters": ["rjsp"], "lat": -19.9, "lng": -43.9, "report_id": "rid-1"}
+    assert estudo_do_ponto["estudos"] == [
+        {
+            "autor": 1,
+            "masters": ["rjsp"],
+            "lat": -19.9,
+            "lng": -43.9,
+            "fora_da_area": True,
+            "lugar": "Lugar -19.9, -43.9",
+            "report_id": "rid-1",
+        }
     ]
 
 
@@ -1052,7 +1073,8 @@ def test_growth_estuda_qualquer_ponto_sem_aviso(
     _login(monkeypatch, "Fulano", {"masters.ver"})
     _estudo_do_ponto(-19.90, -43.90)
     assert estudo_do_ponto["pdfs"][-1]["aviso_fora_da_area"] is False
-    assert estudo_do_ponto["fora"] == []
+    # Quem vê todos os masters (Growth, Líderes) não é master: o estudo dele não vira aviso.
+    assert estudo_do_ponto["estudos"] == []
 
 
 def test_estudo_fora_do_pais_e_recusado(
@@ -1086,3 +1108,20 @@ def test_o_api_me_diz_quando_o_inicio_e_o_do_master(monkeypatch: pytest.MonkeyPa
     assert r["masters_proprio"] is True
     _login(monkeypatch, "Fulano", {"masters.ver", "rede.ver"})
     assert pilot.me(remote_user="alguem")["masters_proprio"] is False
+
+
+def test_o_api_me_diz_os_avisos_que_chegam_a_pessoa(monkeypatch: pytest.MonkeyPatch) -> None:
+    """O sino da barra lateral (DEC-090) so' aparece com a chave `avisos`: o Growth recebe o de
+    estudo pelo perfil; quem tem o de imovel marcado na aba Acessos, esse; o master, nenhum."""
+    from motor_expansao.db import avisos as db_avisos
+
+    marcados: set[str] = set()
+    monkeypatch.setattr(db_avisos, "avisos_da_pessoa", lambda _id: frozenset(marcados))
+    _login(monkeypatch, "Fulano", {"masters.ver", "rede.ver", "avisos.estudos_masters"})
+    assert pilot.me(remote_user="alguem")["avisos"] == ["estudo_master"]
+    marcados.add("imovel_master")
+    _login(monkeypatch, "Priscila", {"rede.ver"})
+    assert pilot.me(remote_user="alguem")["avisos"] == ["imovel_master"]
+    marcados.clear()
+    _login(monkeypatch, "Master Um", {"rede.ver_propria", "masters.ver_proprio"})
+    assert "avisos" not in pilot.me(remote_user="alguem")
