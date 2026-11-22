@@ -98,6 +98,7 @@ from motor_expansao.dashboard import (  # noqa: E402
     acesso_log,
     comodidades_concorrentes,
     movimentacao_concorrencia,
+    movimentacao_semanal,
     planos_agregador,
     rede_cadastro,
     rede_coorte,
@@ -14138,31 +14139,81 @@ def _rede_movimentacao() -> pd.DataFrame | None:
     return movimentacao_concorrencia.filtrar_concorrencia(tabela, _rede_redes_estudio())
 
 
+def _rede_movimentacao_semanal() -> dict[str, Any]:
+    """Movimentação da concorrência pela SÉRIE SEMANAL do coletor (emenda 1 da DEC-064). Opcional.
+
+    Lê `snapshots_concorrentes` e `ponte_identidade_concorrentes` com as regras de
+    `movimentacao_semanal`. A chave do cache é a assinatura da série no disco: o lote de domingo
+    grava a semana nova e a tela relê na chamada seguinte, sem restart. O pacote de setembro
+    (`_rede_movimentacao`) segue como histórico.
+    """
+    return _rede_movimentacao_semanal_da_serie(movimentacao_semanal.assinatura_da_serie(STAGING_DIR))
+
+
+@functools.lru_cache(maxsize=2)
+def _rede_movimentacao_semanal_da_serie(assinatura: tuple[tuple[str, int, int], ...]) -> dict[str, Any]:
+    vazio: dict[str, Any] = {"eventos": None, "laudo": {}, "redes": frozenset()}
+    if not assinatura:
+        return vazio
+    try:
+        serie = movimentacao_semanal.ler_serie(STAGING_DIR)
+        eventos, laudo = movimentacao_semanal.eventos_da_serie(serie)
+    except Exception as erro:  # noqa: BLE001
+        print(f"[rede] série semanal de concorrentes ilegível ({erro})", file=sys.stderr)
+        return vazio
+    estudios = _rede_redes_estudio()
+    return {
+        "eventos": movimentacao_concorrencia.filtrar_concorrencia(eventos, estudios),
+        "laudo": laudo,
+        "redes": frozenset(r for r in movimentacao_semanal.redes_da_serie(serie) if r not in estudios and r.lower() != "ultra"),
+    }
+
+
+def _rede_movimentacao_semanal_no_entorno(lat_lng: tuple[float, float] | None) -> dict[str, Any]:
+    """O bloco `semanal` da ficha: o que a série viu a até 2 km, na janela dela."""
+    mov = _rede_movimentacao_semanal()
+    janela = (mov.get("laudo") or {}).get("janela") or {}
+    if mov.get("eventos") is None or not janela:
+        return {"disponivel": False, "eventos": [], "contagem": movimentacao_concorrencia.contagem_vazia()}
+    itens = movimentacao_concorrencia.eventos_no_entorno(lat_lng[0], lat_lng[1], mov["eventos"]) if lat_lng else []
+    jan = janela.get(movimentacao_semanal.FONTE_CADASTRO) or janela.get(movimentacao_semanal.FONTE_AGREGADOR) or {}
+    return {
+        "disponivel": True,
+        "de": jan.get("de"),
+        "ate": jan.get("ate"),
+        "semanas": int(jan.get("semanas") or 0),
+        "eventos": itens,
+        "contagem": movimentacao_concorrencia.contar(itens),
+    }
+
+
 def _rede_movimentacao_unidade(unidade_id: str) -> dict[str, Any]:
+    pontos = _rede_pontos()
+    linha = pontos[pontos["unidade_id"] == unidade_id]
+    lat_lng = (float(linha["lat"].iloc[0]), float(linha["lng"].iloc[0])) if len(linha) else None
+    semanal = _rede_movimentacao_semanal_no_entorno(lat_lng)
     eventos = _rede_movimentacao()
+    itens = movimentacao_concorrencia.eventos_no_entorno(lat_lng[0], lat_lng[1], eventos) if eventos is not None and lat_lng else []
+    # Logo miúda ao lado do nome, uma vez por rede, das duas listas (a série e o histórico).
+    redes = {i["rede"] for i in itens + semanal["eventos"] if i["rede"]}
+    logos = {rede: _icone_rede(rede) for rede in sorted(redes)}
     if eventos is None:
         return {
             "disponivel": False,
             "periodos": [],
             "contagem": movimentacao_concorrencia.contagem_vazia(),
             "eventos": [],
-            "logos": {},
+            "logos": logos,
+            "semanal": semanal,
         }
-    pontos = _rede_pontos()
-    linha = pontos[pontos["unidade_id"] == unidade_id]
-    itens = (
-        movimentacao_concorrencia.eventos_no_entorno(float(linha["lat"].iloc[0]), float(linha["lng"].iloc[0]), eventos)
-        if len(linha)
-        else []
-    )
     return {
         "disponivel": True,
         "sem_coordenada": not len(linha),
         "periodos": movimentacao_concorrencia.periodos(eventos),
         "contagem": movimentacao_concorrencia.contar(itens),
         "eventos": itens,
-        # Logo miúda ao lado do nome, uma vez por rede (a lista pode repetir a mesma rede).
-        "logos": {rede: _icone_rede(rede) for rede in sorted({i["rede"] for i in itens if i["rede"]})},
+        "logos": logos,
+        "semanal": semanal,
     }
 
 
@@ -14173,12 +14224,17 @@ def _rede_movimentacao_redes() -> dict[str, Any]:
     uma abertura da Panobianco em Ribeirão Preto conta mesmo sem Ultra por perto. A tela diz que
     o card não segue os filtros do topo (decisão do Vinicius, 05/11/2026).
 
-    A chave do cache é o `stat` do histórico semanal (`saldo_rede.ARQUIVO_STAGING`): o lote de
-    domingo troca o arquivo e o card relê na chamada seguinte. Um `lru_cache` sem chave esperaria
-    o restart, e o restart de domingo só roda quando o regen publica. O pacote de setembro é fixo
-    (não há como reingeri-lo) e segue no cache de `_rede_movimentacao`.
+    A chave do cache é o `stat` do histórico semanal (`saldo_rede.ARQUIVO_STAGING`) mais a
+    assinatura da série semanal de concorrentes: o lote de domingo troca os dois e o card relê na
+    chamada seguinte. Um `lru_cache` sem chave esperaria o restart, e o restart de domingo só roda
+    quando o regen publica. Aberturas e fechamentos vêm da série (`_rede_movimentacao_semanal`,
+    emenda 1 da DEC-064); o pacote de setembro é fixo, segue no cache de `_rede_movimentacao` e
+    vira o histórico do card.
     """
-    return _rede_movimentacao_redes_do_arquivo(_stat_ou_none(STAGING_DIR / saldo_rede.ARQUIVO_STAGING))
+    return _rede_movimentacao_redes_do_arquivo(
+        _stat_ou_none(STAGING_DIR / saldo_rede.ARQUIVO_STAGING),
+        movimentacao_semanal.assinatura_da_serie(STAGING_DIR),
+    )
 
 
 def _rede_contagem_semanal(identidade: tuple[str, int, int] | None) -> dict[str, Any]:
@@ -14202,7 +14258,9 @@ def _rede_contagem_semanal(identidade: tuple[str, int, int] | None) -> dict[str,
 
 
 @functools.lru_cache(maxsize=2)
-def _rede_movimentacao_redes_do_arquivo(identidade: tuple[str, int, int] | None) -> dict[str, Any]:
+def _rede_movimentacao_redes_do_arquivo(
+    identidade: tuple[str, int, int] | None, serie: tuple[tuple[str, int, int], ...] = ()
+) -> dict[str, Any]:
     # Toda rede MAPEADA entra, mesmo sem nenhuma movimentação no período (Felipe, 17/09): a
     # tabela não é só "quem mexeu", ela carrega o tamanho do mercado.
     payload = movimentacao_concorrencia.crescimento_por_rede(
@@ -14210,6 +14268,9 @@ def _rede_movimentacao_redes_do_arquivo(identidade: tuple[str, int, int] | None)
         _rede_ler_opcional(STAGING_DIR / movimentacao_concorrencia.ARQUIVO_CONTAGEM_STAGING),
         _rede_contagem_semanal(identidade),
         excluir=_rede_redes_estudio(),
+    )
+    payload = movimentacao_semanal.anexar_ao_card(
+        payload, _rede_movimentacao_semanal_da_serie(serie), excluir=_rede_redes_estudio()
     )
     for linha in payload["redes"]:
         linha["logo"] = _icone_rede(linha["rede"])

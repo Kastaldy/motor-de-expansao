@@ -321,7 +321,9 @@ export function avisosDaContagem(m: RedeCrescimento | undefined, hoje?: string):
   } else if (c?.data) {
     avisos.push(...avisosDaSemana(c, c.data, hoje))
   }
-  if (!m.tem_cadastro) {
+  // Sem o pacote E sem a série, o card só tem a contagem. Com a série, aberturas e fechamentos estão
+  // na tela (o pacote é só o histórico) e o aviso seria falso.
+  if (!m.tem_cadastro && !temSemanal(m)) {
     avisos.push({
       tom: 'info',
       texto: 'O cadastro de aberturas e fechamentos (pacote de setembro) não está neste ambiente: o card mostra só a contagem semanal.',
@@ -421,31 +423,10 @@ function avisosDaSemana(c: RedeContagemSemanal, data: string, hoje?: string): Av
 
 /* ------------------------------- rodapé ------------------------------- */
 
-/** O rodapé do card: de onde vem cada coluna e a data de cada fonte, tudo tirado do payload. */
+/** O rodapé do card no modo HISTÓRICO (o pacote de setembro): de onde vem cada coluna e a data de
+ *  cada fonte, tudo tirado do payload. O modo padrão, a série semanal, usa `rodapeSemanal`. */
 export function rodapeCrescimento(m: RedeCrescimento, comCautela: boolean): string {
-  const partes: string[] = []
-  const c = m.contagem
-  if (m.unidades_mapeadas) {
-    let t = `Mercado mapeado: ${num(m.unidades_mapeadas)} unidades em ${num(m.redes_mapeadas ?? 0)} redes`
-    if (m.variacao_total != null && c?.data_anterior) {
-      t += ` (${comSinal(m.variacao_total)} desde ${diaMes(c.data_anterior)}, entre as redes das duas contagens)`
-    }
-    partes.push(`${t}.`)
-  }
-  if (m.contagem_origem === 'semanal') {
-    partes.push(
-      `Unidades: contagem semanal do coletor de ${diaMes(m.data_contagem)}, a mesma do relatório de domingo no ` +
-        'Telegram, que já inclui as unidades anunciadas ("Em breve"). Cada rede é comparada com a última contagem ' +
-        'boa dela: a que não foi recoletada, ou que deu um salto brusco ainda não confirmado, fica com a contagem ' +
-        'anterior e sem variação.',
-    )
-    if (temVariacao(m)) partes.push('A variação mistura aberturas, anúncios e ajustes do coletor.')
-    if (m.redes.some((r) => r.variacao_status === 'novo')) {
-      partes.push('"nova": rede que o coletor passou a contar; não é abertura.')
-    }
-  } else if (m.contagem_origem === 'pacote') {
-    partes.push(`Unidades: contagem oficial de ${diaMes(m.data_contagem)}, do pacote de setembro.`)
-  }
+  const partes = partesDasUnidades(m)
   if (m.tem_cadastro) {
     const alta = janela(m.periodos, 'cadastro', 'alta')
     const cautela = janela(m.periodos, 'cadastro', 'cautela')
@@ -471,6 +452,139 @@ export function rodapeCrescimento(m: RedeCrescimento, comCautela: boolean): stri
   }
   partes.push('Estúdios boutique ficam fora (DEC-056).')
   return partes.join(' ')
+}
+
+/** Mercado mapeado e de onde vêm as unidades: a parte do rodapé que não muda com o modo. */
+function partesDasUnidades(m: RedeCrescimento): string[] {
+  const partes: string[] = []
+  const c = m.contagem
+  if (m.unidades_mapeadas) {
+    let t = `Mercado mapeado: ${num(m.unidades_mapeadas)} unidades em ${num(m.redes_mapeadas ?? 0)} redes`
+    if (m.variacao_total != null && c?.data_anterior) {
+      t += ` (${comSinal(m.variacao_total)} desde ${diaMes(c.data_anterior)}, entre as redes das duas contagens)`
+    }
+    partes.push(`${t}.`)
+  }
+  if (m.contagem_origem === 'semanal') {
+    partes.push(
+      `Unidades: contagem semanal do coletor de ${diaMes(m.data_contagem)}, a mesma do relatório de domingo no ` +
+        'Telegram, que já inclui as unidades anunciadas ("Em breve"). Cada rede é comparada com a última contagem ' +
+        'boa dela: a que não foi recoletada, ou que deu um salto brusco ainda não confirmado, fica com a contagem ' +
+        'anterior e sem variação.',
+    )
+    if (temVariacao(m)) partes.push('A variação mistura aberturas, anúncios e ajustes do coletor.')
+    if (m.redes.some((r) => r.variacao_status === 'novo')) {
+      partes.push('"nova": rede que o coletor passou a contar; não é abertura.')
+    }
+  } else if (m.contagem_origem === 'pacote') {
+    partes.push(`Unidades: contagem oficial de ${diaMes(m.data_contagem)}, do pacote de setembro.`)
+  }
+  return partes
+}
+
+/* ---------------------------- série semanal ---------------------------- */
+
+/* Desde 19/11/2026 (emenda 1 da DEC-064) aberturas, fechamentos, saldo, "Em breve" e Wellhub vêm
+   da SÉRIE SEMANAL do coletor, acumulados desde o início da série (decisão do Felipe: "mostre o
+   acumulado por enquanto"). O pacote de setembro fica como HISTÓRICO, num botão. As regras que
+   tiram ruído da conta (troca de cadastro, recalibração, salto de cobertura) moram no backend
+   (`movimentacao_semanal`); aqui só se diz o que ficou de fora. */
+
+/** A série semanal está no card; com ela, o modo padrão é o semanal. */
+export function temSemanal(m: RedeCrescimento | undefined): boolean {
+  return !!m?.semanal?.disponivel
+}
+
+/** Botão do modo semanal: "Desde 20/09". */
+export function rotuloBotaoSemanal(m: RedeCrescimento): string {
+  return m.semanal?.de ? `Desde ${diaMes(m.semanal.de)}` : 'Semanal'
+}
+
+/** Botão do histórico: "Histórico de 02/08 a 06/09" (as fotos validadas do pacote). */
+export function rotuloBotaoHistorico(m: RedeCrescimento): string {
+  const j = janela(m.periodos, 'cadastro', 'alta') ?? janela(m.periodos, 'cadastro')
+  return j ? `Histórico de ${textoJanela(j)}` : 'Histórico'
+}
+
+/** Cabeçalho do grupo de colunas da série: "Movimento de 20/09 a 15/11". */
+export function rotuloSemanal(m: RedeCrescimento): string {
+  const s = m.semanal
+  return s?.de && s?.ate ? `Movimento de ${diaMes(s.de)} a ${diaMes(s.ate)}` : 'Movimento semanal'
+}
+
+/** A célula da série numa linha. Sem leitura ("—") quando a coleta semanal não enxerga a rede:
+ *  zero afirmaria que ela não se mexeu. */
+export function celulaSemanal(r: Pick<RedeCrescimentoRede, 'semanal'>, coluna: ColunaCadastro): CelulaCadastro {
+  if (!r.semanal) return { tipo: 'sem_leitura', valor: 0, titulo: 'A coleta semanal não enxerga esta rede.' }
+  const valor = r.semanal[coluna]
+  return valor ? { tipo: 'numero', valor } : { tipo: 'zero', valor: 0 }
+}
+
+/** Os valores de movimento que a tabela ordena e mostra, no modo escolhido. */
+export function movimentoDaLinha(
+  r: RedeCrescimentoRede,
+  modo: 'semanal' | 'historico',
+  comCautela: boolean,
+): { aberturas: number; fechamentos: number; saldo: number; em_breve: number } {
+  if (modo === 'semanal') {
+    const s = r.semanal ?? { aberturas: 0, fechamentos: 0, saldo: 0, em_breve: 0 }
+    return { aberturas: s.aberturas, fechamentos: s.fechamentos, saldo: s.saldo, em_breve: s.em_breve }
+  }
+  const aberturas = comCautela ? r.aberturas : r.aberturas_conferidas
+  const fechamentos = comCautela ? r.fechamentos : r.fechamentos_conferidos
+  return { aberturas, fechamentos, saldo: aberturas - fechamentos, em_breve: r.em_breve }
+}
+
+/** O rodapé do card no modo semanal: as regras da conta e o que ficou de fora, tirados do payload. */
+export function rodapeSemanal(m: RedeCrescimento): string {
+  const partes = partesDasUnidades(m)
+  const s = m.semanal
+  if (s?.disponivel) {
+    const semanas = s.semanas ? ` (${num(s.semanas)} ${plural(s.semanas, 'coleta', 'coletas')})` : ''
+    partes.push(
+      `Aberturas, fechamentos e saldo: coleta semanal dos sites das redes, acumulada de ${diaMes(s.de)} a ` +
+        `${diaMes(s.ate)}${semanas}. Abertura é unidade que aparece pela primeira vez; fechamento, a que sai e ` +
+        'não volta por duas coletas seguidas. Troca de nome ou de endereço no site, a até 1 km, não conta.',
+    )
+    const pendentes = s.pendentes?.unidades ?? 0
+    if (pendentes) {
+      partes.push(
+        `${num(pendentes)} ${plural(pendentes, 'saída aguarda', 'saídas aguardam')} a segunda coleta para contar como fechamento.`,
+      )
+    }
+    const recalibradas = [...new Set((s.recalibracoes ?? []).map((r) => r.rede))]
+    if (recalibradas.length) {
+      partes.push(
+        `Ficam fora as semanas em que o coletor refez o cadastro de uma rede de uma vez (${listaNomes(recalibradas)}).`,
+      )
+    }
+    const ampliadas = [...new Set((s.cobertura_redes ?? []).map((r) => r.rede))]
+    if (ampliadas.length) {
+      partes.push(
+        `Também ficam fora as unidades que o coletor passou a achar de uma vez numa rede, que não são aberturas (${listaNomes(ampliadas)}).`,
+      )
+    }
+    partes.push('"Em breve": anúncios que seguiam sem inaugurar na última coleta.')
+    const saltos = (s.cobertura_agregador ?? []).filter((c) => c.sentido === 'entradas')
+    if (saltos.length) {
+      partes.push(
+        `Wellhub: as entradas de ${saltos.map((c) => diaMes(c.ate)).join(' e ')} ficam fora, porque o coletor ` +
+          'ampliou de uma vez as academias que enxerga.',
+      )
+    }
+    partes.push('Saída do site nem sempre é fechamento.')
+  }
+  partes.push('Estúdios boutique ficam fora (DEC-056).')
+  return partes.join(' ')
+}
+
+/** Legenda da lista semanal na ficha da unidade. */
+export function legendaSemanal(s: { de?: string | null; ate?: string | null } | undefined): string {
+  if (!s?.de || !s?.ate) return ''
+  return (
+    `Coleta semanal de ${diaMes(s.de)} a ${diaMes(s.ate)}, acumulada: abertura é unidade nova no site da rede; ` +
+    'fechamento, a que saiu e não voltou por duas coletas.'
+  )
 }
 
 /** Legenda da movimentação na ficha da unidade: até quando vai cada foto do pacote. */
