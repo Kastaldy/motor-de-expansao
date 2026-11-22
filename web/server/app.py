@@ -5284,6 +5284,9 @@ def me(
     # com esta chave. Só existe com o banco no comando (sem ele não há perfil `master`).
     if acesso.banco_no_comando() and "masters" in abas:
         resposta["masters_proprio"] = acesso.ve_so_o_proprio_master(remote_user)
+        # A trilha "Meu territorio" do Inicio: a do master com login proprio e a de quem tem
+        # `masters.inicio_testar` (DEC-090: o Growth, para testar e avaliar).
+        resposta["trilha_do_master"] = acesso.ve_a_trilha_do_master(remote_user)
     # DEC-090: os avisos que chegam a esta pessoa (o sino da barra lateral so' aparece com eles).
     # AUSENTE sem banco ou sem aviso nenhum, como as chaves abaixo: a SPA trata como opcional.
     quem_avisos = _avisos_de_quem_pede(remote_user)
@@ -17046,6 +17049,10 @@ def api_master_solicitar_imovel(
         raise HTTPException(400, "Diga a região em que você gostaria de um imóvel.")
     _masters_exigir()
     permitidos = _masters_do_pedido(remote_user)
+    # Quem ve todos os masters (o Growth avaliando o Inicio do master, DEC-090) faz pedido de
+    # TESTE: nao grava e nao avisa ninguem -- o aviso de imovel e' do pedido de master.
+    if permitidos is None:
+        return {"ok": True, "registrado": False, "teste": True}
     from motor_expansao.db import eventos as db_eventos
 
     registrado = _masters_registrar(

@@ -657,7 +657,8 @@ export const api = {
 
   /** O Início do master (emenda 2 da DEC-089): pedir um imóvel numa região. */
   masterSolicitarImovel: (regiao: string) =>
-    pedir<{ ok: boolean; registrado: boolean }>(
+    /* `teste`: o pedido de quem vê todos os masters (o Growth avaliando, DEC-090) não grava. */
+    pedir<{ ok: boolean; registrado: boolean; teste?: boolean }>(
       '/api/masters/solicitar-imovel',
       { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ regiao }) },
       30_000,

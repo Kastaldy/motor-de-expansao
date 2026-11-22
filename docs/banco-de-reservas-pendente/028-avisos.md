@@ -20,6 +20,7 @@ barra lateral, com o número de não lidos.
 | `usuario_avisos` | Os avisos que uma pessoa recebe além dos do perfil dela, marcados na aba Acessos. |
 | `avisos_lidos` | Até que evento da trilha a pessoa já viu os avisos (o sino conta os de depois). |
 | `avisos.estudos_masters` | Capacidade nova: receber o aviso de estudo pedido por um master. |
+| `masters.inicio_testar` | Capacidade nova: ver e testar o Início do master (a trilha "Meu território") sem ser master. |
 
 ## Decisões de desenho
 
@@ -32,6 +33,11 @@ barra lateral, com o número de não lidos.
   por isso a lista por pessoa, no molde da `usuario_paises` (021) e da `usuario_masters` (025),
   editada na aba Acessos. A lista também serve para dar o aviso de estudo a alguém de fora do
   Growth.
+- **O Growth avalia o Início do master** (Juan, 22/11/2026: "seria bom a growth terem essa nova
+  vista, para testes ou avaliar"). Capacidade, e não nome de perfil, como todo o RBAC: Líderes
+  entram com uma linha em `perfil_permissoes`. Ela só liga a trilha na tela (`/api/me`); as rotas
+  dos dois pedidos já aceitam quem tem `masters.ver`. O pedido de quem vê todos os masters é
+  teste: não vira aviso.
 - **`aviso` é valor controlado, e não FK.** A lista é curta e fechada e cresce por migration: o
   CHECK `chk_usuario_avisos_tipo` recusa o que o piloto não sabe mostrar.
 - **"Lido até" em vez de "lido um a um".** Abrir o sino marca tudo o que estava na lista; uma linha
@@ -92,7 +98,10 @@ CREATE TABLE avisos_lidos (
 -- Descricao com o mesmo cuidado das outras: ela vira ROTULO DE TELA (convencoes §5).
 -- ---------------------------------------------------------------------------------------------
 INSERT INTO permissoes (chave, descricao_permissao) VALUES
-  ('avisos.estudos_masters', 'Receber o aviso de estudo pedido por um master'); -- GET /api/avisos
+  ('avisos.estudos_masters', 'Receber o aviso de estudo pedido por um master'), -- GET /api/avisos
+  -- So' liga a trilha "Meu territorio" no Inicio (`trilha_do_master` do /api/me); os pedidos
+  -- seguem o gate de sempre (`masters.ver`). Juan, 22/11/2026: o Growth testa e avalia.
+  ('masters.inicio_testar', 'Ver e testar o Início do master');
 
 -- O perfil `growth` inteiro (decisao de produto de 19/11/2026, DEC-090). Escrito como consulta, e
 -- nao com id literal, pelo mesmo motivo da 012. A trigger de auditoria do D19 grava
@@ -102,7 +111,8 @@ SELECT p.id_perfil, pe.id_permissao
 FROM perfis p
 JOIN permissoes pe ON TRUE
 WHERE (p.nome_perfil, pe.chave) IN (
-  ('growth', 'avisos.estudos_masters')
+  ('growth', 'avisos.estudos_masters'),
+  ('growth', 'masters.inicio_testar')
 );
 
 COMMIT;
@@ -111,12 +121,12 @@ COMMIT;
 ## Verificação (não vai para a migration)
 
 ```sql
--- 1. Só o perfil growth tem `avisos.estudos_masters`.
+-- 1. Só o perfil growth tem as duas capacidades novas.
 SELECT p.nome_perfil, pe.chave
 FROM perfil_permissoes pp
 JOIN perfis p ON p.id_perfil = pp.id_perfil
 JOIN permissoes pe ON pe.id_permissao = pp.id_permissao
-WHERE pe.chave = 'avisos.estudos_masters'
+WHERE pe.chave IN ('avisos.estudos_masters', 'masters.inicio_testar')
 ORDER BY 1;
 
 -- 2. Aviso fora da lista é recusado: deve FALHAR com check_violation.

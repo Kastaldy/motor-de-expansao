@@ -1,6 +1,6 @@
 -- ARQUIVO GERADO -- nao editar a mao.
 -- Origem: banco-de-reservas/sql/028-avisos.md (primeiro bloco ```sql).
--- sha256 do bloco extraido: b3d80a72afa0932b351fabdef0df247e698382e0fac66b0873bd320adb482b8e
+-- sha256 do bloco extraido: 636a3c368bad64ba01c3834ffc00e98295f3d9f3d93f803f934520dde393a53b
 -- Regenerar: python scripts/extrair_migracoes.py --origem <.../banco-de-reservas/sql>
 --
 -- O `banco-de-reservas` e' a fonte da verdade do DESENHO (convencoes §7): mudanca de
@@ -43,7 +43,10 @@ CREATE TABLE avisos_lidos (
 -- Descricao com o mesmo cuidado das outras: ela vira ROTULO DE TELA (convencoes §5).
 -- ---------------------------------------------------------------------------------------------
 INSERT INTO permissoes (chave, descricao_permissao) VALUES
-  ('avisos.estudos_masters', 'Receber o aviso de estudo pedido por um master'); -- GET /api/avisos
+  ('avisos.estudos_masters', 'Receber o aviso de estudo pedido por um master'), -- GET /api/avisos
+  -- So' liga a trilha "Meu territorio" no Inicio (`trilha_do_master` do /api/me); os pedidos
+  -- seguem o gate de sempre (`masters.ver`). Juan, 22/11/2026: o Growth testa e avalia.
+  ('masters.inicio_testar', 'Ver e testar o Início do master');
 
 -- O perfil `growth` inteiro (decisao de produto de 19/11/2026, DEC-090). Escrito como consulta, e
 -- nao com id literal, pelo mesmo motivo da 012. A trigger de auditoria do D19 grava
@@ -53,7 +56,8 @@ SELECT p.id_perfil, pe.id_permissao
 FROM perfis p
 JOIN permissoes pe ON TRUE
 WHERE (p.nome_perfil, pe.chave) IN (
-  ('growth', 'avisos.estudos_masters')
+  ('growth', 'avisos.estudos_masters'),
+  ('growth', 'masters.inicio_testar')
 );
 
 COMMIT;

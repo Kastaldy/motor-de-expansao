@@ -478,6 +478,8 @@ export function PassoImovel() {
   const [texto, setTexto] = useState('')
   const [estado, setEstado] = useState<'editando' | 'enviando' | 'enviado' | 'erro'>('editando')
   const [erro, setErro] = useState<string | null>(null)
+  // O pedido de quem vê todos os masters (o Growth avaliando o Início do master, DEC-090) é teste.
+  const [teste, setTeste] = useState(false)
   const campo = useRef<HTMLTextAreaElement>(null)
 
   useEffect(() => {
@@ -489,7 +491,8 @@ export function PassoImovel() {
     setEstado('enviando')
     setErro(null)
     try {
-      await api.masterSolicitarImovel(texto.trim())
+      const r = await api.masterSolicitarImovel(texto.trim())
+      setTeste(r.teste === true)
       setEstado('enviado')
     } catch (e) {
       setErro(e instanceof ApiError ? e.message : 'Não foi possível enviar o pedido.')
@@ -501,7 +504,11 @@ export function PassoImovel() {
     return (
       <div style={PAINEL}>
         <div style={MIOLO}>
-          <Aviso>Pedido enviado. A expansão vai procurar imóveis em: {texto.trim()}</Aviso>
+          <Aviso>
+            {teste
+              ? `Pedido de teste: como você vê todos os masters, ele não foi gravado e ninguém foi avisado. Região: ${texto.trim()}`
+              : `Pedido enviado. A expansão vai procurar imóveis em: ${texto.trim()}`}
+          </Aviso>
           <button type="button" onClick={() => { setTexto(''); setEstado('editando') }} style={BOTAO_DO_PASSO(true)}>
             Pedir outra região
           </button>

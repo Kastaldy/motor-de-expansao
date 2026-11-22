@@ -5395,5 +5395,7 @@ Mercado, concorrentes, pinos Ultra e malha do Censo vêm dos arquivos que o moto
 
 **O que entrega.** Um sino no rodapé da barra lateral, para quem recebe algum aviso, com o número de não lidos. Quando um master pede um estudo pelo Início, o aviso chega ao perfil Growth inteiro (capacidade `avisos.estudos_masters`): a hora, quem pediu, o master, o lugar (bairro e município) e a coordenada, e "Fora da área" quando for. Quando pede um imóvel, chega a quem tem o aviso marcado na aba Acessos (a Priscila): a hora, quem pediu, o master e a região. O aviso é o evento da trilha (`estudo.solicitado`, novo, e `imovel.solicitado`); a 028 cria só quem recebe (`usuario_avisos`) e até onde cada pessoa leu (`avisos_lidos`).
 
+**O Growth no Início do master** (22/11/2026, pedido do Juan na prévia). A capacidade `masters.inicio_testar` (mesma 028, só para o perfil Growth) liga a trilha "Meu território" no Início do Growth, para testar e avaliar a tela do master. O pedido de imóvel de quem vê todos os masters é teste: não grava e não avisa.
+
 **Na VPS, depois do merge.** (1) Aplicar a 028 (`aplicar --simular`, `aplicar`, `conferir`); (2) `GRANT SELECT, INSERT, UPDATE, DELETE ON usuario_avisos TO app;` e conferir `avisos_lidos` com `\dp` (o default privilege dá `SELECT`, `INSERT` e `UPDATE`); (3) `privilegios`; (4) na aba Acessos, "Editar avisos" na linha da Priscila e marcar "Imóvel pedido por um master".
 

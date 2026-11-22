@@ -285,7 +285,7 @@ modelo): o master vai em `metadados` (`masters`, os ids da config dos territóri
 
 | `tipo` | `entidade` | `metadados` | grava? |
 |---|---|---|---|
-| `imovel.solicitado` | — | `masters`, `regiao` (o texto do master, até 300 caracteres), `origem` | **sim** (emenda 2 da DEC-089); vira o aviso de imóvel |
+| `imovel.solicitado` | — | `masters`, `regiao` (o texto do master, até 300 caracteres), `origem` | **sim** (emenda 2 da DEC-089); vira o aviso de imóvel. Só o pedido de master: o de quem vê todos os masters (o Growth avaliando o Início, DEC-090) é teste e não grava |
 | `estudo.solicitado` | — | `masters`, `lat`, `lng`, `fora_da_area`, `lugar` (bairro e município, ou nulo), `report_id`, `origem` | **sim** (DEC-090); vira o aviso de estudo do Growth. Substitui o `estudo.fora_da_area` da emenda 2, que só gravava o estudo de fora da área |
 
 ## 3. O que o esquema precisa acomodar

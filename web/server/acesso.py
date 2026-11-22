@@ -880,6 +880,25 @@ def ve_so_o_proprio_master(usuario: object) -> bool:
     )
 
 
+CAPACIDADE_TESTAR_INICIO_DO_MASTER = "masters.inicio_testar"
+
+
+def ve_a_trilha_do_master(usuario: object) -> bool:
+    """A trilha "Meu territorio" do Inicio aparece para a pessoa? Para o master com login proprio
+    (`ve_so_o_proprio_master`) e para quem tem `masters.inicio_testar` (DEC-090: o Growth, para
+    testar e avaliar a tela do master). So' informa a tela: os pedidos seguem o gate de sempre
+    (`masters.ver` ou `masters.ver_proprio`). Qualquer falha vira `False`: o Inicio de sempre."""
+    if ve_so_o_proprio_master(usuario):
+        return True
+    try:
+        from motor_expansao.db import rbac
+
+        quem = rbac.identidade(normalizar_usuario(usuario))
+    except Exception:  # noqa: BLE001 — so' informa a tela; quem barra e' o gate
+        return False
+    return quem is not None and quem.pode(CAPACIDADE_TESTAR_INICIO_DO_MASTER)
+
+
 def rota_da_rede_propria(path: str, metodo: str) -> bool:
     """`True` = esta rota+metodo esta' no alcance de `rede.ver_propria` (allowlist fechada).
 

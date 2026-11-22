@@ -980,6 +980,21 @@ def test_o_master_pede_um_imovel_numa_regiao(
     )
 
 
+def test_o_pedido_de_imovel_de_quem_ve_todos_os_masters_e_teste(
+    masters: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """DEC-090: o Growth avaliando o Inicio do master pede um imovel; o pedido e' de TESTE, nao
+    grava (logo nao avisa a pessoa do aviso de imovel) e a tela sabe disso pela chave `teste`."""
+    from motor_expansao.db import eventos as db_eventos
+
+    _login(monkeypatch, "Fulano", {"masters.ver", "masters.inicio_testar"})
+    gravados: list[dict[str, Any]] = []
+    monkeypatch.setattr(db_eventos, "registrar_imovel_solicitado", lambda **kw: gravados.append(kw))
+    r = pilot.api_master_solicitar_imovel(pilot.PedidoDeImovelIn(regiao="Centro"), remote_user="x")
+    assert r == {"ok": True, "registrado": False, "teste": True}
+    assert gravados == []
+
+
 def test_o_pedido_de_imovel_nao_cai_quando_a_trilha_falha(
     masters: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -1108,6 +1123,32 @@ def test_o_api_me_diz_quando_o_inicio_e_o_do_master(monkeypatch: pytest.MonkeyPa
     assert r["masters_proprio"] is True
     _login(monkeypatch, "Fulano", {"masters.ver", "rede.ver"})
     assert pilot.me(remote_user="alguem")["masters_proprio"] is False
+
+
+def test_a_trilha_do_master_no_inicio_e_do_master_e_de_quem_a_avalia(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """DEC-090 (22/11/2026, Juan: "seria bom a growth terem essa nova vista, para testes ou
+    avaliar"): `trilha_do_master` liga a trilha "Meu territorio" para o master com login proprio
+    e para quem tem `masters.inicio_testar` (o Growth); so' a aba Masters (Lideres) nao basta."""
+    _login(monkeypatch, "Master Um", {"rede.ver_propria", "masters.ver_proprio"})
+    assert pilot.me(remote_user="alguem")["trilha_do_master"] is True
+    _login(monkeypatch, "Fulano", {"masters.ver", "rede.ver", "masters.inicio_testar"})
+    r = pilot.me(remote_user="alguem")
+    assert r["trilha_do_master"] is True
+    assert r["masters_proprio"] is False
+    _login(monkeypatch, "Fulano", {"masters.ver", "rede.ver"})
+    assert pilot.me(remote_user="alguem")["trilha_do_master"] is False
+
+
+def test_a_migration_028_da_a_trilha_e_o_aviso_de_estudo_so_ao_growth() -> None:
+    sql = (_REPO / "src/motor_expansao/db/migracoes/028-avisos.sql").read_text(encoding="utf-8")
+    assert "('masters.inicio_testar'," in sql
+    concessoes = sql.split("INSERT INTO perfil_permissoes")[1]
+    assert "('growth', 'masters.inicio_testar')" in concessoes
+    assert "('growth', 'avisos.estudos_masters')" in concessoes
+    for fora in ("master", "lideres", "consultoria", "expansao"):
+        assert f"('{fora}'," not in concessoes
 
 
 def test_o_api_me_diz_os_avisos_que_chegam_a_pessoa(monkeypatch: pytest.MonkeyPatch) -> None:

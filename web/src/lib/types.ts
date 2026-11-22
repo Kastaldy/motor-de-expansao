@@ -13,6 +13,9 @@ export interface MePayload {
   /** O master com login próprio (emenda 2 da DEC-089): vê só o próprio painel e tem o Início
    *  dele. Ausente sem banco ou para quem não tem a aba Masters. */
   masters_proprio?: boolean
+  /** A trilha "Meu território" do Início (DEC-090): a do master com login próprio e a de quem a
+   *  testa e avalia (o Growth, `masters.inicio_testar`). Ausente: vale `masters_proprio`. */
+  trilha_do_master?: boolean
   /** Os avisos que chegam a esta pessoa (DEC-090): o sino da barra lateral só aparece com eles.
    *  Ausente sem banco ou sem aviso nenhum. Quem valida e estreita é `avisosDoPayload`. */
   avisos?: unknown
