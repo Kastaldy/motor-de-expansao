@@ -28,7 +28,8 @@ from motor_expansao.masters.meta import meta_do_ano
 from motor_expansao.masters.territorios import Master, normalizar
 
 # Mesma régua do residual (`pipelines.calcular_colunas_mercado.CAPACIDADE_DEFAULT_CONCORRENTE_ALUNOS`;
-# a igualdade é travada por teste para as duas não divergirem em silêncio).
+# a igualdade é travada por `test_a_capacidade_da_unidade_e_a_regua_do_residual_do_motor`, em
+# `tests/unit/test_relatorio_masters.py`, para as duas não divergirem em silêncio).
 CAPACIDADE_UNIDADE_ALUNOS = 2_500.0
 
 MES_MADURA = 24  # a partir daqui a unidade é comparada com as maduras do mesmo mês-calendário
