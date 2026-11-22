@@ -443,13 +443,21 @@ def _medir_evento(
         var_u = float(d / a - 1) if a else float("nan")
         var_rede = _variacao_rede(fato, {uid, vid}, pre_p, pos_p, col)
         out[f"var_{col}"], out[f"var_{col}_rede"] = var_u, var_rede
-        out[f"efeito_{col}"] = float((1 + var_u) / (1 + var_rede) - 1)
+        out[f"efeito_{col}"] = _efeito(var_u, var_rede)
         vizinha_depois = sv.reindex(pos_p)[col].mean() if not sv.empty else float("nan")
         out[f"{col}_vizinha_depois"] = float(vizinha_depois)
         out[f"var_{col}_par"] = (
             float((d + vizinha_depois) / a - 1) if a and pd.notna(vizinha_depois) else float("nan")
         )
     return out
+
+
+def _efeito(var_u: float, var_rede: float) -> float:
+    """O efeito na unidade descontada a rede: (1 + variação dela) / (1 + variação da rede) - 1.
+    Rede que caiu a zero na janela (variação de -100%) não serve de base: NaN, e não
+    ZeroDivisionError derrubando o relatório (achado da revisão automática do #568)."""
+    base = 1 + var_rede
+    return float((1 + var_u) / base - 1) if base else float("nan")
 
 
 def _variacao_rede(
@@ -534,8 +542,10 @@ def progresso_meta(
     n_pipe = int((pipeline["master"].map(normalizar) == alvo).sum()) if len(pipeline) else 0
     prazo = pd.Timestamp(meta.prazo) if meta.prazo else None
     meses = None
+    vencido = False
     if prazo is not None:
-        meses = max(0, (prazo.year - hoje.year) * 12 + prazo.month - hoje.month)
+        diferenca = (prazo.year - hoje.year) * 12 + prazo.month - hoje.month
+        meses, vencido = max(0, diferenca), diferenca < 0
     q = meta.quantidade
     faltam = max(0, q - len(contam)) if q is not None else None
     return {
@@ -549,7 +559,13 @@ def progresso_meta(
         "pct_com_pipeline": (len(contam) + n_pipe) / q if q else float("nan"),
         "faltam": faltam,
         "meses_ate_prazo": meses,
-        "ritmo_necessario_mes": (faltam / meses) if (faltam and meses) else 0.0,
+        "prazo_vencido": vencido,
+        # Faltando unidades sem mês pela frente (prazo neste mês ou vencido) ou sem prazo, não há
+        # ritmo a pedir: NaN, e o PDF diz o caso em palavras (achado da revisão automática do #568:
+        # o "0,0 por mês" lia como "nada a fazer").
+        "ritmo_necessario_mes": (
+            (faltam / meses) if (faltam and meses) else (float("nan") if faltam else 0.0)
+        ),
         "ritmo_atual_mes": aberturas_12m / 12,
         "por_ano": meta.por_ano,
         "ano": hoje.year,

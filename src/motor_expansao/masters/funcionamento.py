@@ -84,6 +84,19 @@ def janela_madura(
     return g.reset_index()
 
 
+def _razao(num: pd.Series, den: pd.Series) -> pd.Series:
+    """`num / den` só onde o denominador é positivo (NaN no resto): sem `inf` entrando na mediana."""
+    return num / den.where(den > 0)
+
+
+def _terco(v: pd.Series) -> pd.Series:
+    """O terço (0, 1, 2) de cada valor. Pela ORDEM (`rank` com desempate pela posição), e não pelo
+    valor: com valores repetidos entre unidades, `qcut` pelo valor levanta "Bin edges must be
+    unique" e derruba o slide (achado da revisão automática do #568). Sem repetição, os grupos são
+    os mesmos do `qcut` pelo valor."""
+    return pd.qcut(v.rank(method="first"), 3, labels=False)
+
+
 def _mediana(v: pd.Series) -> float:
     v = v.dropna()
     return float(v.median()) if len(v) else float("nan")
@@ -416,7 +429,7 @@ def padrao_faturamento(u: pd.DataFrame, fato: pd.DataFrame, master: Master) -> d
             "fat_m12": _mediana(fat.loc[idx, MESES_RAMPA]),
             "cheias_m3": int((sub[3] >= MARCO_RAMPA).sum()),
             "n_m3": int(sub[3].notna().sum()),
-            "alunos_m3": _mediana(atv.loc[idx, 3] / atv.loc[idx, MESES_RAMPA]),
+            "alunos_m3": _mediana(_razao(atv.loc[idx, 3], atv.loc[idx, MESES_RAMPA])),
             "ticket_m3": _mediana(ticket.loc[idx, 3]),
             "ticket_m12": _mediana(ticket.loc[idx, MESES_RAMPA]),
             # Faturamento por aluno do 3º mês sobre o do 12º, unidade a unidade (mesma régua dos alunos).
@@ -563,9 +576,7 @@ def faturamento_tendencia(
         renda = mm["iso_renda_pc__pe_15"] if "iso_renda_pc__pe_15" in mm.columns else None
         tercos = []
         if renda is not None and renda.notna().sum() >= 3 * N_MIN_GRUPO:
-            ok = mm[renda.notna()].assign(
-                terco=lambda x: pd.qcut(x["iso_renda_pc__pe_15"], 3, labels=False)
-            )
+            ok = mm[renda.notna()].assign(terco=lambda x: _terco(x["iso_renda_pc__pe_15"]))
             for k in range(3):
                 t = ok[ok["terco"] == k]
                 tercos.append(
