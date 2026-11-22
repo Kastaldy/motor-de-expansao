@@ -8,7 +8,12 @@ import pytest
 
 from motor_expansao.masters import analise as A
 from motor_expansao.masters import area as AR
-from motor_expansao.masters.gerar import Base, _marcar_unidades_do_master, montar_dados
+from motor_expansao.masters.gerar import (
+    Base,
+    _marcar_unidades_do_master,
+    _regiao_dos_pontos,
+    montar_dados,
+)
 from motor_expansao.masters.relatorio_pdf import _t, fmt_pct, fmt_reais, gerar_pdf
 from motor_expansao.masters.territorios import masters_de_dict, municipios_sem_match, normalizar
 
@@ -448,6 +453,30 @@ def test_unidade_do_master_casa_com_o_pino_livre_mais_perto():
     assert len(up) == 3
 
 
+def test_cada_unidade_vai_para_a_area_do_hexagono_do_pino():
+    """O mapa de cada área (19/11/2026, Juan: o DF/GO com um mapa para o DF e outro para Goiás)
+    põe a unidade na área do hexágono do pino, a regra do relatório por área; a unidade do master
+    sem pino fica com a área do hexágono mais perto."""
+    m = pd.DataFrame(
+        {
+            "hex_id": [HEX["h1"], HEX["h3"]],
+            "lat": [COORD["h1"][0], COORD["h3"][0]],
+            "lng": [COORD["h1"][1], COORD["h3"][1]],
+            "regiao_id": ["abcd", "litoral"],
+        }
+    )
+    pontos = pd.DataFrame(
+        {
+            # O pino de Santos, com a coordenada puxada para o ABC: vale o hexágono do pino.
+            "lat": [-23.70, -23.67, -23.97],
+            "lng": [-46.50, -46.54, -46.33],
+            "hex_id_res7": [HEX["h3"], None, None],
+        }
+    )
+    assert _regiao_dos_pontos(pontos, m) == ["litoral", "abcd", "litoral"]
+    assert _regiao_dos_pontos(pontos.iloc[:0], m) == []
+
+
 def test_pdf_com_estudo_de_area(masters, tmp_path, renda_identidade):
     dim, fato = _painel()
     inaug, pipe = _planilhas()
@@ -484,12 +513,27 @@ def test_pdf_com_estudo_de_area(masters, tmp_path, renda_identidade):
     from motor_expansao.masters.relatorio_pdf import legenda_do_mapa
 
     itens = legenda_do_mapa(d)
-    assert [r for _, r in itens][: len(d.master.regioes)] == [r.nome for r in d.master.regioes]
-    assert ("sua", "Sua unidade") in itens
+    # O limite de cada área e uma logo só, "Unidades" (19/11/2026, Juan: "junte os dois").
+    assert itens == [*(("limite", r.nome) for r in d.master.regioes), ("unidades", "Unidades")]
     sem_ultra = legenda_do_mapa(replace(d, ultra_pontos=pd.DataFrame()))
-    assert not any(tipo in ("sua", "outra") for tipo, _ in sem_ultra)
-    # As 10 páginas do modelo do estudo de área (capa ... análise de oportunidade).
-    assert pdf.count(b"/Type /Page") - pdf.count(b"/Type /Pages") == 10
+    assert not any(tipo == "unidades" for tipo, _ in sem_ultra)
+    # O contorno de cada área vem pronto, de todos os hexágonos dela.
+    assert set(d.contornos) == {r.id for r in d.master.regioes}
+    # As 10 páginas do modelo do estudo de área (capa ... análise de oportunidade), com o mapa e
+    # os mapas de calor UMA VEZ POR ÁREA: o "lit" tem duas, então 12 (19/11/2026, Juan: "um por
+    # área").
+    assert pdf.count(b"/Type /Page") - pdf.count(b"/Type /Pages") == 12
+    # Cada área só com o que é dela: os hexágonos, as unidades e o contorno.
+    from motor_expansao.masters.relatorio_pdf import _por_area
+
+    areas = _por_area(d)
+    assert [nome for _, nome in areas] == [r.nome for r in d.master.regioes]
+    for da, _ in areas:
+        (r,) = da.master.regioes
+        assert set(da.hexes["regiao_id"]) <= {r.id}
+        assert set(da.ultra_pontos["regiao_id"]) <= {r.id}
+        assert set(da.contornos) == {r.id}
+    assert sum(len(da.hexes) for da, _ in areas) == len(d.hexes)
 
 
 def test_referencia_ocupacao_usa_so_cidades_grandes():

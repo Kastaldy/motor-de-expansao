@@ -25,7 +25,7 @@ from __future__ import annotations
 
 import io
 from collections.abc import Callable, Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any
 
@@ -183,6 +183,9 @@ class DadosRelatorio:
     hexes: pd.DataFrame = field(default_factory=pd.DataFrame)
     setores_mapa: pd.DataFrame = field(default_factory=pd.DataFrame)
     ultra_pontos: pd.DataFrame = field(default_factory=pd.DataFrame)
+    #: O contorno de cada área (`masters.mapa.contorno`), por `regiao_id`: o mapa do território
+    #: só demarca a área (19/11/2026). Vazio = o contorno sai dos hexágonos povoados.
+    contornos: dict[str, Any] = field(default_factory=dict)
     #: Slides a mais do modelo novo (`masters.funcionamento.montar`); vazio = modelo antigo.
     funcionamento: dict[str, Any] = field(default_factory=dict)
     #: Régua nacional da ocupação do mercado (`analise.referencia_ocupacao`); None = sem régua.
@@ -375,29 +378,33 @@ def pino_ultra(assets_dir: Path | None, px: int = 64) -> bytes | None:
     return buf.getvalue()
 
 
-#: Até quantos hexágonos o mapa do território desenha a borda branca de cada um (acima, a borda
-#: domina a cor: Cotia, ~200 hexágonos, fica com borda; um estado inteiro, sem).
-HEX_COM_BORDA_MAX = 5000
+def _contorno_dos_hexagonos(hex_ids: Sequence[str]) -> list[Any]:
+    """O contorno da união dos hexágonos, quando o relatório não traz o pronto (`d.contornos`)."""
+    from motor_expansao.masters.mapa import contorno
+
+    return contorno(list(hex_ids))
 
 
 def _mapa_territorio(
     d: DadosRelatorio, tamanho: tuple[float, float], icone: bytes | None = None
 ) -> io.BytesIO:
     hx = d.hexes
-    cores = _cor_regiao(d)
     fig, ax = plt.subplots(figsize=tamanho)
-    # Território grande (estado inteiro): sem a borda branca de cada hexágono, que, com o hexágono
-    # minúsculo na página, clareava a cor e a afastava da legenda (18/11: Bahia saía lilás).
-    grande = len(hx) > HEX_COM_BORDA_MAX
-    faces = [cores.get(r, "#cccccc") for r in hx["regiao_id"]]
-    pc = PolyCollection(
-        _poligonos(list(hx["hex_id"])),
-        facecolors=faces,
-        edgecolors=faces if grande else "white",
-        linewidths=0.15,
-        alpha=0.85,
-    )
-    ax.add_collection(pc)
+    # Só a DEMARCAÇÃO da área, sem pintar (19/11/2026, Juan: "o mapa está rosa; deixe apenas a
+    # demarcação da área", como o mapa da aba do master): o contorno de cada área, em cinza.
+    poligonos = [p for r in d.master.regioes for p in d.contornos.get(r.id, [])]
+    if not poligonos:
+        poligonos = _contorno_dos_hexagonos(list(hx["hex_id"]))
+    for poligono in poligonos:
+        for anel in poligono:
+            ax.plot(
+                [p[0] for p in anel],
+                [p[1] for p in anel],
+                color=_rgb(TINTA_2),
+                linewidth=1.3,
+                solid_joinstyle="round",
+                zorder=2,
+            )
     ax.autoscale_view()
     # Hexágono isolado longe do resto (a ilha da Trindade é de Vitória/ES) não espreme o mapa:
     # o enquadramento vai até 3 vezes a distância de 99% dos hexágonos ao centro.
@@ -412,30 +419,24 @@ def _mapa_territorio(
     # visualização"): a legenda fica numa linha acima do mapa, na página.
     up = d.ultra_pontos
     if not up.empty:
-        # A logo da Ultra no ponto de cada unidade (17/11, Juan), o pino do motor; as outras,
-        # menores e mais claras. Sem o pino, os círculos de antes. A legenda sai fora do mapa.
+        # A logo da Ultra no ponto de cada unidade (17/11, Juan), o pino do motor, a MESMA para
+        # todas (19/11/2026, Juan: "deixe apenas 'Unidades', junte os dois"; antes as do master e
+        # as outras saíam em dois tamanhos). Sem o pino, círculos. A legenda sai fora do mapa.
         img = plt.imread(io.BytesIO(icone), format="png") if icone else None
-        for meu, zoom, alfa, ordem in ((False, 0.15, 0.55, 3), (True, 0.2, 1.0, 4)):
-            sub = up[up["do_master"] == meu]
-            if img is None:
-                ax.scatter(
-                    sub["lng"],
-                    sub["lat"],
-                    s=34 if meu else 16,
-                    c="#202020" if meu else "white",
-                    edgecolors="white" if meu else "#202020",
-                    linewidths=0.8,
-                    zorder=ordem,
-                )
-                continue
-            for lng, lat in zip(sub["lng"], sub["lat"], strict=True):
+        if img is None:
+            ax.scatter(
+                up["lng"],
+                up["lat"],
+                s=34,
+                c="#202020",
+                edgecolors="white",
+                linewidths=0.8,
+                zorder=4,
+            )
+        else:
+            for lng, lat in zip(up["lng"], up["lat"], strict=True):
                 ax.add_artist(
-                    AnnotationBbox(
-                        OffsetImage(img, zoom=zoom, alpha=alfa),
-                        (lng, lat),
-                        frameon=False,
-                        zorder=ordem,
-                    )
+                    AnnotationBbox(OffsetImage(img, zoom=0.2), (lng, lat), frameon=False, zorder=4)
                 )
     _eixo_mapa(ax, float(hx["lat"].mean()))
     return _png(fig)
@@ -696,8 +697,45 @@ def _visao_geral(pdf: _UltraPDF, d: DadosRelatorio, assets: dict[str, bytes | No
         )
 
 
-def _pagina_mapa(pdf: _UltraPDF, d: DadosRelatorio, assets: dict[str, bytes | None]) -> None:
-    y = _pagina(pdf, assets, "Estudo de Área - Mapa do território", d, cor=MAGENTA)
+def _por_area(d: DadosRelatorio) -> list[tuple[DadosRelatorio, str | None]]:
+    """O relatório com duas ou mais áreas desenha o mapa e os mapas de calor UMA VEZ POR ÁREA
+    (19/11/2026, Juan, no DF/GO: o território junto é Goiás quase inteiro, com o DF minúsculo no
+    meio; "um por área: DF e Goiás"). Com uma área, o relatório inteiro, como antes."""
+    if len(d.master.regioes) < 2:
+        return [(d, None)]
+    return [(_recorte_da_area(d, r.id), r.nome) for r in d.master.regioes]
+
+
+def _recorte_da_area(d: DadosRelatorio, regiao_id: str) -> DadosRelatorio:
+    """Os dados dos mapas de UMA área: os hexágonos, os setores, as unidades e os municípios dela."""
+
+    def so(df: pd.DataFrame) -> pd.DataFrame:
+        if df.empty or "regiao_id" not in df.columns:
+            return df
+        return df[df["regiao_id"] == regiao_id].reset_index(drop=True)
+
+    regiao = next(r for r in d.master.regioes if r.id == regiao_id)
+    return replace(
+        d,
+        master=replace(d.master, regioes=(regiao,)),
+        hexes=so(d.hexes),
+        setores_mapa=so(d.setores_mapa),
+        ultra_pontos=so(d.ultra_pontos),
+        visao=so(d.visao),
+        contornos={k: v for k, v in d.contornos.items() if k == regiao_id},
+    )
+
+
+def _titulo_da_area(titulo: str, area: str | None) -> str:
+    return f"{titulo}: {area}" if area else titulo
+
+
+def _pagina_mapa(
+    pdf: _UltraPDF, d: DadosRelatorio, assets: dict[str, bytes | None], area: str | None = None
+) -> None:
+    y = _pagina(
+        pdf, assets, _titulo_da_area("Estudo de Área - Mapa do território", area), d, cor=MAGENTA
+    )
     if d.hexes.empty:
         _nota(pdf, y, "Sem hexágonos do motor para este território.")
         return
@@ -720,20 +758,17 @@ def _pagina_mapa(pdf: _UltraPDF, d: DadosRelatorio, assets: dict[str, bytes | No
     for linha in linhas:
         xl = (W - (sum(w for _, w in linha) - 24)) / 2
         for (tipo, rotulo), w_it in linha:
-            if tipo == "sua" or tipo == "outra":
-                lado = 14.0 if tipo == "sua" else 11.0
-                xi, yi = xl + (14 - lado) / 2, yl + (14 - lado) / 2
+            if tipo == "unidades":
                 if pino:
-                    pdf.image(io.BytesIO(pino), x=xi, y=yi, w=lado, h=lado)
-                    if tipo == "outra":
-                        # Mesmo clareamento do mapa: um véu branco sobre a logo.
-                        with pdf.local_context(fill_opacity=0.5):
-                            pdf.set_fill_color(255, 255, 255)
-                            pdf.rect(xi, yi, lado, lado, style="F")
+                    pdf.image(io.BytesIO(pino), x=xl, y=yl, w=14, h=14)
+                else:
+                    pdf.set_fill_color(32, 32, 32)
+                    pdf.rect(xl + 3, yl + 3, 8, 8, style="F", round_corners=True, corner_radius=4)
             else:
-                # A cor como ela sai no mapa (alfa 0,85 sobre o branco).
-                pdf.set_fill_color(*(round(c * 255) for c in _sobre_branco(_hex_rgba(tipo, 217))))
-                pdf.rect(xl, yl + 1, 14, 12, style="F", round_corners=True, corner_radius=2)
+                # O limite da área: o traço do contorno do mapa.
+                pdf.set_draw_color(*TINTA_2)
+                pdf.set_line_width(1.6)
+                pdf.line(xl, yl + 7, xl + 14, yl + 7)
             pdf.set_xy(xl + 20, yl)
             pdf.set_font("Helvetica", "B", 10.5)
             pdf.set_text_color(*TINTA)
@@ -751,23 +786,22 @@ def _pagina_mapa(pdf: _UltraPDF, d: DadosRelatorio, assets: dict[str, bytes | No
 
 
 def legenda_do_mapa(d: DadosRelatorio) -> list[tuple[str, str]]:
-    """Os itens da legenda do mapa do território: (cor da região ou "sua"/"outra", rótulo).
+    """Os itens da legenda do mapa do território: ("limite", nome da área) e ("unidades",
+    "Unidades").
 
-    As logos só entram quando há unidade daquele tipo no mapa (Ceará e Maranhão, sem nenhuma Ultra,
-    mostravam "Sua unidade" e "Outra unidade Ultra" à toa)."""
-    cores = _cor_regiao(d)
-    itens = [(cores[r.id], r.nome) for r in d.master.regioes]
-    up = d.ultra_pontos
-    if not up.empty and "do_master" in up.columns:
-        if up["do_master"].astype(bool).any():
-            itens.append(("sua", "Sua unidade"))
-        if (~up["do_master"].astype(bool)).any():
-            itens.append(("outra", "Outra unidade Ultra"))
+    Uma logo só, "Unidades" (19/11/2026, Juan: "tem dois ícones da Ultra; deixe apenas
+    'Unidades', junte os dois"), e só quando há unidade no mapa (Ceará e Maranhão, sem nenhuma
+    Ultra, mostravam a logo à toa)."""
+    itens = [("limite", r.nome) for r in d.master.regioes]
+    if not d.ultra_pontos.empty:
+        itens.append(("unidades", "Unidades"))
     return itens
 
 
-def _pagina_calor(pdf: _UltraPDF, d: DadosRelatorio, assets: dict[str, bytes | None]) -> None:
-    y = _pagina(pdf, assets, "Estudo de Área - Mapas de calor", d)
+def _pagina_calor(
+    pdf: _UltraPDF, d: DadosRelatorio, assets: dict[str, bytes | None], area: str | None = None
+) -> None:
+    y = _pagina(pdf, assets, _titulo_da_area("Estudo de Área - Mapas de calor", area), d)
     if d.setores_mapa.empty or d.hexes.empty:
         _nota(pdf, y, "Sem a base de setores do Censo para os mapas de calor deste território.")
         return
@@ -1379,8 +1413,10 @@ def gerar_pdf(d: DadosRelatorio, modelo: str = "antigo") -> bytes:
     _capa(pdf, d, assets)
     if d.tem_area:
         _visao_geral(pdf, d, assets)
-        _pagina_mapa(pdf, d, assets)
-        _pagina_calor(pdf, d, assets)
+        # Com duas ou mais áreas, o mapa e os mapas de calor de cada uma, em seguida.
+        for da, area in _por_area(d):
+            _pagina_mapa(pdf, da, assets, area)
+            _pagina_calor(pdf, da, assets, area)
     _pagina_regioes(pdf, d, assets)
     if d.tem_area:
         _pagina_bairros(pdf, d, assets)
