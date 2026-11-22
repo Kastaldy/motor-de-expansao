@@ -32,6 +32,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
+import numpy as np
 import openpyxl
 import pandas as pd
 
@@ -324,7 +325,11 @@ def planilha_do_relatorio(
         return nomes.get(v) if isinstance(v, str) else None
 
     def sim_nao(v: Any) -> str | None:
-        return "Sim" if v is True else "Não" if v is False else None
+        # `bool` do Python OU `numpy.bool_` (achado da revisão automática do #568): com `is True`,
+        # o valor numpy saía em branco no relatório. Nulo (None, NaN, NA) continua em branco.
+        if isinstance(v, (bool, np.bool_)):
+            return "Sim" if v else "Não"
+        return None
 
     inaug = pd.DataFrame(
         {

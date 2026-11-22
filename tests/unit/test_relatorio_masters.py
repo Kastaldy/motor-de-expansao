@@ -1479,3 +1479,29 @@ def test_a_razao_ignora_denominador_zero_em_vez_de_virar_inf():
     r = F._razao(pd.Series([10.0, 10.0, 10.0]), pd.Series([20.0, 0.0, float("nan")]))
     assert r.iloc[0] == pytest.approx(0.5)
     assert r.iloc[1:].isna().all()
+
+
+def test_o_relatorio_so_reaponta_a_renda_quando_o_staging_muda(tmp_path, monkeypatch):
+    """Achado médio da revisão automática do #568: cada PDF ou estudo chamava
+    `configurar_staging`, que zera os caches de renda do processo inteiro (as outras telas também
+    os leem). Agora só reaponta quando o staging é outro."""
+    from pathlib import Path
+
+    from motor_expansao.masters import gerar as G
+    from motor_expansao.renda import insumos
+
+    chamadas: list[Path] = []
+    monkeypatch.setattr(insumos, "_staging_configurado", tmp_path)
+
+    def configurar(path):
+        chamadas.append(Path(path))
+        insumos._staging_configurado = Path(path)
+
+    monkeypatch.setattr(insumos, "configurar_staging", configurar)
+    G._apontar_insumos_da_renda(tmp_path)
+    G._apontar_insumos_da_renda(str(tmp_path))
+    assert chamadas == []  # já aponta para lá: nenhum cache zerado
+    outro = tmp_path / "outro"
+    G._apontar_insumos_da_renda(outro)
+    G._apontar_insumos_da_renda(outro)
+    assert chamadas == [outro]  # staging novo: reaponta uma vez só
