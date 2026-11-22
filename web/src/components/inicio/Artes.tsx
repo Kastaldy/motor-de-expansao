@@ -445,37 +445,78 @@ const JANELAS_DO_PREDIO = [
   '138,67 145.8,63.1 145.8,55.1 138,59',
 ] as const
 
-/** O painel do master: o nome, os números e a barra da meta — o card que leva à tela Masters. */
+/** O painel do master, no tema do card do imóvel (19/11/2026, Juan: "deixe todos na temática da
+ *  primeira logo"; "a logo do meio, deixe ela com mais cara de painel"; e, nela, "tire o quadrado
+ *  em torno": sem o lote): uma tela em pé, em perspectiva, com o cabeçalho do master, os três
+ *  números e a barra até a meta, marcada em laranja. */
 function ArteMeuPainel() {
   return (
     <Quadro>
-      <rect x={40} y={22} width={160} height={108} rx={8} fill={CAIXA} stroke="var(--line-mid)" />
-      <circle cx={60} cy={42} r={8} fill="var(--ac)" fillOpacity={0.8} />
-      <rect x={74} y={37} width={70} height={6} rx={3} fill="var(--tx-sub)" fillOpacity={0.6} />
-      <rect x={74} y={46} width={44} height={4} rx={2} fill="var(--tx-sub)" fillOpacity={0.35} />
-      {[0, 1, 2].map((i) => (
-        <rect key={i} x={52 + i * 48} y={60} width={40} height={24} rx={4} fill={CAIXA_FUNDA} />
-      ))}
-      <rect x={52} y={98} width={136} height={8} rx={4} fill={CAIXA_FUNDA} />
-      <rect x={52} y={98} width={100} height={8} rx={4} fill="var(--gr-verde)" />
-      <rect x={160} y={92} width={2.5} height={20} fill="var(--gr-rosa)" />
+      {/* Sem o lote, a tela vem para o meio do quadro e um pouco maior. */}
+      <g transform="translate(-15.1 12.9) scale(1.15)">
+        {/* O pé da tela. */}
+        <ellipse cx={117.5} cy={86.25} rx={9} ry={4.5} fill="var(--tx-sub)" fillOpacity={0.35} />
+        <path d="M117.5 86.25V77.25" stroke="var(--tx-sub)" strokeWidth={3} strokeLinecap="round" />
+        {/* A espessura da tela (em cima e à direita) e a frente dela. */}
+        <polygon points="84,16 148,48 151,46.5 87,14.5" fill="var(--arte-face-luz)" stroke="var(--line-dashed)" strokeLinejoin="round" />
+        <polygon points="148,94 151,92.5 151,46.5 148,48" fill="var(--arte-face-luz)" stroke="var(--line-dashed)" strokeLinejoin="round" />
+        <polygon points="84,62 148,94 148,48 84,16" fill="var(--arte-face-sombra)" stroke="var(--line-dashed)" strokeLinejoin="round" />
+        {/* O cabeçalho: o master e o território. */}
+        <polygon points="89,30.5 96,34 96,27 89,23.5" fill="var(--ac)" fillOpacity={0.85} />
+        <path d="M100 30.5L128 44.5M100 34.5L116 42.5" stroke="var(--tx-sub)" strokeOpacity={0.6} strokeWidth={2.2} strokeLinecap="round" />
+        {/* Os três números. */}
+        {CARTOES_DO_PAINEL.map((c) => (
+          <polygon key={c} points={c} fill={CAIXA_FUNDA} stroke="var(--line-dashed)" strokeLinejoin="round" />
+        ))}
+        <path d="M92 43.5L100 47.5M112 53.5L120 57.5M132 63.5L140 67.5" stroke="var(--ac)" strokeWidth={2.2} strokeLinecap="round" />
+        {/* A barra até a meta, e a meta em laranja. */}
+        <polygon points="89,57.5 143,84.5 143,80 89,53" fill={CAIXA_FUNDA} />
+        <polygon points="89,57.5 127,76.5 127,72 89,53" fill="var(--gr-verde)" />
+        <path d="M132 82.5V71" stroke="var(--mst)" strokeWidth={2.6} strokeLinecap="round" />
+      </g>
     </Quadro>
   )
 }
 
-/** O estudo em PDF de um ponto: a folha com o pino e as linhas do texto. */
+/** Os três cartões de número da tela do painel, em perspectiva (a mesma projeção do prédio). */
+const CARTOES_DO_PAINEL = [
+  '89,47.5 103,54.5 103,43.5 89,36.5',
+  '109,57.5 123,64.5 123,53.5 109,46.5',
+  '129,67.5 143,74.5 143,63.5 129,56.5',
+] as const
+
+/** O estudo em PDF de um ponto, no tema do card do imóvel (19/11/2026, Juan: "deixe todos na
+ *  temática da primeira logo"): o mesmo lote em perspectiva, o raio do estudo no chão, o pino
+ *  fincado no ponto (com o ponto no meio, como pedido) e, atrás dele, a folha do PDF em pé, com a
+ *  etiqueta laranja. */
 function ArteEstudo() {
   return (
     <Quadro>
-      <path d="M84 18 h56 l20 20 v94 h-76 z" fill={CAIXA} stroke="var(--line-mid)" />
-      <path d="M140 18 v20 h20" fill="none" stroke="var(--line-mid)" />
-      <circle cx={122} cy={62} r={20} fill="var(--ac)" fillOpacity={0.1} stroke="var(--ac)" strokeDasharray="3 3" />
-      <path d="M122 70c-6-8-9-12-9-17a9 9 0 0118 0c0 5-3 9-9 17z" fill="var(--ac)" />
-      {/* O ponto no meio do pino (19/11/2026, Juan: "igual o do 'Solicitar imóvel'"). */}
-      <circle cx={122} cy={53} r={3.3} fill="var(--ac-on)" />
-      {[92, 102, 112].map((y, i) => (
-        <rect key={y} x={96} y={y} width={i === 2 ? 34 : 52} height={4} rx={2} fill="var(--tx-sub)" fillOpacity={0.45} />
-      ))}
+      <polygon
+        points="34,89 120,132 206,89 120,46"
+        fill="var(--ac)"
+        fillOpacity={0.12}
+        stroke="var(--ac)"
+        strokeWidth={1.8}
+        strokeDasharray="5 4"
+        strokeLinejoin="round"
+      />
+      {/* A folha do PDF, em pé atrás do pino, com as linhas do texto e a etiqueta. */}
+      <polygon points="130,68 162,84 162,38 130,22" fill="var(--arte-face-sombra)" stroke="var(--line-dashed)" strokeLinejoin="round" />
+      <path
+        d="M135 54.5L157 65.5M135 47.5L157 58.5M135 40.5L149 47.5"
+        stroke="var(--tx-sub)"
+        strokeOpacity={0.6}
+        strokeWidth={2.2}
+        strokeLinecap="round"
+      />
+      <polygon points="134,34 146,40 146,34 134,28" fill="var(--mst)" />
+      {/* O raio do estudo no chão, em volta do ponto. */}
+      <ellipse cx={104} cy={91} rx={36} ry={18} fill="var(--ac)" fillOpacity={0.14} stroke="var(--ac)" strokeOpacity={0.7} />
+      {/* O pino fincado no ponto, com a sombra e o ponto no meio. */}
+      <ellipse cx={104} cy={91} rx={7} ry={3.5} fill="var(--tx-sub)" fillOpacity={0.35} />
+      <path d="M104 91c-7-10-11-15-11-21a11 11 0 0122 0c0 6-4 11-11 21z" fill="var(--ac)" />
+      <circle cx={104} cy={70} r={4} fill="var(--ac-on)" />
     </Quadro>
   )
 }
