@@ -84,6 +84,8 @@ AGRUPAMENTO_ABAS: tuple[tuple[str, str], ...] = (
     ("/api/concorrente/observacoes", "mapa"),
     # Unidades da rede no Mapa (11/11/2026): seletor, ficha e PDF de concorrencia.
     ("/api/mapa/", "mapa"),
+    # Tela Masters (DEC-089).
+    ("/api/masters", "masters"),
 )
 
 #: Camada de LABEL (CLAUDE.md §2): valor bruto sem acento; exibição acentuada.
@@ -91,6 +93,7 @@ LABEL_ABA = {
     "executiva": "Executiva",
     "imobiliaria": "Imobiliária",
     "mapa": "Mapa",
+    "masters": "Masters",
     "oportunidades": "Oportunidades",
     "viabilidade": "Viabilidade",
 }

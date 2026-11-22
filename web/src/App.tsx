@@ -10,6 +10,7 @@ import AcessosScreen from './screens/AcessosScreen'
 import ExecutiveScreen from './screens/ExecutiveScreen'
 import InicioScreen from './screens/InicioScreen'
 import MapScreen from './screens/MapScreen'
+import MastersScreen from './screens/MastersScreen'
 import OportunidadesScreen from './screens/OportunidadesScreen'
 import OportunidadesImobiliariasScreen from './screens/OportunidadesImobiliariasScreen'
 import PontoScreen from './screens/PontoScreen'
@@ -57,6 +58,7 @@ export type Tela =
   | 'mapa'
   | 'viabilidade'
   | 'executiva'
+  | 'masters'
   | 'acessos'
 
 /** O ponto que viaja do mapa para a Viabilidade — a costura entre as duas telas. */
@@ -904,6 +906,10 @@ export default function App() {
           // Painel restrito (emenda DEC-027). Autônomo como a Executiva: não herda
           // UF/município — a trilha é da rede inteira, não de um recorte do mapa.
           <AcessosScreen onInicio={voltarAoInicio} />
+        ) : tela === 'masters' ? (
+          // Tela Masters (DEC-089). Autônoma como a Executiva: os masters são da rede
+          // inteira, não de um recorte do mapa.
+          <MastersScreen onInicio={voltarAoInicio} />
         ) : tela === 'oportunidades-imob' ? (
           // Camada de oferta (imóveis de locação joinados ao território). Autônoma:
           // nacional, filtra por dentro; sem PII (contato do corretor só no dossiê).

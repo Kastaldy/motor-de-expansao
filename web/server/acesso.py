@@ -42,7 +42,9 @@ _REPO_ROOT = _HERE.parents[2]
 
 # Valores brutos de aba — identificadores SEM acento (regra do CLAUDE.md §2). A SPA
 # usa exatamente estes nomes em `web/src/lib/acesso.ts`; mudou aqui, muda la' junto.
-ABAS_VALIDAS = frozenset({"executiva", "imobiliaria", "mapa", "oportunidades", "viabilidade"})
+ABAS_VALIDAS = frozenset(
+    {"executiva", "imobiliaria", "mapa", "masters", "oportunidades", "viabilidade"}
+)
 
 # Abas com dado SENSIVEL (financeiro da rede, PII de franqueado/consultor, ESCRITA) —
 # negadas no fail-CLOSED quando o controle cai em producao (BLK-SEC-05). `executiva`
@@ -55,7 +57,10 @@ ABAS_VALIDAS = frozenset({"executiva", "imobiliaria", "mapa", "oportunidades", "
 # mas a LISTA agregada continua servindo os pins do Mapa Territorial, porque quem
 # perde `imobiliaria` no fail-closed ainda tem `mapa` (decisao do Felipe, 2026-08-24:
 # "todos os usuarios com acesso ao mapa tambem tem acesso a esses imoveis").
-ABAS_SENSIVEIS = frozenset({"executiva", "imobiliaria", "viabilidade"})
+#
+# `masters` (DEC-089): contratos, metas e assinadas dos masters, da planilha de levantamento
+# confidencial. Sensivel pelo mesmo motivo do financeiro: nem o curinga nem o fail-closed a dao.
+ABAS_SENSIVEIS = frozenset({"executiva", "imobiliaria", "masters", "viabilidade"})
 
 # Que abas LIBERAM cada rota (basta ter UMA delas). Casamento por PREFIXO do path.
 # Rota sem regra = livre para qualquer usuario autenticado (health, catalogos, /api/me);
@@ -145,6 +150,10 @@ REGRAS_DE_ACESSO: tuple[tuple[str, frozenset[str]], ...] = (
     # unidade em janela e o PDF de concorrencia dela, para quem tem o mapa SEM ganhar a
     # Executiva. Rotas enxutas (so' territorio e concorrencia), e por isso FORA de `/api/rede/`.
     ("/api/mapa/", frozenset({"mapa"})),
+    # Tela Masters (DEC-089): a lista e o painel de cada master. Sem a barra no prefixo, cobre
+    # `/api/masters` e `/api/masters/{id}`. Aba PROPRIA, como a imobiliaria (DEC-037): os
+    # contratos dos masters nao vao junto com a Visao Executiva.
+    ("/api/masters", frozenset({"masters"})),
 )
 
 
@@ -203,6 +212,8 @@ SUPERFICIE_DA_ROTA: tuple[tuple[str, frozenset[str]], ...] = (
     ("/api/pin-concorrente/", frozenset({"mapa"})),
     ("/api/concorrente/observacoes", frozenset({"mapa"})),
     ("/api/mapa/", frozenset({"mapa"})),
+    # Os masters sao do Brasil: a superficie so' existe no perfil BR (DEC-089).
+    ("/api/masters", frozenset({"masters"})),
 )
 
 # `/api/ponto`, `/api/resolver-ponto`, `/api/municipio-do-ponto`,
@@ -727,6 +738,8 @@ REGRAS_POR_CAPACIDADE: tuple[tuple[str, tuple[str, ...] | None, str], ...] = (
     # o que) e' LEITURA; mudar quem entra e' outra coisa, e por isso outra capacidade (D25).
     ("/api/acessos/usuarios", ("POST", "PATCH", "PUT", "DELETE"), "acesso.usuario_gerir"),
     ("/api/acessos/", None, "acesso.painel_ver"),
+    # Tela Masters (DEC-089, migration 026): so' leitura, uma capacidade para a lista e o painel.
+    ("/api/masters", None, "masters.ver"),
 )
 
 #: Capacidades equivalentes às `ABAS_SENSIVEIS`: são estas que o fail-closed nega quando o
@@ -750,6 +763,8 @@ CAPACIDADES_SENSIVEIS = frozenset(
         # ja' e' sensivel, entao a degradacao com o banco fora ja' nega o master). Ela esta' aqui
         # para que uma rota que um dia a exija direto nasca fechada no fail-closed, e nao aberta.
         "rede.ver_propria",
+        # 026 (DEC-089): contratos e metas dos masters, da planilha confidencial.
+        "masters.ver",
     }
 )
 
@@ -970,6 +985,8 @@ CAPACIDADE_QUE_SUSTENTA_A_ABA: dict[str, str] = {
     "imobiliaria": "imovel.dossie_ver",
     "viabilidade": "viabilidade.simular",
     "executiva": "rede.ver",
+    # 026 (DEC-089): so' growth e lideres.
+    "masters": "masters.ver",
 }
 
 #: Capacidades que TAMBEM sustentam uma aba, alem da principal acima (DEC-087). O master tem a

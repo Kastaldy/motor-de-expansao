@@ -64,7 +64,7 @@ SCHEMA_VERSAO = 1
 #: `tests/contracts/test_perfil_espelha_abas_validas.py` trava que os dois batem — se
 #: alguem criar uma aba nova em `acesso.py` e esquecer daqui, o teste falha nomeando-a.
 SUPERFICIES_VALIDAS = frozenset(
-    {"executiva", "imobiliaria", "mapa", "oportunidades", "viabilidade"}
+    {"executiva", "imobiliaria", "mapa", "masters", "oportunidades", "viabilidade"}
 )
 
 #: Vocabulario de `avisos.*.onde` — os artefatos em que um aviso pode viajar (Bloco C+,

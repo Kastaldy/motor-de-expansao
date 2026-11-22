@@ -44,6 +44,10 @@ export const ITENS_DOCK: readonly ItemDock[] = Object.freeze([
   /* Primeiro da fila: é a superfície default do piloto (App.tsx §5 do CLAUDE.md). */
   Object.freeze({ id: 'mapa', tela: 'mapa' as const, titulo: 'Explorar uma região' }),
   Object.freeze({ id: 'exec', tela: 'executiva' as const, titulo: 'Visão executiva' }),
+  /* Tela Masters (DEC-089): um painel por master franqueado — em operação, em
+     inauguração, contratos assinados e a meta. Aba própria e deny-by-default: para
+     quem não tem `masters.ver` o ícone não existe. */
+  Object.freeze({ id: 'masters', tela: 'masters' as const, titulo: 'Masters' }),
   /* "Expansão de domínio" e "Carteira e plano" SAIRAM (Juan, 2026-09-02: "eles não
      estão sendo utilizados, então tirar os ícones deles"). Eram os dois únicos itens
      com `tela: null` — existiam para anunciar que o piloto é um recorte do produto,
