@@ -5,14 +5,21 @@ import {
   AVISO_NACIONAL,
   avisosDaContagem,
   celulaCadastro,
+  celulaSemanal,
   celulaVariacao,
   diaMes,
   hojeLocal,
   janela,
+  movimentoDaLinha,
   nomeRede,
   rodapeCrescimento,
+  rodapeSemanal,
+  rotuloBotaoHistorico,
+  rotuloBotaoSemanal,
   rotuloCadastro,
   rotuloContagem,
+  rotuloSemanal,
+  temSemanal,
   temVariacao,
   textoJanela,
 } from '../../lib/crescimento-concorrencia'
@@ -958,7 +965,9 @@ const COLUNAS_CADASTRO: ColunaCadastro[] = ['aberturas', 'fechamentos', 'saldo',
    o card lia só o pacote de setembro e ficou oito domingos parado em 06/09):
    - "Contagem de DD/MM": unidades e variação da contagem semanal do coletor, a última contagem
      boa de cada rede;
-   - "Cadastro de DD/MM a DD/MM": aberturas, fechamentos, saldo e "Em breve" do pacote fixo.
+   - "Movimento de DD/MM a DD/MM": aberturas, fechamentos, saldo e "Em breve" da SÉRIE semanal,
+     acumulados desde o início dela (emenda 1 da DEC-064, 19/11/2026). O pacote fixo de setembro
+     vira o botão "Histórico", com o seu próprio cabeçalho ("Cadastro de DD/MM a DD/MM").
    Nacional de propósito (decisão de 05/11/2026), e a tela diz isso. Os textos moram em
    `lib/crescimento-concorrencia`, testados sem DOM. */
 function MovimentacaoConcorrencia({ dados }: { dados: RedeInteligencia }) {
@@ -967,7 +976,12 @@ function MovimentacaoConcorrencia({ dados }: { dados: RedeInteligencia }) {
   // Padrão = só as fotos VALIDADAS do cadastro. A foto anterior teve troca de coletor em várias
   // redes: com ela, a SkyFit lia +207 com UMA abertura conferida.
   const [comCautela, setComCautela] = useState(false)
+  const comSerie = temSemanal(m)
   const comCadastro = !!m?.tem_cadastro
+  // A série é o padrão; o histórico de setembro, um botão. Sem série, só sobra o histórico.
+  const [verHistorico, setVerHistorico] = useState(false)
+  const modo: 'semanal' | 'historico' = comSerie && !(verHistorico && comCadastro) ? 'semanal' : 'historico'
+  const comMovimento = modo === 'semanal' ? comSerie : comCadastro
   const cautela = janela(m?.periodos, 'cadastro', 'cautela')
   const comVariacao = temVariacao(m)
   const dataAnterior = m?.contagem?.data_anterior ?? null
@@ -975,11 +989,7 @@ function MovimentacaoConcorrencia({ dados }: { dados: RedeInteligencia }) {
   // deixaria o card parado de novo sem denúncia nenhuma. No fuso local, e nunca em UTC.
   const avisos = avisosDaContagem(m, hojeLocal())
   const redes = (m?.redes ?? [])
-    .map((r) => {
-      const aberturas = comCautela ? r.aberturas : r.aberturas_conferidas
-      const fechamentos = comCautela ? r.fechamentos : r.fechamentos_conferidos
-      return { ...r, aberturas, fechamentos, saldo: aberturas - fechamentos }
-    })
+    .map((r) => ({ ...r, ...movimentoDaLinha(r, modo, comCautela) }))
     // Toda rede MAPEADA aparece, mesmo parada no período (Felipe, 17/09): quem se mexeu vem
     // primeiro, por saldo; o resto por tamanho, para o mercado inteiro ficar à vista.
     .sort((a, b) => {
@@ -993,8 +1003,13 @@ function MovimentacaoConcorrencia({ dados }: { dados: RedeInteligencia }) {
       )
     })
   const visiveis = todas ? redes : redes.slice(0, 12)
-  const wellhub = (m?.agregadores ?? []).filter((a) => a.agregador === 'wellhub')
-  const janelaWellhub = textoJanela(janela(m?.periodos, 'wellhub'))
+  const wellhub = ((modo === 'semanal' ? m?.semanal?.agregadores : m?.agregadores) ?? []).filter(
+    (a) => a.agregador === 'wellhub',
+  )
+  const janelaWellhub =
+    modo === 'semanal'
+      ? textoJanela({ de: m?.semanal?.agregador_de ?? null, ate: m?.semanal?.agregador_ate ?? null })
+      : textoJanela(janela(m?.periodos, 'wellhub'))
   const celula = { padding: '0 8px', borderBottom: '1px solid var(--line-soft)', textAlign: 'right' as const, whiteSpace: 'nowrap' as const }
   const titulo = { ...celula, padding: '0 8px 7px', font: '600 9.5px/1.2 var(--f-ui)', letterSpacing: '.05em', textTransform: 'uppercase' as const, color: 'var(--tx-muted)', borderBottom: '1px solid var(--line-mid)' }
   // A linha de cima do cabeçalho diz de QUE DATA é cada grupo de colunas.
@@ -1013,10 +1028,24 @@ function MovimentacaoConcorrencia({ dados }: { dados: RedeInteligencia }) {
     <Glass style={CARD}>
       <Titulo
         extra={
-          comCadastro && cautela ? (
-            <Chip ativo={comCautela} onClick={() => setComCautela(!comCautela)}>
-              Incluir {textoJanela(cautela)} (não validado)
-            </Chip>
+          comSerie || (comCadastro && cautela) ? (
+            <span style={{ display: 'inline-flex', gap: 6, flexWrap: 'wrap', justifyContent: 'flex-end' }}>
+              {comSerie && m && comCadastro && (
+                <>
+                  <Chip ativo={modo === 'semanal'} onClick={() => setVerHistorico(false)}>
+                    {rotuloBotaoSemanal(m)}
+                  </Chip>
+                  <Chip ativo={modo === 'historico'} onClick={() => setVerHistorico(true)}>
+                    {rotuloBotaoHistorico(m)}
+                  </Chip>
+                </>
+              )}
+              {modo === 'historico' && comCadastro && cautela && (
+                <Chip ativo={comCautela} onClick={() => setComCautela(!comCautela)}>
+                  Incluir {textoJanela(cautela)} (não validado)
+                </Chip>
+              )}
+            </span>
           ) : undefined
         }
       >
@@ -1050,15 +1079,17 @@ function MovimentacaoConcorrencia({ dados }: { dados: RedeInteligencia }) {
                   <col />
                 </colgroup>
                 <colgroup span={comVariacao ? 2 : 1} />
-                {comCadastro && <colgroup span={4} />}
+                {comMovimento && <colgroup span={4} />}
                 <thead>
                   <tr>
                     {/* Canto vazio como célula comum (e não `aria-hidden`): fora da árvore de
                         acessibilidade, ele empurrava os grupos uma coluna para a esquerda. */}
                     <td style={{ ...grupo, borderBottom: 'none' }} />
                     <th scope="colgroup" colSpan={comVariacao ? 2 : 1} style={grupo}>{rotuloContagem(m)}</th>
-                    {comCadastro && (
-                      <th scope="colgroup" colSpan={4} style={grupo}>{rotuloCadastro(m, comCautela)}</th>
+                    {comMovimento && (
+                      <th scope="colgroup" colSpan={4} style={grupo}>
+                        {modo === 'semanal' ? rotuloSemanal(m) : rotuloCadastro(m, comCautela)}
+                      </th>
                     )}
                   </tr>
                   <tr>
@@ -1069,7 +1100,7 @@ function MovimentacaoConcorrencia({ dados }: { dados: RedeInteligencia }) {
                         Desde {diaMes(dataAnterior)}
                       </th>
                     )}
-                    {comCadastro && (
+                    {comMovimento && (
                       <>
                         <th scope="col" style={titulo}>Aberturas</th>
                         <th scope="col" style={titulo}>Fechamentos</th>
@@ -1102,10 +1133,10 @@ function MovimentacaoConcorrencia({ dados }: { dados: RedeInteligencia }) {
                             </span>
                           </td>
                         )}
-                        {comCadastro &&
+                        {comMovimento &&
                           COLUNAS_CADASTRO.map((coluna) => {
                             // A decisão "número, 0 ou —" é da lib (`celulaCadastro`), testada.
-                            const c = celulaCadastro(r, coluna)
+                            const c = modo === 'semanal' ? celulaSemanal(r, coluna) : celulaCadastro(r, coluna)
                             return (
                               <td key={coluna} className="num" style={celula}>
                                 {c.tipo === 'sem_leitura'
@@ -1132,7 +1163,7 @@ function MovimentacaoConcorrencia({ dados }: { dados: RedeInteligencia }) {
               )}
             </div>
 
-            {comCadastro && (
+            {comMovimento && (
               <div style={{ flex: '1 1 240px', minWidth: 0, display: 'flex', flexDirection: 'column', gap: 10 }}>
                 <div style={{ font: '600 9.5px/1.2 var(--f-ui)', letterSpacing: '.05em', textTransform: 'uppercase', color: 'var(--tx-muted)' }}>
                   Agregadores{janelaWellhub ? ` · ${janelaWellhub}` : ''}
@@ -1156,7 +1187,7 @@ function MovimentacaoConcorrencia({ dados }: { dados: RedeInteligencia }) {
           </div>
         </>
       )}
-      {m?.disponivel && <Rodape>{rodapeCrescimento(m, comCautela)}</Rodape>}
+      {m?.disponivel && <Rodape>{modo === 'semanal' ? rodapeSemanal(m) : rodapeCrescimento(m, comCautela)}</Rodape>}
     </Glass>
   )
 }
