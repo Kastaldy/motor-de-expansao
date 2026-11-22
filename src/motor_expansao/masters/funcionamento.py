@@ -22,6 +22,21 @@ import pandas as pd
 from motor_expansao.masters import analise as A
 from motor_expansao.masters.territorios import Master
 
+#: A leitura de um traço em VALOR BRUTO: identificador comparado em dict e em `in`, então ASCII
+#: e sem acento (CLAUDE.md §2; achado da revisão automática do #568). O texto de tela sai de
+#: `ROTULO_DA_LEITURA`.
+ANDA_JUNTO = "anda_junto"
+ANDA_AO_CONTRARIO = "anda_ao_contrario"
+SEM_RELACAO = "sem_relacao_clara"
+POUCAS_UNIDADES = "poucas_unidades"
+COM_RELACAO = (ANDA_JUNTO, ANDA_AO_CONTRARIO)
+ROTULO_DA_LEITURA = {
+    ANDA_JUNTO: "anda junto",
+    ANDA_AO_CONTRARIO: "anda ao contrário",
+    SEM_RELACAO: "sem relação clara",
+    POUCAS_UNIDADES: "poucas unidades",
+}
+
 #: Regra do estudo "Padrões das unidades": nenhuma leitura de grupo com menos de 5 unidades.
 N_MIN_GRUPO = 5
 #: Relação só com 15+ unidades maduras na região; abaixo disso a faixa não diz nada.
@@ -134,9 +149,9 @@ def _do_lado_do_selo(v: pd.Series, acima: pd.Series, formato: str, leitura: str)
     Número: acima (anda junto) ou abaixo (ao contrário) da típica (mediana) da região inteira;
     sim/não: com o traço (junto) ou sem (ao contrário). None quando não há selo de relação.
     """
-    if leitura not in ("anda junto", "anda ao contrário"):
+    if leitura not in COM_RELACAO:
         return None
-    junto = leitura == "anda junto"
+    junto = leitura == ANDA_JUNTO
     va = v[acima].dropna()
     if formato == "sim_nao":
         return int((va == (1.0 if junto else 0.0)).sum())
@@ -146,7 +161,7 @@ def _do_lado_do_selo(v: pd.Series, acima: pd.Series, formato: str, leitura: str)
 
 def _leitura(lo: float, hi: float) -> str:
     """Faixa toda acima de 50%: anda junto; toda abaixo: ao contrário; senão, pode ser acaso."""
-    return "anda junto" if lo > 0.5 else "anda ao contrário" if hi < 0.5 else "sem relação clara"
+    return ANDA_JUNTO if lo > 0.5 else ANDA_AO_CONTRARIO if hi < 0.5 else SEM_RELACAO
 
 
 #: Pesquisa "Padrões das unidades", rodada 43 (28/10/2026): valor típico de cada traço nas unidades
@@ -241,7 +256,7 @@ def comportamento(
                 leitura = _leitura(lo, hi)
             else:
                 acerto = lo = hi = float("nan")
-                leitura = "poucas unidades"
+                leitura = POUCAS_UNIDADES
             tracos.append(
                 {
                     "col": col,

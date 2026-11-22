@@ -663,7 +663,7 @@ def test_comportamento_por_regiao_com_a_media_da_rede(masters):
     # Santos (madura) está no Litoral; Boqueirão (6 meses) não tem os 12 meses da janela.
     assert grupos["litoral"]["n_maduras"] == 1 and grupos["abcd"]["n_maduras"] == 0
     renda = {t["col"]: t for t in grupos["litoral"]["tracos"]}["iso_renda_pc__pe_15"]
-    assert renda["leitura"] == "poucas unidades" and renda["n"] == 1
+    assert renda["leitura"] == "poucas_unidades" and renda["n"] == 1
     # % de alunos de agregador: as 12 de rede, fora das regiões do master.
     assert comp["pct_agregador_alunos_outras"] == pytest.approx(0.3)
 
@@ -724,10 +724,10 @@ def test_comportamento_acima_e_abaixo_da_media_com_a_forca():
     assert (df["n_acima"], df["n_abaixo"]) == (10, 10)
     t = {x["col"]: x for x in df["tracos"]}
     assert t["iso_renda_pc__pe_15"]["acima"] == pytest.approx(1_000.0 + 300 * 14.5)
-    assert t["iso_renda_pc__pe_15"]["leitura"] == "anda junto"
+    assert t["iso_renda_pc__pe_15"]["leitura"] == "anda_junto"
     # "Acerto": comparando duas unidades, a de renda maior fatura mais em 100% das vezes.
     assert t["iso_renda_pc__pe_15"]["acerto"] == pytest.approx(1.0)
-    assert t["iso_pop__carro_5"]["leitura"] == "anda ao contrário"
+    assert t["iso_pop__carro_5"]["leitura"] == "anda_ao_contrario"
     assert t["iso_pop__carro_5"]["acerto"] == pytest.approx(0.0)
     # O número real embaixo do selo: as 10 acima estão na metade com mais renda (e menos
     # população); sem selo de relação, sem contagem.
@@ -735,12 +735,12 @@ def test_comportamento_acima_e_abaixo_da_media_com_a_forca():
     assert t["iso_pop__carro_5"]["do_lado"] == 10
     assert t["rampa_ativos_m3"]["do_lado"] is None
     # Estúdio fora do painel sintético: traço sem dado, nunca erro.
-    assert t["cad_mod_studios"]["leitura"] == "poucas unidades"
+    assert t["cad_mod_studios"]["leitura"] == "poucas_unidades"
     # Metragem em só 3 unidades da região: sem força e sem o lado de cima (menos de 5).
-    assert t["tam_metragem_m2"]["leitura"] == "poucas unidades"
+    assert t["tam_metragem_m2"]["leitura"] == "poucas_unidades"
     assert t["tam_metragem_m2"]["n_acima"] == 0
     # Traço sem variação: a faixa não sai do zero -> sem relação clara (nunca um veredito).
-    assert t["rampa_ativos_m3"]["leitura"] == "sem relação clara"
+    assert t["rampa_ativos_m3"]["leitura"] == "sem_relacao_clara"
     # Só as regiões do master saem como grupo; a rede entra só na média e no mix das outras.
     assert len(r["grupos"]) == 1 and r["n_rede"] == 30
     assert df["pct_agregador_alunos"] == pytest.approx(0.3)
@@ -822,11 +822,11 @@ def test_selo_ao_contrario_sai_pelo_lado_que_fatura_mais():
         frase_contagem,
     )
 
-    pop = {"col": "iso_pop__carro_5", "formato": "mil", "leitura": "anda ao contrário"}
+    pop = {"col": "iso_pop__carro_5", "formato": "mil", "leitura": "anda_ao_contrario"}
     # "Maior, fatura menos" soava como "ter população é ruim": sai "menor, fatura mais".
     assert _rotulo_leitura(pop) == "menor, fatura mais"
     assert _rotulo_leitura({**pop, "formato": "sim_nao"}) == "sem, fatura mais"
-    assert _rotulo_leitura({**pop, "leitura": "anda junto"}) == "maior, fatura mais"
+    assert _rotulo_leitura({**pop, "leitura": "anda_junto"}) == "maior, fatura mais"
     # O "acontece em" do selo usa o complemento: a menor fatura mais em 75% das comparações.
     assert _acerto_do_selo({**pop, "acerto": 0.25}) == pytest.approx(0.75)
     # Embaixo do selo, o número real (17/11: "75 de cada 100" era lido como unidades da região).
@@ -837,7 +837,7 @@ def test_selo_ao_contrario_sai_pelo_lado_que_fatura_mais():
     renda = {
         "col": "iso_renda_pc__pe_15",
         "formato": "reais",
-        "leitura": "anda junto",
+        "leitura": "anda_junto",
         "do_lado": 6,
         "n_acima": 10,
     }
@@ -848,7 +848,7 @@ def test_selo_ao_contrario_sai_pelo_lado_que_fatura_mais():
     estudio = {
         "col": "cad_mod_studios",
         "formato": "sim_nao",
-        "leitura": "anda junto",
+        "leitura": "anda_junto",
         "do_lado": 6,
         "n_acima": 8,
         "rotulo": "Tem estúdio",
@@ -873,19 +873,19 @@ def test_apresentacao_diz_o_padrao_em_palavras():
 
     regiao = {
         "tracos": [
-            traco("iso_pop__carro_5", "mil", 29_000.0, 124_000.0, "anda ao contrário"),
-            traco("iso_renda_pc__pe_15", "reais", 4_863.0, 1_891.0, "anda junto"),
-            traco("cad_mod_studios", "sim_nao", 0.91, 0.56, "sem relação clara"),
+            traco("iso_pop__carro_5", "mil", 29_000.0, 124_000.0, "anda_ao_contrario"),
+            traco("iso_renda_pc__pe_15", "reais", 4_863.0, 1_891.0, "anda_junto"),
+            traco("cad_mod_studios", "sim_nao", 0.91, 0.56, "sem_relacao_clara"),
             # Selo "junto" com o valor típico apontando para o outro lado: sem o número.
-            traco("tam_metragem_m2", "m2", 1_400.0, 1_500.0, "anda junto"),
+            traco("tam_metragem_m2", "m2", 1_400.0, 1_500.0, "anda_junto"),
         ]
     }
     assert frases_padrao(regiao) == [
-        ("**menos população em 5 min de carro** (4,3× menor)", "anda ao contrário"),
-        ("**mais renda por pessoa em 15 min a pé** (2,6× maior)", "anda junto"),
-        ("**mais metragem**", "anda junto"),
+        ("**menos população em 5 min de carro** (4,3× menor)", "anda_ao_contrario"),
+        ("**mais renda por pessoa em 15 min a pé** (2,6× maior)", "anda_junto"),
+        ("**mais metragem**", "anda_junto"),
     ]
-    sem_padrao = {"tracos": [traco("cad_mod_studios", "sim_nao", 0.9, 0.5, "sem relação clara")]}
+    sem_padrao = {"tracos": [traco("cad_mod_studios", "sim_nao", 0.9, 0.5, "sem_relacao_clara")]}
     assert frases_padrao(sem_padrao) == []
 
 
@@ -1505,3 +1505,19 @@ def test_o_relatorio_so_reaponta_a_renda_quando_o_staging_muda(tmp_path, monkeyp
     G._apontar_insumos_da_renda(outro)
     G._apontar_insumos_da_renda(outro)
     assert chamadas == [outro]  # staging novo: reaponta uma vez só
+
+
+def test_a_leitura_e_identificador_ascii_e_o_texto_de_tela_vem_do_rotulo():
+    """Achado médio da revisão automática do #568 (CLAUDE.md §2): o valor bruto da leitura é
+    comparado em dict e em `in`, então é ASCII e sem acento; o acento fica no rótulo de tela."""
+    from motor_expansao.masters import funcionamento as F
+    from motor_expansao.masters.relatorio_funcionamento import ESTILOS, _rotulo_leitura
+
+    for bruto in (F.ANDA_JUNTO, F.ANDA_AO_CONTRARIO, F.SEM_RELACAO, F.POUCAS_UNIDADES):
+        assert bruto.isascii() and " " not in bruto
+        assert bruto in F.ROTULO_DA_LEITURA
+    assert F.ROTULO_DA_LEITURA[F.ANDA_AO_CONTRARIO] == "anda ao contrário"
+    assert F.ROTULO_DA_LEITURA[F.SEM_RELACAO] == "sem relação clara"
+    assert set(ESTILOS) == set(F.COM_RELACAO)
+    # Leitura sem frase própria no selo sai pelo rótulo acentuado, nunca pelo valor bruto.
+    assert _rotulo_leitura({"leitura": F.POUCAS_UNIDADES}) == "poucas unidades"
