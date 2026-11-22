@@ -1306,13 +1306,16 @@ def test_pdf_avisa_quando_o_estudo_saiu_do_centroide_do_hexagono(tmp_path):
 
 def test_pdf_avisa_o_estudo_fora_da_area_do_master(tmp_path):
     """Emenda 2 da DEC-089 (Juan, 19/11/2026): o estudo que o master pede fora do território dele
-    sai com o aviso, na capa e na Realização, sem tirar o rótulo do lugar."""
+    sai com o aviso NA CONCLUSÃO, num card amarelo com o bloco "Área de atuação" ("dessa forma
+    não, deixe na conclusão em amarelo"; antes ia em letra pequena na capa e na Realização). A
+    Conclusão entra mesmo sem a viabilidade: pedir o aviso pede a página onde ele mora."""
     texto = _texto_do_pdf(
         _pdf_do_ponto(
             tmp_path, rotulo=_NOME_IMOVEL_LONGO, origem_centroide_hex=False, aviso_fora_da_area=True
         )
     ).lower()
-    assert texto.count("estudo fora da sua") >= 2
+    assert texto.count("estudo fora da sua") == 1  # só na Conclusão, nem capa nem Realização
+    assert "rea de atua" in texto and "conclus" in texto  # o título do bloco e a página
     assert _NOME_IMOVEL_LONGO.lower() in texto
     # Sem o parâmetro (todo o resto do motor), nenhum aviso de área.
     sem = _texto_do_pdf(

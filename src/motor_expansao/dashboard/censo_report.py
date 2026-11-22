@@ -2316,6 +2316,8 @@ CONCLUSAO_REPROVADO = "reprovado"
 # `_CONCLUSAO_SELO_LEGENDAS`, camada de exibicao.
 CONCLUSAO_EIXO_DEMOGRAFICO = "demografico"
 CONCLUSAO_EIXO_FINANCEIRO = "financeiro"
+#: O bloco do aviso de area (o estudo do master fora do territorio dele), o primeiro da coluna.
+CONCLUSAO_BLOCO_AREA = "area"
 
 _CONCLUSAO_CORES = {
     CONCLUSAO_APROVADO: _CARD_VERDE_RGB,
@@ -2499,6 +2501,7 @@ _CONCLUSAO_BLOCO_GAP = 14.0
 # leitor ve dois carimbos e uma lista unica, sem saber qual apontamento pesou em qual.
 # Camada de EXIBICAO -- acentuada, como manda a regra; a chave e' o eixo bruto.
 _CONCLUSAO_BLOCO_TITULOS = {
+    CONCLUSAO_BLOCO_AREA: "Área de atuação",
     CONCLUSAO_EIXO_DEMOGRAFICO: "Praça (demográfico)",
     CONCLUSAO_EIXO_FINANCEIRO: "Imóvel e retorno (financeiro)",
 }
@@ -2514,6 +2517,9 @@ _CONCLUSAO_OBS_CORES = {
     "eliminatorio": (_CARD_VERMELHO_RGB, (198, 57, 57)),
     "ressalva": (_CARD_NEUTRO_RGB, (198, 146, 44)),
     "confirmacao": (_CARD_VERDE_RGB, (26, 170, 85)),
+    # O aviso de area: o card inteiro em amarelo, para nao passar batido (Juan, 19/11/2026:
+    # "deixe na conclusao em amarelo"). Texto no cinza escuro dos outros cards (> 10:1).
+    "fora_da_area": ((255, 240, 160), (240, 190, 0)),
 }
 # Cor SOLIDA do selo por estado (traco e texto). Os `_CARD_*_RGB` sao pasteis de FUNDO e
 # nao teriam contraste como linha de 2 pt nem como tipografia; estas sao as mesmas
@@ -3678,8 +3684,12 @@ def _conclusao_page(
     secondary: tuple[int, int, int] = ULTRA_MAGENTA,
     somente_estudo: bool = False,
     contexto: _RecortePdf | None = None,
+    aviso_fora_da_area: bool = False,
 ) -> None:
     """Pagina de parecer do ponto, em 2 COLUNAS: conteudo a esquerda, selos a direita.
+
+    `aviso_fora_da_area`: o estudo do master fora do territorio dele abre a coluna com o card
+    amarelo `_AVISO_FORA_DA_AREA`, num bloco proprio ("Área de atuação"), antes da praca.
 
     `contexto` (DEC-074): o recorte do Estudo, repassado ao parecer e as frases; `None` =
     raio de 1 km, a pagina de sempre.
@@ -3733,6 +3743,10 @@ def _conclusao_page(
 
     # --- Coluna ESQUERDA: cards de aluguel + cards de observacao, centrados na vertical ---
     blocos = _conclusao_blocos(parecer, somente_estudo=somente_estudo, contexto=ctx)
+    if aviso_fora_da_area:
+        # O primeiro elemento da coluna: o plano por rodadas o desenha antes de tudo, entao
+        # o aviso nunca cai na truncagem.
+        blocos = ((CONCLUSAO_BLOCO_AREA, ((_AVISO_FORA_DA_AREA, "fora_da_area"),)), *blocos)
     elementos = _conclusao_elementos(pdf, blocos, largura_esq)
     # No modo so-estudo os cards de aluguel nao existem -- e a altura deles NAO pode entrar
     # na conta, senao o bloco de observacoes nasce 94 pt abaixo do centro da area.
@@ -3874,9 +3888,12 @@ _AVISO_ORIGEM_CENTROIDE_HEX = (
 # Aviso de AREA, impresso quando o chamador passa `aviso_fora_da_area=True` (hoje: o estudo que o
 # master pede pelo Inicio do piloto com uma coordenada fora do territorio do contrato dele; emenda
 # 2 da DEC-089, Juan em 19/11/2026: "se for fora da area, no PDF gerar um aviso 'estudo fora da
-# sua area de atuacao'"). Mesmo desenho do aviso de origem: string FIXA de produto, parametro
-# explicito, capa e Realizacao. Latin-1 puro.
-_AVISO_FORA_DA_AREA = "Estudo fora da sua área de atuação."
+# sua area de atuacao'"). Sai NA CONCLUSAO, em amarelo, como o primeiro card da coluna (Juan,
+# 19/11/2026: "dessa forma nao, deixe na conclusao em amarelo"; antes ia em letra pequena na capa
+# e na Realizacao). String FIXA de produto. Latin-1 puro.
+_AVISO_FORA_DA_AREA = (
+    "Estudo fora da sua área de atuação: este ponto não fica no território do seu contrato."
+)
 
 
 def _cor_por_meta(valor: Any, meta: float) -> tuple[int, int, int]:
@@ -4586,7 +4603,6 @@ def _classico_cover_page(
     rotulo: str | None = None,
     now: datetime | None = None,
     origem_centroide_hex: bool = False,
-    aviso_fora_da_area: bool = False,
     contexto: _RecortePdf | None = None,
 ) -> None:
     """Capa classica: texto por baseline, todo na coluna limpa da arte (x>=460, y 300-450).
@@ -4624,13 +4640,8 @@ def _classico_cover_page(
     # logo branco: ilegivel e riscando a marca. Aqui a caixa e' turquesa chapado medido.
     # Largura: 314,1 pt a 10 pt contra 462 pt uteis (base_x=478 ate a margem direita) -> 147,9
     # pt de folga em UMA linha; a string e' texto de produto, fixa, entao a folga nao varia.
-    # O de AREA vence o de origem na mesma linha (o estudo do master e' sempre de coordenada, nunca
-    # do centroide); os dois juntos so' sairiam por um chamador novo, e a Realizacao mostra ambos.
-    aviso_da_capa = (
-        _AVISO_FORA_DA_AREA
-        if aviso_fora_da_area
-        else (_AVISO_ORIGEM_CENTROIDE_HEX if origem_centroide_hex else None)
-    )
+    # O aviso de AREA nao sai aqui: ele vive na Conclusao, em amarelo (Juan, 19/11/2026).
+    aviso_da_capa = _AVISO_ORIGEM_CENTROIDE_HEX if origem_centroide_hex else None
     if aviso_da_capa:
         pdf.set_font("Helvetica", "", _CAPA_AVISO_FONT_PT)
         pdf.text(base_x, _CAPA_AVISO_Y, _ascii(aviso_da_capa))
@@ -5064,7 +5075,6 @@ def _classico_credit_page(
     rotulo: str | None = None,
     now: datetime | None = None,
     origem_centroide_hex: bool = False,
-    aviso_fora_da_area: bool = False,
     contexto: _RecortePdf | None = None,
 ) -> None:
     """Realizacao/Credito: fundo turquesa solido + credito/metodo + aviso de dados
@@ -5142,14 +5152,8 @@ def _classico_credit_page(
     # de proposito: capa e Realizacao sao as duas paginas que quem recebe o PDF olha inteiro,
     # e o aviso nao pode depender de uma unica linha. Largura medida: ~293 pt a 10 pt na
     # celula de 880 pt — uma linha, sem risco de estouro (string fixa do modulo).
-    avisos = [
-        a
-        for a, ligado in (
-            (_AVISO_FORA_DA_AREA, aviso_fora_da_area),
-            (_AVISO_ORIGEM_CENTROIDE_HEX, origem_centroide_hex),
-        )
-        if ligado
-    ]
+    # So o de origem: o aviso de AREA vive na Conclusao, em amarelo (Juan, 19/11/2026).
+    avisos = [_AVISO_ORIGEM_CENTROIDE_HEX] if origem_centroide_hex else []
     for i, aviso in enumerate(avisos):
         pdf.set_font("Helvetica", "", 10)
         pdf.set_xy(40, 408 + 16 * i)
@@ -5294,7 +5298,6 @@ def gerar_pdf_relatorio_pontual_classico(
         rotulo=rotulo,
         now=now,
         origem_centroide_hex=origem_centroide_hex,
-        aviso_fora_da_area=aviso_fora_da_area,
         **kw_ctx,
     )
     # Imovel: FOTOS primeiro, DEPOIS a vista aerea (item Felipe 2026-07-23) — cada uma em
@@ -5372,7 +5375,9 @@ def gerar_pdf_relatorio_pontual_classico(
     # com `viabilidade=None` SEM o botao Estudo (operador nao preencheu a Viabilidade),
     # segue sem a pagina. Default `False` = comportamento historico intacto para todo
     # chamador que nao se manifeste.
-    if viabilidade or conclusao_so_estudo:
+    # O aviso de AREA mora na Conclusao (Juan, 19/11/2026: "deixe na conclusao em amarelo"),
+    # entao pedir o aviso tambem pede a pagina: sem ela, o aviso sumiria em silencio.
+    if viabilidade or conclusao_so_estudo or aviso_fora_da_area:
         antes = pdf.pages_count
         _conclusao_page(
             pdf,
@@ -5384,6 +5389,7 @@ def gerar_pdf_relatorio_pontual_classico(
             primary=p5,
             secondary=s5,
             somente_estudo=not viabilidade,
+            aviso_fora_da_area=aviso_fora_da_area,
             **kw_ctx,
         )
         # No modo so-estudo a conclusao NAO tem eixo financeiro (nem cards de aluguel,
@@ -5397,7 +5403,6 @@ def gerar_pdf_relatorio_pontual_classico(
         rotulo=rotulo,
         now=now,
         origem_centroide_hex=origem_centroide_hex,
-        aviso_fora_da_area=aviso_fora_da_area,
         **kw_ctx,
     )
 
