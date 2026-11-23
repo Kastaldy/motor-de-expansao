@@ -42,6 +42,14 @@ from tests.unit.test_piloto_web_rede import _base_sintetica  # noqa: E402
 HOJE = pd.Timestamp("2026-11-18")
 
 
+@pytest.fixture(autouse=True)
+def _painel_do_master_ligado(monkeypatch: pytest.MonkeyPatch) -> None:
+    """O painel do master esta' TEMPORARIAMENTE desligado (emenda 3 da DEC-089). Os testes deste
+    arquivo cobrem o comportamento com ele LIGADO, para quando voltar; o estado atual (desligado)
+    e' o de `test_piloto_web_master_sem_painel.py`."""
+    monkeypatch.setattr(acesso, "MASTER_VE_O_PROPRIO_PAINEL", True)
+
+
 def _tabelas(esquema: int = ingestao.ESQUEMA) -> ingestao.Tabelas:
     contratos = pd.DataFrame(
         [

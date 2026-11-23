@@ -5376,7 +5376,7 @@ Mercado, concorrentes, pinos Ultra e malha do Censo vêm dos arquivos que o moto
 | **Prioridade** | Alta — pedido do Juan em 19/11/2026, na prévia da tela Masters. |
 | **Esteira** | PR próprio, empilhado no do BLK-MASTERS-04 (escolha do Juan). |
 | **Quem** | Juan (código); Felipe (migration 027 na VPS e deploy); Felipe ou Vinicius (aprovação crítica). |
-| **Status** | Em PR |
+| **Status** | Entregue (#570, 23/11/2026); painel do master DESLIGADO temporariamente (emenda 3 da DEC-089: `MASTER_VE_O_PROPRIO_PAINEL = False`) |
 | **Depende de** | BLK-MASTERS-04 |
 | **Autonomia** | **manual (NÃO loop-safe)** — RBAC e dado confidencial. |
 

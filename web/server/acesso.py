@@ -821,6 +821,13 @@ ROTAS_DA_REDE_PROPRIA: tuple[re.Pattern[str], ...] = (
 #: da ROTA (`_masters_do_pedido`, no `app.py`), que devolve 404 ao master de outro.
 CAPACIDADE_MASTERS_PROPRIO = "masters.ver_proprio"
 
+#: TEMPORARIO (23/11/2026, Juan: "os masters nao podem visualizar essas abas novas, vai ser
+#: temporariamente"; emenda 3 da DEC-089). Desligado, o master com login proprio NAO ve a aba
+#: Masters nem a trilha "Meu territorio" do Inicio, e as rotas de `/api/masters` o recusam: ele fica
+#: so' com a Executiva recortada, como antes da 027. A capacidade continua no banco e nada mais
+#: muda (Growth e Lideres, a trilha de teste do Growth). Para voltar: `True`, numa linha so'.
+MASTER_VE_O_PROPRIO_PAINEL = False
+
 #: Segmento do id de master na config (`dfgo`, `camargo`): sem barra nem ponto.
 _ID_DO_MASTER = r"[^/.]+"
 
@@ -874,7 +881,8 @@ def ve_so_o_proprio_master(usuario: object) -> bool:
     except Exception:  # noqa: BLE001 — so' informa a tela; quem barra e' o gate
         return False
     return (
-        quem is not None
+        MASTER_VE_O_PROPRIO_PAINEL
+        and quem is not None
         and quem.pode(CAPACIDADE_MASTERS_PROPRIO)
         and not quem.pode("masters.ver")
     )
@@ -1061,7 +1069,8 @@ def motivo_bloqueio_por_banco(path: str, metodo: str, usuario: object) -> str | 
     # O master na tela Masters (027, emenda 2 da DEC-089): sem `masters.ver`, mas com
     # `masters.ver_proprio`, passa SO' nas leituras da allowlist -- e a rota recorta o master dele.
     if (
-        necessaria == "masters.ver"
+        MASTER_VE_O_PROPRIO_PAINEL
+        and necessaria == "masters.ver"
         and quem.pode(CAPACIDADE_MASTERS_PROPRIO)
         and rota_dos_masters_proprios(path, metodo)
     ):
@@ -1108,7 +1117,10 @@ def _sustenta_a_aba(quem: Identidade, aba: str, capacidade: str) -> bool:
     """A pessoa tem a capacidade principal da aba, ou uma das alternativas dela."""
     if quem.pode(capacidade):
         return True
-    return any(quem.pode(c) for c in CAPACIDADES_ALTERNATIVAS_DA_ABA.get(aba, ()))
+    alternativas = CAPACIDADES_ALTERNATIVAS_DA_ABA.get(aba, frozenset())
+    if not MASTER_VE_O_PROPRIO_PAINEL:  # temporario: o master sem a aba Masters (emenda 3)
+        alternativas = alternativas - {CAPACIDADE_MASTERS_PROPRIO}
+    return any(quem.pode(c) for c in alternativas)
 
 
 def abas_do_usuario_por_banco(usuario: object) -> frozenset[str]:
