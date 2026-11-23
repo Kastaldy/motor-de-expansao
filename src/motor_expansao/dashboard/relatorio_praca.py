@@ -1122,7 +1122,11 @@ def preparar_hexes_da_cidade(
 # --------------------------------------------------------------------------- #
 @dataclass(frozen=True)
 class PracaDoPonto:
-    """Paginas da praca no Relatorio Pontual. `mapas` = chave -> PNG."""
+    """Paginas da praca no Relatorio Pontual. `mapas` = chave -> PNG.
+
+    `independente_sem_raio` (Brasil, 2026-11-23): o mapa de pressao saiu sem o disco das
+    independentes, e a nota da pagina tem de dizer isso -- elas seguem nas contagens do painel.
+    """
 
     municipio: str
     uf: str | None
@@ -1130,6 +1134,7 @@ class PracaDoPonto:
     crescimento: CrescimentoCidade
     crescimento_hex: CrescimentoDoHexagono
     mapas: dict[str, bytes] = field(default_factory=dict)
+    independente_sem_raio: bool = False
 
 
 @dataclass(frozen=True)
