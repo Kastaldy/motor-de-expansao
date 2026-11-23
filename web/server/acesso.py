@@ -828,6 +828,23 @@ CAPACIDADE_MASTERS_PROPRIO = "masters.ver_proprio"
 #: muda (Growth e Lideres, a trilha de teste do Growth). Para voltar: `True`, numa linha so'.
 MASTER_VE_O_PROPRIO_PAINEL = False
 
+#: TEMPORARIO (23/11/2026, Felipe: testar o aviso de imovel com um login de teste de master antes
+#: de liberar os masters). Estes `id_usuario` veem o painel do master mesmo com
+#: `MASTER_VE_O_PROPRIO_PAINEL` desligado -- e SO' eles: o gate, a aba, o Inicio e a rota leem a
+#: mesma funcao (`painel_do_master_ligado`). Id, e nao login, para nao por dado pessoal no codigo.
+#: Para tirar: `frozenset()`.
+IDS_COM_O_PAINEL_DO_MASTER: frozenset[int] = frozenset({24})
+
+
+def painel_do_master_ligado(quem: object) -> bool:
+    """O painel do master (aba Masters recortada, Inicio dele e as rotas de `/api/masters`) vale
+    para esta pessoa? Para todos com `MASTER_VE_O_PROPRIO_PAINEL`; sem ele, so' para os ids de
+    `IDS_COM_O_PAINEL_DO_MASTER`. Sem identidade, `False`."""
+    if MASTER_VE_O_PROPRIO_PAINEL:
+        return True
+    return getattr(quem, "id_usuario", None) in IDS_COM_O_PAINEL_DO_MASTER
+
+
 #: Segmento do id de master na config (`dfgo`, `camargo`): sem barra nem ponto.
 _ID_DO_MASTER = r"[^/.]+"
 
@@ -881,8 +898,8 @@ def ve_so_o_proprio_master(usuario: object) -> bool:
     except Exception:  # noqa: BLE001 — so' informa a tela; quem barra e' o gate
         return False
     return (
-        MASTER_VE_O_PROPRIO_PAINEL
-        and quem is not None
+        quem is not None
+        and painel_do_master_ligado(quem)
         and quem.pode(CAPACIDADE_MASTERS_PROPRIO)
         and not quem.pode("masters.ver")
     )
@@ -1069,7 +1086,7 @@ def motivo_bloqueio_por_banco(path: str, metodo: str, usuario: object) -> str | 
     # O master na tela Masters (027, emenda 2 da DEC-089): sem `masters.ver`, mas com
     # `masters.ver_proprio`, passa SO' nas leituras da allowlist -- e a rota recorta o master dele.
     if (
-        MASTER_VE_O_PROPRIO_PAINEL
+        painel_do_master_ligado(quem)
         and necessaria == "masters.ver"
         and quem.pode(CAPACIDADE_MASTERS_PROPRIO)
         and rota_dos_masters_proprios(path, metodo)
@@ -1118,7 +1135,7 @@ def _sustenta_a_aba(quem: Identidade, aba: str, capacidade: str) -> bool:
     if quem.pode(capacidade):
         return True
     alternativas = CAPACIDADES_ALTERNATIVAS_DA_ABA.get(aba, frozenset())
-    if not MASTER_VE_O_PROPRIO_PAINEL:  # temporario: o master sem a aba Masters (emenda 3)
+    if not painel_do_master_ligado(quem):  # temporario: o master sem a aba Masters (emenda 3)
         alternativas = alternativas - {CAPACIDADE_MASTERS_PROPRIO}
     return any(quem.pode(c) for c in alternativas)
 

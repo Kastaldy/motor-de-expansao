@@ -74,6 +74,40 @@ def test_o_inicio_do_master_nao_ganha_a_trilha(monkeypatch: pytest.MonkeyPatch) 
     assert acesso.ve_a_trilha_do_master("alguem") is False
 
 
+def test_so_o_login_de_teste_tem_o_painel_com_a_chave_desligada() -> None:
+    """23/11/2026 (Felipe): o login de teste de master (id 24 na produção) testa o aviso de
+    imóvel antes de os masters ganharem o painel. Só ele; tirar é `frozenset()`."""
+    assert acesso.IDS_COM_O_PAINEL_DO_MASTER == frozenset({24})
+
+
+def test_o_login_de_teste_ganha_o_painel_inteiro(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Com o id dele na lista, o master de teste tem tudo o que a chave ligada daria: a aba, o
+    gate nas leituras e nos dois POST do Início, a rota e a trilha "Meu território"."""
+    # `_identidade` devolve o id 1: ele faz o papel do login de teste aqui.
+    monkeypatch.setattr(acesso, "IDS_COM_O_PAINEL_DO_MASTER", frozenset({1}))
+    _login(monkeypatch, "Master Um", MASTER)
+    assert acesso.abas_do_usuario_por_banco("alguem") == frozenset({"executiva", "masters"})
+    for metodo, caminho in (
+        ("GET", "/api/masters"),
+        ("GET", "/api/masters/rjsp"),
+        ("POST", "/api/masters/solicitar-imovel"),
+        ("POST", "/api/masters/estudo"),
+    ):
+        assert acesso.motivo_bloqueio_por_banco(caminho, metodo, "alguem") is None, caminho
+    assert acesso.ve_so_o_proprio_master("alguem") is True
+    assert acesso.ve_a_trilha_do_master("alguem") is True
+
+
+def test_o_login_de_teste_nao_abre_o_painel_de_outro_master(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A lista libera o painel, não o recorte: outro id segue recusado, e o recorte da rota
+    continua pelo nome (`_masters_do_pedido` devolve um conjunto, nunca `None` = todos)."""
+    monkeypatch.setattr(acesso, "IDS_COM_O_PAINEL_DO_MASTER", frozenset({2}))
+    _identidade(monkeypatch, MASTER)  # id 1, fora da lista
+    assert acesso.abas_do_usuario_por_banco("alguem") == frozenset({"executiva"})
+    assert acesso.motivo_bloqueio_por_banco("/api/masters", "GET", "alguem") is not None
+    assert acesso.painel_do_master_ligado(None) is False
+
+
 def test_growth_e_lideres_nao_mudam(monkeypatch: pytest.MonkeyPatch) -> None:
     """Quem vê todos os masters segue com a aba e, no Growth, com a trilha de teste do Início."""
     _login(monkeypatch, "Fulano", {"masters.ver", "rede.ver", "masters.inicio_testar"})
