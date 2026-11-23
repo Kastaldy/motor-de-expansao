@@ -1,7 +1,15 @@
 /** Cliente do backend do piloto. Tudo passa pelo proxy /api do Vite. */
 
 import type { AluguelReferencia, TipoImovelAluguel } from './aluguel-referencia'
-import type { MasterPainel, MastersPayload } from './masters'
+import type {
+  MasterCamadas,
+  MasterCrescimento,
+  MasterEstudo,
+  MasterMapa,
+  MasterPainel,
+  MastersPayload,
+  SetorDoTerritorio,
+} from './masters'
 import type {
   AcaoImobiliaria,
   AcessosFicha,
@@ -30,6 +38,7 @@ import type {
   PontoPayload,
   PontoResolvido,
   MunicipioDoPonto,
+  RecomendacaoTop10,
   RedeCarteira,
   RedeFicha,
   RedeFiltros,
@@ -609,6 +618,55 @@ export const api = {
   /** O painel de um master: as listas por status e a meta do ano por trimestre. */
   master: (id: string) =>
     pedir<MasterPainel>(`/api/masters/${encodeURIComponent(id)}`, {}, 30_000),
+
+  /** O "Onde expandir" da aba Expansão (BLK-MASTERS-04): a Análise de Oportunidade do
+   *  relatório. A primeira vez lê os setores do território inteiro no servidor (até ~30 s num
+   *  estado grande); depois vem do cache. */
+  masterEstudo: (id: string) =>
+    pedir<MasterEstudo>(`/api/masters/${encodeURIComponent(id)}/estudo`, {}, 180_000),
+
+  /** Onde abrir no território pela régua do motor (Mata Virgem e Premium, DEC-077), com 20
+   *  vagas por segmento; `recomendacao: null` = país sem régua. */
+  masterRecomendacao: (id: string) =>
+    pedir<{ recomendacao: RecomendacaoTop10 | null }>(
+      `/api/masters/${encodeURIComponent(id)}/recomendacao`,
+      {},
+      120_000,
+    ),
+
+  /** Os setores do Censo do território inteiro (renda e densidade em qualquer zoom). A primeira
+   *  leitura do território é lenta; depois vem do cache. */
+  masterSetores: (id: string) =>
+    pedir<{ setores: SetorDoTerritorio[] }>(`/api/masters/${encodeURIComponent(id)}/setores`, {}, 180_000),
+
+  /** Quanto o master pode crescer no território: mercado, atendido, espaço livre e academias. */
+  masterCrescimento: (id: string) =>
+    pedir<MasterCrescimento>(`/api/masters/${encodeURIComponent(id)}/crescimento`, {}, 60_000),
+
+  /** O território do master no mapa do painel (BLK-MASTERS-04): hexágonos por região e Ultra. */
+  masterMapa: (id: string) =>
+    pedir<MasterMapa>(`/api/masters/${encodeURIComponent(id)}/mapa`, {}, 60_000),
+
+  /** Renda domiciliar e densidade dos hexágonos do território, pedidas ao ligar uma camada
+   *  (a primeira leitura de uma UF no servidor é lenta, como na ficha da carteira). */
+  masterCamadas: (id: string) =>
+    pedir<MasterCamadas>(`/api/masters/${encodeURIComponent(id)}/mapa/camadas`, {}, 120_000),
+
+  /** O relatório do master (BLK-MASTERS-04), gerado no servidor: com duas ou mais áreas, um PDF
+   *  por área num .zip (menos no DF/GO, um PDF só); senão, o PDF. Com `regiao`, o PDF daquela área. 404 diz o que falta no
+   *  servidor (painel de unidades, config dos territórios). */
+  relatorioMaster: (id: string, regiao?: string | null) =>
+    pedirArquivo(
+      `/api/masters/relatorio/${encodeURIComponent(id)}${
+        regiao ? `?regiao=${encodeURIComponent(regiao)}` : ''
+      }`,
+      { method: 'GET' },
+      `relatorio_master_${id}${regiao ? `_${regiao}` : ''}.pdf`,
+      {
+        falha: 'Falha ao gerar o relatório do master',
+        timeout: 'O relatório do master demorou demais para ficar pronto; tente de novo.',
+      },
+    ),
 
   /* ---- Aba Acessos (emenda DEC-027; restrita por allowlist no backend) ---- */
 

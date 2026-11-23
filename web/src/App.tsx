@@ -909,7 +909,7 @@ export default function App() {
         ) : tela === 'masters' ? (
           // Tela Masters (DEC-089). Autônoma como a Executiva: os masters são da rede
           // inteira, não de um recorte do mapa.
-          <MastersScreen onInicio={voltarAoInicio} />
+          <MastersScreen onInicio={voltarAoInicio} tema={tema} />
         ) : tela === 'oportunidades-imob' ? (
           // Camada de oferta (imóveis de locação joinados ao território). Autônoma:
           // nacional, filtra por dentro; sem PII (contato do corretor só no dossiê).

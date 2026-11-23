@@ -15,12 +15,15 @@ from motor_expansao.masters.ingestao import (
     ARQ_INAUGURADAS,
     ARQ_MANIFESTO,
     ARQ_PIPELINE,
+    ARQ_TERRITORIOS,
     ESQUEMA,
     IngestaoRecusada,
     gravar,
     montar_tabelas,
     nome_do_master,
+    planilha_do_relatorio,
 )
+from motor_expansao.masters.territorios import carregar_territorios
 
 #: Como a planilha escreve o titular: o território na frente, o nome do master depois.
 TITULAR = "DF — Fulano de Tal Ltda"
@@ -113,7 +116,16 @@ def _territorios(tmp_path: Path) -> Path:
 def test_ingestao_grava_so_o_que_a_tela_mostra(tmp_path: Path) -> None:
     tabelas = montar_tabelas(_planilha(tmp_path), _territorios(tmp_path))
     feitos = gravar(tabelas, tmp_path / "staging")
-    assert [p.name for p in feitos] == [ARQ_CONTRATOS, ARQ_INAUGURADAS, ARQ_PIPELINE, ARQ_MANIFESTO]
+    assert [p.name for p in feitos] == [
+        ARQ_CONTRATOS,
+        ARQ_INAUGURADAS,
+        ARQ_PIPELINE,
+        ARQ_TERRITORIOS,
+        ARQ_MANIFESTO,
+    ]
+    # A config dos territórios vai como veio: o relatório em PDF do servidor lê as regiões dela.
+    copia = carregar_territorios(tmp_path / "staging" / ARQ_TERRITORIOS)
+    assert set(copia) == {"alfa", "beta"} and copia["alfa"].regioes[0].ufs == {"DF"}
 
     contratos = pd.read_parquet(tmp_path / "staging" / ARQ_CONTRATOS)
     assert list(contratos["master_id"]) == ["alfa", "beta"]
@@ -185,3 +197,43 @@ def test_aba_faltando_recusa_sem_gravar(tmp_path: Path) -> None:
 def test_master_fora_da_config_recusa(tmp_path: Path) -> None:
     with pytest.raises(IngestaoRecusada, match="fora do territorios.json"):
         montar_tabelas(_planilha(tmp_path, master_extra=True), _territorios(tmp_path))
+
+
+def test_planilha_do_relatorio_volta_ao_formato_da_planilha(tmp_path: Path) -> None:
+    """O PDF do servidor lê a planilha pelo nome do master (`nome_planilha`): as tabelas ingeridas
+    voltam a esse formato, com o mesmo resultado que ler a planilha crua."""
+    from motor_expansao.masters.dados import ler_planilha_masters
+
+    planilha, territorios = _planilha(tmp_path), _territorios(tmp_path)
+    t = montar_tabelas(planilha, territorios)
+    inaug, pipe = planilha_do_relatorio(t.inauguradas, t.pipeline, carregar_territorios(territorios))
+    cru_inaug, cru_pipe = ler_planilha_masters(planilha)
+    assert list(inaug["master_secao"]) == list(cru_inaug["master_secao"])
+    assert list(inaug["operacao"]) == list(cru_inaug["operacao"])
+    # A meta de quem não é master da config ("Holding…") fica vazia: não casa com master nenhum.
+    assert list(inaug["meta"]) == ["Alfa — Fulano", None, "Beta — Ciclano"]
+    assert list(pipe["master"]) == list(cru_pipe["master"])
+    assert list(pipe["dentro_territorio"]) == ["Sim", "Não", None]
+
+
+def test_dentro_do_territorio_sai_certo_vindo_do_parquet_e_com_numpy_bool(tmp_path: Path) -> None:
+    """Achado médio da revisão automática do #568: `sim_nao` comparava com `is True`/`is False`, e
+    um `numpy.bool_` (o que a coluna vira por outros caminhos de leitura) saía em branco no
+    relatório. O piloto lê o pipeline do parquet da ingestão: os dois casos ficam travados aqui."""
+    import numpy as np
+
+    planilha, territorios = _planilha(tmp_path), _territorios(tmp_path)
+    t = montar_tabelas(planilha, territorios)
+    masters = carregar_territorios(territorios)
+    # Sem nulo no lote, a coluna volta do parquet como bool.
+    sem_nulo = t.pipeline[t.pipeline["dentro_territorio"].notna()].reset_index(drop=True)
+    caminho = tmp_path / "pipeline.parquet"
+    sem_nulo.to_parquet(caminho, index=False)
+    _, pipe = planilha_do_relatorio(t.inauguradas, pd.read_parquet(caminho), masters)
+    assert list(pipe["dentro_territorio"]) == ["Sim", "Não"]
+    # `numpy.bool_` guardado como objeto: era o caso que saía em branco.
+    com_numpy = sem_nulo.assign(
+        dentro_territorio=pd.Series([np.bool_(True), np.bool_(False)], dtype=object)
+    )
+    _, pipe = planilha_do_relatorio(t.inauguradas, com_numpy, masters)
+    assert list(pipe["dentro_territorio"]) == ["Sim", "Não"]

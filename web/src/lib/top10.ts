@@ -26,6 +26,7 @@ import { TEXTO_SEM_DADO } from './constants'
 import { alunos, num, renda } from './format'
 import { destinoDoHex, type DestinoHex } from './oportunidades'
 import { perfilDoCliente } from './perfil'
+import type { Tema } from './tema'
 import type {
   Passo,
   RankItem,
@@ -60,6 +61,15 @@ export const TOKEN_COR_TOP10: Readonly<Record<SegmentoTop10 | 'fora', string>> =
   premium: 'var(--top10-premium)',
   fora: 'var(--top10-fora)',
 })
+
+/** O RGB de Mata Virgem e de Premium por tema, para o deck.gl (que não lê CSS): espelho de
+ *  `--top10-mv` e `--top10-premium`, como a `PELE` do HexMap. O mapa do território do master
+ *  pinta com ele a região clicada no top 5; `mapa-top10.test.ts` trava o par com o tokens.css. */
+export const RGB_TOP10: Readonly<Record<Tema, Readonly<Record<SegmentoTop10, readonly [number, number, number]>>>> =
+  Object.freeze({
+    escuro: { mata_virgem: [63, 207, 142], premium: [197, 140, 255] },
+    claro: { mata_virgem: [10, 112, 66], premium: [122, 63, 196] },
+  })
 
 /**
  * O DISCRIMINADOR: o payload traz o bloco `recomendacao`?

@@ -823,9 +823,10 @@ def test_nenhuma_async_do_app_vai_ao_banco_direto() -> None:
         and (achadas := _chamadas_diretas(no))
     }
     assert violacoes == {}
-    # E as quatro rotas de relatorio de fato usam o despachante (nao sumiram do mapa).
+    # E as cinco rotas de relatorio de fato usam o despachante (nao sumiram do mapa): as quatro
+    # de antes e a do relatorio do master (BLK-MASTERS-04, emenda 1 da DEC-089).
     fonte = (_SERVER / "app.py").read_text(encoding="utf-8")
-    assert fonte.count("await _registrar_relatorio_gerado_fora_do_loop(") == 4
+    assert fonte.count("await _registrar_relatorio_gerado_fora_do_loop(") == 5
 
 
 def test_os_tetos_sao_positivos_e_chegam_literais_na_conexao(

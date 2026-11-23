@@ -28,6 +28,7 @@ import copy
 import functools
 import hashlib
 import inspect
+import io
 import ipaddress
 import json
 import logging
@@ -38,6 +39,7 @@ import sys
 import threading
 import time
 import unicodedata
+import zipfile
 from collections.abc import Callable, Collection, Iterator, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -16876,7 +16878,555 @@ def api_master(master_id: str) -> dict[str, Any]:
     )
     if painel is None:
         raise HTTPException(404, "Master não encontrado.")
-    return {**painel, "hoje": hoje.strftime("%Y-%m-%d"), "fontes": _masters_fontes(manifesto)}
+    return {
+        **painel,
+        "hoje": hoje.strftime("%Y-%m-%d"),
+        "fontes": _masters_fontes(manifesto),
+        # O que o botão do relatório entrega, para o texto embaixo dele dizer a verdade.
+        "relatorio_por_area": _masters_relatorio_por_area(
+            master_id, _masters_n_areas_do_relatorio(master_id, len(painel["regioes"]))
+        ),
+    }
+
+
+# ---------------------------------------------------------------------------
+# O relatório do master em PDF (BLK-MASTERS-04): o modelo antigo mais os padrões das unidades
+# quando a região tem dado, gerado AQUI com os arquivos que o motor usa (mercado, concorrentes,
+# pinos Ultra, malha do Censo), e não com cópias locais. Precisa ainda, na staging: a config dos
+# territórios (da ingestão) e o painel de unidades BLK-UNI, copiado todo mês pelo Felipe.
+# ---------------------------------------------------------------------------
+
+MASTERS_TERRITORIOS = STAGING_DIR / masters_ingestao.ARQ_TERRITORIOS
+#: Masters cujo relatório sai num PDF ÚNICO com todas as áreas, mesmo tendo duas ou mais (19/11/2026,
+#: Juan: "df pode deixar Goiás e DF tudo no mesmo relatório"; só o DF/GO, os outros seguem com um
+#: PDF por área num .zip). O id é o da config dos territórios.
+MASTERS_RELATORIO_UNICO = frozenset({"dfgo"})
+UNI_DIM_PARQUET = STAGING_DIR / "dim_unidade.parquet"
+UNI_FATO_PARQUET = STAGING_DIR / "fato_unidade_mes.parquet"
+
+
+def _masters_n_areas_do_relatorio(master_id: str, n_do_painel: int) -> int:
+    """Quantas áreas o relatório do master vê: as da config dos territórios, a mesma da rota do
+    PDF; sem a config (ou sem o master nela), as do painel."""
+    from motor_expansao.masters.territorios import carregar_territorios
+
+    if not MASTERS_TERRITORIOS.exists():
+        return n_do_painel
+    try:
+        master = carregar_territorios(MASTERS_TERRITORIOS).get(master_id)
+    except Exception:  # noqa: BLE001 — config ilegível não derruba o painel; a rota do PDF diz o que falta
+        return n_do_painel
+    return len(master.regioes) if master is not None else n_do_painel
+
+
+def _masters_relatorio_por_area(master_id: str, n_areas: int) -> bool:
+    """O botão do relatório entrega um PDF por área num .zip? Sim com duas ou mais áreas, menos
+    nos masters de `MASTERS_RELATORIO_UNICO`, que recebem o PDF do master inteiro."""
+    return n_areas >= 2 and master_id not in MASTERS_RELATORIO_UNICO
+
+
+def _masters_faltando_para_o_relatorio() -> list[str]:
+    """O que falta no servidor para gerar o relatório, em palavras (vazio = nada falta)."""
+    exigidos = (
+        ("a config dos territórios (scripts/ingerir_masters.py)", MASTERS_TERRITORIOS),
+        ("o painel de unidades BLK-UNI (dim_unidade.parquet)", UNI_DIM_PARQUET),
+        ("o painel de unidades BLK-UNI (fato_unidade_mes.parquet)", UNI_FATO_PARQUET),
+        ("o mercado do motor (hexagonos_mercado_mapeado.parquet)", MERCADO_PARQUET),
+        ("os concorrentes do motor (concorrentes_mapeados.parquet)", CONCORRENTES_PARQUET),
+    )
+    return [nome for nome, caminho in exigidos if not caminho.exists()]
+
+
+def _masters_assinatura_das_fontes() -> tuple[tuple[str, int], ...]:
+    """Data de cada fonte do relatório: chave do cache, para um arquivo novo gerar de novo."""
+    return tuple(
+        (caminho.name, caminho.stat().st_mtime_ns if caminho.exists() else 0)
+        for caminho in (
+            MASTERS_MANIFESTO,
+            MASTERS_TERRITORIOS,
+            UNI_DIM_PARQUET,
+            UNI_FATO_PARQUET,
+            MERCADO_PARQUET,
+            CONCORRENTES_PARQUET,
+            ULTRA_MAPEADAS_PARQUET,
+        )
+    )
+
+
+@functools.lru_cache(maxsize=8)
+def _masters_pdf(
+    master_id: str, regiao_id: str | None, hoje: str, fontes: tuple[tuple[str, int], ...]
+) -> tuple[bytes, str]:
+    """Gera (e guarda em memória) o PDF de um master ou de uma área dele. `fontes` só entra na
+    chave do cache. Import tardio: o gerador puxa matplotlib e fpdf2, que o resto não usa."""
+    from motor_expansao.masters import gerar as masters_gerar
+
+    entradas, masters, planilha = _masters_entradas_do_gerador()
+    return masters_gerar.pdf_do_master(
+        entradas, masters[master_id], pd.Timestamp(hoje), regiao_id=regiao_id, planilha=planilha
+    )
+
+
+def _masters_entradas_do_gerador() -> tuple[Any, dict[str, Any], tuple[pd.DataFrame, pd.DataFrame]]:
+    """As entradas do gerador do relatório (os arquivos que o motor usa), os masters da config e a
+    planilha remontada da ingestão: as mesmas para o PDF e para o estudo da aba Expansão."""
+    from motor_expansao.masters import gerar as masters_gerar
+    from motor_expansao.masters.territorios import carregar_territorios
+
+    _contratos, inauguradas, pipeline, _manifesto = _masters_exigir()
+    masters = carregar_territorios(MASTERS_TERRITORIOS)
+    entradas = masters_gerar.Entradas(
+        planilha=STAGING_DIR / "planilha_nao_usada.xlsx",  # o piloto passa a ingestão
+        territorios=MASTERS_TERRITORIOS,
+        mercado=MERCADO_PARQUET,
+        concorrentes=CONCORRENTES_PARQUET,
+        dim_unidade=UNI_DIM_PARQUET,
+        fato_unidade_mes=UNI_FATO_PARQUET,
+        ultra=ULTRA_MAPEADAS_PARQUET,
+        censo_geo_dir=CENSO_GEO_DIR,
+        staging_dir=STAGING_DIR,
+        assets_dir=ULTRA_DIR,
+    )
+    return entradas, masters, masters_ingestao.planilha_do_relatorio(inauguradas, pipeline, masters)
+
+
+@functools.lru_cache(maxsize=8)
+def _masters_estudo(master_id: str, hoje: str, fontes: tuple[tuple[str, int], ...]) -> str:
+    """O "Onde expandir" da aba Expansão (JSON): a Análise de Oportunidade pela função do PDF
+    (`gerar.estudo_do_master`). Em cache até uma fonte mudar de data ou virar o dia."""
+    from motor_expansao.masters import gerar as masters_gerar
+
+    entradas, masters, planilha = _masters_entradas_do_gerador()
+    estudo = masters_gerar.estudo_do_master(
+        entradas, masters[master_id], pd.Timestamp(hoje), planilha=planilha
+    )
+    return json.dumps(estudo, ensure_ascii=False)
+
+
+@app.get("/api/masters/relatorio/{master_id}")
+async def api_master_relatorio(
+    master_id: str,
+    regiao: str | None = None,
+    remote_user: str | None = Header(default=None, alias="Remote-User"),
+) -> Response:
+    """O relatório do master. Sem `regiao` (o botão único da tela): master com duas ou mais áreas
+    recebe um .zip com um PDF por área (18/11/2026, Juan: "entregar as áreas que ele tem", com um
+    botão só), menos os de `MASTERS_RELATORIO_UNICO` (o DF/GO), que recebem o PDF do master inteiro;
+    com uma área ou nenhuma, o PDF. Com `regiao`, o PDF daquela área. Mesmo gate da tela
+    (`masters.ver`), o mesmo teto de PDFs ao mesmo tempo e o evento `relatorio.gerado` (D17)."""
+    _masters_exigir()
+    faltando = _masters_faltando_para_o_relatorio()
+    if faltando:
+        raise HTTPException(
+            404, "Para gerar o relatório, falta no servidor: " + "; ".join(faltando) + "."
+        )
+    from motor_expansao.masters.territorios import carregar_territorios
+
+    master = carregar_territorios(MASTERS_TERRITORIOS).get(master_id)
+    if master is None:
+        raise HTTPException(404, "Master não encontrado.")
+    if regiao is not None and regiao not in {r.id for r in master.regioes}:
+        raise HTTPException(404, "Área não encontrada para este master.")
+    por_area = regiao is None and _masters_relatorio_por_area(master.id, len(master.regioes))
+    await _registrar_relatorio_gerado_fora_do_loop(
+        remote_user, relatorio="master", formato="zip" if por_area else "pdf"
+    )
+    hoje = _masters_hoje().strftime("%Y-%m-%d")
+    fontes = _masters_assinatura_das_fontes()
+    async with _PDF_SEMAFORO:
+        if not por_area:
+            pdf, nome = await run_in_threadpool(_masters_pdf, master_id, regiao, hoje, fontes)
+            return Response(
+                content=pdf,
+                media_type="application/pdf",
+                headers={"Content-Disposition": f'attachment; filename="{nome}"'},
+            )
+        # Uma área de cada vez, na mesma vaga do teto: são PDFs pesados (SP leva ~35 s).
+        pdfs = [
+            await run_in_threadpool(_masters_pdf, master_id, r.id, hoje, fontes)
+            for r in master.regioes
+        ]
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w", compression=zipfile.ZIP_DEFLATED) as zf:
+        for pdf, nome in pdfs:
+            zf.writestr(nome, pdf)
+    from motor_expansao.masters.gerar import nome_do_arquivo
+
+    nome_zip = (
+        nome_do_arquivo(master.id, pd.Timestamp(hoje), "novo")
+        .replace("relatorio_", "relatorios_", 1)
+        .replace(".pdf", ".zip")
+    )
+    return Response(
+        content=buf.getvalue(),
+        media_type="application/zip",
+        headers={"Content-Disposition": f'attachment; filename="{nome_zip}"'},
+    )
+
+
+@app.get("/api/masters/{master_id}/estudo")
+async def api_master_estudo(master_id: str) -> Response:
+    """O "Onde expandir" da aba Expansão: os cartões da Análise de Oportunidade, os mesmos do
+    relatório. Pesado na primeira vez (lê os setores do território), por isso no mesmo teto dos
+    PDFs; depois, em cache."""
+    _masters_exigir()
+    faltando = _masters_faltando_para_o_relatorio()
+    if faltando:
+        raise HTTPException(
+            404, "Para o estudo do território, falta no servidor: " + "; ".join(faltando) + "."
+        )
+    from motor_expansao.masters.territorios import carregar_territorios
+
+    if master_id not in carregar_territorios(MASTERS_TERRITORIOS):
+        raise HTTPException(404, "Master não encontrado.")
+    hoje = _masters_hoje().strftime("%Y-%m-%d")
+    async with _PDF_SEMAFORO:
+        corpo = await run_in_threadpool(
+            _masters_estudo, master_id, hoje, _masters_assinatura_das_fontes()
+        )
+    return Response(content=corpo, media_type="application/json")
+
+
+# --- Mapa do território no painel do master (BLK-MASTERS-04) -----------------------------------
+# 18/11/2026, Juan: "deixe uma parte do relatório nessa aba, o mapa, assim como está na carteira,
+# com a área e a opção de ligar a renda e a densidade". O território é o do mapa do PDF (hexágonos
+# povoados de cada região); as camadas usam a conta do Mapa do motor, para o número ser o mesmo.
+
+
+def _masters_assinatura_do_mapa() -> tuple[tuple[str, int], ...]:
+    return tuple(
+        (caminho.name, caminho.stat().st_mtime_ns if caminho.exists() else 0)
+        for caminho in (MASTERS_TERRITORIOS, MERCADO_PARQUET, ULTRA_MAPEADAS_PARQUET)
+    )
+
+
+def _masters_master_do_mapa(master_id: str) -> Any:
+    """O master da config de territórios, ou 404 com o que falta no servidor."""
+    _masters_exigir()
+    faltando = [c.name for c in (MASTERS_TERRITORIOS, MERCADO_PARQUET) if not c.exists()]
+    if faltando:
+        raise HTTPException(
+            404, "Para o mapa do território, falta no servidor: " + "; ".join(faltando) + "."
+        )
+    from motor_expansao.masters.territorios import carregar_territorios
+
+    master = carregar_territorios(MASTERS_TERRITORIOS).get(master_id)
+    if master is None:
+        raise HTTPException(404, "Master não encontrado.")
+    return master
+
+
+@functools.lru_cache(maxsize=8)
+def _masters_mercado(master_id: str, fontes: tuple[tuple[str, int], ...]) -> pd.DataFrame:
+    """Os hexágonos do mercado no território do master, com a região de cada um e o que o mapa lê
+    (uma leitura por master; `fontes` é a chave: arquivo novo, leitura nova)."""
+    from motor_expansao.masters import mapa as masters_mapa
+
+    master = _masters_master_do_mapa(master_id)
+    ufs = sorted(master.ufs_envolvidas)
+    colunas = list(masters_mapa.COLUNAS_MERCADO_MAPA)
+    mercado = (
+        pd.read_parquet(MERCADO_PARQUET, columns=colunas, filters=[("uf", "in", ufs)])
+        if ufs
+        else pd.DataFrame(columns=colunas)
+    )
+    return masters_mapa.com_regiao(mercado, master)
+
+
+def _masters_hexes_povoados(master_id: str, fontes: tuple[tuple[str, int], ...]) -> set[str]:
+    """Os hexágonos povoados do território: os da recomendação."""
+    m = _masters_mercado(master_id, fontes)
+    return set(m.loc[pd.to_numeric(m["pop_hex_base"], errors="coerce") > 0, "hex_id"].astype(str))
+
+
+@functools.lru_cache(maxsize=16)
+def _masters_mapa(master_id: str, fontes: tuple[tuple[str, int], ...]) -> str:
+    """O território do master (JSON): regiões com a cor, o CONTORNO de cada uma (o território vai
+    demarcado, não pintado), os municípios (para os setores do Censo ao aproximar), as unidades
+    Ultra no território e o enquadramento."""
+    from motor_expansao.masters import mapa as masters_mapa
+    from motor_expansao.masters.dados import ler_ultra
+
+    master = _masters_master_do_mapa(master_id)
+    ultra = ler_ultra(ULTRA_MAPEADAS_PARQUET) if ULTRA_MAPEADAS_PARQUET.exists() else None
+    saida = masters_mapa.territorio(_masters_mercado(master_id, fontes), master, ultra)
+    saida["icone_ultra"] = _icone_ultra() if saida["ultra"] else None
+    return json.dumps(saida, ensure_ascii=False)
+
+
+def _masters_camadas() -> str:
+    """As camadas do mapa (JSON): renda domiciliar e densidade, SEMPRE do Censo ("deixe o padrão
+    sempre censitário"), com as faixas de cor do núcleo; os setores vêm de `/setores`, os
+    polígonos do território inteiro, em qualquer zoom. Espaço livre e academias concorrentes, que
+    iam por hexágono, saíram (19/11/2026, Juan: "a camada de espaço livre e academias
+    concorrentes não precisa ter"); seguem só no relatório em PDF."""
+    from motor_expansao.dashboard import constants as _constants
+
+    return json.dumps(
+        {
+            "faixas": {
+                "renda_domiciliar": _faixas_camada(_constants.RENDA_MEDIA_DOMICILIAR_BANDS),
+                "densidade": _faixas_camada(_constants.DENSIDADE_POP_BANDS),
+            },
+        },
+        ensure_ascii=False,
+    )
+
+
+#: Vagas por segmento da recomendação no território do master: a tela mostra 5 (a régua do país)
+#: e abre as 20 no "ver top 20" (18/11/2026, Juan).
+MASTERS_VAGAS_RECOMENDACAO = 20
+
+
+@functools.lru_cache(maxsize=8)
+def _masters_recomendacao(
+    master_id: str, fontes: tuple[tuple[str, int], ...], regra: Regra | None
+) -> str:
+    """A recomendação do motor no território do master (JSON): Mata Virgem e Premium por
+    hexágono (DEC-077), pela MESMA porta das outras telas (`_bloco_recomendacao`, com o nome do
+    bairro de cada região), só com 20 vagas por segmento em vez de 5. A régua é a vigente do país.
+
+    O núcleo só conhece os recortes brasil, UF e município; o território do master atravessa UFs
+    e vai como "brasil" já filtrado nos hexágonos dele. A régua não depende do nível (é só o
+    rótulo do recorte), e a tela do master não mostra esse rótulo.
+
+    A régua vem de quem chama, como no Top 10 do Brasil: função cacheada que lesse o `PERFIL`
+    vazaria o país entre testes (`test_cache_de_perfil_nao_escapa.py`); com a régua na chave do
+    cache, o país já está nela."""
+    from dataclasses import replace as _substituir
+
+    master = _masters_master_do_mapa(master_id)
+    if regra is None:
+        return json.dumps({"recomendacao": None})
+    ids = _masters_hexes_povoados(master_id, fontes)
+    partes = []
+    for uf in sorted(master.ufs_envolvidas):
+        try:
+            df = carregar_uf(uf)
+        except HTTPException:
+            continue  # UF sem partição: fica fora (os hexágonos dela não entram no ranking)
+        sub = df[df["hex_id"].isin(ids)]
+        partes.append(sub if "uf" in sub.columns else sub.assign(uf=uf))
+    if not partes:
+        return json.dumps({"recomendacao": None})
+    bloco = _bloco_recomendacao(
+        pd.concat(partes, ignore_index=True),
+        Recorte(nivel="brasil", nome=f"território {master.nome_exibicao}"),
+        regra=_substituir(regra, vagas_por_segmento=MASTERS_VAGAS_RECOMENDACAO),
+    )
+    return json.dumps({"recomendacao": bloco}, ensure_ascii=False)
+
+
+@app.get("/api/masters/{master_id}/recomendacao")
+def api_master_recomendacao(master_id: str) -> Response:
+    """Onde expandir no território, pela régua do motor (Mata Virgem e Premium), com 20 vagas
+    por segmento. Mesmo gate da tela (`masters.ver`)."""
+    _masters_master_do_mapa(master_id)
+    return Response(
+        content=_masters_recomendacao(
+            master_id, _masters_assinatura_do_mapa(), _regra_recomendacao()
+        ),
+        media_type="application/json",
+    )
+
+
+@functools.lru_cache(maxsize=16)
+def _masters_crescimento(master_id: str, fontes: tuple[tuple[str, int], ...]) -> str:
+    """Quanto o master pode crescer no território (JSON): mercado fitness, quanto redes e Ultra já
+    atendem, o espaço livre (o residual do motor, `oferta_efetiva_disponivel`) e quantas
+    academias cabem nele, por região e no total. A MESMA conta da página de regiões do relatório
+    (`analise.comparar_regioes`), lida direto do mercado (rápida: não passa pelos setores)."""
+    from motor_expansao.masters import analise as masters_analise
+
+    master = _masters_master_do_mapa(master_id)
+    ufs = sorted(master.ufs_envolvidas)
+    if not ufs:
+        return json.dumps({"total": None, "regioes": []})
+    colunas = [
+        "uf",
+        "nome_municipio",
+        "hex_id",
+        "pop_hex_base",
+        "sam_fitness_potencial",
+        "oferta_consumida_mercado_estimada",
+        "oferta_consumida_ultra_estimada",
+        "oferta_efetiva_disponivel",
+    ]
+    mercado = pd.read_parquet(MERCADO_PARQUET, columns=colunas, filters=[("uf", "in", ufs)])
+    r = masters_analise.comparar_regioes(mercado, master)
+
+    def bloco(mercado_alunos: float, consumo: float, livre: float) -> dict[str, Any]:
+        return {
+            "mercado_alunos": _num(mercado_alunos, 0),
+            "atendido_alunos": _num(consumo, 0),
+            "pct_atendido": _num(consumo / mercado_alunos, 4) if mercado_alunos > 0 else None,
+            "espaco_livre_alunos": _num(livre, 0),
+            "academias_que_cabem": int(livre // masters_analise.CAPACIDADE_UNIDADE_ALUNOS),
+        }
+
+    consumo = r["consumo_concorrentes"] + r["consumo_ultra"]
+    return json.dumps(
+        {
+            "capacidade_por_academia": masters_analise.CAPACIDADE_UNIDADE_ALUNOS,
+            "total": bloco(
+                float(r["mercado_alunos"].sum()),
+                float(consumo.sum()),
+                float(r["espaco_livre_alunos"].sum()),
+            ),
+            "regioes": [
+                {
+                    "id": str(lin.regiao_id),
+                    "nome": str(lin.regiao_nome),
+                    **bloco(float(lin.mercado_alunos), float(c), float(lin.espaco_livre_alunos)),
+                }
+                for lin, c in zip(r.itertuples(), consumo, strict=True)
+            ],
+        },
+        ensure_ascii=False,
+    )
+
+
+@app.get("/api/masters/{master_id}/crescimento")
+def api_master_crescimento(master_id: str) -> Response:
+    """A primeira linha do painel do master: quanto ele pode crescer no território."""
+    _masters_master_do_mapa(master_id)
+    return Response(
+        content=_masters_crescimento(master_id, _masters_assinatura_do_mapa()),
+        media_type="application/json",
+    )
+
+
+@app.get("/api/masters/{master_id}/mapa")
+def api_master_mapa(master_id: str) -> Response:
+    """O território do master para o mapa do painel. Mesmo gate da tela (`masters.ver`)."""
+    _masters_master_do_mapa(master_id)
+    return Response(
+        content=_masters_mapa(master_id, _masters_assinatura_do_mapa()),
+        media_type="application/json",
+    )
+
+
+#: Casas decimais das coordenadas dos setores do território (5 = cerca de 1 m): o território
+#: inteiro vai numa resposta só, e a sexta casa só pesaria no fio.
+MASTERS_SETORES_CASAS = 5
+#: A geometria dos setores do território é simplificada como COBERTURA (`shapely.coverage_simplify`):
+#: a borda comum de dois setores vizinhos é simplificada uma vez só e serve aos dois, e o mapa não
+#: abre fresta entre eles. Simplificar setor a setor abria: na prévia de 19/11/2026 apareciam
+#: frestas escuras entre os setores rurais grandes ao aproximar. Duas passadas, porque a tolerância
+#: da cobertura é uma só:
+#: 1. o território inteiro, com uma tolerância fina (cerca de 33 m), que é a dos setores urbanos;
+#: 2. só os setores rurais (lado acima de `MASTERS_SETORES_LADO_RURAL`), com uma tolerância grossa
+#:    (cerca de 280 m) e sem mexer na borda deles com os urbanos (`simplify_boundary=False`).
+#: Medido no DF/GO em 19/11/2026 (18.279 setores): com 11 m em todos os setores, 1,33 milhão de
+#: vértices e 29 MB de JSON, porque os contornos dos setores rurais grandes seguem rios e estradas;
+#: com as duas passadas, cerca de 300 mil.
+MASTERS_SETORES_TOL_COBERTURA = 0.0003
+MASTERS_SETORES_LADO_RURAL = 0.004
+MASTERS_SETORES_TOL_RURAL = 0.0025
+#: O que a renda domiciliar (`renda.setor.renda_domiciliar_da_linha`) e a densidade leem de cada
+#: setor, além da geometria.
+_COLUNAS_SETOR_NO_TERRITORIO = [
+    "cod_setor",
+    "densidade_pop_setor_hab_km2",
+    "renda_responsavel_media_setor_2022",
+    "renda_per_capita_setor_2022",
+    "avg_moradores_domicilio_setor_2022",
+]
+
+
+def _setores_do_municipio_no_territorio(uf: str, cod_municipio: str) -> list[tuple[Any, Any, Any]]:
+    """Os setores de um município para o mapa do território do master, ainda sem simplificar:
+    `(geometria, renda domiciliar, densidade)`, com a renda e a densidade do mapa de calor do
+    município (`_setores_heatmap_features`). Setor sem geometria fica de fora; município sem
+    partição: nada."""
+    import shapely
+
+    from motor_expansao.dashboard.data import read_censo_geo_partition
+
+    df = read_censo_geo_partition(CENSO_GEO_DIR, uf, cod_municipio)
+    if df.empty or "geometry_wkb" not in df.columns:
+        return []
+    geoms = shapely.from_wkb(df["geometry_wkb"].to_numpy(), on_invalid="ignore")
+    invalidas = ~shapely.is_valid(geoms) & ~shapely.is_missing(geoms)
+    geoms[invalidas] = shapely.buffer(geoms[invalidas], 0)
+
+    _renda_staging_configurado()  # aponta os insumos da renda para o STAGING_DIR (1x)
+    colunas = [c for c in _COLUNAS_SETOR_NO_TERRITORIO if c in df.columns]
+    return [
+        (
+            geom,
+            _num(_renda_setor.renda_domiciliar_da_linha(r, uf, cod_municipio), 0),
+            _num(r.get("densidade_pop_setor_hab_km2"), 1),
+        )
+        for geom, r in zip(geoms, df[colunas].to_dict("records"), strict=True)
+        if geom is not None and not geom.is_empty
+    ]
+
+
+def _simplificar_cobertura_do_territorio(geoms: Any) -> Any:
+    """Os setores do território simplificados como cobertura, em duas passadas (ver
+    `MASTERS_SETORES_TOL_COBERTURA`): vizinhos seguem encaixados, sem fresta entre eles."""
+    import numpy as np
+    import shapely
+
+    geoms = np.asarray(geoms, dtype=object)
+    if not len(geoms):
+        return geoms
+    rural = np.sqrt(shapely.area(geoms)) > MASTERS_SETORES_LADO_RURAL
+    geoms = shapely.coverage_simplify(geoms, MASTERS_SETORES_TOL_COBERTURA)
+    if rural.any():
+        geoms[rural] = shapely.coverage_simplify(
+            geoms[rural], MASTERS_SETORES_TOL_RURAL, simplify_boundary=False
+        )
+    return geoms
+
+
+@functools.lru_cache(maxsize=4)
+def _masters_setores(master_id: str, fontes: tuple[tuple[str, int], ...]) -> str:
+    """Os polígonos dos setores do Censo de TODOS os municípios do território (JSON), com renda
+    domiciliar e densidade: o mapa do painel pinta a renda e a densidade com eles em QUALQUER zoom
+    (19/11/2026, Juan: "deixe a densidade e a renda (quando ativadas) aparecendo sem limite de
+    zoom"). Antes, de longe, ia um ponto por setor, e os polígonos só no zoom de cidade.
+
+    Uma linha por peça, `[renda domiciliar, densidade, anéis]` (as peças e os buracos pelo mesmo
+    `_aneis` do mapa de calor), com as coordenadas em `MASTERS_SETORES_CASAS` casas. A cobertura
+    é o território inteiro de uma vez, para a borda entre dois municípios também ficar sem fresta."""
+    territorio = json.loads(_masters_mapa(master_id, fontes))
+    setores = [
+        setor
+        for uf, cod, *_ in territorio["municipios"]
+        for setor in _setores_do_municipio_no_territorio(uf, cod)
+    ]
+    geoms = _simplificar_cobertura_do_territorio([g for g, _, _ in setores])
+    casas = MASTERS_SETORES_CASAS
+    linhas = []
+    for geom, (_, renda, densidade) in zip(geoms, setores, strict=True):
+        for parte in cobertura_1km._aneis(geom):
+            aneis = [[[round(x, casas), round(y, casas)] for x, y in anel] for anel in parte]
+            linhas.append([renda, densidade, aneis])
+    return json.dumps({"setores": linhas}, ensure_ascii=False, separators=(",", ":"))
+
+
+@app.get("/api/masters/{master_id}/setores")
+def api_master_setores(master_id: str) -> Response:
+    """Os setores do Censo do território inteiro, `[renda, densidade, anéis]` por peça: a renda e
+    a densidade do mapa do painel, sempre do Censo, em qualquer zoom. Pedidos só quando a pessoa
+    liga uma das duas; a primeira leitura do território é lenta, depois fica em cache."""
+    _masters_master_do_mapa(master_id)
+    return Response(
+        content=_masters_setores(master_id, _masters_assinatura_do_mapa()),
+        media_type="application/json",
+    )
+
+
+@app.get("/api/masters/{master_id}/mapa/camadas")
+def api_master_mapa_camadas(master_id: str) -> Response:
+    """As faixas de cor da renda e da densidade: pedidas só quando a pessoa liga uma camada."""
+    _masters_master_do_mapa(master_id)
+    return Response(
+        content=_masters_camadas(),
+        media_type="application/json",
+    )
 
 
 @app.get("/api/oportunidades")
