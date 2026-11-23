@@ -6,6 +6,14 @@ atualizar os dados de produção do PC dele, sem usar a chave do Felipe e sem vi
 Aplicado em **2026-10-09** para o **Vini** (`@VinhoAbencoado`), no modelo decidido em 2026-07-23
 (usuário dedicado, não "a chave dele no `root`"), para ter **log e revogação por pessoa**.
 
+| Pessoa | Conta na VPS | Desde | Chave (impressão) |
+|---|---|---|---|
+| Vini (`@VinhoAbencoado`) | `deploy` (também roda os crons do banco, ver §4) | 2026-10-09 | — |
+| Juan (`@juancalu`) | `juan` (DEC-091) | 2026-11-23 | `SHA256:0xxKLlN5vZHQwO8gLPp3J/aacAdX9/XMUcIovKsG0Bc` |
+
+Para o Juan, nas seções abaixo, trocar `deploy@` por `juan@` (a chave dele também se chama
+`~/.ssh/id_ultra_deploy`).
+
 > **Guardrail CLAUDE.md §6 continua valendo:** execução na VPS é passo humano, comando a comando.
 > O acesso dá *capacidade*; não dá *autorização* para rodar o que não foi combinado.
 > Deploy segue **manual, por digest imutável** (`docs/deploy_piloto_web.md`, `docs/deploy_api_bot.md`).
