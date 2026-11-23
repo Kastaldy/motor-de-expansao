@@ -13,7 +13,7 @@ merge e deploy" já é o desenho do orquestrador (`run-cycle.md` Passo 0 e 6.b).
    `guard`; `review-gate`; `claude-review` — DEC-016).
 3. Merge pela régua da DEC-016 (o merge já dá push na `main`): Baixa/Média auto-mergeia com os 4
    verdes; Alta exige `aprovado-humano` (humano ≠ autor); Crítica exige também `critica-aprovada` de
-   um dono (`Kastaldy` ou `VinhoAbencoado`, DEC-019).
+   um dono (`Kastaldy`, `VinhoAbencoado` ou `juancalu`, DEC-019 e DEC-091).
 4. Push na `main` roda o CI de novo e dispara os jobs `publish-web`/`publish-api`
    (filtrados por caminho) → buildam e publicam as imagens no GHCR (`type=sha` + `latest`).
 5. **Felipe** faz o **deploy PULL por digest** no VPS, comando a comando
