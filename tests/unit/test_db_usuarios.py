@@ -23,7 +23,7 @@ from motor_expansao.db import postgres
 from motor_expansao.db import usuarios as mod
 
 #: (id, login, nome, email, perfil, ativo, criado, atualizado, senha_propria, deve_trocar_senha,
-#:  paises, masters)
+#:  paises, masters, avisos)
 # senha_propria/deve_trocar vem da 016. O Vinícius ja' definiu a dele; o `inativo` do teste abaixo
 # nunca definiu — e' o par que a tela precisa distinguir. `masters` (025, emenda 1 da DEC-087) e'
 # vazio para quem nao e' master.
@@ -39,6 +39,7 @@ LINHA_LISTA = (
     True,
     False,
     ["BR", "AR"],
+    [],
     [],
 )
 
@@ -211,6 +212,7 @@ def test_listar_traz_inativos(monkeypatch: pytest.MonkeyPatch) -> None:
         True,
         ["BR"],
         [],
+        [],
     )
     con = _instalar(monkeypatch, {"FROM usuarios u": [LINHA_LISTA, inativo]})
     lista = mod.listar()
@@ -241,6 +243,7 @@ def test_listar_traz_o_estado_da_senha_de_cada_um(monkeypatch: pytest.MonkeyPatc
         False,
         True,
         ["BR"],
+        [],
         [],
     )
     _instalar(monkeypatch, {"FROM usuarios u": [LINHA_LISTA, inativo]})
@@ -1412,6 +1415,7 @@ def test_listar_traz_os_masters_de_cada_um(monkeypatch: pytest.MonkeyPatch) -> N
         False,
         ["BR"],
         ["Dalmo Ribeiro"],
+        [],
     )
     _instalar(monkeypatch, {"FROM usuarios u": [LINHA_LISTA, master]})
     lista = mod.listar()
@@ -1730,3 +1734,86 @@ def test_o_tipo_do_evento_do_vinculo_esta_no_contrato() -> None:
         encoding="utf-8"
     )
     assert f"`{mod.EVENTO_MASTERS_ALTERADOS}`" in contrato
+
+
+# ---------------------------------------------------------------------------------------------
+# Os avisos de cada pessoa (DEC-090, migration 028): a aba Acessos marca e desmarca
+# ---------------------------------------------------------------------------------------------
+
+
+def test_listar_traz_os_avisos_de_cada_um(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A tela mostra os avisos marcados na linha da pessoa, agregados no MESMO SELECT."""
+    priscila = (
+        13,
+        "priscila",
+        "Priscila",
+        "p@u.com",
+        "expansao",
+        True,
+        None,
+        None,
+        True,
+        False,
+        ["BR"],
+        [],
+        ["imovel_master"],
+    )
+    _instalar(monkeypatch, {"FROM usuarios u": [LINHA_LISTA, priscila]})
+    lista = mod.listar()
+    assert [u.avisos for u in lista] == [(), ("imovel_master",)]
+    assert lista[1].como_json()["avisos"] == ["imovel_master"]
+    assert "FROM usuario_avisos ua WHERE ua.id_usuario = u.id_usuario" in mod.SQL_LISTAR
+
+
+def _con_avisos(monkeypatch: pytest.MonkeyPatch, *, atuais: list[str]) -> FakeConexao:
+    return _instalar(
+        monkeypatch,
+        {
+            "FOR UPDATE OF u": [(9, "alvo", "expansao", True)],
+            "FROM usuario_avisos": [(a,) for a in atuais],
+        },
+    )
+
+
+def test_alterar_acesso_substitui_os_avisos(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Replace-all: sai o que nao veio, entra o novo, UM evento com o antes e o depois."""
+    con = _con_avisos(monkeypatch, atuais=["estudo_master"])
+    r = mod.alterar_acesso(9, avisos=["imovel_master", "imovel_master"], autor=7)
+    assert [p for _s, p in con.sql_que_contem("DELETE FROM usuario_avisos")] == [
+        (9, "estudo_master")
+    ]
+    assert [p for _s, p in con.sql_que_contem("INSERT INTO usuario_avisos")] == [
+        (9, "imovel_master")
+    ]
+    assert [e[1] for e in con.eventos] == [mod.EVENTO_AVISOS_ALTERADOS]
+    assert con.eventos[0][4].obj == {"antes": ["estudo_master"], "depois": ["imovel_master"]}
+    assert r["avisos"] == {
+        "id_usuario": 9,
+        "de": ["estudo_master"],
+        "para": ["imovel_master"],
+        "mudou": True,
+    }
+
+
+def test_alterar_acesso_avisos_sem_mudanca_nao_grava_nem_registra(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    con = _con_avisos(monkeypatch, atuais=["imovel_master"])
+    r = mod.alterar_acesso(9, avisos=["imovel_master"], autor=7)
+    assert _escritas(con) == []
+    assert r["avisos"]["mudou"] is False
+
+
+def test_alterar_acesso_lista_vazia_desmarca_tudo(monkeypatch: pytest.MonkeyPatch) -> None:
+    con = _con_avisos(monkeypatch, atuais=["estudo_master", "imovel_master"])
+    mod.alterar_acesso(9, avisos=[], autor=7)
+    assert len(con.sql_que_contem("DELETE FROM usuario_avisos")) == 2
+    assert con.sql_que_contem("INSERT INTO usuario_avisos") == []
+
+
+def test_aviso_desconhecido_e_recusado_antes_do_banco(monkeypatch: pytest.MonkeyPatch) -> None:
+    """O mesmo conjunto do CHECK `chk_usuario_avisos_tipo`: o que o sino nao sabe mostrar."""
+    con = _con_avisos(monkeypatch, atuais=[])
+    with pytest.raises(ValueError, match="Aviso desconhecido"):
+        mod.alterar_acesso(9, avisos=["qualquer_coisa"], autor=7)
+    assert _escritas(con) == []

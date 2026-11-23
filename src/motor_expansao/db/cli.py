@@ -84,11 +84,13 @@ TABELAS_DO_MODELO = (
     "observacoes_concorrente_historico",
     "unidades_ultra_site",
     "usuario_masters",
+    "usuario_avisos",
+    "avisos_lidos",
 )
 NUMEROS_DA_SECAO_ZERO = {
-    "indices": 67,  # 46 explicitos + 18 de PK + 3 de UNIQUE (a 022/DEC-083 somou 3 em sso_tickets: PK + UNIQUE do token + idx de id_usuario; a 023, 5 explicitos e 2 PK; a 024/DEC-085, 5 explicitos e 1 PK; a 025/DEC-087, so' a PK composta de `usuario_masters`)
-    "constraints CHECK": 34,  # a 018 (D30), a 019 (`ck_usuarios_prazo_exige_troca`), a 021/DEC-081 (`chk_usuario_paises_sigla`), a 022/DEC-083 (`chk_sso_ticket_sigla`, `chk_sso_ticket_expira_apos_criacao`) os 10 da 023, os 6 da 024 (DEC-085) e o da 025 (DEC-087, `chk_usuario_masters_nome`)
-    "chaves estrangeiras": 21,  # a 018 (D30): `sessoes.id_usuario`; a 021/DEC-081: `usuario_paises.id_usuario`; a 022/DEC-083: `sso_tickets.id_usuario` e `sso_tickets.id_sessao_origem`; a 023: autor e `apagada_por`; a 024: quem incluiu, `alterada_por` e `removida_por`; a 025/DEC-087: `usuario_masters.id_usuario`
+    "indices": 69,  # 46 explicitos + 20 de PK + 3 de UNIQUE (a 022/DEC-083 somou 3 em sso_tickets: PK + UNIQUE do token + idx de id_usuario; a 023, 5 explicitos e 2 PK; a 024/DEC-085, 5 explicitos e 1 PK; a 025/DEC-087, so' a PK composta de `usuario_masters`; a 028/DEC-090, as PKs de `usuario_avisos` e `avisos_lidos`)
+    "constraints CHECK": 36,  # a 018 (D30), a 019 (`ck_usuarios_prazo_exige_troca`), a 021/DEC-081 (`chk_usuario_paises_sigla`), a 022/DEC-083 (`chk_sso_ticket_sigla`, `chk_sso_ticket_expira_apos_criacao`) os 10 da 023, os 6 da 024 (DEC-085), o da 025 (DEC-087, `chk_usuario_masters_nome`) e os 2 da 028 (DEC-090, `chk_usuario_avisos_tipo`, `chk_avisos_lidos_evento`)
+    "chaves estrangeiras": 23,  # a 018 (D30): `sessoes.id_usuario`; a 021/DEC-081: `usuario_paises.id_usuario`; a 022/DEC-083: `sso_tickets.id_usuario` e `sso_tickets.id_sessao_origem`; a 023: autor e `apagada_por`; a 024: quem incluiu, `alterada_por` e `removida_por`; a 025/DEC-087: `usuario_masters.id_usuario`; a 028/DEC-090: `usuario_avisos.id_usuario` e `avisos_lidos.id_usuario`
     "triggers": 16,  # 5 ate' a 016; a 017 (D29) somou a guarda de coerencia nas duas regioes; a 023, seis; a 024, tres
     "colunas geometricas": 7,
 }
@@ -959,6 +961,24 @@ def _checagens_positivas() -> list[tuple[str, str, str]]:
             "sem SELECT o perfil master nao alcanca as proprias unidades na Visao Executiva; "
             "sem INSERT/DELETE a aba Acessos nao cria master, nao troca o master nem tira "
             "alguem do perfil master",
+        ),
+        # 028 (DEC-090): a mesma armadilha da 025. A aba Acessos marca e desmarca os avisos de uma
+        # pessoa (INSERT e DELETE explicito, `028-avisos.md`), e o sino le a lista e grava ate'
+        # onde a pessoa leu (`INSERT ... ON CONFLICT DO UPDATE`). Sem sequence nas duas.
+        (
+            "ler e gravar os avisos de cada pessoa",
+            "SELECT has_table_privilege(current_user, 'usuario_avisos', 'SELECT') "
+            "AND has_table_privilege(current_user, 'usuario_avisos', 'INSERT') "
+            "AND has_table_privilege(current_user, 'usuario_avisos', 'DELETE')",
+            "sem SELECT o sino nao sabe quem recebe o aviso de imovel; sem INSERT/DELETE a aba "
+            "Acessos nao marca nem desmarca os avisos de ninguem",
+        ),
+        (
+            "gravar ate' onde cada pessoa leu os avisos",
+            "SELECT has_table_privilege(current_user, 'avisos_lidos', 'SELECT') "
+            "AND has_table_privilege(current_user, 'avisos_lidos', 'INSERT') "
+            "AND has_table_privilege(current_user, 'avisos_lidos', 'UPDATE')",
+            "sem isto o sino nao zera ao abrir: os mesmos avisos contam como novos para sempre",
         ),
     ]
 

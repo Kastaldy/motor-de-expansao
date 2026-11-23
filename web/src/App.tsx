@@ -24,6 +24,7 @@ import {
 } from './lib/troca-de-senha'
 import { api, ApiError, repetirEm503 } from './lib/api'
 import { definirAlcances, type Alcance } from './lib/alcance'
+import { avisosDoPayload } from './lib/avisos'
 import { assinarQuedaDeSessao, entrarNovamente } from './lib/sessao'
 import type { AlvoCaptura } from './lib/captura-mapa'
 import {
@@ -131,8 +132,11 @@ export default function App() {
    * espelhando o fail-open do backend — que é quem barra de verdade, rota a rota.
    */
   const [abas, setAbas] = useState<Set<Aba> | null>(null)
-  // O master com login próprio tem o Início dele (emenda 2 da DEC-089).
-  const [mastersProprio, setMastersProprio] = useState(false)
+  // A trilha "Meu território" do Início: a do master com login próprio (emenda 2 da DEC-089) e a
+  // de quem a testa e avalia (o Growth, DEC-090).
+  const [trilhaDoMaster, setTrilhaDoMaster] = useState(false)
+  // O sino da barra lateral (DEC-090): só para quem recebe algum aviso.
+  const [temAvisos, setTemAvisos] = useState(false)
   useEffect(() => {
     /* `vivo` corta as novas tentativas se o App desmontar no meio da espera — o StrictMode
        do dev monta, desmonta e monta de novo, e a resposta tardia da primeira montagem não
@@ -158,7 +162,8 @@ export default function App() {
         definirAlcances(r.alcances)
         const s = abasDoPayload(r)
         setAbas(s)
-        setMastersProprio(r.masters_proprio === true)
+        setTrilhaDoMaster(r.trilha_do_master === true || r.masters_proprio === true)
+        setTemAvisos(avisosDoPayload(r).length > 0)
         setEstadoSenha(estadoDaSenhaDoPayload(r))
         // Se o usuário abriu numa tela que não pode ver (estado antigo, deep state),
         // leva para o lugar certo em vez de deixar a tela vazia atrás de 403s.
@@ -731,11 +736,12 @@ export default function App() {
            todo mundo; o backend deixou de mandar o campo. Um cadeado que abre um formulário
            fadado à recusa é pior que nenhum. */
         onSenha={estadoSenha ? () => setSenhaAberta(true) : undefined}
+        avisos={temAvisos}
       />
 
       <main style={{ flex: 1, position: 'relative', minWidth: 0 }}>
         {tela === 'inicio' ? (
-          <InicioScreen onEscolher={escolherModo} modos={modosLiberados(abas, mastersProprio)} />
+          <InicioScreen onEscolher={escolherModo} modos={modosLiberados(abas, trilhaDoMaster)} />
         ) : tela === 'mapa' || tela === 'ponto' ? (
           /* UM RAMO SÓ para as duas entradas do mapa (decisão do dono, 2026-10-14).
 

@@ -109,13 +109,14 @@ export function telaLiberada(tela: TelaControlada, abas: Set<Aba> | null): boole
 }
 
 /** Cards do Início que este usuário pode ver (cada card leva a uma tela). Os da trilha do
- *  master só para o master com login próprio (`masters_proprio` do `/api/me`, emenda 2 da
- *  DEC-089): Growth e Líderes também têm a aba Masters, e o Início deles não muda. */
-export function modosLiberados(abas: Set<Aba> | null, mastersProprio = false): readonly ModoDefinicao[] {
+ *  master só com `trilhaDoMaster` (`trilha_do_master` do `/api/me`): o master com login próprio
+ *  (emenda 2 da DEC-089) e quem a testa e avalia (o Growth, DEC-090). Ter a aba Masters não
+ *  basta: Líderes também a têm, e o Início deles não muda. */
+export function modosLiberados(abas: Set<Aba> | null, trilhaDoMaster = false): readonly ModoDefinicao[] {
   const daTrilhaDoMaster = (m: ModoDefinicao) => m.trilha === 'master'
   if (abas === null) return MODOS.filter((m) => !daTrilhaDoMaster(m))
   return MODOS.filter(
-    (m) => telaLiberada(m.destino, abas) && (!daTrilhaDoMaster(m) || mastersProprio),
+    (m) => telaLiberada(m.destino, abas) && (!daTrilhaDoMaster(m) || trilhaDoMaster),
   )
 }
 

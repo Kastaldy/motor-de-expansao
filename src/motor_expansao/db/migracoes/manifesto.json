@@ -197,6 +197,13 @@
       "documento": "027-permissao-masters-proprio.md",
       "sha256_bloco": "a2830535c9ad51cefec7c705c788ad85f32731f646780f8a96c2e0738475d738",
       "sha256_arquivo": "cf1472f4c21320ace6c8f95e4e541680a9e2f226e6669d9d35b54301fcd38b79"
+    },
+    {
+      "versao": "028",
+      "arquivo": "028-avisos.sql",
+      "documento": "028-avisos.md",
+      "sha256_bloco": "636a3c368bad64ba01c3834ffc00e98295f3d9f3d93f803f934520dde393a53b",
+      "sha256_arquivo": "40fca9021bfd097b2395114ba1e1eeb51b9a6dcccfb19d2822da30634496f8fd"
     }
   ]
 }

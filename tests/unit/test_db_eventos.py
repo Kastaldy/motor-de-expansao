@@ -666,29 +666,46 @@ def test_o_pedido_de_imovel_grava_o_tipo_o_master_e_a_regiao(con: FakeConexao) -
     assert len(con.eventos) == 1
 
 
-def test_o_estudo_fora_da_area_grava_o_ponto_e_o_report_id(con: FakeConexao) -> None:
-    """A coordenada vai arredondada a 6 casas (~10 cm) e o `report_id` liga a linha ao
-    `relatorio.gerado` do mesmo PDF."""
-    mod.registrar_estudo_fora_da_area(
-        autor=7, masters=["dfgo"], lat=-23.55052012345, lng=-46.6333094321, report_id="r-1"
+def test_o_estudo_pedido_grava_o_ponto_o_lugar_a_area_e_o_report_id(con: FakeConexao) -> None:
+    """DEC-090: todo estudo do master (e nao so' o de fora da area, como o `estudo.fora_da_area`
+    que ele substitui). A coordenada vai arredondada a 6 casas (~10 cm), `lugar` e' o que o sino
+    mostra e o `report_id` liga a linha ao `relatorio.gerado` do mesmo PDF."""
+    mod.registrar_estudo_solicitado(
+        autor=7,
+        masters=["dfgo"],
+        lat=-23.55052012345,
+        lng=-46.6333094321,
+        fora_da_area=True,
+        lugar="Sé, São Paulo/SP",
+        report_id="r-1",
     )
     (autor, tipo, metadados) = con.eventos[0]
-    assert (autor, tipo) == (7, mod.EVENTO_ESTUDO_FORA_DA_AREA)
+    assert (autor, tipo) == (7, mod.EVENTO_ESTUDO_SOLICITADO)
+    assert mod.EVENTO_ESTUDO_SOLICITADO == "estudo.solicitado"
     assert metadados.obj == {
         "masters": ["dfgo"],
         "lat": -23.55052,
         "lng": -46.633309,
+        "fora_da_area": True,
+        "lugar": "Sé, São Paulo/SP",
         "report_id": "r-1",
         "origem": "web",
     }
+    assert not hasattr(mod, "EVENTO_ESTUDO_FORA_DA_AREA")
 
 
 @pytest.mark.parametrize(
     "gravar",
     [
         lambda: mod.registrar_imovel_solicitado(autor=7, masters=["dfgo"], regiao="Asa Sul"),
-        lambda: mod.registrar_estudo_fora_da_area(
-            autor=7, masters=["dfgo"], lat=-15.8, lng=-47.9, report_id=None
+        lambda: mod.registrar_estudo_solicitado(
+            autor=7,
+            masters=["dfgo"],
+            lat=-15.8,
+            lng=-47.9,
+            fora_da_area=False,
+            lugar=None,
+            report_id=None,
         ),
     ],
     ids=["imovel", "estudo"],

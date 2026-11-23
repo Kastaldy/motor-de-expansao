@@ -292,6 +292,16 @@ describe('o recado depois de uma alteração', () => {
     ).toBe('dalmo: master franquia agora Dalmo Ribeiro, Luana Ribeiro.')
   })
 
+  it('os avisos (DEC-090): os marcados pelo rótulo, e nenhum quando desmarca tudo', () => {
+    const rotuloDoAviso = (a: string) => (a === 'imovel_master' ? 'Imóvel pedido por um master' : a)
+    expect(
+      recadoDaAlteracao('priscila', { avisos: { para: ['imovel_master'], mudou: true } }, rot, rotuloDoAviso),
+    ).toBe('priscila: avisos agora Imóvel pedido por um master.')
+    expect(recadoDaAlteracao('priscila', { avisos: { para: [], mudou: true } }, rot)).toBe(
+      'priscila: nenhum aviso marcado (ficam só os do perfil).',
+    )
+  })
+
   it('os recados de antes continuam iguais', () => {
     expect(
       recadoDaAlteracao('ana', { perfil: { de: 'consultoria', para: 'master', mudou: true } }, rot),

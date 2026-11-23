@@ -1,5 +1,6 @@
 import type { Tela } from '../App'
 import BotaoSair from './BotaoSair'
+import SinoDeAvisos from './SinoDeAvisos'
 import BotaoTema from './BotaoTema'
 import { telaLiberada, type Aba } from '../lib/acesso'
 import { ITENS_DOCK } from '../lib/dock-itens'
@@ -218,6 +219,7 @@ export default function Dock({
   onTema,
   pais = null,
   onSenha,
+  avisos = false,
 }: {
   tela: Tela
   onTela: (t: Tela) => void
@@ -231,6 +233,8 @@ export default function Dock({
    *  quando o banco não respondeu ou a pessoa não tem cadastro: um atalho que abre um
    *  formulário fadado a 409 seria pior que atalho nenhum. */
   onSenha?: () => void
+  /** A pessoa recebe algum aviso (`avisos` do `/api/me`, DEC-090): o sino aparece no rodapé. */
+  avisos?: boolean
 }) {
   // Ícone de tela vetada SOME em vez de aparecer desabilitado: um ícone apagado não
   // diz por que está apagado, e "existe mas não para você" só gastaria a paciência de
@@ -409,6 +413,9 @@ export default function Dock({
           com o login próprio desligado (decisão do dono, 24/10/2026): o `/api/me` nem
           manda o estado da senha, porque a do banco ainda não abre porta nenhuma. */}
       <div style={{ marginTop: 'auto', display: 'flex', flexDirection: 'column', gap: 8 }}>
+        {/* O sino (DEC-090) encabeça o rodapé: é o único que chama a atenção por conta própria,
+            com o contador, e some para quem não recebe aviso nenhum. */}
+        {avisos && <SinoDeAvisos />}
         {onSenha && (
           <button
             type="button"

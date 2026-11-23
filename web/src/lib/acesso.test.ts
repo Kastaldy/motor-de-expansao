@@ -86,8 +86,15 @@ describe('modosLiberados', () => {
     const abasDoMaster = new Set(['executiva', 'masters']) as Set<Aba>
     const doMaster = modosLiberados(abasDoMaster, true).map((m) => m.id)
     expect(doMaster).toEqual(['panorama', 'recorte', 'unidade', 'imovel', 'masters', 'estudo'])
-    // Growth e Líderes também têm a aba Masters, e o Início deles não ganha a trilha.
+    // Ter a aba Masters não basta (Líderes): sem `trilha_do_master`, o Início não ganha a trilha.
     expect(modosLiberados(abasDoMaster, false).map((m) => m.id)).toEqual(['panorama', 'recorte', 'unidade'])
+  })
+
+  it('o Growth, que avalia o Início do master (DEC-090), ganha a trilha sem perder as dele', () => {
+    const abasDoGrowth = new Set(['mapa', 'oportunidades', 'viabilidade', 'executiva', 'masters']) as Set<Aba>
+    const semTrilha = modosLiberados(abasDoGrowth, false).map((m) => m.id)
+    const comTrilha = modosLiberados(abasDoGrowth, true).map((m) => m.id)
+    expect(comTrilha).toEqual([...semTrilha, 'imovel', 'masters', 'estudo'])
   })
 
   it('mapa + oportunidades + viabilidade = so a trilha de expansao (perfil do grupo 2)', () => {
