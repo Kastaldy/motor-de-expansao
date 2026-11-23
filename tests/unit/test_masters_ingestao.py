@@ -214,3 +214,26 @@ def test_planilha_do_relatorio_volta_ao_formato_da_planilha(tmp_path: Path) -> N
     assert list(inaug["meta"]) == ["Alfa — Fulano", None, "Beta — Ciclano"]
     assert list(pipe["master"]) == list(cru_pipe["master"])
     assert list(pipe["dentro_territorio"]) == ["Sim", "Não", None]
+
+
+def test_dentro_do_territorio_sai_certo_vindo_do_parquet_e_com_numpy_bool(tmp_path: Path) -> None:
+    """Achado médio da revisão automática do #568: `sim_nao` comparava com `is True`/`is False`, e
+    um `numpy.bool_` (o que a coluna vira por outros caminhos de leitura) saía em branco no
+    relatório. O piloto lê o pipeline do parquet da ingestão: os dois casos ficam travados aqui."""
+    import numpy as np
+
+    planilha, territorios = _planilha(tmp_path), _territorios(tmp_path)
+    t = montar_tabelas(planilha, territorios)
+    masters = carregar_territorios(territorios)
+    # Sem nulo no lote, a coluna volta do parquet como bool.
+    sem_nulo = t.pipeline[t.pipeline["dentro_territorio"].notna()].reset_index(drop=True)
+    caminho = tmp_path / "pipeline.parquet"
+    sem_nulo.to_parquet(caminho, index=False)
+    _, pipe = planilha_do_relatorio(t.inauguradas, pd.read_parquet(caminho), masters)
+    assert list(pipe["dentro_territorio"]) == ["Sim", "Não"]
+    # `numpy.bool_` guardado como objeto: era o caso que saía em branco.
+    com_numpy = sem_nulo.assign(
+        dentro_territorio=pd.Series([np.bool_(True), np.bool_(False)], dtype=object)
+    )
+    _, pipe = planilha_do_relatorio(t.inauguradas, com_numpy, masters)
+    assert list(pipe["dentro_territorio"]) == ["Sim", "Não"]

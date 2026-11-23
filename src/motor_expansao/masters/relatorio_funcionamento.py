@@ -61,12 +61,12 @@ NAVY = (30, 28, 58)
 
 #: Estilo de cada leitura: número grande, selo (fundo, texto) e ícone (fundo do círculo, traço).
 ESTILOS: dict[str, dict[str, Any]] = {
-    "anda junto": {
+    F.ANDA_JUNTO: {
         "numero": (0, 135, 127),
         "selo": ((224, 244, 242), (0, 112, 106)),
         "icone": ((224, 244, 242), "#00706A"),
     },
-    "anda ao contrário": {
+    F.ANDA_AO_CONTRARIO: {
         "numero": MAGENTA,
         "selo": ((248, 227, 238), (156, 44, 111)),
         "icone": ((248, 227, 238), "#9C2C6F"),
@@ -143,16 +143,16 @@ def _rotulo_leitura(t: dict[str, Any]) -> str:
     """
     sim_nao = t.get("formato") == "sim_nao"
     return {
-        "anda junto": "com, fatura mais" if sim_nao else "maior, fatura mais",
-        "anda ao contrário": "sem, fatura mais" if sim_nao else "menor, fatura mais",
-        "sem relação clara": "sem diferença clara",
-    }.get(t["leitura"], t["leitura"])
+        F.ANDA_JUNTO: "com, fatura mais" if sim_nao else "maior, fatura mais",
+        F.ANDA_AO_CONTRARIO: "sem, fatura mais" if sim_nao else "menor, fatura mais",
+        F.SEM_RELACAO: "sem diferença clara",
+    }.get(t["leitura"], F.ROTULO_DA_LEITURA.get(t["leitura"], t["leitura"]))
 
 
 def _acerto_do_selo(t: dict[str, Any]) -> float:
     """Em quantas comparações de duas unidades o selo acontece (ao contrário: o complemento)."""
     a = t.get("acerto", float("nan"))
-    return 1 - a if t["leitura"] == "anda ao contrário" and pd.notna(a) else a
+    return 1 - a if t["leitura"] == F.ANDA_AO_CONTRARIO and pd.notna(a) else a
 
 
 def comparacao(t: dict[str, Any]) -> tuple[str, str] | None:
@@ -231,7 +231,7 @@ def frase_contagem(t: dict[str, Any]) -> str | None:
     k, n = t.get("do_lado"), t.get("n_acima", 0)
     if k is None or not n:
         return None
-    junto = t["leitura"] == "anda junto"
+    junto = t["leitura"] == F.ANDA_JUNTO
     base = f"**{k} das {n}** que faturam acima"
     if t.get("formato") == "sim_nao":
         objeto = SIM_NAO_OBJETO.get(t["col"], t["rotulo"].lower())
@@ -368,7 +368,7 @@ def _linha_sem_relacao(pdf: _UltraPDF, y: float, tracos: list[dict[str, Any]]) -
         yy = y + 11 + 18 * i
         _icone(pdf, t["col"], MARGEM + 210, yy, 16, "#555555")
         comp = comparacao(t)
-        if t["leitura"] == "poucas unidades":
+        if t["leitura"] == F.POUCAS_UNIDADES:
             detalhe = f"só {t['n']} unidades com o dado (mínimo {F.N_MIN_RELACAO})"
         elif comp:
             detalhe = (
@@ -388,7 +388,7 @@ def tracos_do_slide(
     regiao: dict[str, Any],
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
     """(cartões, linha cinza): o que anda com o faturamento e o resto que aparece no slide."""
-    com = [t for t in regiao["tracos"] if t["leitura"] in ("anda junto", "anda ao contrário")]
+    com = [t for t in regiao["tracos"] if t["leitura"] in F.COM_RELACAO]
     sem = [t for t in regiao["tracos"] if t not in com and t["col"] not in SO_QUANDO_DIFERENCIA]
     return com, sem
 
@@ -404,7 +404,7 @@ def frases_padrao(regiao: dict[str, Any]) -> list[tuple[str, str]]:
         lados = PADRAO_FRASE.get(t["col"])
         if lados is None:
             continue
-        junto = t["leitura"] == "anda junto"
+        junto = t["leitura"] == F.ANDA_JUNTO
         frase = f"**{lados[0] if junto else lados[1]}**"
         comp = comparacao(t)
         if comp and " nas que faturam acima" in comp[1]:
@@ -461,7 +461,7 @@ def _slide_apresentacao(
         pdf.cell(larg_esq, 15, _t("As unidades que faturam mais têm:"))
         y += 26
         for frase, leitura in frases:
-            cor = MAGENTA if leitura == "anda ao contrário" else TURQUESA
+            cor = MAGENTA if leitura == F.ANDA_AO_CONTRARIO else TURQUESA
             _bolinha(pdf, MARGEM + 2, y + 5, cor, 8)
             pdf.set_xy(MARGEM + 18, y)
             pdf.set_font("Helvetica", "", 13)

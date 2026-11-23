@@ -352,6 +352,20 @@ def nome_do_arquivo(master_id: str, gerado_em: pd.Timestamp, modelo: str) -> str
     return f"relatorio_master_{master_id}_{rotulo_trimestre(gerado_em)}{sufixo}.pdf"
 
 
+def _apontar_insumos_da_renda(staging: Path | str) -> None:
+    """Aponta os insumos da renda para o staging do relatório SÓ se ainda não apontam para ele.
+
+    `insumos.configurar_staging` zera os caches de renda do PROCESSO inteiro, que as outras telas
+    do piloto também leem: chamar a cada PDF ou estudo jogava fora o cache de todo mundo a cada
+    pedido, inclusive no meio de uma requisição concorrente (achado da revisão automática do
+    #568). No piloto o staging é o mesmo da subida, e nada é reapontado.
+    """
+    from motor_expansao.renda import insumos
+
+    if Path(insumos.staging_dir()).resolve() != Path(staging).resolve():
+        insumos.configurar_staging(staging)
+
+
 def pdf_do_master(
     e: Entradas,
     master: Master,
@@ -367,9 +381,7 @@ def pdf_do_master(
     `modelo="novo"` = o modelo antigo mais os padrões das unidades quando a região tem dado.
     """
     if e.staging_dir is not None:
-        from motor_expansao.renda import insumos
-
-        insumos.configurar_staging(e.staging_dir)  # uplift e moradores da renda exibida
+        _apontar_insumos_da_renda(e.staging_dir)  # uplift e moradores da renda exibida
     base = carregar_base(e, [master], planilha=planilha)
     d, _ = montar_dados(master, base, gerado_em, teste=teste, modelo=modelo, regiao_id=regiao_id)
     return gerar_pdf(d, modelo), nome_do_arquivo(d.master.id, gerado_em, modelo)
@@ -385,9 +397,7 @@ def estudo_do_master(
     recomendação, igual está no relatório, para onde expandir"): os cartões da Análise de
     Oportunidade, pela MESMA função do PDF (`cartoes_da_analise`), do master inteiro."""
     if e.staging_dir is not None:
-        from motor_expansao.renda import insumos
-
-        insumos.configurar_staging(e.staging_dir)  # uplift e moradores da renda exibida
+        _apontar_insumos_da_renda(e.staging_dir)  # uplift e moradores da renda exibida
     base = carregar_base(e, [master], planilha=planilha)
     d, _ = montar_dados(master, base, gerado_em, modelo="antigo")
     return {
@@ -410,9 +420,7 @@ def gerar(
     """Um relatório por master; com `por_regiao`, um por região dos masters com mais de uma."""
     gerado_em = gerado_em or pd.Timestamp.now().normalize()
     if e.staging_dir is not None:
-        from motor_expansao.renda import insumos
-
-        insumos.configurar_staging(e.staging_dir)  # uplift e moradores da renda exibida
+        _apontar_insumos_da_renda(e.staging_dir)  # uplift e moradores da renda exibida
     base = carregar_base(e, masters)
     pasta = saida / rotulo_trimestre(gerado_em)
     pasta.mkdir(parents=True, exist_ok=True)
