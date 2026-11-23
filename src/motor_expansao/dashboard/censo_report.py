@@ -4912,17 +4912,23 @@ def _praca_pressao_page(
     if p.n_independentes_sobre_ponto:
         redes.append(f"Independentes ({p.n_independentes_sobre_ponto})")
     y = _linha_rotulo_valor(pdf, x, y, w, "Redes sobre o ponto", ", ".join(redes) if redes else "Nenhuma")
+    nota = (
+        f"Cada círculo é o raio de {raio_txt} em volta de uma academia, a leitura do relatório "
+        "para o entorno imediato do ponto. Onde os círculos se sobrepõem a cor escurece: mais "
+        "academias disputando o mesmo público."
+    )
+    if praca.independente_sem_raio:
+        # Brasil (pedido de 2026-11-23): a independente sem o disco no mapa. A nota diz que ela
+        # continua na conta, senao o painel ao lado contaria raios que o mapa nao mostra.
+        nota = (
+            f"Cada círculo é o raio de {raio_txt} em volta de uma rede ou da Ultra, a leitura do "
+            "relatório para o entorno imediato do ponto; onde se sobrepõem, a cor escurece. As "
+            "independentes aparecem só com a logo, sem círculo, mas seguem na contagem ao lado."
+        )
     pdf.set_text_color(*_CINZA_TEXTO)
     pdf.set_font("Helvetica", "", 9)
     pdf.set_xy(x, max(y, _PAGE_H - 110))
-    pdf.multi_cell(
-        w, 12,
-        _ascii(
-            f"Cada círculo é o raio de {raio_txt} em volta de uma academia, a leitura do relatório "
-            "para o entorno imediato do ponto. Onde os círculos se sobrepõem a cor escurece: mais "
-            "academias disputando o mesmo público."
-        ),
-    )
+    pdf.multi_cell(w, 12, _ascii(nota))
     _draw_footer(pdf, with_attribution=True)
 
 

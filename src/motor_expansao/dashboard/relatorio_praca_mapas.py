@@ -426,11 +426,16 @@ def render_pressao_raios(
     *,
     raio_m: float = RAIO_PRESSAO_PONTO_M,
     basemap: bool = True,
+    raio_independente: bool = True,
 ) -> bytes:
     """Um disco de `raio_m` por academia no entorno; a sobreposicao escurece por soma de alpha.
 
     O default e' o raio de LEITURA do pontual (`RAIO_PRESSAO_PONTO_M`), nao o do modelo (`RAIO_INFLUENCIA_M`),
     que fica com `render_pressao_cidade` (municipal).
+
+    `raio_independente=False` (Brasil, pedido de 2026-11-23): como no mapa da cidade, a academia
+    independente sai so' com a marca (a logo do Wellhub), sem o disco. E' DESENHO: ela segue nas
+    contagens do painel da pagina, e a legenda diz que ela esta' ali sem raio.
     """
     janela = janela_pressao_m(raio_m)
     grau_lat = 111_195.0
@@ -440,8 +445,9 @@ def render_pressao_raios(
         _bounds_de_pontos([lat - d_lat, lat + d_lat], [lng - d_lng, lng + d_lng], margem=0.0), _W, _H
     )
     raio_txt = rotulo_raio(raio_m)
+    quem = "academia" if raio_independente else "rede e Ultra"
     image, draw, desenhou = _base(
-        quadro, "Pressao concorrencial", f"Area de influencia de {raio_txt} por academia", basemap=basemap
+        quadro, "Pressao concorrencial", f"Area de influencia de {raio_txt} por {quem}", basemap=basemap
     )
 
     alcance = raio_m + janela * 1.5
@@ -452,14 +458,17 @@ def render_pressao_raios(
             return None
         return sub.loc[distancia_m(lat, lng, sub["lat"], sub["lng"]) <= alcance]
 
-    draw = _discos_sobre(image, quadro, _perto(concorrentes), _perto(ultra), raio_m=raio_m, lat_ref=lat)
+    draw = _discos_sobre(
+        image, quadro, _perto(concorrentes), _perto(ultra), raio_m=raio_m, lat_ref=lat,
+        sem_raio_independente=not raio_independente,
+    )
 
     cx, cy = quadro.lnglat(lng, lat)
     r_ponto = quadro.metros_em_px(raio_m, lat)
     draw.ellipse([cx - r_ponto, cy - r_ponto, cx + r_ponto, cy + r_ponto], outline=(0, 88, 220, 235), width=4)
     _draw_center_pin(draw, int(round(cx)), int(round(cy)), scale=1.4)
 
-    yy = _legenda_discos(draw)
+    yy = _legenda_discos(draw, raio_independente=raio_independente)
     x = _W - _LEGEND_W + 24
     draw.ellipse([x, yy + 84, x + 40, yy + 124], outline=(0, 88, 220, 235), width=4)
     _draw_text(draw, (x + 58, yy + 90), f"Raio de {raio_txt} do ponto", font=_font(22))
@@ -587,7 +596,7 @@ def _discos_sobre(
     `realce` (mapa da cidade): discos desenhados por tipo, independente por baixo e Ultra por
     cima, com a borda de rede e Ultra mais forte, e marcadores maiores (`_DISCO_REALCE`). Sem
     ele (pressao do ponto), o desenho de antes. `sem_raio_independente`: a independente fica so'
-    com a marca (logo ou ponto), sem disco -- so' o mapa da cidade do Brasil pede isso.
+    com a marca (logo ou ponto), sem disco -- os mapas de pressao do Brasil (cidade e ponto) pedem isso.
     """
     # Discos numa camada propria, recortada a caixa do mapa: disco de academia fora do quadro
     # nao pode pintar a legenda.

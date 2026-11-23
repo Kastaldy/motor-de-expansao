@@ -106,10 +106,16 @@ def montar_praca_do_ponto(
                 linha_hex = achados.iloc[0].to_dict()
     crescimento_hex = rp.crescimento_do_hexagono(linha_hex, hexes_cidade)
 
+    # Brasil (pedido de 2026-11-23): a independente sem o disco de 750 m, como no mapa da cidade do
+    # municipal. O criterio e' o mesmo de la' e da leitura sem veredito: a instancia com a regua da
+    # recomendacao (`leitura`), nunca a sigla do pais (DEC-047). So' desenho: a contagem nao muda.
+    independente_sem_raio = leitura
     mapas: dict[str, bytes] = {}
     for fundo in ((True, False) if basemap else (False,)):
         try:
-            mapas["pressao_raios"] = rpm.render_pressao_raios(lat, lng, comp_df, ultra_df, basemap=fundo)
+            mapas["pressao_raios"] = rpm.render_pressao_raios(
+                lat, lng, comp_df, ultra_df, basemap=fundo, raio_independente=not independente_sem_raio
+            )
             break
         except Exception as exc:  # noqa: BLE001 - mapa que falha vira fallback textual
             log.warning("mapa pressao_raios (fundo=%s) falhou: %r", fundo, exc)
@@ -125,4 +131,5 @@ def montar_praca_do_ponto(
         crescimento=crescimento,
         crescimento_hex=crescimento_hex,
         mapas=mapas,
+        independente_sem_raio=independente_sem_raio,
     )
