@@ -146,7 +146,9 @@ ALCANCE_DO_MASTER_NA_TELA_MASTERS = frozenset(
 
 @pytest.fixture
 def _master_com_a_tela(monkeypatch: pytest.MonkeyPatch, _master: str) -> str:
-    """O master da 025 + 027: `rede.ver_propria` e `masters.ver_proprio`."""
+    """O master da 025 + 027: `rede.ver_propria` e `masters.ver_proprio`, com o painel do master
+    LIGADO (hoje desligado de proposito, emenda 3 da DEC-089: ver o teste de baixo)."""
+    monkeypatch.setattr(acesso, "MASTER_VE_O_PROPRIO_PAINEL", True)
 
     def falsa(_remote_user: object) -> rbac.Identidade:
         return rbac.Identidade(
@@ -184,3 +186,31 @@ def test_o_master_com_login_proprio_so_passa_no_proprio_painel(_master_com_a_tel
         "a rota tem de aplicar o recorte e entrar na allowlist do `acesso.py` e aqui."
     )
     assert not a_menos, f"o master perdeu leituras: {a_menos}"
+
+
+def test_hoje_o_master_com_a_027_so_alcanca_a_executiva(
+    monkeypatch: pytest.MonkeyPatch, _master: str
+) -> None:
+    """Emenda 3 da DEC-089 (23/11/2026, temporario): com `MASTER_VE_O_PROPRIO_PAINEL` desligado,
+    o master com as duas chaves (025 e 027) alcanca EXATAMENTE o mesmo que o da 025 sozinho -- a
+    Executiva recortada -- e nenhuma rota da tela Masters, nem os dois POST do Inicio."""
+    assert acesso.MASTER_VE_O_PROPRIO_PAINEL is False
+
+    def falsa(_remote_user: object) -> rbac.Identidade:
+        return rbac.Identidade(
+            id_usuario=99,
+            login=_master,
+            perfil="master",
+            permissoes=frozenset(
+                {acesso.CAPACIDADE_REDE_PROPRIA, acesso.CAPACIDADE_MASTERS_PROPRIO}
+            ),
+            paises=frozenset({"BR"}),
+        )
+
+    monkeypatch.setattr(rbac, "identidade", falsa)
+    passaram = {
+        (m, c)
+        for m, c in _rotas_protegidas()
+        if not _negada(c, _master, acesso.motivo_bloqueio_por_banco(c, m, _master))
+    }
+    assert passaram == set(ALCANCE_DO_MASTER)

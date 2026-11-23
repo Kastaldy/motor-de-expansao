@@ -17001,7 +17001,9 @@ def _masters_do_pedido(remote_user: str | None) -> frozenset[str] | None:
         raise HTTPException(403, _DETALHE_FORA_DA_AREA)
     if eu.pode("masters.ver"):
         return None
-    if not eu.pode(acesso.CAPACIDADE_MASTERS_PROPRIO):
+    # Temporario (emenda 3 da DEC-089): com o painel do master desligado, a rota tambem o recusa,
+    # alem do gate -- a mesma chave, `acesso.MASTER_VE_O_PROPRIO_PAINEL`, nos dois lugares.
+    if not acesso.MASTER_VE_O_PROPRIO_PAINEL or not eu.pode(acesso.CAPACIDADE_MASTERS_PROPRIO):
         raise HTTPException(403, _DETALHE_FORA_DA_AREA)
     try:
         nome = rbac.nome_do_usuario(eu.id_usuario)
