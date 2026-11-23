@@ -10,6 +10,9 @@ export type { CriterioPonto, ReguasPonto }
 export interface MePayload {
   usuario: string | null
   abas: string[]
+  /** O master com login próprio (emenda 2 da DEC-089): vê só o próprio painel e tem o Início
+   *  dele. Ausente sem banco ou para quem não tem a aba Masters. */
+  masters_proprio?: boolean
   /** Perfil do país da instância (Bloco A / DEC-047). `unknown` e opcional de
    *  propósito: um backend anterior ao bloco não manda o campo, e o front tem de
    *  continuar abrindo. Quem valida e estreita é `definirPerfil` em `lib/perfil.ts`,

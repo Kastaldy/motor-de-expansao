@@ -29,6 +29,9 @@ describe('MODOS', () => {
       'panorama',
       'recorte',
       'unidade',
+      'imovel',
+      'masters',
+      'estudo',
     ])
   })
 
@@ -38,7 +41,7 @@ describe('MODOS', () => {
 
   it('so aponta para telas que existem hoje', () => {
     for (const m of MODOS) {
-      expect(['mapa', 'ponto', 'oportunidades', 'executiva']).toContain(m.destino)
+      expect(['mapa', 'ponto', 'oportunidades', 'executiva', 'masters']).toContain(m.destino)
     }
   })
 
@@ -69,6 +72,10 @@ describe('MODOS', () => {
       ['panorama', null],
       ['recorte', 'recorte'],
       ['unidade', 'unidade'],
+      // A trilha do master: os dois passos fazem o gesto no card; o do meio leva à tela.
+      ['imovel', 'imovel'],
+      ['masters', null],
+      ['estudo', 'estudo'],
     ])
   })
 
@@ -83,7 +90,17 @@ describe('MODOS', () => {
       expect(m.eyebrow.trim()).not.toBe('')
       expect(m.titulo.trim()).not.toBe('')
       expect(m.linha.trim()).not.toBe('')
-      expect(['brasil', 'estado', 'ponto', 'painel', 'rede', 'ficha']).toContain(m.arte)
+      expect([
+        'brasil',
+        'estado',
+        'ponto',
+        'painel',
+        'rede',
+        'ficha',
+        'imovel',
+        'meupainel',
+        'estudo',
+      ]).toContain(m.arte)
     }
   })
 
@@ -126,12 +143,15 @@ describe('trilhas', () => {
       'recorte',
       'unidade',
     ])
+    // Juan: à esquerda solicitar imóvel, no meio Masters e à direita o estudo.
+    expect(modosDaTrilha('master').map((m) => m.id)).toEqual(['imovel', 'masters', 'estudo'])
+    expect(modosDaTrilha('master').map((m) => m.destino)).toEqual(['masters', 'masters', 'masters'])
   })
 })
 
 describe('trilhasDisponiveis', () => {
-  it('com todos os cards, as duas trilhas existem na ordem da pilula', () => {
-    expect(trilhasDisponiveis(MODOS)).toEqual(['expansao', 'operacoes'])
+  it('com todos os cards, as tres trilhas existem na ordem da pilula', () => {
+    expect(trilhasDisponiveis(MODOS)).toEqual(['expansao', 'operacoes', 'master'])
   })
 
   it('so a Executiva liberada = so a trilha de operacoes', () => {
@@ -146,8 +166,15 @@ describe('trilhasDisponiveis', () => {
     expect(trilhasDisponiveis(so)).toEqual(['expansao'])
   })
 
-  it('com as duas, a entrada abre na de expansao', () => {
-    expect(trilhaInicial(MODOS)).toBe('expansao')
+  it('com as duas de sempre, a entrada abre na de expansao', () => {
+    const semMaster = MODOS.filter((m) => m.trilha !== 'master')
+    expect(trilhaInicial(semMaster)).toBe('expansao')
+  })
+
+  it('o master com login proprio abre no Inicio dele, com a Executiva a um clique', () => {
+    const doMaster = MODOS.filter((m) => m.trilha === 'master' || m.trilha === 'operacoes')
+    expect(trilhasDisponiveis(doMaster)).toEqual(['operacoes', 'master'])
+    expect(trilhaInicial(doMaster)).toBe('master')
   })
 
   it('sem card nenhum nao ha trilha — a tela mostra a explicacao, nao uma pilula vazia', () => {

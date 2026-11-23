@@ -5281,6 +5281,10 @@ def me(
         "abas": sorted(abas),
         "perfil": _perfil_do_cliente(),
     }
+    # O master com login próprio (emenda 2 da DEC-089) tem um Início próprio: a SPA só o mostra
+    # com esta chave. Só existe com o banco no comando (sem ele não há perfil `master`).
+    if acesso.banco_no_comando() and "masters" in abas:
+        resposta["masters_proprio"] = acesso.ve_so_o_proprio_master(remote_user)
     # AUSENTE em vez de nula, pelo mesmo motivo da `senha` abaixo: no Brasil (perfil sem
     # aviso) a resposta nao muda um byte, e a SPA trata a chave como opcional.
     aviso_viabilidade = _aviso_de_viabilidade_para_a_tela()
@@ -15661,6 +15665,7 @@ def _gerar_relatorio_pontual_pdf(
     so_estudo: bool = False,
     excluir_ultra_proxima: bool = False,
     recorte: _RecorteDoPdf | None = None,
+    aviso_fora_da_area: bool = False,
 ) -> Response:
     """Corpo SINCRONO do Relatorio Pontual — roda no threadpool, nunca no event loop.
 
@@ -15925,6 +15930,7 @@ def _gerar_relatorio_pontual_pdf(
         foto_satelite=foto_satelite,
         # Marcador EXPLICITO de origem (parametro proprio, nunca embutido no `rotulo`).
         origem_centroide_hex=origem_centroide_hex,
+        aviso_fora_da_area=aviso_fora_da_area,
         # Bloco C+ (decisao 0.7): se o perfil declara o aviso de viabilidade com "pdf"
         # em `onde`, o `texto_rodape` e carimbado em todas as paginas de resultado
         # financeiro. No Brasil (`avisos` = {}) isto e None e o PDF nao muda um byte.
@@ -16854,24 +16860,206 @@ def _masters_fontes(manifesto: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+# --- O master com login próprio (027, emenda 2 da DEC-089, 19/11/2026) -------------------------
+# Juan: "os masters vão ter seus próprios logins; quando clicarem em Masters, já abrir no nome
+# dele". O gate (`acesso.rota_dos_masters_proprios`) só deixa quem tem `masters.ver_proprio` chegar
+# às leituras da tela; o recorte é AQUI, em cada rota: o master de outro responde 404, como um
+# master que não existe (o 403 confirmaria que ele existe). Falha fechada: login sem nome que bata
+# com um master vê a lista VAZIA; banco que não responde vira 503. Sem banco no comando (modo
+# JSON), não há perfil `master`, e nada muda.
+
+
+def _masters_do_pedido(remote_user: str | None) -> frozenset[str] | None:
+    """`None` = vê todos os masters (`masters.ver`: Growth e Líderes; ou o modo sem banco);
+    `frozenset` = SÓ estes ids (o master do login, `masters.ver_proprio`), talvez nenhum.
+
+    O master do login é o da planilha cujo nome bate com o `nome_usuario` dele
+    (`masters_painel.master_e_da_pessoa`). `def`, e não `async def`: consulta o Postgres com
+    driver síncrono; as rotas async a chamam no threadpool.
+    """
+    if not acesso.banco_no_comando():
+        return None
+    from motor_expansao import db
+    from motor_expansao.db import rbac
+
+    eu = _identidade_da_rede(remote_user)
+    if eu is None:
+        raise HTTPException(403, _DETALHE_FORA_DA_AREA)
+    if eu.pode("masters.ver"):
+        return None
+    if not eu.pode(acesso.CAPACIDADE_MASTERS_PROPRIO):
+        raise HTTPException(403, _DETALHE_FORA_DA_AREA)
+    try:
+        nome = rbac.nome_do_usuario(eu.id_usuario)
+    except (db.BancoIndisponivel, db.BancoNaoConfigurado) as erro:
+        _LOG_FALHA.warning("recorte dos masters: banco indisponivel ao ler o nome", exc_info=True)
+        raise _http_banco_sem_resposta(erro) from erro
+    contratos = _masters_exigir()[0]
+    return frozenset(
+        str(mid)
+        for mid, nome_master in zip(contratos["master_id"], contratos["nome"], strict=True)
+        if masters_painel.master_e_da_pessoa(nome_master, nome)
+    )
+
+
+def _masters_exigir_do_pedido(master_id: str, remote_user: str | None) -> None:
+    """404 se quem pede só vê o próprio painel e este não é o dele (a mesma resposta de um master
+    que não existe). Chamada no começo de toda rota de um master."""
+    permitidos = _masters_do_pedido(remote_user)
+    if permitidos is not None and master_id not in permitidos:
+        raise HTTPException(404, "Master não encontrado.")
+
+
+def _masters_registrar(
+    remote_user: str | None, registrar: Callable[..., None], descricao: str, **dados: Any
+) -> bool:
+    """Grava um gesto do master na trilha (`eventos`), e NUNCA derruba a resposta: mesma politica
+    do `_registrar_dossie_baixado` (sem banco configurado, a ausencia do evento e' o comportamento
+    declarado do deploy; com o banco falhando, o gesto segue e a falha vai ao log como erro).
+    `True` = gravou."""
+    from motor_expansao.db import BancoNaoConfigurado
+
+    try:
+        from motor_expansao.db import rbac
+
+        quem = rbac.identidade(acesso.login_da_requisicao(remote_user))
+        registrar(autor=quem.id_usuario if quem is not None else None, **dados)
+        return True
+    except BancoNaoConfigurado:
+        _LOG_D17.debug("D17: deploy sem banco — %s sem evento", descricao)
+        return False
+    except Exception:  # noqa: BLE001 — a trilha nunca derruba o gesto
+        _LOG_D17.exception("D17: %s ficou SEM evento no banco", descricao)
+        return False
+
+
+def _masters_ponto_fora_da_area(permitidos: frozenset[str] | None, lat: float, lng: float) -> bool:
+    """O ponto cai FORA do território de todos os masters do login? (quem vê todos os masters,
+    Growth e Líderes, não tem área própria: nunca está fora). O hexágono res-7 do ponto contra os
+    hexágonos das regiões do master (todos, e não só os povoados: um terreno vazio dentro do
+    território ainda é do território)."""
+    if permitidos is None:
+        return False
+    import h3
+
+    hex_do_ponto = str(h3.latlng_to_cell(lat, lng, 7))
+    fontes = _masters_assinatura_do_mapa()
+    return not any(
+        hex_do_ponto in set(_masters_mercado(mid, fontes)["hex_id"].astype(str))
+        for mid in sorted(permitidos)
+    )
+
+
+class PedidoDeImovelIn(BaseModel):
+    """O pedido de imóvel do master (19/11/2026, Juan: "ele fala a região que ele gostaria de
+    solicitar um imóvel; por enquanto é isso")."""
+
+    regiao: str = Field(min_length=1, max_length=300)
+
+
+@app.post("/api/masters/solicitar-imovel")
+def api_master_solicitar_imovel(
+    pedido: PedidoDeImovelIn,
+    remote_user: str | None = Header(default=None, alias="Remote-User"),
+) -> dict[str, Any]:
+    """O master pede um imóvel numa região: a linha `imovel.solicitado` na trilha, com a região e o
+    master do login, para o Growth ver. Nada além disso por ora."""
+    regiao = " ".join(pedido.regiao.split())
+    if not regiao:
+        raise HTTPException(400, "Diga a região em que você gostaria de um imóvel.")
+    _masters_exigir()
+    permitidos = _masters_do_pedido(remote_user)
+    from motor_expansao.db import eventos as db_eventos
+
+    registrado = _masters_registrar(
+        remote_user,
+        db_eventos.registrar_imovel_solicitado,
+        "pedido de imóvel do master",
+        masters=sorted(permitidos or []),
+        regiao=regiao,
+    )
+    return {"ok": True, "registrado": registrado}
+
+
+@app.post("/api/masters/estudo")
+async def api_master_estudo_do_ponto(
+    lat: float,
+    lng: float,
+    remote_user: str | None = Header(default=None, alias="Remote-User"),
+) -> Response:
+    """O estudo de um ponto pedido pelo Início do master (19/11/2026, Juan: "ele pode colocar as
+    coordenadas e vai ser gerado o estudo, mas sem levar para o mapa"): o Estudo pontual (o PDF
+    exclusivamente demográfico, `so_estudo`), direto, a partir da coordenada. Pode ser fora da
+    área dele; nesse caso o PDF sai com o aviso "Estudo fora da sua área de atuação" e a trilha
+    ganha `estudo.fora_da_area`, para o Growth ("notificar a growth, ainda não sei como")."""
+    if not PERFIL.bbox.contem(lat, lng):
+        raise HTTPException(400, "Coordenada fora do país desta instância.")
+    _masters_exigir()
+    permitidos = await run_in_threadpool(_masters_do_pedido, remote_user)
+    fora = await run_in_threadpool(_masters_ponto_fora_da_area, permitidos, lat, lng)
+    report_id = await _registrar_relatorio_gerado_fora_do_loop(
+        remote_user, relatorio="pontual", formato="pdf"
+    )
+    if fora:
+        from motor_expansao.db import eventos as db_eventos
+
+        await run_in_threadpool(
+            functools.partial(
+                _masters_registrar,
+                remote_user,
+                db_eventos.registrar_estudo_fora_da_area,
+                "estudo fora da área do master",
+                masters=sorted(permitidos or []),
+                lat=lat,
+                lng=lng,
+                report_id=report_id,
+            )
+        )
+    solicitante = acesso.login_da_requisicao(remote_user)
+    async with _PDF_SEMAFORO:
+        return await run_in_threadpool(
+            functools.partial(
+                _gerar_relatorio_pontual_pdf,
+                lat,
+                lng,
+                None,
+                solicitante,
+                None,
+                None,
+                None,
+                [],
+                report_id=report_id,
+                so_estudo=True,
+                aviso_fora_da_area=fora,
+            )
+        )
+
+
 @app.get("/api/masters")
-def api_masters() -> dict[str, Any]:
-    """Um card por master, na ordem da config: em operação, em inauguração, assinados e a meta."""
+def api_masters(remote_user: str | None = Header(default=None, alias="Remote-User")) -> dict[str, Any]:
+    """Um card por master, na ordem da config: em operação, em inauguração, assinados e a meta.
+    O master com login próprio recebe só o dele, e `proprio: true` (a tela abre direto nele)."""
     contratos, inauguradas, pipeline, manifesto = _masters_exigir()
+    permitidos = _masters_do_pedido(remote_user)
     hoje = _masters_hoje()
+    cards = masters_painel.cards(
+        contratos, inauguradas, pipeline, _masters_datas(), _chave_unidade, hoje
+    )
+    if permitidos is not None:
+        cards = [c for c in cards if c["id"] in permitidos]
     return {
-        "masters": masters_painel.cards(
-            contratos, inauguradas, pipeline, _masters_datas(), _chave_unidade, hoje
-        ),
+        "masters": cards,
+        "proprio": permitidos is not None,
         "hoje": hoje.strftime("%Y-%m-%d"),
         "fontes": _masters_fontes(manifesto),
     }
 
 
 @app.get("/api/masters/{master_id}")
-def api_master(master_id: str) -> dict[str, Any]:
+def api_master(master_id: str, remote_user: str | None = Header(default=None, alias="Remote-User")) -> dict[str, Any]:
     """O painel de um master: as listas por status e a meta do ano por trimestre."""
     contratos, inauguradas, pipeline, manifesto = _masters_exigir()
+    _masters_exigir_do_pedido(master_id, remote_user)
     hoje = _masters_hoje()
     painel = masters_painel.painel_do_master(
         master_id, contratos, inauguradas, pipeline, _masters_datas(), _chave_unidade, hoje
@@ -17013,8 +17201,10 @@ async def api_master_relatorio(
     recebe um .zip com um PDF por área (18/11/2026, Juan: "entregar as áreas que ele tem", com um
     botão só), menos os de `MASTERS_RELATORIO_UNICO` (o DF/GO), que recebem o PDF do master inteiro;
     com uma área ou nenhuma, o PDF. Com `regiao`, o PDF daquela área. Mesmo gate da tela
-    (`masters.ver`), o mesmo teto de PDFs ao mesmo tempo e o evento `relatorio.gerado` (D17)."""
+    (`masters.ver`), o mesmo teto de PDFs ao mesmo tempo e o evento `relatorio.gerado` (D17).
+    O master com login próprio gera o dele (emenda 2 da DEC-089); o de outro responde 404."""
     _masters_exigir()
+    await run_in_threadpool(_masters_exigir_do_pedido, master_id, remote_user)
     faltando = _masters_faltando_para_o_relatorio()
     if faltando:
         raise HTTPException(
@@ -17065,11 +17255,12 @@ async def api_master_relatorio(
 
 
 @app.get("/api/masters/{master_id}/estudo")
-async def api_master_estudo(master_id: str) -> Response:
+async def api_master_estudo(master_id: str, remote_user: str | None = Header(default=None, alias="Remote-User")) -> Response:
     """O "Onde expandir" da aba Expansão: os cartões da Análise de Oportunidade, os mesmos do
     relatório. Pesado na primeira vez (lê os setores do território), por isso no mesmo teto dos
     PDFs; depois, em cache."""
     _masters_exigir()
+    await run_in_threadpool(_masters_exigir_do_pedido, master_id, remote_user)
     faltando = _masters_faltando_para_o_relatorio()
     if faltando:
         raise HTTPException(
@@ -17218,10 +17409,11 @@ def _masters_recomendacao(
 
 
 @app.get("/api/masters/{master_id}/recomendacao")
-def api_master_recomendacao(master_id: str) -> Response:
+def api_master_recomendacao(master_id: str, remote_user: str | None = Header(default=None, alias="Remote-User")) -> Response:
     """Onde expandir no território, pela régua do motor (Mata Virgem e Premium), com 20 vagas
     por segmento. Mesmo gate da tela (`masters.ver`)."""
     _masters_master_do_mapa(master_id)
+    _masters_exigir_do_pedido(master_id, remote_user)
     return Response(
         content=_masters_recomendacao(
             master_id, _masters_assinatura_do_mapa(), _regra_recomendacao()
@@ -17287,9 +17479,10 @@ def _masters_crescimento(master_id: str, fontes: tuple[tuple[str, int], ...]) ->
 
 
 @app.get("/api/masters/{master_id}/crescimento")
-def api_master_crescimento(master_id: str) -> Response:
+def api_master_crescimento(master_id: str, remote_user: str | None = Header(default=None, alias="Remote-User")) -> Response:
     """A primeira linha do painel do master: quanto ele pode crescer no território."""
     _masters_master_do_mapa(master_id)
+    _masters_exigir_do_pedido(master_id, remote_user)
     return Response(
         content=_masters_crescimento(master_id, _masters_assinatura_do_mapa()),
         media_type="application/json",
@@ -17297,9 +17490,10 @@ def api_master_crescimento(master_id: str) -> Response:
 
 
 @app.get("/api/masters/{master_id}/mapa")
-def api_master_mapa(master_id: str) -> Response:
+def api_master_mapa(master_id: str, remote_user: str | None = Header(default=None, alias="Remote-User")) -> Response:
     """O território do master para o mapa do painel. Mesmo gate da tela (`masters.ver`)."""
     _masters_master_do_mapa(master_id)
+    _masters_exigir_do_pedido(master_id, remote_user)
     return Response(
         content=_masters_mapa(master_id, _masters_assinatura_do_mapa()),
         media_type="application/json",
@@ -17408,11 +17602,15 @@ def _masters_setores(master_id: str, fontes: tuple[tuple[str, int], ...]) -> str
 
 
 @app.get("/api/masters/{master_id}/setores")
-def api_master_setores(master_id: str) -> Response:
+def api_master_setores(
+    master_id: str,
+    remote_user: str | None = Header(default=None, alias="Remote-User"),
+) -> Response:
     """Os setores do Censo do território inteiro, `[renda, densidade, anéis]` por peça: a renda e
     a densidade do mapa do painel, sempre do Censo, em qualquer zoom. Pedidos só quando a pessoa
     liga uma das duas; a primeira leitura do território é lenta, depois fica em cache."""
     _masters_master_do_mapa(master_id)
+    _masters_exigir_do_pedido(master_id, remote_user)
     return Response(
         content=_masters_setores(master_id, _masters_assinatura_do_mapa()),
         media_type="application/json",
@@ -17420,9 +17618,10 @@ def api_master_setores(master_id: str) -> Response:
 
 
 @app.get("/api/masters/{master_id}/mapa/camadas")
-def api_master_mapa_camadas(master_id: str) -> Response:
+def api_master_mapa_camadas(master_id: str, remote_user: str | None = Header(default=None, alias="Remote-User")) -> Response:
     """As faixas de cor da renda e da densidade: pedidas só quando a pessoa liga uma camada."""
     _masters_master_do_mapa(master_id)
+    _masters_exigir_do_pedido(master_id, remote_user)
     return Response(
         content=_masters_camadas(),
         media_type="application/json",

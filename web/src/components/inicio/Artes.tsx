@@ -392,6 +392,135 @@ function ArteFicha() {
   )
 }
 
+/* ---------------------------------------------------------------------------
+   Trilha do master (emenda 2 da DEC-089)
+   --------------------------------------------------------------------------- */
+
+/** O prédio no lote, em perspectiva — o card de pedir um imóvel (a opção D que o Juan escolheu
+ *  no Claude Design, 19/11/2026: "pensei numa área ou num prédio"): o lote tracejado no chão (a
+ *  área) e o prédio em cima, com a bandeira laranja do pedido, na cor da trilha. A face da
+ *  esquerda fica na sombra e a da direita na luz (`--arte-face-*`); o térreo da direita é a porta. */
+function ArteImovel() {
+  return (
+    <Quadro>
+      {/* O lote. */}
+      <polygon
+        points="34,89 120,132 206,89 120,46"
+        fill="var(--ac)"
+        fillOpacity={0.12}
+        stroke="var(--ac)"
+        strokeWidth={1.8}
+        strokeDasharray="5 4"
+        strokeLinejoin="round"
+      />
+      {/* O prédio: as duas faces e o telhado. */}
+      <polygon points="90,103 120,118 120,62 90,47" fill="var(--arte-face-sombra)" stroke="var(--line-dashed)" strokeLinejoin="round" />
+      <polygon points="120,118 150,103 150,47 120,62" fill="var(--arte-face-luz)" stroke="var(--line-dashed)" strokeLinejoin="round" />
+      <polygon points="90,47 120,62 150,47 120,32" fill="var(--ac)" fillOpacity={0.55} stroke="var(--line-dashed)" strokeLinejoin="round" />
+      <g fill="var(--ac)" fillOpacity={0.6}>
+        {JANELAS_DO_PREDIO.map((pontos) => (
+          <polygon key={pontos} points={pontos} />
+        ))}
+      </g>
+      <polygon points="131.4,112.3 138.6,108.7 138.6,96.7 131.4,100.3" fill={CAIXA_FUNDA} stroke="var(--line-dashed)" />
+      {/* A bandeira do pedido no telhado. */}
+      <path d="M120 47V22" stroke="var(--tx-sub)" strokeWidth={1.6} strokeLinecap="round" />
+      <path d="M120 22L135 26.5L120 31Z" fill="var(--mst)" />
+    </Quadro>
+  )
+}
+
+/** As janelas do prédio em perspectiva: três andares em duas colunas na face da sombra; dois na
+ *  da luz, cujo térreo é a porta. */
+const JANELAS_DO_PREDIO = [
+  '95.4,93.7 103.2,97.6 103.2,89.6 95.4,85.7',
+  '95.4,78.7 103.2,82.6 103.2,74.6 95.4,70.7',
+  '95.4,63.7 103.2,67.6 103.2,59.6 95.4,55.7',
+  '108,100 115.8,103.9 115.8,95.9 108,92',
+  '108,85 115.8,88.9 115.8,80.9 108,77',
+  '108,70 115.8,73.9 115.8,65.9 108,62',
+  '125.4,88.3 133.2,84.4 133.2,76.4 125.4,80.3',
+  '125.4,73.3 133.2,69.4 133.2,61.4 125.4,65.3',
+  '138,82 145.8,78.1 145.8,70.1 138,74',
+  '138,67 145.8,63.1 145.8,55.1 138,59',
+] as const
+
+/** O painel do master, no tema do card do imóvel (19/11/2026, Juan: "deixe todos na temática da
+ *  primeira logo"; "a logo do meio, deixe ela com mais cara de painel"; e, nela, "tire o quadrado
+ *  em torno": sem o lote): uma tela em pé, em perspectiva, com o cabeçalho do master, os três
+ *  números e a barra até a meta, marcada em laranja. */
+function ArteMeuPainel() {
+  return (
+    <Quadro>
+      {/* Sem o lote, a tela vem para o meio do quadro e um pouco maior. */}
+      <g transform="translate(-15.1 12.9) scale(1.15)">
+        {/* O pé da tela. */}
+        <ellipse cx={117.5} cy={86.25} rx={9} ry={4.5} fill="var(--tx-sub)" fillOpacity={0.35} />
+        <path d="M117.5 86.25V77.25" stroke="var(--tx-sub)" strokeWidth={3} strokeLinecap="round" />
+        {/* A espessura da tela (em cima e à direita) e a frente dela. */}
+        <polygon points="84,16 148,48 151,46.5 87,14.5" fill="var(--arte-face-luz)" stroke="var(--line-dashed)" strokeLinejoin="round" />
+        <polygon points="148,94 151,92.5 151,46.5 148,48" fill="var(--arte-face-luz)" stroke="var(--line-dashed)" strokeLinejoin="round" />
+        <polygon points="84,62 148,94 148,48 84,16" fill="var(--arte-face-sombra)" stroke="var(--line-dashed)" strokeLinejoin="round" />
+        {/* O cabeçalho: o master e o território. */}
+        <polygon points="89,30.5 96,34 96,27 89,23.5" fill="var(--ac)" fillOpacity={0.85} />
+        <path d="M100 30.5L128 44.5M100 34.5L116 42.5" stroke="var(--tx-sub)" strokeOpacity={0.6} strokeWidth={2.2} strokeLinecap="round" />
+        {/* Os três números. */}
+        {CARTOES_DO_PAINEL.map((c) => (
+          <polygon key={c} points={c} fill={CAIXA_FUNDA} stroke="var(--line-dashed)" strokeLinejoin="round" />
+        ))}
+        <path d="M92 43.5L100 47.5M112 53.5L120 57.5M132 63.5L140 67.5" stroke="var(--ac)" strokeWidth={2.2} strokeLinecap="round" />
+        {/* A barra até a meta, e a meta em laranja. */}
+        <polygon points="89,57.5 143,84.5 143,80 89,53" fill={CAIXA_FUNDA} />
+        <polygon points="89,57.5 127,76.5 127,72 89,53" fill="var(--gr-verde)" />
+        <path d="M132 82.5V71" stroke="var(--mst)" strokeWidth={2.6} strokeLinecap="round" />
+      </g>
+    </Quadro>
+  )
+}
+
+/** Os três cartões de número da tela do painel, em perspectiva (a mesma projeção do prédio). */
+const CARTOES_DO_PAINEL = [
+  '89,47.5 103,54.5 103,43.5 89,36.5',
+  '109,57.5 123,64.5 123,53.5 109,46.5',
+  '129,67.5 143,74.5 143,63.5 129,56.5',
+] as const
+
+/** O estudo em PDF de um ponto, no tema do card do imóvel (19/11/2026, Juan: "deixe todos na
+ *  temática da primeira logo"): o mesmo lote em perspectiva, o raio do estudo no chão, o pino
+ *  fincado no ponto (com o ponto no meio, como pedido) e, atrás dele, a folha do PDF em pé, com a
+ *  etiqueta laranja. */
+function ArteEstudo() {
+  return (
+    <Quadro>
+      <polygon
+        points="34,89 120,132 206,89 120,46"
+        fill="var(--ac)"
+        fillOpacity={0.12}
+        stroke="var(--ac)"
+        strokeWidth={1.8}
+        strokeDasharray="5 4"
+        strokeLinejoin="round"
+      />
+      {/* A folha do PDF, em pé atrás do pino, com as linhas do texto e a etiqueta. */}
+      <polygon points="130,68 162,84 162,38 130,22" fill="var(--arte-face-sombra)" stroke="var(--line-dashed)" strokeLinejoin="round" />
+      <path
+        d="M135 54.5L157 65.5M135 47.5L157 58.5M135 40.5L149 47.5"
+        stroke="var(--tx-sub)"
+        strokeOpacity={0.6}
+        strokeWidth={2.2}
+        strokeLinecap="round"
+      />
+      <polygon points="134,34 146,40 146,34 134,28" fill="var(--mst)" />
+      {/* O raio do estudo no chão, em volta do ponto. */}
+      <ellipse cx={104} cy={91} rx={36} ry={18} fill="var(--ac)" fillOpacity={0.14} stroke="var(--ac)" strokeOpacity={0.7} />
+      {/* O pino fincado no ponto, com a sombra e o ponto no meio. */}
+      <ellipse cx={104} cy={91} rx={7} ry={3.5} fill="var(--tx-sub)" fillOpacity={0.35} />
+      <path d="M104 91c-7-10-11-15-11-21a11 11 0 0122 0c0 6-4 11-11 21z" fill="var(--ac)" />
+      <circle cx={104} cy={70} r={4} fill="var(--ac-on)" />
+    </Quadro>
+  )
+}
+
 const ARTES: Record<ArteInicio, () => React.JSX.Element> = {
   brasil: ArteBrasil,
   estado: ArteEstado,
@@ -399,6 +528,9 @@ const ARTES: Record<ArteInicio, () => React.JSX.Element> = {
   painel: ArtePainel,
   rede: ArteRede,
   ficha: ArteFicha,
+  imovel: ArteImovel,
+  meupainel: ArteMeuPainel,
+  estudo: ArteEstudo,
 }
 
 /** Desenha a arte de um card. Chave desconhecida não desenha nada — o card continua

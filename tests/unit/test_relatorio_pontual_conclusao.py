@@ -1664,12 +1664,15 @@ def test_todo_eixo_tem_texto_para_todo_status():
         _CONCLUSAO_BLOCO_TITULOS,
         _CONCLUSAO_SELO_LEGENDAS,
         _CONCLUSAO_SELO_TEXTOS,
+        CONCLUSAO_BLOCO_AREA,
     )
 
     eixos = {CONCLUSAO_EIXO_DEMOGRAFICO, CONCLUSAO_EIXO_FINANCEIRO}
     assert set(_CONCLUSAO_SELO_TEXTOS) == eixos
     assert set(_CONCLUSAO_SELO_LEGENDAS) == eixos
-    assert set(_CONCLUSAO_BLOCO_TITULOS) == eixos
+    # Os blocos de observação são os dos eixos mais o do aviso de área do master (o card
+    # amarelo do estudo fora do território, emenda 2 da DEC-089), que tem título e não tem selo.
+    assert set(_CONCLUSAO_BLOCO_TITULOS) == eixos | {CONCLUSAO_BLOCO_AREA}
     for por_status in _CONCLUSAO_SELO_TEXTOS.values():
         assert set(por_status) == {CONCLUSAO_APROVADO, CONCLUSAO_RESSALVAS, CONCLUSAO_REPROVADO}
         # A linha de apoio e' o que distingue os dois selos: nenhuma pode ser vazia.

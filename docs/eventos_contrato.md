@@ -276,6 +276,17 @@ na mesma transação, o que a coluna nega.
 evento (a auditoria do D19 é sobre `perfil_permissoes`). Para o mesmo gesto existe um caminho
 com rastro, a tela de administração, e o manual não é o único.
 
+### 2.8 Gestos do master no Início (emenda 2 da DEC-089)
+
+Os dois pedidos que o master faz pelo Início do piloto. Sem `entidade` (o pedido não tem alvo do
+modelo): o master vai em `metadados` (`masters`, os ids da config dos territórios), como o alvo da
+§3.1. Nada de login, e-mail ou nome: o `id_usuario` do carimbo já identifica quem pediu.
+
+| `tipo` | `entidade` | `metadados` | grava? |
+|---|---|---|---|
+| `imovel.solicitado` | — | `masters`, `regiao` (o texto do master, até 300 caracteres), `origem` | **sim** (emenda 2 da DEC-089) |
+| `estudo.fora_da_area` | — | `masters`, `lat`, `lng` (6 casas), `report_id` (o do `relatorio.gerado` do mesmo PDF), `origem` | **sim** (emenda 2 da DEC-089): só o estudo de um ponto fora do território do master |
+
 ## 3. O que o esquema precisa acomodar
 
 Duas questões de modelo. A primeira está **resolvida** (D24, migration `014`); a segunda segue

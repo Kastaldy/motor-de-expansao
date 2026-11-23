@@ -1168,15 +1168,19 @@ def _vincular(con: Any, id_usuario: int, master: str) -> None:
     )
 
 
-def test_025_o_master_tem_so_rede_ver_propria_e_so_ele_a_tem(con: Any) -> None:
+def test_025_o_master_tem_so_as_chaves_proprias_e_so_ele_as_tem(con: Any) -> None:
+    """025: `rede.ver_propria`; desde a 027 (emenda 2 da DEC-089), também `masters.ver_proprio`.
+    Nenhuma das duas sai do perfil `master`, e ele não tem nenhuma das que abrem tudo."""
     linhas = con.execute(
         "SELECT p.nome_perfil, pe.chave FROM perfil_permissoes pp "
         "JOIN perfis p ON p.id_perfil = pp.id_perfil "
         "JOIN permissoes pe ON pe.id_permissao = pp.id_permissao "
-        "WHERE p.nome_perfil = 'master' OR pe.chave = 'rede.ver_propria'"
+        "WHERE p.nome_perfil = 'master' "
+        "OR pe.chave IN ('rede.ver_propria', 'masters.ver_proprio')"
     ).fetchall()
-    assert {c for p, c in linhas if p == "master"} == {"rede.ver_propria"}
+    assert {c for p, c in linhas if p == "master"} == {"rede.ver_propria", "masters.ver_proprio"}
     assert {p for p, c in linhas if c == "rede.ver_propria"} == {"master"}
+    assert {p for p, c in linhas if c == "masters.ver_proprio"} == {"master"}
 
 
 def test_025_a_identidade_do_master_nao_tem_rede_ver(con: Any) -> None:
@@ -1189,7 +1193,9 @@ def test_025_a_identidade_do_master_nao_tem_rede_ver(con: Any) -> None:
     ).fetchone()[0]
     quem = db_rbac.identidade(login)
     assert quem is not None and quem.perfil == "master"
-    assert quem.permissoes == frozenset({"rede.ver_propria"})
+    # As duas chaves próprias (025 e 027), e nenhuma que abra a rede ou a tela Masters inteiras.
+    assert quem.permissoes == frozenset({"rede.ver_propria", "masters.ver_proprio"})
+    assert not quem.pode("rede.ver") and not quem.pode("masters.ver")
     assert quem.paises == frozenset({"BR"})
 
 

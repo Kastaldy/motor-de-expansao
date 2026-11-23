@@ -5367,3 +5367,17 @@ READ-ONLY sobre o M1. Não muda o que os testes verificam, só como/quando rodam
 Mercado, concorrentes, pinos Ultra e malha do Censo vêm dos arquivos que o motor já usa na VPS (atualizados), e não de cópias locais.
 
 **O que falta levar ao servidor.** (1) o código do relatório em PDF (`masters/relatorio_pdf.py`, `relatorio_funcionamento.py`, `gerar.py`, `analise.py`, `area.py`, hoje no ramo `feat/relatorio-masters`); (2) as regiões com municípios do `territorios.json` (a ingestão do BLK-MASTERS-03 leva só os nomes); (3) o painel BLK-UNI (`dim_unidade.parquet`, `fato_unidade_mes.parquet`) por cópia MENSAL do Felipe para `/opt/motor-expansao/data/staging` (escolha do Juan em 18/11/2026), de onde saem a lista de unidades do master e os padrões.
+
+### BLK-MASTERS-05 — O master com login próprio abre o próprio painel na tela Masters (emenda 2 da DEC-089)
+
+| Campo | Valor |
+|---|---|
+| **Criticidade** | **Crítica** — capacidade nova no RBAC (migration 027) e allowlist nova no gate. READ-ONLY sobre o M1. |
+| **Prioridade** | Alta — pedido do Juan em 19/11/2026, na prévia da tela Masters. |
+| **Esteira** | PR próprio, empilhado no do BLK-MASTERS-04 (escolha do Juan). |
+| **Quem** | Juan (código); Felipe (migration 027 na VPS e deploy); Felipe ou Vinicius (aprovação crítica). |
+| **Status** | Em PR |
+| **Depende de** | BLK-MASTERS-04 |
+| **Autonomia** | **manual (NÃO loop-safe)** — RBAC e dado confidencial. |
+
+**O que entrega.** O master franqueado com login próprio (perfil `master`, DEC-087) vê a aba Masters e, ao clicar, abre direto no PRÓPRIO painel, sem a lista dos outros e sem o "← Todos os masters"; gera o próprio relatório em PDF. O vínculo é o nome: o `nome_usuario` do login tem de bater com o nome do master na planilha (o titular, ou uma das pessoas de um titular composto). Capacidade `masters.ver_proprio` (migration 027), allowlist fechada no gate (`ROTAS_DOS_MASTERS_PROPRIOS`) e recorte em cada rota (`_masters_do_pedido`, 404 ao master de outro, falha fechada). E o **Início do master**, a trilha "Meu território": Solicitar um imóvel (a região, gravada como `imovel.solicitado`), Masters (leva à tela) e Solicitar um estudo (a coordenada vira o Estudo pontual em PDF, sem o mapa; fora do território, o PDF sai com o aviso "Estudo fora da sua área de atuação" num card amarelo na Conclusão, e a trilha ganha `estudo.fora_da_area`). Falta o canal de "notificar a Growth" (Juan: "ainda não sei como").

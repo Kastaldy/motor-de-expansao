@@ -1,8 +1,10 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 
 import Arte from '../components/inicio/Artes'
 import {
   PassoEndereco,
+  PassoEstudo,
+  PassoImovel,
   PassoRecorte,
   PassoUf,
   PassoUnidade,
@@ -57,13 +59,24 @@ export default function InicioScreen({
   const ufs = useUfsDaBase()
   const disponiveis = trilhasDisponiveis(modos)
   const [trilha, setTrilha] = useState<TrilhaInicio | null>(() => trilhaInicial(modos))
+  // A pessoa já tocou na pílula? Enquanto não, a trilha segue a inicial dos cards de AGORA.
+  const escolheuATrilha = useRef(false)
 
   /* As abas chegam DEPOIS da primeira pintura (`/api/me` é assíncrono), então a trilha
      escolhida na montagem pode deixar de existir — é o caso de quem só tem a Executiva:
      ele nasce com `expansao` (fail-open) e, quando a resposta chega, essa trilha some.
      Sem isto a tela ficaria mostrando a pergunta errada, sem card nenhum embaixo. */
+  /* Pelo mesmo motivo, a trilha do master (emenda 2 da DEC-089) só aparece quando a resposta
+     chega, e o Início dele tem de ABRIR nela, e não na Executiva com que nasceu: enquanto a
+     pessoa não escolheu na pílula, vale a trilha inicial dos cards de agora. */
   useEffect(() => {
-    setTrilha((atual) => (atual && disponiveis.includes(atual) ? atual : (disponiveis[0] ?? null)))
+    setTrilha((atual) =>
+      !escolheuATrilha.current
+        ? trilhaInicial(modos)
+        : atual && disponiveis.includes(atual)
+          ? atual
+          : (disponiveis[0] ?? null),
+    )
     // `join` e não o array: `trilhasDisponiveis` devolve um array novo a cada render.
   }, [disponiveis.join('|')]) // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -164,7 +177,10 @@ export default function InicioScreen({
                 key={t}
                 trilha={t}
                 ativa={t === trilha}
-                onEscolher={() => setTrilha(t)}
+                onEscolher={() => {
+                  escolheuATrilha.current = true
+                  setTrilha(t)
+                }}
               />
             ))}
           </div>
@@ -258,6 +274,24 @@ const ICONE_TRILHA: Record<TrilhaInicio, React.JSX.Element> = {
       <path d="M16 14h2" />
     </>
   ),
+  // Alvo sobre o território: o do master (emenda 2 da DEC-089).
+  master: (
+    <>
+      <circle cx="12" cy="12" r="8" />
+      <circle cx="12" cy="12" r="4" />
+      <path d="M12 2v3" />
+      <path d="M12 19v3" />
+    </>
+  ),
+}
+
+/** A cor de cada trilha, na pílula (`cheia`, `sobre`) e nos cards dela (`acento`, `borda`):
+ *  turquesa na expansão, rosa nas operações e laranja no master (19/11/2026, Juan: "a aba
+ *  'Meu território' está na cor rosa; mude para laranja"). */
+const COR_DA_TRILHA: Record<TrilhaInicio, { cheia: string; sobre: string; acento: string; borda: string }> = {
+  expansao: { cheia: 'var(--ac)', sobre: 'var(--ac-on)', acento: 'var(--ac-text)', borda: 'var(--ac-a30)' },
+  operacoes: { cheia: 'var(--ops)', sobre: 'var(--ops-on)', acento: 'var(--ops-text)', borda: 'var(--ops)' },
+  master: { cheia: 'var(--mst)', sobre: 'var(--mst-on)', acento: 'var(--mst-text)', borda: 'var(--mst)' },
 }
 
 function BotaoTrilha({
@@ -269,8 +303,7 @@ function BotaoTrilha({
   ativa: boolean
   onEscolher: () => void
 }) {
-  const cheia = trilha === 'expansao' ? 'var(--ac)' : 'var(--ops)'
-  const sobre = trilha === 'expansao' ? 'var(--ac-on)' : 'var(--ops-on)'
+  const { cheia, sobre } = COR_DA_TRILHA[trilha]
   return (
     <button
       type="button"
@@ -340,8 +373,7 @@ function CardModo({
   ufs: readonly string[]
 }) {
   const [aberto, setAberto] = useState(false)
-  const acento = modo.trilha === 'expansao' ? 'var(--ac-text)' : 'var(--ops-text)'
-  const borda = modo.trilha === 'expansao' ? 'var(--ac-a30)' : 'var(--ops)'
+  const { acento, borda } = COR_DA_TRILHA[modo.trilha]
   const temPasso = modo.segundoPasso !== null
 
   /* Esc fecha o passo aberto — o mesmo gesto que fecha a ficha da unidade na Visão
@@ -411,6 +443,10 @@ function CardModo({
           <PassoRecorte onEscolher={(e) => onEscolher(modo.id, e)} />
         ) : modo.segundoPasso === 'unidade' ? (
           <PassoUnidade onEscolher={(e) => onEscolher(modo.id, e)} />
+        ) : modo.segundoPasso === 'imovel' ? (
+          <PassoImovel />
+        ) : modo.segundoPasso === 'estudo' ? (
+          <PassoEstudo />
         ) : (
           <Arte nome={modo.arte} />
         )}

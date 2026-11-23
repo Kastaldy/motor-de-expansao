@@ -13,6 +13,8 @@ import {
   escalaDaBarra,
   etiquetasDaUnidade,
   focoDoHexagono,
+  lerCoordenada,
+  masterQueAbreSozinho,
   metaDoAno,
   pct,
   recorteDoTop,
@@ -314,5 +316,26 @@ describe('tela Masters (DEC-089): textos', () => {
     expect(alunosCurto(846_210)).toBe('846 mil')
     expect(alunosCurto(730)).toBe('730')
     expect(alunosCurto(null)).toBe('—')
+  })
+
+  it('o master com login próprio abre direto no painel dele; os outros perfis, na lista', () => {
+    const m = (id: string) => ({ id }) as never
+    expect(masterQueAbreSozinho({ proprio: true, masters: [m('dfgo')] })).toBe('dfgo')
+    // Growth e Líderes (lista inteira) e servidor antigo (sem o campo): a lista.
+    expect(masterQueAbreSozinho({ proprio: false, masters: [m('dfgo')] })).toBeNull()
+    expect(masterQueAbreSozinho({ masters: [m('dfgo')] })).toBeNull()
+    // Login sem master (aviso) ou com mais de um (a lista dos dele).
+    expect(masterQueAbreSozinho({ proprio: true, masters: [] })).toBeNull()
+    expect(masterQueAbreSozinho({ proprio: true, masters: [m('a'), m('b')] })).toBeNull()
+    expect(masterQueAbreSozinho(null)).toBeNull()
+  })
+
+  it('a coordenada do card de estudo, com ponto ou vírgula decimal', () => {
+    expect(lerCoordenada('-15.79, -47.88')).toEqual({ lat: -15.79, lng: -47.88 })
+    expect(lerCoordenada('-15,79 -47,88')).toEqual({ lat: -15.79, lng: -47.88 })
+    expect(lerCoordenada(' -15.79;-47.88 ')).toEqual({ lat: -15.79, lng: -47.88 })
+    expect(lerCoordenada('Asa Sul')).toBeNull()
+    expect(lerCoordenada('-15.79')).toBeNull()
+    expect(lerCoordenada('95, 10')).toBeNull()
   })
 })
