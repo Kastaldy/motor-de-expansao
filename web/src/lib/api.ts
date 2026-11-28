@@ -377,8 +377,11 @@ export const VIDA_DA_BLOB_URL_MS = 60_000
  */
 /**
  * Exports da Visão Executiva (CSV/XLSX/PDF da carteira e PDF da ficha) DESLIGADOS
- * temporariamente a pedido do Felipe (15/09). Os botões seguem visíveis e desabilitados;
- * religar é trocar para `true`. As rotas do backend continuam de pé.
+ * temporariamente a pedido do Felipe (15/09). Os botões seguem visíveis e desabilitados.
+ * Desde o B7 do pentest (11/2026) o BACKEND também recusa (403) enquanto estiver desligado —
+ * antes as rotas respondiam 200 e um download pela URL contornava a tela. Religar é trocar
+ * para `true` AQUI E no `EXPORTS_REDE_ATIVOS` de `web/server/app.py`; os dois têm de bater
+ * (guardado por `test_piloto_web_rede::test_chave_de_exports_casa_com_a_tela`).
  */
 export const EXPORTS_REDE_ATIVOS = false
 export const MOTIVO_EXPORTS_DESLIGADOS = 'Exportação temporariamente desativada'

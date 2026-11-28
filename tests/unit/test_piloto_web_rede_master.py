@@ -42,6 +42,15 @@ from motor_expansao import db  # noqa: E402
 from motor_expansao.db import rbac  # noqa: E402
 from tests.unit.test_piloto_web_rede import rede  # noqa: E402,F401  (fixture)
 
+
+@pytest.fixture(autouse=True)
+def _exports_da_rede_ligados(monkeypatch: pytest.MonkeyPatch) -> None:
+    """B7: os exports da rede nascem DESLIGADOS em producao. Estes testes do master foram
+    escritos quando as rotas respondiam 200 a quem tem `rede.ver`; liga a chave para o 403 que
+    importa aqui ser o do recorte do master (`_exigir_rede_inteira`), nao o dos exports."""
+    monkeypatch.setattr(pilot, "EXPORTS_REDE_ATIVOS", True)
+
+
 MES = "2026-07"
 MASTER = "dalmo_ribeiro"
 REDE_INTEIRA = "ana"

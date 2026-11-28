@@ -22,10 +22,14 @@ import './styles/global.css'
  * bloqueada" avisaria a quem varre nomes que acertou um. E' por isso que a tela conta as
  * falhas sozinha (`falhas`, em `Entrada`) e nomeia o bloqueio a partir de `MAX_TENTATIVAS`.
  *
- * POR QUE CONTINUA SENDO UM BUNDLE SEPARADO. Quem ainda nao entrou recebe ~23 kB de
- * formulario, e nao os ~1,5 MB da SPA do piloto — que carregam o mapa inteiro e o nome de
- * cada rota interna da API. Servir o bundle do piloto a quem nao autenticou entrega o
- * desenho da casa a quem tocou a campainha.
+ * POR QUE CONTINUA SENDO UM BUNDLE SEPARADO. Quem ainda nao entrou recebe so' a tela de
+ * entrar — sem o `App` do piloto, sem o mapa, sem as telas —, e nao a SPA inteira. RESSALVA
+ * HONESTA (B3 do pentest de 11/2026): este bundle importa o objeto `api` de `./lib/api`, que
+ * e' o cliente INTEIRO, entao os NOMES das rotas (inclusive as de admin) viajam aqui e o
+ * bundle mede ~230 kB, nao os ~23 kB que este comentario ja' afirmou. Isso NAO e' furo: cada
+ * rota exige capacidade no servidor (gate por rota + `_portao_de_sessao`), entao saber o nome
+ * de uma rota nao da' acesso a ela. Tirar o mapa da API do anonimo de verdade exigiria por os
+ * estaticos atras de sessao, o que contraria o corte do P19 (DEC-067) e fica fora deste PR.
  *
  * POR QUE O `fetch` CONTINUA RELATIVO. Mesma origem que o backend do piloto: o cookie de
  * sessao e' aceito e nao ha' CORS. Consequencia herdada, e vale repetir porque continua

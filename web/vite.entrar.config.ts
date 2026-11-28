@@ -25,6 +25,11 @@ import react from '@vitejs/plugin-react'
  * `auth.`. O `auth.` continua existindo -- a instancia AR depende dele --, e o cookie
  * continua saindo com `Domain=<apex>`, entao o mecanismo descrito acima segue valendo
  * nos dois casos.
+ *
+ * RESSALVA (B3 do pentest de 11/2026): separar o build reduz o que o anonimo baixa (sem o
+ * `App` nem o mapa), mas NAO esconde os NOMES das rotas da API -- a propria tela de entrar
+ * importa o objeto `api` inteiro (`entrar.tsx`), entao eles viajam no bundle dela. Nao e'
+ * furo: o servidor exige capacidade em cada rota (ver o cabecalho de `entrar.tsx`).
  */
 export default defineConfig({
   plugins: [react()],
