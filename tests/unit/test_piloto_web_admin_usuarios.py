@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import sys
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
@@ -34,6 +35,24 @@ from motor_expansao.db import sessoes as db_sessoes  # noqa: E402
 from motor_expansao.db import usuarios as db_usuarios  # noqa: E402
 
 ADMIN = "vinicius"
+
+
+def _req() -> Any:
+    """Request falso para `me_trocar_senha` (so' le `.headers.get(...)` e `.client`): origem
+    desconhecida, como o `_RequisicaoDeLogin` default de `test_piloto_web_login`. A trava de
+    tentativas (r4 do pentest) passou a exigir o `request` nessa rota."""
+    return SimpleNamespace(headers={}, client=None)
+
+
+@pytest.fixture(autouse=True)
+def _reset_rate_limit() -> Any:
+    """A trava por par (conta, IP) de `me_trocar_senha` guarda estado de MODULO em
+    `rate_limit_login`; zera entre testes para uma chamada nao contaminar a seguinte."""
+    import rate_limit_login
+
+    rate_limit_login._resetar_para_teste()
+    yield
+    rate_limit_login._resetar_para_teste()
 
 
 class _Eu:
@@ -512,6 +531,7 @@ def test_trocar_a_propria_senha_nao_exige_a_allowlist_do_painel(
     )
     saida = pilot_app.me_trocar_senha(
         pilot_app.MinhaSenhaIn(senha_atual="a-inicial", nova_senha="uma frase bem longa"),
+        request=_req(),
         remote_user="qualquer",
     )
     assert saida["primeira_vez"] is True
@@ -535,6 +555,7 @@ def test_a_rota_de_senha_nao_aceita_alvo(monkeypatch: pytest.MonkeyPatch) -> Non
     )
     pilot_app.me_trocar_senha(
         pilot_app.MinhaSenhaIn(senha_atual="x", nova_senha="uma frase bem longa"),
+        request=_req(),
         remote_user=ADMIN,
     )
     assert set(visto) == {"autor", "senha_atual", "nova_senha"}
@@ -577,9 +598,49 @@ def test_cada_recusa_da_troca_tem_seu_status(
     with pytest.raises(HTTPException) as caiu:
         pilot_app.me_trocar_senha(
             pilot_app.MinhaSenhaIn(senha_atual="x", nova_senha="uma frase bem longa"),
+            request=_req(),
             remote_user=ADMIN,
         )
     assert caiu.value.status_code == status
+
+
+@pytest.mark.usefixtures("login_proprio")
+def test_trocar_a_propria_senha_tem_trava_de_tentativas(monkeypatch: pytest.MonkeyPatch) -> None:
+    """r4 do pentest: sem trava, uma sessao roubada adivinharia a senha ATUAL sem limite, cada
+    palpite pagando um Argon2 de 64 MiB. Apos 5 recusas do par (conta, IP), a 6a da' 429 ANTES
+    de chamar o verificador -- igual ao `/api/login`."""
+    monkeypatch.setattr(pilot_app, "_minha_identidade", lambda _u: _Eu())
+    chamadas = 0
+
+    def _trocar(**_k: Any) -> None:
+        nonlocal chamadas
+        chamadas += 1
+        raise db_usuarios.SenhaAtualIncorreta("nao")
+
+    monkeypatch.setattr(db_usuarios, "trocar_a_propria_senha", _trocar)
+
+    def _tentar() -> int:
+        with pytest.raises(HTTPException) as caiu:
+            pilot_app.me_trocar_senha(
+                pilot_app.MinhaSenhaIn(senha_atual="errada", nova_senha="uma frase bem longa"),
+                request=_req(),
+                remote_user=ADMIN,
+            )
+        return caiu.value.status_code
+
+    # As 5 primeiras pagam o Argon2 (chamam o verificador) e dao 403.
+    assert [_tentar() for _ in range(5)] == [403] * 5
+    assert chamadas == 5
+    # A 6a e' barrada pelo par ANTES do verificador: 429, com Retry-After, e o stub nao roda.
+    with pytest.raises(HTTPException) as barrada:
+        pilot_app.me_trocar_senha(
+            pilot_app.MinhaSenhaIn(senha_atual="errada", nova_senha="uma frase bem longa"),
+            request=_req(),
+            remote_user=ADMIN,
+        )
+    assert barrada.value.status_code == 429
+    assert barrada.value.headers == {"Retry-After": str(pilot_app.rate_limit_login.JANELA_S)}
+    assert chamadas == 5
 
 
 @pytest.mark.usefixtures("login_proprio")
@@ -605,7 +666,7 @@ def test_senha_fraca_e_422(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(db_usuarios, "trocar_a_propria_senha", _trocar)
     with pytest.raises(HTTPException) as caiu:
         pilot_app.me_trocar_senha(
-            pilot_app.MinhaSenhaIn(senha_atual="x", nova_senha=curta), remote_user=ADMIN
+            pilot_app.MinhaSenhaIn(senha_atual="x", nova_senha=curta), request=_req(), remote_user=ADMIN
         )
     assert caiu.value.status_code == 422
     assert f"{piso} caracteres" in str(caiu.value.detail)
@@ -626,6 +687,7 @@ def test_sem_cadastro_no_banco_a_mensagem_nao_fala_da_allowlist(
     with pytest.raises(HTTPException) as caiu:
         pilot_app.me_trocar_senha(
             pilot_app.MinhaSenhaIn(senha_atual="x", nova_senha="uma frase bem longa"),
+            request=_req(),
             remote_user="ninguem",
         )
     assert caiu.value.status_code == 409
@@ -721,6 +783,7 @@ _GESTOS_DE_SENHA = [
     pytest.param(
         lambda: pilot_app.me_trocar_senha(
             pilot_app.MinhaSenhaIn(senha_atual="x", nova_senha="uma frase bem longa"),
+            request=_req(),
             remote_user=ADMIN,
         ),
         "LOGIN_PROPRIO_DESLIGADO_TROCA",
@@ -986,6 +1049,7 @@ def test_deploy_sem_banco_na_troca_da_propria_senha_e_503_e_nao_500(
     with pytest.raises(HTTPException) as caiu:
         pilot_app.me_trocar_senha(
             pilot_app.MinhaSenhaIn(senha_atual="a-inicial", nova_senha="uma frase bem longa"),
+            request=_req(),
             remote_user="qualquer",
         )
     assert caiu.value.status_code == 503
@@ -1011,6 +1075,7 @@ def test_as_duas_mensagens_de_sem_banco_sao_DIFERENTES(monkeypatch: pytest.Monke
     with pytest.raises(HTTPException) as na_senha:
         pilot_app.me_trocar_senha(
             pilot_app.MinhaSenhaIn(senha_atual="a-inicial", nova_senha="uma frase bem longa"),
+            request=_req(),
             remote_user="qualquer",
         )
 
