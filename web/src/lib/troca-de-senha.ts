@@ -103,6 +103,10 @@ export function mensagemDoErro(status: number, doServidor?: string | null): stri
       return 'A troca de senha só funciona com o login próprio do piloto ligado.'
     case 409:
       return 'Você não tem cadastro no banco, então não há senha sua para trocar.'
+    case 429:
+      // r4 do pentest: a troca da própria senha agora tem trava de tentativas (como o login),
+      // para uma sessão roubada não adivinhar a senha atual sem limite.
+      return 'Muitas tentativas. Aguarde um instante e tente de novo.'
     case 503:
       return 'O sistema de senhas está indisponível agora. Tente de novo em instantes.'
     default:

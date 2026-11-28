@@ -99,7 +99,23 @@ def sob_limite(ip: str, *, agora: float | None = None) -> bool:
 _MAX_PARES = 20_000
 
 _lock_par = threading.Lock()
-_recusas_par: OrderedDict[tuple[int, str], list[float]] = OrderedDict()
+#: Chave do par: o ID da conta (int) quando o login EXISTE, ou `chave_de_login(login)` (str)
+#: quando NAO existe -- ver `chave_de_login` e o furo r2 do pentest (oraculo de tempo).
+_recusas_par: OrderedDict[tuple[int | str, str], list[float]] = OrderedDict()
+
+
+def chave_de_login(login: str) -> str:
+    """Chave de par para um login que NAO existe, no lugar do `id_usuario`.
+
+    Fecha o oraculo de TEMPO (furo r2 do pentest de 11/2026): sem isto, so' a conta EXISTENTE
+    trancava o par e passava a responder sem rodar o Argon2 -- o login inexistente pagava o hash
+    falso sempre, mais lento, e a diferenca denunciava quem existe. Com o par tambem para o
+    inexistente, apos o teto os dois pulam o Argon2 e o cronometro nao os distingue.
+
+    `login:` + minusculas para casar com o `CITEXT` da migration 013: `Ana` e `ana` nao podem
+    abrir baldes diferentes, senao o teto por par nao conteria a variacao de caixa.
+    """
+    return "login:" + login.strip().lower()
 
 
 def _vivas(marcas: list[float], *, agora: float, janela_s: float, piso: float | None) -> list[float]:
@@ -111,7 +127,7 @@ def _vivas(marcas: list[float], *, agora: float, janela_s: float, piso: float | 
 
 
 def reservar_tentativa_par(
-    id_usuario: int,
+    id_usuario: int | str,
     ip: str,
     *,
     maximo: int,
@@ -150,7 +166,7 @@ def reservar_tentativa_par(
         return False
 
 
-def desfazer_reserva_par(id_usuario: int, ip: str) -> None:
+def desfazer_reserva_par(id_usuario: int | str, ip: str) -> None:
     """Devolve a reserva de uma tentativa que NAO foi avaliada (semaforo cheio, 503)."""
     with _lock_par:
         marcas = _recusas_par.get((id_usuario, ip))
@@ -158,7 +174,7 @@ def desfazer_reserva_par(id_usuario: int, ip: str) -> None:
             marcas.pop()
 
 
-def limpar_par(id_usuario: int, ip: str) -> None:
+def limpar_par(id_usuario: int | str, ip: str) -> None:
     """O acerto zera o par, como no banco: quem provou saber a senha nao fica com recusa velha.
 
     So' o PAR do acerto -- e nao a conta inteira -- porque o acerto da dona num IP nao pode

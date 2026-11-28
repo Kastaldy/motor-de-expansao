@@ -6345,7 +6345,13 @@ def login(body: LoginIn, request: Request) -> Response:
     )
     if rate_limit_login.sob_limite(_ip_edge):
         _LOG_D17.warning("login: teto de taxa por IP atingido (429)")
-        raise HTTPException(429, "Muitas tentativas. Aguarde um instante e tente novamente.")
+        # Retry-After (r3 do pentest): diz em quantos segundos tentar de novo -- a largura da
+        # janela do rate-limit. Padrao HTTP para 429/503; cliente e proxies sabem respeitar.
+        raise HTTPException(
+            429,
+            "Muitas tentativas. Aguarde um instante e tente novamente.",
+            headers={"Retry-After": str(rate_limit_login.JANELA_S)},
+        )
 
     negado = HTTPException(401, "Login ou senha incorretos.")
     vencida = False
@@ -6364,6 +6370,15 @@ def login(body: LoginIn, request: Request) -> Response:
         trancado_par = False
         reservou_par = False
         recusas = 0
+        # Chave do par (conta, IP): o id quando a conta EXISTE, ou o login normalizado quando
+        # NAO existe. Reservar o par tambem para o inexistente fecha o oraculo de TEMPO (r2 do
+        # pentest de 11/2026): apos o teto, os dois pulam o Argon2 e o cronometro nao distingue
+        # quem existe. O teto por CONTA (abaixo) so' vale para conta existente, que tem evento.
+        chave_par: int | str = (
+            credencial.id_usuario
+            if credencial is not None
+            else rate_limit_login.chave_de_login(body.login)
+        )
         if credencial is not None:
             recusas = db_eventos.contar_recusas_recentes(
                 id_usuario=credencial.id_usuario,
@@ -6375,20 +6390,20 @@ def login(body: LoginIn, request: Request) -> Response:
                 redefinida_em=credencial.redefinida_em,
             )
             trancado = recusas >= db_sessoes.MAX_TENTATIVAS_CONTA
-            if not trancado:
-                # O PAR (conta, IP) barra quem esta' errando DESTA origem sem tocar em quem entra
-                # de outra; o teto da conta, acima, e' a rede contra o ataque espalhado. A
-                # checagem RESERVA a tentativa no mesmo lock, antes do Argon2 -- ler e so'
-                # contar depois deixava uma rajada simultanea passar do teto (revisao de 09/11).
-                trancado_par = rate_limit_login.reservar_tentativa_par(
-                    credencial.id_usuario,
-                    _ip_edge,
-                    maximo=db_sessoes.MAX_TENTATIVAS,
-                    janela_s=db_sessoes.JANELA_TENTATIVAS_MIN * 60,
-                    redefinida_em=credencial.redefinida_em,
-                )
-                reservou_par = not trancado_par
-                trancado = trancado_par
+        if not trancado:
+            # O PAR (conta, IP) barra quem esta' errando DESTA origem sem tocar em quem entra
+            # de outra; o teto da conta, acima, e' a rede contra o ataque espalhado. A checagem
+            # RESERVA a tentativa no mesmo lock, antes do Argon2 -- ler e so' contar depois
+            # deixava uma rajada simultanea passar do teto (revisao de 09/11).
+            trancado_par = rate_limit_login.reservar_tentativa_par(
+                chave_par,
+                _ip_edge,
+                maximo=db_sessoes.MAX_TENTATIVAS,
+                janela_s=db_sessoes.JANELA_TENTATIVAS_MIN * 60,
+                redefinida_em=credencial.redefinida_em if credencial is not None else None,
+            )
+            reservou_par = not trancado_par
+            trancado = trancado_par
 
         # A verificacao roda MESMO sem credencial, e o `None` e' proposital: `senhas.verificar`
         # JA' paga um `ph.hash` descartavel quando o hash e' nulo ou fora do formato PHC,
@@ -6412,7 +6427,7 @@ def login(body: LoginIn, request: Request) -> Response:
             confere = False
             # Nao foi avaliada: a reserva do par volta, senao a carga contaria como erro de senha.
             if reservou_par:
-                rate_limit_login.desfazer_reserva_par(credencial.id_usuario, _ip_edge)
+                rate_limit_login.desfazer_reserva_par(chave_par, _ip_edge)
 
         # SENHA TEMPORARIA VENCIDA (D31) conta como senha errada, e a checagem vem DEPOIS do
         # Argon2 de proposito -- o oposto da trava acima. La' negar cedo poupa CPU numa rajada;
@@ -6477,7 +6492,8 @@ def login(body: LoginIn, request: Request) -> Response:
     # pode haver: usar o PRIMEIRO token em vez do ultimo foi vulnerabilidade real (pentest de
     # 19/08/2026), e uma segunda redacao da regra e' a que esquece a licao.
     # O acerto zera o PAR desta origem (o banco zera a conta pelo evento `login`, logo abaixo).
-    rate_limit_login.limpar_par(credencial.id_usuario, _ip_edge)
+    # `chave_par` == `credencial.id_usuario` aqui (o acerto exige conta existente).
+    rate_limit_login.limpar_par(chave_par, _ip_edge)
     aberta = db_sessoes.abrir(
         id_usuario=credencial.id_usuario,
         ip=_ip_real_do_xff(
@@ -7004,6 +7020,7 @@ def _derrubar_sessoes(id_alvo: int, *, autor: int, motivo: str) -> None:
 @app.patch("/api/me/senha", include_in_schema=False)
 def me_trocar_senha(
     body: MinhaSenhaIn,
+    request: Request,
     remote_user: str | None = Header(default=None, alias="Remote-User"),
 ) -> dict[str, Any]:
     """A pessoa troca a SENHA DELA. Nao passa pela allowlist do painel, e nao deve.
@@ -7027,9 +7044,39 @@ def me_trocar_senha(
     sentido. Com a chave desligada o `/api/me` nem manda o estado da senha, e a SPA nao a oferece.
     """
     _exigir_login_proprio(LOGIN_PROPRIO_DESLIGADO_TROCA)
+    from motor_expansao.db import sessoes as db_sessoes
     from motor_expansao.db import usuarios as db_usuarios
+    from motor_expansao.origem_ip import chave_de_origem
 
     eu = _minha_identidade(remote_user)
+
+    # TRAVA DE TENTATIVAS (r4 do pentest de 11/2026): sem ela, uma sessao roubada adivinharia a
+    # senha ATUAL sem limite, cada palpite pagando um Argon2 de 64 MiB (dois no acerto) e
+    # pressionando o `mem_limit` do `web`. Reusa o par (conta, IP) e o semaforo do `/api/login`:
+    # 5 recusas em 15 min barram o par, e o Argon2 roda sob o semaforo nao-bloqueante.
+    _ip_edge = chave_de_origem(
+        rate_limit_login.ip_observado_pelo_edge(
+            request.headers.get("x-forwarded-for"),
+            request.client.host if request.client else None,
+        )
+    )
+    if rate_limit_login.reservar_tentativa_par(
+        eu.id_usuario,
+        _ip_edge,
+        maximo=db_sessoes.MAX_TENTATIVAS,
+        janela_s=db_sessoes.JANELA_TENTATIVAS_MIN * 60,
+    ):
+        _LOG_D17.warning("troca da propria senha: par (conta, IP) barrado pela trava de tentativas")
+        raise HTTPException(
+            429,
+            "Muitas tentativas. Aguarde um instante e tente novamente.",
+            headers={"Retry-After": str(rate_limit_login.JANELA_S)},
+        )
+    if not _SEM_LOGIN.acquire(blocking=False):
+        # Carga (BLK-BANCO-07): nao foi avaliada, a reserva volta e sai 503, como no `/api/login`.
+        rate_limit_login.desfazer_reserva_par(eu.id_usuario, _ip_edge)
+        _LOG_D17.warning("troca da propria senha recusada por carga: semaforo do Argon2 cheio")
+        raise HTTPException(503, "Serviço ocupado no momento. Tente novamente em instantes.")
     try:
         resultado = db_usuarios.trocar_a_propria_senha(
             autor=eu.id_usuario,
@@ -7037,7 +7084,13 @@ def me_trocar_senha(
             nova_senha=body.nova_senha,
         )
     except Exception as erro:  # noqa: BLE001 - traduzido logo abaixo
+        # Senha atual errada (ou outro erro de dominio): a reserva FICA, contando a tentativa
+        # como no login. Traduz DEPOIS de soltar o semaforo (no `finally`).
         raise _erro_de_usuarios(erro) from erro
+    finally:
+        _SEM_LOGIN.release()
+    # Acerto: zera o par desta origem -- quem provou saber a senha atual nao fica com recusa velha.
+    rate_limit_login.limpar_par(eu.id_usuario, _ip_edge)
     # Decisao 2 do P19: a senha nova invalida as sessoes abertas com a ANTIGA. Aqui quem
     # age e quem sofre sao a mesma pessoa -- inclusive a sessao DESTA requisicao cai, e e'
     # o comportamento certo: trocar senha e continuar logado com a credencial velha e'

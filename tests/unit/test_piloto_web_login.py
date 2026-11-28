@@ -1108,3 +1108,40 @@ def test_login_recusado_tambem_libera_o_slot(ligado: None, monkeypatch: pytest.M
         pilot.login(pilot.LoginIn(login="vinicius", senha="errada"), _req())
     assert caiu.value.status_code == 401
     assert _todos_os_slots_do_login_livres(), "o semaforo nao foi liberado apos a recusa"
+
+
+# --------------------------------------------------------------------------------------
+# Resíduos do pentest de 11/2026 (M4): Retry-After e o oráculo de tempo
+# --------------------------------------------------------------------------------------
+
+
+def test_o_429_por_IP_diz_quando_tentar_de_novo(ligado: None, monkeypatch: pytest.MonkeyPatch) -> None:
+    """r3: o 429 do teto por IP leva `Retry-After` (a largura da janela), que o cliente respeita."""
+    _preparar(monkeypatch, credencial=None, confere=False)
+    ip = "203.0.113.9"
+    for _ in range(pilot.rate_limit_login.MAX_TENTATIVAS):
+        with pytest.raises(pilot.HTTPException):
+            pilot.login(pilot.LoginIn(login="x", senha="y"), _req(xff=ip))
+    with pytest.raises(pilot.HTTPException) as caiu:
+        pilot.login(pilot.LoginIn(login="x", senha="y"), _req(xff=ip))
+    assert caiu.value.status_code == 429
+    assert caiu.value.headers == {"Retry-After": str(pilot.rate_limit_login.JANELA_S)}
+
+
+def test_login_INEXISTENTE_tambem_tranca_o_par(ligado: None, monkeypatch: pytest.MonkeyPatch) -> None:
+    """r2 (oraculo de tempo): ate' agora so' a conta EXISTENTE trancava o par e parava de pagar
+    o Argon2; o login inexistente pagava o hash falso SEMPRE, mais lento, e a diferenca denunciava
+    quem existe. Agora o inexistente tambem tranca: apos 5 do mesmo IP, a 6a nao chama o
+    verificador. Falhava antes porque eram 6 pagamentos."""
+    vistas: list[Any] = []
+    _preparar(monkeypatch, credencial=None, confere=False, verificacoes=vistas)
+    ip = "198.51.100.23"
+    for _ in range(5):
+        with pytest.raises(pilot.HTTPException) as caiu:
+            pilot.login(pilot.LoginIn(login="fantasma", senha="x"), _req(xff=ip))
+        assert caiu.value.status_code == 401
+    assert len(vistas) == 5  # as 5 pagaram o hash falso
+    with pytest.raises(pilot.HTTPException) as caiu:
+        pilot.login(pilot.LoginIn(login="fantasma", senha="x"), _req(xff=ip))
+    assert caiu.value.status_code == 401  # mesmo 401 de sempre
+    assert len(vistas) == 5  # NAO chamou o verificador na 6a -- oraculo fechado

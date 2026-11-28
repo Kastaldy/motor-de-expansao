@@ -103,3 +103,24 @@ def test_dict_podado_no_teto_de_ips(monkeypatch: pytest.MonkeyPatch) -> None:
     for i in range(20):
         rl.sob_limite(f"ip-{i}", agora=float(i))
     assert len(rl._marcas) <= 5, "o dict tem de ser podado para nao crescer sem teto"
+
+
+# --- Chave de par para o login INEXISTENTE (r2 do pentest: oraculo de tempo) ---------------
+
+
+def test_chave_de_login_normaliza_caixa_e_espaco() -> None:
+    """`Ana`, `ana` e `  ana ` caem no MESMO balde, casando com o CITEXT da migration 013 --
+    senao a variacao de caixa furaria o teto por par do login inexistente."""
+    assert rl.chave_de_login("  Ana  ") == rl.chave_de_login("ana")
+    assert rl.chave_de_login("ana") == "login:ana"
+
+
+def test_par_aceita_chave_str_do_login_inexistente() -> None:
+    """A trava por par agora chaveia por int (conta existente) OU str (login inexistente)."""
+    rl._resetar_para_teste()
+    chave = rl.chave_de_login("fantasma")
+    for _ in range(5):
+        assert rl.reservar_tentativa_par(chave, "1.2.3.4", maximo=5, janela_s=900) is False
+    assert rl.reservar_tentativa_par(chave, "1.2.3.4", maximo=5, janela_s=900) is True
+    # int e str nao colidem: um id numerico na mesma origem tem balde proprio.
+    assert rl.reservar_tentativa_par(7, "1.2.3.4", maximo=5, janela_s=900) is False
