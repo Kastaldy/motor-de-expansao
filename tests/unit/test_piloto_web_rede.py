@@ -19,6 +19,7 @@ import ast
 import csv
 import io
 import json
+import re
 import sys
 from pathlib import Path
 
@@ -35,6 +36,15 @@ import app as pilot  # noqa: E402
 
 from motor_expansao.dashboard import rede_cadastro, rede_diagnostico, rede_export  # noqa: E402
 from tests.unit.rede_fixtures import mes as mes_sintetico  # noqa: E402
+
+
+@pytest.fixture(autouse=True)
+def _exports_da_rede_ligados(monkeypatch: pytest.MonkeyPatch) -> None:
+    """B7: em producao os exports da rede nascem DESLIGADOS (403). Esta suite foi escrita
+    quando as 4 rotas respondiam 200, entao liga a chave para todos os testes do modulo;
+    `test_exports_desligados_recusam_no_servidor` a desliga de novo para provar o 403."""
+    monkeypatch.setattr(pilot, "EXPORTS_REDE_ATIVOS", True)
+
 
 _CACHES = (
     "_carregar_growth",
@@ -1636,3 +1646,35 @@ def test_rotulos_e_nota_do_churn_medio_na_tela_e_nos_exports(rede_um_ano: Path) 
     ficha = pilot.rede_unidade("antiga-x-sp", mes="2026-10")
     assert pilot._NOTA_CHURN_MEDIO not in ficha["notas"]
     assert pilot._NOTA_CHURN_MEDIO.encode("latin-1", "replace").decode("latin-1") == pilot._NOTA_CHURN_MEDIO
+
+
+# --- B7: exportacao desligada vale no SERVIDOR, nao so' na tela -----------------------------
+
+_ROTAS_DE_EXPORT = (
+    pytest.param(lambda: pilot.rede_carteira_csv(mes="2026-07"), id="carteira.csv"),
+    pytest.param(lambda: pilot.rede_carteira_xlsx(mes="2026-07"), id="carteira.xlsx"),
+    pytest.param(lambda: pilot.rede_carteira_pdf(mes="2026-07"), id="carteira.pdf"),
+    pytest.param(lambda: pilot.rede_unidade_pdf("botafogo-rj", mes="2026-07"), id="ficha.pdf"),
+)
+
+
+@pytest.mark.parametrize("chamar", _ROTAS_DE_EXPORT)
+def test_exports_desligados_recusam_no_servidor(chamar, monkeypatch: pytest.MonkeyPatch) -> None:
+    # Desliga a chave (sobrepondo o autouse): as 4 rotas tem de dar 403 ANTES de qualquer dado,
+    # provando que a tela nao e' a unica barreira (B7). Sem banco, `_exigir_rede_inteira` ja'
+    # passa, entao o 403 so' pode vir do `_exigir_exports_da_rede_ligados`.
+    monkeypatch.setattr(pilot, "EXPORTS_REDE_ATIVOS", False)
+    with pytest.raises(HTTPException) as erro:
+        chamar()
+    assert erro.value.status_code == 403
+    assert erro.value.detail == pilot._MOTIVO_EXPORTS_DESLIGADOS
+
+
+def test_chave_de_exports_casa_com_a_tela() -> None:
+    # Religar exige trocar a chave no front E no backend; reprova se so' um mudar.
+    api_ts = (_REPO / "web" / "src" / "lib" / "api.ts").read_text(encoding="utf-8")
+    app_py = (_REPO / "web" / "server" / "app.py").read_text(encoding="utf-8")
+    front = re.search(r"EXPORTS_REDE_ATIVOS\s*=\s*(true|false)", api_ts)
+    back = re.search(r"EXPORTS_REDE_ATIVOS\s*=\s*(True|False)", app_py)
+    assert front is not None and back is not None
+    assert (front.group(1) == "true") == (back.group(1) == "True")

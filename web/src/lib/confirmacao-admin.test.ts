@@ -320,6 +320,14 @@ describe('redefinir a senha de alguem (15/09)', () => {
     expect(c.gravidade).toBe('media')
   })
 
+  it('mesmo sem senha propria, avisa que a inicial cai e as sessoes tambem (M2)', () => {
+    /* Antes este ramo so' dizia "a troca continua pendente" e nao avisava que a senha inicial
+       que a pessoa usava deixa de valer na hora, com as sessoes derrubadas. */
+    const texto = montarConfirmacao({ ...alvo, senhaPropria: false }).apoio.join(' ')
+    expect(texto).toContain('deixa de valer agora')
+    expect(texto).toContain('sessões abertas')
+  })
+
   it('avisa que o admin VAI ver a senha, uma vez só', () => {
     /* Até 18/09/2026 este teste guardava a promessa CONTRÁRIA — "você não passa a conhecer a
        senha de ninguém" —, que era verdade quando a redefinição entregava a senha inicial
@@ -362,6 +370,14 @@ describe('exigir nova senha (15/09)', () => {
     expect(c.apoio.join(' ')).toContain('continua valendo')
     expect(c.gravidade).toBe('media')
     expect(c.loginParaDigitar).toBeNull()
+  })
+
+  it('NAO indica para vazamento e aponta Redefinir senha (M2)', () => {
+    /* "Exigir troca" nao mexe na senha, entao quem ja' a tem continua entrando: indica-la para
+       vazamento era o furo M2 do pentest. O texto agora manda usar Redefinir senha. */
+    const texto = montarConfirmacao(alvo).apoio.join(' ')
+    expect(texto).not.toContain('Use depois de uma suspeita de vazamento')
+    expect(texto).toContain('Redefinir senha')
   })
 })
 

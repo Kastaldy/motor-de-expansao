@@ -1317,7 +1317,7 @@ export default function PainelUsuarios() {
                                 ? 'A sua própria senha se troca pelo cadeado, no rodapé do menu.'
                                 : u.deve_trocar_senha
                                   ? 'A troca de senha já está pedida para esta pessoa.'
-                                  : 'A senha atual continua valendo; a troca é pedida na próxima entrada.'
+                                  : 'A senha atual continua valendo; a troca é pedida na próxima entrada. Para vazamento, use Redefinir senha.'
                             }
                             onClick={() =>
                               setPendente({ tipo: 'exigir-troca', id_usuario: u.id_usuario })

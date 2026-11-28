@@ -115,7 +115,10 @@ export function rodapeDoPainel(loginProprio: boolean): Segmento[] {
         'repassar; ela vale poucas horas e derruba as sessões abertas dela. Na entrada, o ' +
         'piloto convida a pessoa a criar uma senha nova — oferece, não obriga —, e depois do ' +
         'prazo a temporária para de funcionar. Se você perder a senha antes de repassar, gere ' +
-        'outra — a anterior deixa de valer.',
+        'outra — a anterior deixa de valer. ',
+      { forte: 'Exigir troca' },
+      ' só pede a troca na próxima entrada e NÃO invalida a senha atual; para vazamento ou ' +
+        'senha compartilhada, o certo é Redefinir senha.',
     ]
   }
   return [

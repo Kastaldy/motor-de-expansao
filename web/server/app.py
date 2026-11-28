@@ -6214,9 +6214,11 @@ def acessos_usuarios_exigir_troca(
     """Liga a marca de troca sem mexer na senha. Grava `usuario.troca_exigida`.
 
     A migration 016 previa o gesto e o codigo nao existia: `deve_trocar_senha_usuario` so' andava
-    de `TRUE` para `FALSE`. Serve depois de uma suspeita de vazamento, ou quando alguem conta ter
-    compartilhado a senha. `mudou: false` quando a troca ja' estava pedida -- sucesso sem evento,
-    como nas outras escritas desta tela.
+    de `TRUE` para `FALSE`. NAO serve para vazamento: nao mexe na senha, entao quem a tem continua
+    entrando -- para vazamento ou senha compartilhada o gesto certo e' `redefinir-senha`, que troca
+    o hash e derruba as sessoes (M2 do pentest de 11/2026). Isto aqui so' convida a pessoa a trocar
+    na proxima entrada. `mudou: false` quando a troca ja' estava pedida -- sucesso sem evento, como
+    nas outras escritas desta tela.
 
     SO' COM O LOGIN PROPRIO LIGADO (24/10/2026), pela mesma razao do `redefinir-senha`: a marca
     so' convida a trocar a senha do BANCO, e com a chave desligada ela nao e' usada para entrar.
@@ -12365,6 +12367,26 @@ def _exigir_rede_inteira(remote_user: str | None) -> None:
         raise HTTPException(403, _DETALHE_FORA_DA_AREA)
 
 
+#: TEMPORARIO (15/09/2026, pedido do Felipe): os exports da Visao Executiva estao DESLIGADOS.
+#: Ate' aqui so' a TELA os desligava (`EXPORTS_REDE_ATIVOS` em `web/src/lib/api.ts`), e as 4
+#: rotas respondiam 200 a quem tem `rede.ver` -- um download pela URL contornava a tela (B7 do
+#: pentest de 11/2026). Religar = `True` aqui E la'; `test_piloto_web_rede` exige que batam.
+EXPORTS_REDE_ATIVOS = False
+_MOTIVO_EXPORTS_DESLIGADOS = "Exportação temporariamente desativada"
+
+
+def _exigir_exports_da_rede_ligados() -> None:
+    """403 enquanto os exports da rede estiverem desligados (B7).
+
+    Chamado DEPOIS de `_exigir_rede_inteira` de proposito: assim o master segue recebendo o
+    403 de sempre e o banco fora continua virando 503; so' quem passaria (growth, lideres,
+    consultoria) encontra este 403 no lugar do download. 403 e nao 503 porque o cliente so'
+    trata o 401 de forma especial (`api.ts`).
+    """
+    if not EXPORTS_REDE_ATIVOS:
+        raise HTTPException(403, _MOTIVO_EXPORTS_DESLIGADOS)
+
+
 def _exigir_na_carteira(unidade_id: str, permitidos: frozenset[str] | None) -> None:
     """404 para a unidade fora do recorte, ANTES de ler qualquer dado dela."""
     if permitidos is not None and str(unidade_id) not in permitidos:
@@ -13053,6 +13075,7 @@ def rede_unidade_pdf(
     from motor_expansao.dashboard import rede_export
 
     _exigir_rede_inteira(remote_user)  # master não exporta (2a camada; o gate já barra)
+    _exigir_exports_da_rede_ligados()  # B7: export desligado vale no servidor, não só na tela
     payload = _rede_ficha_payload(unidade_id, mes)
     return _anexo(
         rede_export.ficha_pdf(payload),
@@ -14739,6 +14762,7 @@ def rede_carteira_csv(
     from motor_expansao.dashboard import rede_export
 
     _exigir_rede_inteira(remote_user)  # master não exporta (2a camada; o gate já barra)
+    _exigir_exports_da_rede_ligados()  # B7: export desligado vale no servidor, não só na tela
     payload = _rede_carteira_payload(
         mes, inicio, fim, uf, master, consultor, coorte, severidade, busca, ordenar, direcao,
         franqueado=franqueado,
@@ -14769,6 +14793,7 @@ def rede_carteira_xlsx(
     from motor_expansao.dashboard import rede_export
 
     _exigir_rede_inteira(remote_user)  # master não exporta (2a camada; o gate já barra)
+    _exigir_exports_da_rede_ligados()  # B7: export desligado vale no servidor, não só na tela
     payload = _rede_carteira_payload(
         mes, inicio, fim, uf, master, consultor, coorte, severidade, busca, ordenar, direcao,
         franqueado=franqueado,
@@ -14799,6 +14824,7 @@ def rede_carteira_pdf(
     from motor_expansao.dashboard import rede_export
 
     _exigir_rede_inteira(remote_user)  # master não exporta (2a camada; o gate já barra)
+    _exigir_exports_da_rede_ligados()  # B7: export desligado vale no servidor, não só na tela
     payload = _rede_carteira_payload(
         mes, inicio, fim, uf, master, consultor, coorte, severidade, busca, ordenar, direcao,
         franqueado=franqueado,
@@ -16215,13 +16241,21 @@ def _gerar_simulador_xlsx_response(
 # ============================================================================
 
 
+#: B9 do pentest (11/2026): a captura do mapa e' PNG e cabe nisto. Limitar o LADO (e nao so'
+#: o tamanho do data-url, `_IMAGEM_MAX_CHARS`) fecha a imagem muito comprimida que decodifica
+#: para dezenas de Mpx -- uma de ~150 Mpx passava de 0,5 GB no pico ao ser aberta.
+_LADO_MAX_IMAGEM_PX = 4096
+_ASSINATURA_PNG = b"\x89PNG\r\n\x1a\n"
+
+
 def _png_de_data_url(valor: object) -> bytes | None:
     """Decodifica um `data:image/png;base64,...` vindo da captura do mapa.
 
-    Devolve `None` — e nunca levanta — para captura vazia, truncada ou corrompida: o
-    gerador ja' sabe desenhar a moldura declarando "mapa nao capturado", e derrubar o
-    relatorio inteiro por causa de uma imagem seria trocar um slide incompleto por
-    nenhum PDF.
+    Devolve `None` — e nunca levanta — para captura vazia, truncada, corrompida, de formato
+    que nao seja PNG, ou com lado acima de `_LADO_MAX_IMAGEM_PX`: o gerador ja' sabe desenhar a
+    moldura declarando "mapa nao capturado", e derrubar o relatorio inteiro por causa de uma
+    imagem seria trocar um slide incompleto por nenhum PDF. B9 do pentest: so' o LADO e' lido,
+    pelo cabecalho (`.size` sem `.load()`), entao nao abre bomba de descompressao.
     """
     texto = str(valor or "")
     marca = "base64,"
@@ -16229,9 +16263,21 @@ def _png_de_data_url(valor: object) -> bytes | None:
     if corte < 0:
         return None
     try:
-        return base64.b64decode(texto[corte + len(marca) :], validate=True)
+        bruto = base64.b64decode(texto[corte + len(marca) :], validate=True)
     except Exception:  # noqa: BLE001 - captura ruim degrada, nao quebra
         return None
+    if not bruto.startswith(_ASSINATURA_PNG):
+        return None
+    try:
+        from PIL import Image
+
+        with Image.open(io.BytesIO(bruto)) as imagem:
+            largura, altura = imagem.size  # cabecalho; nao chama .load()
+    except Exception:  # noqa: BLE001 - cabecalho ilegivel degrada, nao quebra
+        return None
+    if largura > _LADO_MAX_IMAGEM_PX or altura > _LADO_MAX_IMAGEM_PX:
+        return None
+    return bruto
 
 
 def _gerar_comparacao_pdf(
@@ -16277,8 +16323,10 @@ class ComparacaoItemIn(BaseModel):
 
 class ComparacaoCoordIn(BaseModel):
     # Centro da area fotografada, impresso sob a foto para o operador VOLTAR a ela no mapa.
-    lat: float = Field(allow_inf_nan=False)
-    lng: float = Field(allow_inf_nan=False)
+    # B9 do pentest (11/2026): faixa valida, nao so' finito -- coordenada fora do globo nunca
+    # e' legitima e so' sujaria o texto sob a foto.
+    lat: float = Field(allow_inf_nan=False, ge=-90, le=90)
+    lng: float = Field(allow_inf_nan=False, ge=-180, le=180)
 
 
 class ComparacaoIn(BaseModel):

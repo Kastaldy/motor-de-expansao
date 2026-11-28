@@ -271,7 +271,8 @@ export function montarConfirmacao(
         `Login ${acao.login}.`,
         acao.senhaPropria
           ? 'A senha escolhida pela pessoa deixa de valer agora, e as sessões abertas dela caem.'
-          : 'A pessoa ainda não tinha definido a própria senha — a troca continua pendente.',
+          : 'A pessoa ainda não tinha definido a própria senha — a inicial que ela usava deixa ' +
+            'de valer agora, e as sessões abertas dela caem.',
         // Antes de 18/09/2026 esta linha dizia o contrário ("você não passa a conhecer a senha
         // de ninguém"), porque a redefinição entregava a senha inicial COMPARTILHADA. Ela
         // deixou de ser verdade junto com a D31, e esconder isso do administrador seria pior
@@ -304,7 +305,8 @@ export function montarConfirmacao(
         `Login ${acao.login}.`,
         'A senha atual continua valendo. Na próxima entrada, a tela de troca volta a aparecer ' +
           'para a pessoa.',
-        'Use depois de uma suspeita de vazamento, ou quando a senha foi compartilhada. Fica ' +
+        'NÃO serve para vazamento: quem já tem a senha também consegue trocá-la. Para vazamento ' +
+          'ou senha compartilhada, use Redefinir senha, que invalida a atual na hora. Fica ' +
           'registrado com o seu nome e a data.',
       ],
       rotuloConfirmar: `Exigir troca de ${acao.nome}`,
