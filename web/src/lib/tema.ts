@@ -69,8 +69,11 @@ export function outroTema(tema: Tema): Tema {
  * que o `postMessage` não tem —, o que permite ler antes da primeira pintura; senão a
  * tela nasce preta e clareia, o flash que os dois bootstraps existem para evitar.
  *
- * Espelhado nos bootstraps de `index.html` e `entrar.html` — ao renomear aqui, renomeie
- * lá. `tema.test.ts` tem a guarda que torna o desencontro visível.
+ * Espelhado nos bootstraps INLINE de `index.html`, `entrar.html` e `portal.html` — ao
+ * renomear aqui, renomeie nos três. Esse `<script>` é liberado na CSP por HASH
+ * (`_HASH_SCRIPT_TEMA` em `web/server/app.py`): mudar um byte do bootstrap exige recalcular
+ * o hash, senão a fase 2 da CSP o bloquearia. `tema.test.ts` e
+ * `tests/unit/test_piloto_web_cabecalhos.py` travam os dois desencontros.
  */
 export const COOKIE_TEMA = 'motor.tema'
 

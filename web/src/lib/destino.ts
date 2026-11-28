@@ -13,9 +13,11 @@
  *
  * ## O QUE ELA GARANTE
  *
- * SO' aceita destino `https` do MESMO dominio da instancia. Um `rd` apontando para fora
- * vira um redirecionamento aberto: bastaria mandar a' pessoa um link de login com `rd`
- * para um site clonado, e ela seria levada para la' logo apos digitar a senha de verdade.
+ * SO' aceita destino `https` do MESMO host da instancia — nem um subdominio irmao do
+ * dominio (apex, `piloto-ar.`, `dashboard.`) passa. Um `rd` apontando para fora vira um
+ * redirecionamento aberto: bastaria mandar a' pessoa um link de login com `rd` para um
+ * site clonado, e ela seria levada para la' logo apos digitar a senha de verdade. A regra
+ * antiga aceitava `*.{dominio}`; com um irmao comprometido, isso bastava para o desvio.
  *
  * ## E RECUSA UM DESTINO QUE E' A PROPRIA TELA DE ENTRAR
  *
@@ -69,7 +71,7 @@ const CAMINHO_DA_TELA_DE_ENTRAR = '/entrar.html'
 /** Teto de desembrulhos de `rd` aninhado. Ver `destinoSeguro`. */
 const MAX_DESEMBRULHOS = 5
 
-/** A URL, se for `https` e do dominio da instancia. Qualquer outra coisa, `null`. */
+/** A URL, se for `https` e do MESMO host da instancia. Qualquer outra coisa, `null`. */
 function urlDoDominio(bruto: string | null, hostAtual: string): URL | null {
   if (!bruto) return null
   let url: URL
@@ -79,8 +81,14 @@ function urlDoDominio(bruto: string | null, hostAtual: string): URL | null {
     return null
   }
   if (url.protocol !== 'https:') return null
-  const raiz = dominioRaiz(hostAtual)
-  return url.hostname === raiz || url.hostname.endsWith(`.${raiz}`) ? url : null
+  // MESMO host, exatamente (compara `host`, com porta): um subdominio irmao do dominio
+  // — apex, `piloto-ar.`, `dashboard.` — e' OUTRA pagina, e mandar a pessoa para la'
+  // depois do login ainda e' redirecionamento para fora. Fecha o furo B6 do pentest: a
+  // regra antiga aceitava `*.{dominio}` e, com um irmao comprometido, virava open redirect.
+  if (url.host !== hostAtual) return null
+  // Credencial embutida (`https://usuario:senha@host`) nunca e' destino legitimo.
+  if (url.username || url.password) return null
+  return url
 }
 
 /** Este destino e' o formulario de login — em qualquer host, ou esta propria pagina? */
@@ -100,9 +108,3 @@ function origemComCaminho(bruto: string | undefined, hostAtual: string): string 
   }
 }
 
-/** `auth.ultra-expansao.tech` -> `ultra-expansao.tech`. Dois rotulos bastam aqui porque
- *  a instancia vive num dominio de dois niveis; nao e' um parser de sufixo publico. */
-function dominioRaiz(host: string): string {
-  const partes = host.split('.')
-  return partes.length <= 2 ? host : partes.slice(-2).join('.')
-}

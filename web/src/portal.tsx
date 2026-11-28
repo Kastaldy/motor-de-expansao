@@ -7,6 +7,7 @@ import { api, ApiError } from './lib/api'
 import { falhaDoStatus, type FalhaLogin } from './lib/login'
 import { MAX_TENTATIVAS } from './lib/login-motor'
 import './styles/global.css'
+import './styles/portal.css'
 
 /**
  * Ponto de entrada do PORTAL DO APEX (`ultra-expansao.tech`), que substitui o portal
@@ -144,8 +145,6 @@ function Portal() {
 
   return (
     <div className="portal-pagina" style={PAGINA}>
-      <style>{PORTAL_CSS}</style>
-
       <header style={BLOCO}>
         <div className="portal-marca" style={MARCA}>
           <span style={MARCA_TXT}>Ultra Academia</span>
@@ -299,53 +298,6 @@ const FOOTER: React.CSSProperties = {
   color: 'var(--tx-muted)',
   fontSize: 12,
 }
-
-/* As poucas regras que inline nao alcanca (pseudo-elementos e pseudo-classes). Halo de
-   fundo, barra vermelha da marca, e o realce de hover/foco dos cartoes e links. */
-const PORTAL_CSS = `
-.portal-pagina::before {
-  content: '';
-  position: fixed;
-  inset: 0;
-  pointer-events: none;
-  background: radial-gradient(60% 50% at 50% 0%, var(--ac-a12), transparent 70%);
-  z-index: 0;
-}
-.portal-marca::before {
-  content: '';
-  width: 3px;
-  height: 26px;
-  border-radius: 2px;
-  background: var(--ultra);
-  flex-shrink: 0;
-}
-.portal-cartao {
-  transition: border-color .15s ease, transform .15s ease, box-shadow .15s ease;
-}
-.portal-cartao:hover {
-  border-color: var(--ac-a30);
-  transform: translateY(-2px);
-  box-shadow: var(--sh-pop);
-}
-.portal-cartao:focus-visible {
-  outline: 2px solid var(--ac);
-  outline-offset: 2px;
-  border-color: var(--ac-a30);
-}
-.portal-seta { transition: color .15s ease, transform .15s ease; }
-.portal-cartao:hover .portal-seta,
-.portal-cartao:focus-visible .portal-seta {
-  color: var(--ac-text);
-  transform: translateX(2px);
-}
-.portal-botao:hover { border-color: var(--ac-text); color: var(--tx-max); }
-.portal-botao:focus-visible { outline: 2px solid var(--ac); outline-offset: 2px; }
-@media (prefers-reduced-motion: reduce) {
-  .portal-cartao { transition: none; }
-  .portal-cartao:hover { transform: none; }
-  .portal-seta { transition: none; }
-}
-`
 
 const el = document.getElementById('root')
 if (!el) throw new Error('#root não encontrado no portal.html')

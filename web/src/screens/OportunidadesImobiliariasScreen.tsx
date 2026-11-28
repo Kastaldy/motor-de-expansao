@@ -382,7 +382,7 @@ export default function OportunidadesImobiliariasScreen({
         {itens == null && !erro && (
           <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: 32, color: 'var(--tx-muted)' }}><Spinner /> Carregando oportunidades…</div>
         )}
-        {erro && <Aviso titulo="Não deu para carregar" corpo={`${erro} — se o piloto estiver rodando na sua própria máquina, confira o backend (porta 8899) e o data/oportunidades/viaveis.parquet.`} />}
+        {erro && <Aviso titulo="Não deu para carregar" corpo={`${erro} — tente de novo em instantes; se continuar, avise quem administra o piloto.`} />}
         {itens != null && filtrados.length === 0 && (
           <Aviso titulo="Nada no recorte" corpo="Nenhuma oportunidade bate com os filtros. Amplie o estado, o tipo ou limpe a busca." />
         )}

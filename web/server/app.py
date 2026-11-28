@@ -1240,6 +1240,59 @@ async def _trilha_acesso(request: Request, call_next: Callable[..., Any]) -> Any
     return resposta
 
 
+# --- Cabecalhos de seguranca (B1/B12 do pentest de 11/2026) ------------------
+# Declarado DEPOIS de `_trilha_acesso`, portanto o middleware MAIS EXTERNO: carimba a
+# resposta final (inclusive 401/403 e a propria trilha) na volta. Nao ha' passo no Caddy --
+# vale para BR, AR e apex pela imagem unica (DEC-047/DEC-081), e por isso mora aqui e nao no
+# `sec_headers` do Caddyfile vivo (que e' gitignored).
+#
+# CSP em REPORT-ONLY nesta fase: o navegador RELATA a violacao no console e NAO bloqueia nada.
+# A CSP ja' existiu no snippet do Caddy e saiu "por quebrar o mapa" (DEC-083); por isso a
+# politica abaixo libera o que o maplibre/deck.gl usam de fato: worker/child `blob:`, os tiles
+# e estilos da CARTO em connect/img e `data:` para os icones e as fontes base64. `script-src`
+# traz so' 'self' e o hash do <script> de tema dos 3 HTML -- sem 'unsafe-inline' e sem
+# 'unsafe-eval' (medido: nenhuma lib do bundle usa `new Function`). Sem
+# `upgrade-insecure-requests`, que quebraria o dist servido em http://127.0.0.1:8899.
+#
+# A fase 2 (bloquear de verdade) e' um PR de uma linha trocando o nome do cabecalho para
+# `Content-Security-Policy`, depois de o console ficar limpo em todas as telas.
+_HASH_SCRIPT_TEMA = "sha256-zHULE5RK1RYZZ30nqZYgDzcahgoQvNbg2TPdaFtCwJA="  # bytes LF entre <script> e </script> de index/entrar/portal.html; test_piloto_web_cabecalhos recalcula e trava
+_ORIGENS_CARTO = "https://basemaps.cartocdn.com https://*.basemaps.cartocdn.com"
+_CSP_PILOTO = "; ".join(
+    (
+        "default-src 'self'",
+        f"script-src 'self' '{_HASH_SCRIPT_TEMA}'",
+        "worker-src 'self' blob:",
+        "child-src 'self' blob:",
+        f"connect-src 'self' data: {_ORIGENS_CARTO}",
+        f"img-src 'self' data: blob: {_ORIGENS_CARTO}",
+        "style-src 'self'",
+        "font-src 'self'",
+        "object-src 'none'",
+        "frame-src 'none'",
+        "base-uri 'none'",
+        "form-action 'self'",
+        "frame-ancestors 'none'",
+    )
+)
+
+
+@app.middleware("http")
+async def _cabecalhos_de_seguranca(request: Request, call_next: Callable[..., Any]) -> Any:
+    resposta = await call_next(request)
+    cab = resposta.headers
+    # CSP so' quando a rota nao definiu a propria: a pagina de confirmacao do SSO
+    # (`/api/sso/entrar`) manda um `Content-Security-Policy` proprio, que este `in` preserva.
+    if (
+        "content-security-policy" not in cab
+        and "content-security-policy-report-only" not in cab
+    ):
+        cab["Content-Security-Policy-Report-Only"] = _CSP_PILOTO
+    cab.setdefault("Cross-Origin-Opener-Policy", "same-origin")
+    cab.setdefault("Cross-Origin-Resource-Policy", "same-origin")
+    return resposta
+
+
 # ============================================================================
 # Carga de dados (lazy, cacheada por UF)
 # ============================================================================
@@ -18039,8 +18092,34 @@ def portal_html() -> Any:
     )
 
 
+#: Diretorios de assets com hash no nome (Vite): o conteudo muda => o nome muda, entao podem
+#: ser `immutable` por um ano sem risco de servir versao velha. O resto (index.html e afins)
+#: vai `no-cache`: o navegador guarda mas REVALIDA sempre, para nao reaproveitar um index
+#: velho que aponta para um chunk ja' removido (a aba fica branca). B11 do pentest de 11/2026.
+_PREFIXOS_COM_HASH = ("/assets/", "/entrar-assets/", "/portal-assets/")
+
+
+class _EstaticosDaSpa(StaticFiles):
+    """`StaticFiles` que carimba `Cache-Control` no 200 E no 304.
+
+    Decide pelo `scope["path"]` (a URL, sempre com barra normal), nunca pelo `full_path`, que
+    no Windows chega com o separador do sistema (`os.path.normpath`). O 404 e' uma excecao do
+    Starlette e nao passa por aqui, entao um caminho inexistente nunca ganha `immutable`.
+    `setdefault` preserva o `no-store` que `entrar.html`/`portal.html` ja' definem por rota.
+    """
+
+    def file_response(self, full_path, stat_result, scope, status_code=200):
+        resposta = super().file_response(full_path, stat_result, scope, status_code)
+        imutavel = scope.get("path", "").startswith(_PREFIXOS_COM_HASH)
+        resposta.headers.setdefault(
+            "Cache-Control",
+            "public, max-age=31536000, immutable" if imutavel else "no-cache",
+        )
+        return resposta
+
+
 if _DIST_DIR.is_dir():
-    app.mount("/", StaticFiles(directory=str(_DIST_DIR), html=True), name="spa")
+    app.mount("/", _EstaticosDaSpa(directory=str(_DIST_DIR), html=True), name="spa")
 
 
 if __name__ == "__main__":

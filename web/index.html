@@ -11,27 +11,6 @@
       name="description"
       content="Onde abrir a próxima Ultra, e se o imóvel fecha a conta."
     />
-    <!--
-      Tema ANTES da primeira pintura.
-
-      O `App` também põe `data-tema` no <html>, mas por um efeito do React, que só roda
-      depois que a página já apareceu. O `body` lê `background: var(--bg-base)` desde o
-      primeiro frame, então sem este trecho quem escolheu o claro via a tela nascer preta
-      e clarear — um flash a cada carregamento, justamente para quem pediu o tema claro.
-
-      Fica em linha, e não num módulo, porque `/src/main.tsx` é `defer` por natureza: um
-      arquivo separado chegaria tarde demais e o flash voltaria.
-
-      Espelha `CHAVE_TEMA` / `COOKIE_TEMA` / `CHAVE_TEMA_LEGADA` / `TEMA_PADRAO` de
-      `src/lib/tema.ts`, e na MESMA ORDEM que `lerTema` — ao renomear uma chave lá,
-      renomeie aqui; ler em outra ordem devolve o flash que este trecho evita.
-      `tema.test.ts` tem a guarda que torna o desencontro visível.
-
-      O `try` por fonte existe porque tocar em `localStorage` LEVANTA em aba anônima com
-      cookies de terceiros bloqueados; sem ele o app inteiro morreria antes de montar por
-      causa de uma preferência de cor — e um `try` só, ao redor de tudo, faria a primeira
-      fonte que estoura cancelar as outras duas.
-    -->
     <script>
       ;(function () {
         function valido(v) {

@@ -288,15 +288,17 @@ describe('bootstrap de tema nos dois HTML', () => {
     return alvo[0]
   }
 
-  it('é o MESMO texto nos dois arquivos', () => {
+  it('é o MESMO texto nos três arquivos', () => {
     /* A tela de entrar quebrou em 2026-09-25 justamente por DIVERGIR do `index.html` —
        ela lia uma fonte a menos. Corrigir um e esquecer o outro é o defeito, não o
-       acidente; texto idêntico é a guarda mais simples que o torna vermelho. */
+       acidente; texto idêntico é a guarda mais simples que o torna vermelho. O `portal.html`
+       do apex tem o mesmo bootstrap, e o hash da CSP (`_HASH_SCRIPT_TEMA`) depende dele. */
     expect(bootstrap('entrar.html')).toBe(bootstrap('index.html'))
+    expect(bootstrap('portal.html')).toBe(bootstrap('index.html'))
   })
 
   it('lê as TRÊS fontes, na mesma ordem de lerTema', () => {
-    for (const arquivo of ['index.html', 'entrar.html']) {
+    for (const arquivo of ['index.html', 'entrar.html', 'portal.html']) {
       const s = bootstrap(arquivo)
       const iLocal = s.indexOf(`'${CHAVE_TEMA}'`)
       const iCookie = s.indexOf('document.cookie')
@@ -313,20 +315,20 @@ describe('bootstrap de tema nos dois HTML', () => {
     /* Renomear `COOKIE_TEMA` sem mexer no HTML devolve o defeito EM SILÊNCIO: nada quebra,
        a tela de entrar só volta a nascer escura. */
     const escapado = `${COOKIE_TEMA.replace(/\./g, '\\.')}=`
-    for (const arquivo of ['index.html', 'entrar.html']) {
+    for (const arquivo of ['index.html', 'entrar.html', 'portal.html']) {
       expect(bootstrap(arquivo), `${arquivo}: cookie com outro nome`).toContain(escapado)
     }
   })
 
   it('cada fonte tem o seu try, senão a primeira que estoura cancela as outras', () => {
-    for (const arquivo of ['index.html', 'entrar.html']) {
+    for (const arquivo of ['index.html', 'entrar.html', 'portal.html']) {
       const tentativas = (bootstrap(arquivo).match(/try\s*\{/g) ?? []).length
       expect(tentativas, `${arquivo}: menos de três try`).toBeGreaterThanOrEqual(3)
     }
   })
 
   it('o padrão do HTML é o padrão do produto', () => {
-    for (const arquivo of ['index.html', 'entrar.html']) {
+    for (const arquivo of ['index.html', 'entrar.html', 'portal.html']) {
       expect(bootstrap(arquivo)).toContain(`'${TEMA_PADRAO}'`)
     }
   })
