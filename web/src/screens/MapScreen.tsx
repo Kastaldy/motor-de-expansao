@@ -2384,11 +2384,10 @@ export default function MapScreen({
             <PainelMensagem>
               {erro}
               <br />
-              {/* A porta 8899 nao lidera mais a frase: em producao ela nao diz nada ao
-                  operador e fazia a tela parecer "sistema caiu" (era o sintoma do pedido
-                  do Felipe). Sessao vencida agora tem pop-up proprio — `lib/sessao.ts`. */}
-              <br />Se você estiver rodando o piloto na sua própria máquina, confira se o
-              backend subiu: é o <code>iniciar-piloto-web.cmd</code> que o liga (porta 8899).
+              {/* Mensagem NEUTRA de propósito (B5 do pentest 11/2026): a frase antiga citava
+                  a porta 8899 e o `iniciar-piloto-web.cmd`, detalhe de dev que não diz nada ao
+                  operador e vazava infra. Sessão vencida tem pop-up próprio — `lib/sessao.ts`. */}
+              <br />Tente de novo em instantes. Se continuar, avise quem administra o piloto.
             </PainelMensagem>
           ) : dados && passo ? (
             <NarrativePanel
